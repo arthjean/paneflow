@@ -165,12 +165,12 @@ Every method the app serves is declared once, with types and a schema, and every
 **Paneflow sites:** `protocol/host-conformance-v1.json` and `crates/paneflow-host/tests/conformance.rs:14-49` (the pattern to follow); `src-app/tests/cli_controller.rs`, `src-app/tests/ipc_endpoint_fallback.rs`; `src-app/src/app/ipc_handler/jsonrpc.rs:10-17,112-157`.
 
 **Acceptance Criteria:**
-- [ ] Given `protocol/app-conformance-v1.json`, when it is read, then it holds at least one success case for each of the 23 methods listed in `gates.rs:92-123`, with the full result field set of each
-- [ ] Given the case file, when it is read, then it holds one invalid-parameter case per method that takes a required parameter, asserting code `-32602`
-- [ ] Given a gated method (`surface.send_text`, `surface.send_keystroke`) with its gate closed, when it is called, then the case asserts code `-32601`
-- [ ] Given a case listed in the file with no runner, when the test suite runs, then it fails naming the case id
-- [ ] Given an unknown method name, when it is sent, then the case asserts code `-32601` and the exact current message
-- [ ] The runner drives a real app IPC endpoint on a per-process socket or pipe, as the host conformance runner does, and needs no display
+- [x] Given `protocol/app-conformance-v1.json`, when it is read, then it holds at least one success case for each of the 23 methods listed in `gates.rs:92-123`, with the full result field set of each
+- [x] Given the case file, when it is read, then it holds one invalid-parameter case per method that takes a required parameter, asserting code `-32602`
+- [x] Given a gated method (`surface.send_text`, `surface.send_keystroke`) with its gate closed, when it is called, then the case asserts code `-32601`
+- [x] Given a case listed in the file with no runner, when the test suite runs, then it fails naming the case id
+- [x] Given an unknown method name, when it is sent, then the case asserts code `-32601` and the exact current message
+- [x] The runner drives a real app IPC endpoint on a per-process socket or pipe, as the host conformance runner does, and needs no display
 
 #### US-002: Create `paneflow-api` and migrate the read methods
 **Description:** As the maintainer, I want a registry crate where a method is one declaration so that dispatch and validation stop being written by hand.
@@ -182,13 +182,13 @@ Every method the app serves is declared once, with types and a schema, and every
 **Paneflow sites:** `src-app/src/app/ipc_handler/mod.rs:45-49,172-195`, `params.rs:3-57`, `surface_methods.rs:255-267,396-401,484-486,585-663`, `workspace_methods.rs:694-712`.
 
 **Acceptance Criteria:**
-- [ ] Given the new crate `crates/paneflow-api`, when its dependencies are listed, then it depends on neither `gpui`, `mlua` nor any `src-app` module
-- [ ] Given a method declaration, when it is read, then it carries a name, a one-line summary, a parameter type and a result type that both derive `serde` and `schemars::JsonSchema`, at least one example, an owner (`window`, `worker` or `host`) and a gate
-- [ ] Given `system.ping`, `system.identify`, `system.counters`, `system.capabilities`, `surface.read`, `surface.search`, `surface.list`, `surface.status`, `fleet.list`, `workspace.list` and `workspace.current`, when they are called, then each is served through the registry and the US-001 cases pass unchanged
-- [ ] Given a request whose parameter has the wrong JSON type, when it is dispatched, then the reply is `-32602` and its message names the parameter
-- [ ] Given a request with an unknown extra parameter, when it is dispatched, then it is accepted as today (no new rejection)
-- [ ] Given the three reply kinds `Ready`, `Deferred` and `Async`, when a handler is registered, then it declares its kind and the 5 s dispatch and 30 s reply timeouts of `ipc.rs:86-88` still apply
-- [ ] Given two declarations with the same method name, when the registry is built, then the build of the registry fails in a test, not at runtime in production
+- [x] Given the new crate `crates/paneflow-api`, when its dependencies are listed, then it depends on neither `gpui`, `mlua` nor any `src-app` module
+- [x] Given a method declaration, when it is read, then it carries a name, a one-line summary, a parameter type and a result type that both derive `serde` and `schemars::JsonSchema`, at least one example, an owner (`window`, `worker` or `host`) and a gate
+- [x] Given `system.ping`, `system.identify`, `system.counters`, `system.capabilities`, `surface.read`, `surface.search`, `surface.list`, `surface.status`, `fleet.list`, `workspace.list` and `workspace.current`, when they are called, then each is served through the registry and the US-001 cases pass unchanged
+- [x] Given a request whose parameter has the wrong JSON type, when it is dispatched, then the reply is `-32602` and its message names the parameter
+- [x] Given a request with an unknown extra parameter, when it is dispatched, then it is accepted as today (no new rejection)
+- [x] Given the three reply kinds `Ready`, `Deferred` and `Async`, when a handler is registered, then it declares its kind and the 5 s dispatch and 30 s reply timeouts of `ipc.rs:86-88` still apply
+- [x] Given two declarations with the same method name, when the registry is built, then the build of the registry fails in a test, not at runtime in production
 
 #### US-003: Migrate the remaining methods and delete the hand-written dispatch
 **Description:** As the maintainer, I want the write, layout and compatibility methods on the registry so that the string dispatch and the hand-written capability list can be deleted.
@@ -200,12 +200,12 @@ Every method the app serves is declared once, with types and a schema, and every
 **Paneflow sites:** `gates.rs:3-20,92-123,145-156`; `split.rs:37-46,306-445`; `workspace_methods.rs:25-44,319-436,556,714-791`; `surface_methods.rs:1034-1200`; `tmux_compat.rs:78`; `src-app/src/ipc.rs:887-931`.
 
 **Acceptance Criteria:**
-- [ ] Given `surface.rename`, `surface.focus`, `surface.send_text`, `surface.send_keystroke`, `surface.split`, `workspace.create`, `workspace.up`, `workspace.select`, `workspace.close`, `workspace.restore_layout` and the tmux compatibility method, when they are called, then each is served through the registry and the US-001 cases pass unchanged
-- [ ] Given `events.subscribe`, when the registry is listed, then it has a descriptor marked as a stream, and its frames (`subscribed`, `heartbeat`, `dropped`) are unchanged
-- [ ] Given `system.capabilities`, when it is called, then its `methods` array is computed from the registry and equals the array of US-001 byte for byte
-- [ ] Given the source tree, when `src-app/src/app/ipc_handler/mod.rs` is searched, then no `match` arm compares a method name string, and `capabilities_value` holds no literal list
-- [ ] Given `PANEFLOW_IPC_SCRIPTING` and `PANEFLOW_IPC_ORCHESTRATION` unset, when a gated method is called, then it is refused exactly as before, and the gate is read from the descriptor
-- [ ] Given a `layout` parameter with more leaves than `MAX_PANES`, when `workspace.restore_layout` is called, then it is refused with the same code and message as before
+- [x] Given `surface.rename`, `surface.focus`, `surface.send_text`, `surface.send_keystroke`, `surface.split`, `workspace.create`, `workspace.up`, `workspace.select`, `workspace.close`, `workspace.restore_layout` and the tmux compatibility method, when they are called, then each is served through the registry and the US-001 cases pass unchanged
+- [x] Given `events.subscribe`, when the registry is listed, then it has a descriptor marked as a stream, and its frames (`subscribed`, `heartbeat`, `dropped`) are unchanged
+- [x] Given `system.capabilities`, when it is called, then its `methods` array is computed from the registry and equals the array of US-001 byte for byte
+- [x] Given the source tree, when `src-app/src/app/ipc_handler/mod.rs` is searched, then no `match` arm compares a method name string, and `capabilities_value` holds no literal list
+- [x] Given `PANEFLOW_IPC_SCRIPTING` and `PANEFLOW_IPC_ORCHESTRATION` unset, when a gated method is called, then it is refused exactly as before, and the gate is read from the descriptor
+- [x] Given a `layout` parameter with more leaves than `MAX_PANES`, when `workspace.restore_layout` is called, then it is refused with the same code and message as before
 
 #### US-004: `system.describe` and a checked-in schema snapshot
 **Description:** As a client author, I want to ask a running Paneflow what each method takes and returns so that I can call it without reading source.
@@ -215,12 +215,12 @@ Every method the app serves is declared once, with types and a schema, and every
 **Dependencies:** Blocked by US-003
 
 **Acceptance Criteria:**
-- [ ] Given `system.describe` with no parameter, when it is called, then it returns every method this endpoint serves with name, summary, owner, gate, stream flag, input schema, output schema and examples
-- [ ] Given `system.describe` with `method`, when it is called with a known name, then it returns that one descriptor
-- [ ] Given `system.describe` with an unknown `method`, when it is called, then the reply is `-32602` and names the method
-- [ ] Given a method owned by another process, when the full list is requested, then it appears with its owner and without being callable on this endpoint
-- [ ] Given `protocol/api-v1.json`, when a test regenerates the description from the registry, then the two are equal, and the failure message tells how to regenerate the file
-- [ ] The emitted schemas are JSON Schema 2020-12 and each validates its own examples in a test
+- [x] Given `system.describe` with no parameter, when it is called, then it returns every method this endpoint serves with name, summary, owner, gate, stream flag, input schema, output schema and examples
+- [x] Given `system.describe` with `method`, when it is called with a known name, then it returns that one descriptor
+- [x] Given `system.describe` with an unknown `method`, when it is called, then the reply is `-32602` and names the method
+- [x] Given a method owned by another process, when the full list is requested, then it appears with its owner and without being callable on this endpoint
+- [x] Given `protocol/api-v1.json`, when a test regenerates the description from the registry, then the two are equal, and the failure message tells how to regenerate the file
+- [x] The emitted schemas are JSON Schema 2020-12 and each validates its own examples in a test
 
 #### US-005: `paneflow api list`, `describe` and `call`
 **Description:** As a user, I want to explore and call the API from the shell so that I can script without a reference page.
@@ -232,13 +232,13 @@ Every method the app serves is declared once, with types and a schema, and every
 **Paneflow sites:** `src-app/src/cli/mod.rs:22-25,570-624`.
 
 **Acceptance Criteria:**
-- [ ] Given a running app, when `paneflow api list` runs, then it prints one line per method with its owner and summary, and `--json` prints the descriptors
-- [ ] Given `paneflow api describe surface.read`, when it runs, then it prints the parameters with type, required or optional and default, the result fields, and one example invocation
-- [ ] Given `paneflow api call surface.list`, when it runs, then it prints the JSON result and exits 0
-- [ ] Given `paneflow api call surface.read lines=50 fenced=true`, when it runs, then `key=value` pairs are typed from the method's schema (`50` as an integer, `true` as a boolean), and `--args '{...}'` or `--args @file.json` passes raw JSON
-- [ ] Given an unknown method or a parameter the schema rejects, when `paneflow api call` runs, then it prints the registry's message and exits with the existing error exit code
-- [ ] Given no running window, worker or host, when any `paneflow api` verb runs, then it exits with the existing "no instance" code and message
-- [ ] No existing subcommand changes its flags, output or exit code
+- [x] Given a running app, when `paneflow api list` runs, then it prints one line per method with its owner and summary, and `--json` prints the descriptors
+- [x] Given `paneflow api describe surface.read`, when it runs, then it prints the parameters with type, required or optional and default, the result fields, and one example invocation
+- [x] Given `paneflow api call surface.list`, when it runs, then it prints the JSON result and exits 0
+- [x] Given `paneflow api call surface.read lines=50 fenced=true`, when it runs, then `key=value` pairs are typed from the method's schema (`50` as an integer, `true` as a boolean), and `--args '{...}'` or `--args @file.json` passes raw JSON
+- [x] Given an unknown method or a parameter the schema rejects, when `paneflow api call` runs, then it prints the registry's message and exits with the existing error exit code
+- [x] Given no running window, worker or host, when any `paneflow api` verb runs, then it exits with the existing "no instance" code and message
+- [x] No existing subcommand changes its flags, output or exit code
 
 #### US-006: Route each call to its owner
 **Description:** As a client author, I want one client that sends each method to the process that owns it so that scripts do not hard-code endpoints.
@@ -250,12 +250,12 @@ Every method the app serves is declared once, with types and a schema, and every
 **Paneflow sites:** `crates/paneflow-ipc-client/src/host_control.rs:64-114`; `src-app/src/cli/mod.rs:570-624`; `crates/paneflow-host/src/control.rs:26-49`; `crates/paneflow-serve/src/protocol.rs:20-31`.
 
 **Acceptance Criteria:**
-- [ ] Given the registry, when it is listed, then the host control methods and the worker's `worker.*`, `agent.*` and `usage.*` methods have descriptors with owner `host` or `worker`, and no host or worker code changes in this story
-- [ ] Given a router built on the registry, when a method owned by the window is called and the window listens, then the request goes to the window's socket
-- [ ] Given a method owned by the window and no window, when the host serves a control answer for it, then the router falls back to the host exactly as `resolve_control_target` does today
-- [ ] Given a method owned by the worker and no worker reachable, when it is called, then the error names the worker and the method, and nothing is sent to another endpoint
-- [ ] Given `paneflow api list` with a window and a worker running, when it runs, then it shows the union of the methods, each tagged with its owner
-- [ ] The router lives outside `paneflow-ipc-client`, so no helper binary links it, and each helper's `release-min` size is unchanged by the story
+- [x] Given the registry, when it is listed, then the host control methods and the worker's `worker.*`, `agent.*` and `usage.*` methods have descriptors with owner `host` or `worker`, and no host or worker code changes in this story
+- [x] Given a router built on the registry, when a method owned by the window is called and the window listens, then the request goes to the window's socket
+- [x] Given a method owned by the window and no window, when the host serves a control answer for it, then the router falls back to the host exactly as `resolve_control_target` does today
+- [x] Given a method owned by the worker and no worker reachable, when it is called, then the error names the worker and the method, and nothing is sent to another endpoint
+- [x] Given `paneflow api list` with a window and a worker running, when it runs, then it shows the union of the methods, each tagged with its owner
+- [x] The router lives outside `paneflow-ipc-client`, so no helper binary links it, and each helper's `release-min` size is unchanged by the story
 
 ---
 
@@ -277,11 +277,11 @@ Workspaces, tabs, split trees, panes and surfaces become one plain-data model wi
 **Paneflow sites:** `src-app/src/layout/mutations.rs:77,121`, `close.rs:8`; `src-app/src/app/workspace_ops/mod.rs:644-1095`, `layout.rs:15-196`, `tab.rs:51-662`, `focus.rs:20`; `src-app/src/app/event_handlers/mod.rs:200-575`; `src-app/src/app/close_policy.rs:134-250`; `src-app/src/app/ipc_handler/split.rs:170-445`, `workspace_methods.rs:340-791`; `src-app/src/app/template_launch.rs:140-141`; `src-app/src/app/detached_panes/`.
 
 **Acceptance Criteria:**
-- [ ] Given the section "Layout Operation Inventory" of this PRD, when this story ends, then each operation has its entry points, the function that mutates, the focus rule, the session effect (none, spawn, hold, stop, rehome) and whether it is refused while zoomed, with `file:line`
-- [ ] Given the paths the 2026-11-19 inventory left untraced (IPC `surface.split`, IPC `workspace.close`, `create_workspace_with_picker`, `open_pane_in_new_workspace_tab`, `split_pane_at_edge`, templates, `detached_panes/persistence.rs`), when the section is read, then each is traced, or named as out of scope with a reason
-- [ ] Given an operation with more than one entry point, when the section is read, then it lists every entry point and says whether they behave identically
-- [ ] Given the two behaviors reported as possible defects (undo of a pane holding several surfaces restores one; a non-active surface resolves to a terminal but not to a pane), when the section is read, then each is confirmed or refuted with the code path that decides it
-- [ ] No production code changes in this story
+- [x] Given the section "Layout Operation Inventory" of this PRD, when this story ends, then each operation has its entry points, the function that mutates, the focus rule, the session effect (none, spawn, hold, stop, rehome) and whether it is refused while zoomed, with `file:line`
+- [x] Given the paths the 2026-11-19 inventory left untraced (IPC `surface.split`, IPC `workspace.close`, `create_workspace_with_picker`, `open_pane_in_new_workspace_tab`, `split_pane_at_edge`, templates, `detached_panes/persistence.rs`), when the section is read, then each is traced, or named as out of scope with a reason
+- [x] Given an operation with more than one entry point, when the section is read, then it lists every entry point and says whether they behave identically
+- [x] Given the two behaviors reported as possible defects (undo of a pane holding several surfaces restores one; a non-active surface resolves to a terminal but not to a pane), when the section is read, then each is confirmed or refuted with the code path that decides it
+- [x] No production code changes in this story
 
 #### US-008: Pin today's behavior: create, close, undo, focus, rename
 **Description:** As the maintainer, I want tests that state what the creating and closing operations do today, written against outputs the refactor keeps, so that the model can be proven equivalent.
@@ -291,12 +291,12 @@ Workspaces, tabs, split trees, panes and surfaces become one plain-data model wi
 **Dependencies:** Blocked by US-007
 
 **Acceptance Criteria:**
-- [ ] Given split, new surface, new tab, new workspace, close surface, close pane, remove a given pane, close tab, close workspace, undo close, focus, select and rename, when the suite runs, then at least one test per operation asserts its resulting tree shape, ratios, focus target and session effect through the serialized `LayoutNode` and the requests sent to a fake host
-- [ ] Given a split requested while a tab is zoomed, or at `MAX_PANES`, when the test runs, then it asserts the current refusal
-- [ ] Given a close that empties a tab, when the test runs, then it asserts that the tab receives a fresh pane
-- [ ] Given undo within and after the 5 s hold, and a sixth record pushed on a full history, when the tests run, then they assert reattachment, a fresh terminal, and the eviction with its stop
-- [ ] Given each suspected defect that US-007 confirmed, when the suite runs, then one test pins the current behavior under a name that says so
-- [ ] Given the new tests, when they are read, then each drives the entry point a user or an IPC client triggers, and none reads a private field of `LayoutTree`, so the same test compiles after the refactor
+- [x] Given split, new surface, new tab, new workspace, close surface, close pane, remove a given pane, close tab, close workspace, undo close, focus, select and rename, when the suite runs, then at least one test per operation asserts its resulting tree shape, ratios, focus target and session effect through the serialized `LayoutNode` and the requests sent to a fake host
+- [x] Given a split requested while a tab is zoomed, or at `MAX_PANES`, when the test runs, then it asserts the current refusal
+- [x] Given a close that empties a tab, when the test runs, then it asserts that the tab receives a fresh pane
+- [x] Given undo within and after the 5 s hold, and a sixth record pushed on a full history, when the tests run, then they assert reattachment, a fresh terminal, and the eviction with its stop
+- [x] Given each suspected defect that US-007 confirmed, when the suite runs, then one test pins the current behavior under a name that says so
+- [x] Given the new tests, when they are read, then each drives the entry point a user or an IPC client triggers, and none reads a private field of `LayoutTree`, so the same test compiles after the refactor
 
 #### US-009: Pin today's behavior: move, reorder, resize, zoom, presets, restore
 **Description:** As the maintainer, I want the same pinning tests for the operations that rearrange an existing layout so that every op of the model has a reference.
@@ -306,12 +306,12 @@ Workspaces, tabs, split trees, panes and surfaces become one plain-data model wi
 **Dependencies:** Blocked by US-007
 
 **Acceptance Criteria:**
-- [ ] Given swap, move pane to an edge, move surface, drop an agent session, move pane to a new tab, move tab to a workspace, reorder tabs, reorder workspaces, divider resize, equalize, each preset, zoom, restore layout and templates, when the suite runs, then at least one test per operation asserts its resulting tree shape, ratios, focus target and session effect as US-008 does
-- [ ] Given a move or a preset on a zoomed tab, when the test runs, then it asserts whether zoom is left first or the operation is refused, per operation
-- [ ] Given a reorder to an index past the end, and `workspace.up` with an invalid pane in the middle of its list, when the tests run, then they assert today's outcome
-- [ ] Given restore layout with fewer panes than the tab holds, when the test runs, then it asserts which panes close and with which session effect
-- [ ] Given an operation that cannot be driven in a test without a display (a pointer drag, a detached window), when the inventory is read, then it is listed with the reason and added to the checklist of US-020
-- [ ] Given the new tests, when they are read, then none reads a private field of `LayoutTree`
+- [x] Given swap, move pane to an edge, move surface, drop an agent session, move pane to a new tab, move tab to a workspace, reorder tabs, reorder workspaces, divider resize, equalize, each preset, zoom, restore layout and templates, when the suite runs, then at least one test per operation asserts its resulting tree shape, ratios, focus target and session effect as US-008 does
+- [x] Given a move or a preset on a zoomed tab, when the test runs, then it asserts whether zoom is left first or the operation is refused, per operation
+- [x] Given a reorder to an index past the end, and `workspace.up` with an invalid pane in the middle of its list, when the tests run, then they assert today's outcome
+- [x] Given restore layout with fewer panes than the tab holds, when the test runs, then it asserts which panes close and with which session effect
+- [x] Given an operation that cannot be driven in a test without a display (a pointer drag, a detached window), when the inventory is read, then it is listed with the reason and added to the checklist of US-020
+- [x] Given the new tests, when they are read, then none reads a private field of `LayoutTree`
 
 #### US-010: `paneflow-layout`: the model, ids and the view
 **Description:** As the maintainer, I want the layout as plain data in its own crate so that it can be tested, serialized and later moved to another process.
@@ -323,13 +323,13 @@ Workspaces, tabs, split trees, panes and surfaces become one plain-data model wi
 **Paneflow sites:** `crates/paneflow-config/src/schema/layout.rs:125-139,326-349`, `schema/session.rs:14-30,63-79,200-222`; `src-app/src/workspace/mod.rs:101-128`, `tab.rs:90-100`; `src-app/src/pane.rs:29-40`.
 
 **Acceptance Criteria:**
-- [ ] Given the new crate `crates/paneflow-layout`, when its dependencies are listed, then it depends on neither `gpui` nor any `src-app` module, and its tests need no display
-- [ ] Given the model, when it is read, then it holds workspaces (id, title, space, ordered tabs, active tab), tabs (id, title, split tree, focused pane, zoomed pane), panes (id, ordered surfaces, active surface) and surfaces (id, kind terminal or markdown, name, the fields of `SurfaceDefinition`), plus the active workspace and a `revision`
-- [ ] Given any id, when it is allocated, then it is a `u64` taken from one counter held by the model, strictly increasing, and never reused after a close
-- [ ] Given a `SessionState` written by the current release, when the model loads it, then it allocates ids for every workspace, tab, pane and surface, and exporting the model back yields an equal `SessionState` for every existing field
-- [ ] Given a `SessionState` already carrying ids and a counter, when the model loads it, then every id is kept and the counter is at least one above the highest id
-- [ ] Given a corrupt or duplicated id in the input, when the model loads it, then the offending element gets a fresh id, one warning is logged, and loading succeeds
-- [ ] Given the model, when `view()` is called, then it returns a plain-data snapshot with the `revision`, and two calls with no op in between are equal
+- [x] Given the new crate `crates/paneflow-layout`, when its dependencies are listed, then it depends on neither `gpui` nor any `src-app` module, and its tests need no display
+- [x] Given the model, when it is read, then it holds workspaces (id, title, space, ordered tabs, active tab), tabs (id, title, split tree, focused pane, zoomed pane), panes (id, ordered surfaces, active surface) and surfaces (id, kind terminal or markdown, name, the fields of `SurfaceDefinition`), plus the active workspace and a `revision`
+- [x] Given any id, when it is allocated, then it is a `u64` taken from one counter held by the model, strictly increasing, and never reused after a close
+- [x] Given a `SessionState` written by the current release, when the model loads it, then it allocates ids for every workspace, tab, pane and surface, and exporting the model back yields an equal `SessionState` for every existing field
+- [x] Given a `SessionState` already carrying ids and a counter, when the model loads it, then every id is kept and the counter is at least one above the highest id
+- [x] Given a corrupt or duplicated id in the input, when the model loads it, then the offending element gets a fresh id, one warning is logged, and loading succeeds
+- [x] Given the model, when `view()` is called, then it returns a plain-data snapshot with the `revision`, and two calls with no op in between are equal
 
 #### US-011: Operations, part 1: create, close, focus, rename
 **Description:** As the maintainer, I want the creating, closing and focusing operations expressed as ops on the model so that their rules live in one place.
@@ -339,13 +339,13 @@ Workspaces, tabs, split trees, panes and surfaces become one plain-data model wi
 **Dependencies:** Blocked by US-010
 
 **Acceptance Criteria:**
-- [ ] Given `Model::apply(op)`, when an op succeeds, then it returns the events it caused and the effects it requests (spawn a session for a surface, hold a session, stop a session, rehome a session to a workspace), and increments `revision` by exactly 1
-- [ ] Given an op that fails, when it returns, then the model is unchanged, `revision` is unchanged, and the error is a typed reason (`not_found`, `zoomed`, `pane_limit`, `invalid`)
-- [ ] Given the ops split (direction, target pane, edge), new surface in a pane, new tab, new workspace, close surface, close pane, close tab, close workspace, focus pane, select tab, select workspace, rename surface, rename tab, rename workspace and bind session (a surface and a host session id), when each is applied, then the resulting tree, ratios, focus and effects equal those pinned by US-008 and US-009
-- [ ] Given a close that empties a tab, when it is applied, then the tab receives a fresh pane as today
-- [ ] Given bind session for a surface that does not exist, when it is applied, then it fails with `not_found`; given a surface that already names a live session, then it fails with `invalid`
-- [ ] Given a split while the tab is zoomed, or at `MAX_PANES`, when it is applied, then it fails with `zoomed` or `pane_limit`
-- [ ] Given a sequence of 1,000 random valid ops in a property test, when it runs, then after each op every id is unique, every tab's focused pane exists in its tree, every split has at least two children, and ratios of each split sum to 1 within 1e-6
+- [x] Given `Model::apply(op)`, when an op succeeds, then it returns the events it caused and the effects it requests (spawn a session for a surface, hold a session, stop a session, rehome a session to a workspace), and increments `revision` by exactly 1
+- [x] Given an op that fails, when it returns, then the model is unchanged, `revision` is unchanged, and the error is a typed reason (`not_found`, `zoomed`, `pane_limit`, `invalid`)
+- [x] Given the ops split (direction, target pane, edge), new surface in a pane, new tab, new workspace, close surface, close pane, close tab, close workspace, focus pane, select tab, select workspace, rename surface, rename tab, rename workspace and bind session (a surface and a host session id), when each is applied, then the resulting tree, ratios, focus and effects equal those pinned by US-008 and US-009
+- [x] Given a close that empties a tab, when it is applied, then the tab receives a fresh pane as today
+- [x] Given bind session for a surface that does not exist, when it is applied, then it fails with `not_found`; given a surface that already names a live session, then it fails with `invalid`
+- [x] Given a split while the tab is zoomed, or at `MAX_PANES`, when it is applied, then it fails with `zoomed` or `pane_limit`
+- [x] Given a sequence of 1,000 random valid ops in a property test, when it runs, then after each op every id is unique, every tab's focused pane exists in its tree, every split has at least two children, and ratios of each split sum to 1 within 1e-6
 
 #### US-012: Operations, part 2: move and reorder
 **Description:** As the maintainer, I want the moving and reordering operations on the model so that drag-and-drop and tab moves share one rule set.
@@ -355,12 +355,12 @@ Workspaces, tabs, split trees, panes and surfaces become one plain-data model wi
 **Dependencies:** Blocked by US-011
 
 **Acceptance Criteria:**
-- [ ] Given the ops swap panes, move pane to an edge, move surface to a pane or an edge, move pane to a new tab, move tab to another workspace, reorder tabs and reorder workspaces, when each is applied, then the result equals what US-008 and US-009 pinned
-- [ ] Given a move that empties its source tab, when it is applied, then the source tab is closed as today
-- [ ] Given a move that takes a terminal to another workspace, when it is applied, then one rehome effect is requested per terminal session moved
-- [ ] Given a move whose source or target does not exist, when it is applied, then it fails with `not_found` and the model is unchanged
-- [ ] Given an op that today leaves zoom first (move pane to a new tab, a detached transfer), when it is applied on a zoomed tab, then zoom is cleared as part of the same op; given an op that today is refused while zoomed, then it fails with `zoomed`
-- [ ] Given a reorder to an index past the end, when it is applied, then the result equals what US-008 and US-009 pinned for that case
+- [x] Given the ops swap panes, move pane to an edge, move surface to a pane or an edge, move pane to a new tab, move tab to another workspace, reorder tabs and reorder workspaces, when each is applied, then the result equals what US-008 and US-009 pinned
+- [x] Given a move that empties its source tab, when it is applied, then the source tab is closed as today
+- [x] Given a move that takes a terminal to another workspace, when it is applied, then one rehome effect is requested per terminal session moved
+- [x] Given a move whose source or target does not exist, when it is applied, then it fails with `not_found` and the model is unchanged
+- [x] Given an op that today leaves zoom first (move pane to a new tab, a detached transfer), when it is applied on a zoomed tab, then zoom is cleared as part of the same op; given an op that today is refused while zoomed, then it fails with `zoomed`
+- [x] Given a reorder to an index past the end, when it is applied, then the result equals what US-008 and US-009 pinned for that case
 
 #### US-013: Operations, part 3: resize, zoom, presets, restore
 **Description:** As the maintainer, I want resizing, zoom, presets, restore and templates on the model so that no caller needs to touch the tree.
@@ -370,12 +370,12 @@ Workspaces, tabs, split trees, panes and surfaces become one plain-data model wi
 **Dependencies:** Blocked by US-011
 
 **Acceptance Criteria:**
-- [ ] Given the ops set divider ratio, equalize, apply preset (even horizontal, even vertical, tiled, main vertical), set zoom, restore layout from a `LayoutNode` and launch template, when each is applied, then the result equals what US-008 and US-009 pinned
-- [ ] Given zoom, when it is set on a pane, then the tree is unchanged and only the tab's `zoomed` field changes, and the exported `SessionState` equals what today's tree swap would have saved
-- [ ] Given a preset applied on a zoomed tab, when it is applied, then zoom is cleared as part of the same op
-- [ ] Given a divider ratio outside the floor that `sanitize_ratios` enforces, when it is applied, then it is clamped as today
-- [ ] Given restore layout with fewer panes than the tab holds, when it is applied, then the surplus panes are closed with the same session effect as today
-- [ ] Given restore layout with more leaves than `MAX_PANES`, when it is applied, then it fails with `pane_limit` and the model is unchanged
+- [x] Given the ops set divider ratio, equalize, apply preset (even horizontal, even vertical, tiled, main vertical), set zoom, restore layout from a `LayoutNode` and launch template, when each is applied, then the result equals what US-008 and US-009 pinned
+- [x] Given zoom, when it is set on a pane, then the tree is unchanged and only the tab's `zoomed` field changes, and the exported `SessionState` equals what today's tree swap would have saved
+- [x] Given a preset applied on a zoomed tab, when it is applied, then zoom is cleared as part of the same op
+- [x] Given a divider ratio outside the floor that `sanitize_ratios` enforces, when it is applied, then it is clamped as today
+- [x] Given restore layout with fewer panes than the tab holds, when it is applied, then the surplus panes are closed with the same session effect as today
+- [x] Given restore layout with more leaves than `MAX_PANES`, when it is applied, then it fails with `pane_limit` and the model is unchanged
 
 #### US-014: Undo close in the model
 **Description:** As a user, I want undo close to behave exactly as today so that the refactor is invisible.
@@ -387,13 +387,13 @@ Workspaces, tabs, split trees, panes and surfaces become one plain-data model wi
 **Paneflow sites:** `src-app/src/app/workspace_ops/mod.rs:37-51,117-120,181-244,886-940`; `src-app/src/app/hosted_sessions.rs:222-262`; `src-app/src/app/constants.rs:301-303`.
 
 **Acceptance Criteria:**
-- [ ] Given a closed pane or tab, when the op is applied, then the model keeps a closed record and requests a hold effect of `CLOSED_SESSION_GRACE_MS` for each terminal session it held
-- [ ] Given more than `MAX_CLOSED_PANES` records, when a new one is pushed, then the oldest is evicted and a stop effect is requested for its held sessions
-- [ ] Given undo within the hold, when it is applied, then the surface comes back bound to the same session
-- [ ] Given undo after the hold expired, when it is applied, then the surface comes back with no session and a spawn effect is requested
-- [ ] Given a removal that today stops the session at once and records nothing (`PaneEvent::Remove`, the tmux compatibility close), when it is applied, then no closed record is created and a stop effect is requested
-- [ ] Given undo with an empty history, when it is applied, then it fails with `not_found` and nothing changes
-- [ ] The model takes the current time as an input, so the tests advance a fake clock and assert no wall-clock duration
+- [x] Given a closed pane or tab, when the op is applied, then the model keeps a closed record and requests a hold effect of `CLOSED_SESSION_GRACE_MS` for each terminal session it held
+- [x] Given more than `MAX_CLOSED_PANES` records, when a new one is pushed, then the oldest is evicted and a stop effect is requested for its held sessions
+- [x] Given undo within the hold, when it is applied, then the surface comes back bound to the same session
+- [x] Given undo after the hold expired, when it is applied, then the surface comes back with no session and a spawn effect is requested
+- [x] Given a removal that today stops the session at once and records nothing (`PaneEvent::Remove`, the tmux compatibility close), when it is applied, then no closed record is created and a stop effect is requested
+- [x] Given undo with an empty history, when it is applied, then it fails with `not_found` and nothing changes
+- [x] The model takes the current time as an input, so the tests advance a fake clock and assert no wall-clock duration
 
 #### US-015: The window projects the model
 **Description:** As the maintainer, I want the GPUI tree recomputed from the model through one entry point so that the keyboard, menu and palette paths stop mutating the tree.
@@ -405,13 +405,13 @@ Workspaces, tabs, split trees, panes and surfaces become one plain-data model wi
 **Paneflow sites:** `src-app/src/layout/serde.rs:97-106` (pane reuse); `src-app/src/layout/tree.rs:22-35`; `src-app/src/app/workspace_ops/`; `src-app/src/main.rs:204-209,316`.
 
 **Acceptance Criteria:**
-- [ ] Given one function `apply_layout_op` on the app, when a keyboard, menu or palette path changes the structure, then it calls that function and nothing else mutates workspaces, tabs or trees
-- [ ] Given a model change, when the projection runs, then every pane and terminal view whose id is still present is reused, not recreated, and its terminal keeps its scrollback and selection
-- [ ] Given a spawn, hold, stop or rehome effect, when the op returns, then the window performs it through the code paths used today
-- [ ] Given a model focus change that did not come from the user's click or key, when the projection runs, then GPUI focus moves to that pane
-- [ ] Given a click or key that moves GPUI focus to another pane, when it happens, then a focus op is applied and the model's focused pane matches
-- [ ] Given an op that fails, when it returns, then the user sees the same toast or no-op as today, and no partial change is rendered
-- [ ] The projection performs no I/O and runs on the main thread only as a pure rebuild
+- [x] Given one function `apply_layout_op` on the app, when a keyboard, menu or palette path changes the structure, then it calls that function and nothing else mutates workspaces, tabs or trees
+- [x] Given a model change, when the projection runs, then every pane and terminal view whose id is still present is reused, not recreated, and its terminal keeps its scrollback and selection
+- [x] Given a spawn, hold, stop or rehome effect, when the op returns, then the window performs it through the code paths used today
+- [x] Given a model focus change that did not come from the user's click or key, when the projection runs, then GPUI focus moves to that pane
+- [x] Given a click or key that moves GPUI focus to another pane, when it happens, then a focus op is applied and the model's focused pane matches
+- [x] Given an op that fails, when it returns, then the user sees the same toast or no-op as today, and no partial change is rendered
+- [x] The projection performs no I/O and runs on the main thread only as a pure rebuild
 
 #### US-016: Drag-and-drop and dividers go through the model
 **Description:** As the maintainer, I want pointer gestures to produce model ops so that the tree is no longer edited from event handlers.
@@ -423,12 +423,12 @@ Workspaces, tabs, split trees, panes and surfaces become one plain-data model wi
 **Paneflow sites:** `src-app/src/app/event_handlers/mod.rs:231-575`; `src-app/src/layout/render.rs:176-182`; `src-app/src/app/render.rs:384-386`.
 
 **Acceptance Criteria:**
-- [ ] Given a drag-and-drop of a pane, a surface or an agent session, when it lands, then the change is one model op with the result pinned by US-008 and US-009
-- [ ] Given a drop that is refused today (a detached pane, a zoomed tab), when it lands, then no op is applied and the user sees the same refusal
-- [ ] Given a divider drag, when the mouse moves, then the ratio changes only in the window's view state, and exactly one set-ratio op is applied when the drag ends
-- [ ] Given a divider drag cancelled by a pane transfer, when it is cancelled, then no op is applied and the divider returns to the model's ratio
-- [ ] Given two dividers of nested splits dragged one after the other, when each drag ends, then each produces one op that names its own split
-- [ ] The drag path performs no I/O and takes no lock shared with a background thread
+- [x] Given a drag-and-drop of a pane, a surface or an agent session, when it lands, then the change is one model op with the result pinned by US-008 and US-009
+- [x] Given a drop that is refused today (a detached pane, a zoomed tab), when it lands, then no op is applied and the user sees the same refusal
+- [x] Given a divider drag, when the mouse moves, then the ratio changes only in the window's view state, and exactly one set-ratio op is applied when the drag ends
+- [x] Given a divider drag cancelled by a pane transfer, when it is cancelled, then no op is applied and the divider returns to the model's ratio
+- [x] Given two dividers of nested splits dragged one after the other, when each drag ends, then each produces one op that names its own split
+- [x] The drag path performs no I/O and takes no lock shared with a background thread
 
 #### US-017: Detached panes are keyed by pane id
 **Description:** As a user, I want a detached pane to find its place again after any layout change so that detaching stays reliable once the layout can change from outside.
@@ -440,12 +440,12 @@ Workspaces, tabs, split trees, panes and surfaces become one plain-data model wi
 **Paneflow sites:** `src-app/src/app/detached_panes/mod.rs:13-117`, `window.rs:147-281`; `crates/paneflow-config/src/schema/session.rs:63-79`.
 
 **Acceptance Criteria:**
-- [ ] Given a detached pane, when its placement is saved and restored, then it is keyed by pane id
-- [ ] Given a session file that holds a positional `DetachedPaneLocation`, when it is loaded, then the location is converted to the pane id found at that position
-- [ ] Given a positional location that points at no pane, when it is loaded, then it is dropped with one warning and loading succeeds
-- [ ] Given a pane removed from the model while detached, when the projection runs, then its window closes as today
-- [ ] Given a detached window closed by the user, when it closes, then the pane is shown in its tab again and no structural op is applied
-- [ ] Given a transfer of a detached pane, when it happens, then in-progress divider drags are cancelled and zoom is cleared as today
+- [x] Given a detached pane, when its placement is saved and restored, then it is keyed by pane id
+- [x] Given a session file that holds a positional `DetachedPaneLocation`, when it is loaded, then the location is converted to the pane id found at that position
+- [x] Given a positional location that points at no pane, when it is loaded, then it is dropped with one warning and loading succeeds
+- [x] Given a pane removed from the model while detached, when the projection runs, then its window closes as today
+- [x] Given a detached window closed by the user, when it closes, then the pane is shown in its tab again and no structural op is applied
+- [x] Given a transfer of a detached pane, when it happens, then in-progress divider drags are cancelled and zoom is cleared as today
 
 #### US-018: IPC paths go through the model and direct assignments end
 **Description:** As the maintainer, I want the last mutation paths on the single entry point so that the direct assignments can be deleted for good.
@@ -457,11 +457,11 @@ Workspaces, tabs, split trees, panes and surfaces become one plain-data model wi
 **Paneflow sites:** `src-app/src/app/ipc_handler/split.rs:223-252`, `workspace_methods.rs:747-791`; `src-app/src/app/template_launch.rs:140-141`.
 
 **Acceptance Criteria:**
-- [ ] Given `surface.split`, `workspace.create`, `workspace.up`, `workspace.close`, `workspace.restore_layout` and the tmux compatibility method, when they are called, then each applies model ops and the US-001 cases pass unchanged
-- [ ] Given a template launch, when it runs, then it applies model ops
-- [ ] Given `workspace.up` with an invalid pane in the middle of its list, when it is called, then the outcome equals what US-008 and US-009 pinned for that case
-- [ ] Given `src-app/src`, when a guard test searches it, then no assignment to a tab's `root` or `saved_layout` exists outside the projection module, including through a `&mut` reference
-- [ ] Given the mutators of `src-app/src/layout/mutations.rs` and `src-app/src/layout/close.rs`, when the story ends, then each is deleted or private to the projection module
+- [x] Given `surface.split`, `workspace.create`, `workspace.up`, `workspace.close`, `workspace.restore_layout` and the tmux compatibility method, when they are called, then each applies model ops and the US-001 cases pass unchanged
+- [x] Given a template launch, when it runs, then it applies model ops
+- [x] Given `workspace.up` with an invalid pane in the middle of its list, when it is called, then the outcome equals what US-008 and US-009 pinned for that case
+- [x] Given `src-app/src`, when a guard test searches it, then no assignment to a tab's `root` or `saved_layout` exists outside the projection module, including through a `&mut` reference
+- [x] Given the mutators of `src-app/src/layout/mutations.rs` and `src-app/src/layout/close.rs`, when the story ends, then each is deleted or private to the projection module
 
 #### US-019: Stable ids on the wire and one save path
 **Description:** As a script author, I want the ids I receive to stay valid across a restart so that a saved id or `PANEFLOW_SURFACE_ID` keeps meaning the same pane.
@@ -473,14 +473,14 @@ Workspaces, tabs, split trees, panes and surfaces become one plain-data model wi
 **Paneflow sites:** `src-app/src/app/ipc_handler/surface_methods.rs:41-155,787-833`; `src-app/src/terminal/pty_session/spawn_env.rs:217`; `src-app/src/tmux_compat/mod.rs:118-121`; `src-app/src/app/session.rs:22-28,103-120,1196-1216`; `crates/paneflow-host/src/agent_write.rs:415`.
 
 **Acceptance Criteria:**
-- [ ] Given `surface.list`, `surface.status`, `surface.split`, `workspace.up`, `fleet.list` and the MCP tools, when they return a `surface_id`, `tab_id` or a workspace id, then it is the model's id, still a JSON number
-- [ ] Given an incoming `surface_id`, when it is resolved, then the lookup goes through the model, finds a surface that is not the active one of its pane, and returns its pane
-- [ ] Given a layout saved with ids, when the app restarts, then `surface.list` returns the same `surface_id` for each surviving terminal session, and a new pane spawned afterwards exports that same id as `PANEFLOW_SURFACE_ID`
-- [ ] Given `session.json`, when it is written, then it carries the ids and the counter as added fields, and no existing field is renamed or removed
-- [ ] Given one subscriber on model changes, when the model's revision changes, then a save is scheduled with the existing 150 ms debounce (`SAVE_DEBOUNCE_MS`, `src-app/src/app/session.rs:22`), and `save_session` has no other call site for structural changes (guard test)
-- [ ] Given an id that no longer exists, when a method receives it, then it replies with the same not-found error as today
-- [ ] Given a session file with no ids and a restored terminal whose host record exposes the `PANEFLOW_SURFACE_ID` it was spawned with (to be confirmed in this story from `crates/paneflow-host/src/agent_write.rs:415` and `session.inspect`, with no host change), when ids are first allocated, then the surface takes that value when no other surface claims it, and the counter starts above the highest id
-- [ ] Given the host does not expose that value, when ids are first allocated, then they are fresh, and the changelog entry says that a pane opened before the upgrade keeps a stale `PANEFLOW_SURFACE_ID` until it is restarted, as it does today after every window restart
+- [x] Given `surface.list`, `surface.status`, `surface.split`, `workspace.up`, `fleet.list` and the MCP tools, when they return a `surface_id`, `tab_id` or a workspace id, then it is the model's id, still a JSON number
+- [x] Given an incoming `surface_id`, when it is resolved, then the lookup goes through the model, finds a surface that is not the active one of its pane, and returns its pane
+- [x] Given a layout saved with ids, when the app restarts, then `surface.list` returns the same `surface_id` for each surviving terminal session, and a new pane spawned afterwards exports that same id as `PANEFLOW_SURFACE_ID`
+- [x] Given `session.json`, when it is written, then it carries the ids and the counter as added fields, and no existing field is renamed or removed
+- [x] Given one subscriber on model changes, when the model's revision changes, then a save is scheduled with the existing 150 ms debounce (`SAVE_DEBOUNCE_MS`, `src-app/src/app/session.rs:22`), and `save_session` has no other call site for structural changes (guard test)
+- [x] Given an id that no longer exists, when a method receives it, then it replies with the same not-found error as today
+- [x] Given a session file with no ids and a restored terminal whose host record exposes the `PANEFLOW_SURFACE_ID` it was spawned with (to be confirmed in this story from `crates/paneflow-host/src/agent_write.rs:415` and `session.inspect`, with no host change), when ids are first allocated, then the surface takes that value when no other surface claims it, and the counter starts above the highest id
+- [x] Given the host does not expose that value, when ids are first allocated, then they are fresh, and the changelog entry says that a pane opened before the upgrade keeps a stale `PANEFLOW_SURFACE_ID` until it is restarted, as it does today after every window restart
 
 #### US-020: Prove parity
 **Description:** As Arthur, I want evidence that nothing changed for the user so that I can accept the refactor.
@@ -490,11 +490,11 @@ Workspaces, tabs, split trees, panes and surfaces become one plain-data model wi
 **Dependencies:** Blocked by US-019
 
 **Acceptance Criteria:**
-- [ ] Given a benchmark case added to the terminal or startup suite, when it runs before and after the epic on the same machine, then the time from a split request to the model and projection being updated is recorded in `bench/results/`, with both values
-- [ ] Given `crates/paneflow-host/tests/persistent_baseline/gates.rs`, when the epic ends, then no budget in it was raised
-- [ ] Given a session file with 3 workspaces, 8 tabs and 20 panes saved by the previous release, when the new build opens it, then the restored layout, ratios, titles, zoom and detached windows equal the original, asserted through the exported `SessionState`
-- [ ] Given the checklist written by this story, when Arthur reads it, then it lists every gesture to try (each split, each close, undo, each drag, zoom, presets, detach and reattach, rename, reorder) with the expected result
-- [ ] Given a model op that panics in a test build, when it is caught, then the window keeps its last projected tree and logs the op, and the suite has a test for a failing op leaving the UI intact
+- [x] Given a benchmark case added to the terminal or startup suite, when it runs before and after the epic on the same machine, then the time from a split request to the model and projection being updated is recorded in `bench/results/`, with both values
+- [x] Given `crates/paneflow-host/tests/persistent_baseline/gates.rs`, when the epic ends, then no budget in it was raised
+- [x] Given a session file with 3 workspaces, 8 tabs and 20 panes saved by the previous release, when the new build opens it, then the restored layout, ratios, titles, zoom and detached windows equal the original, asserted through the exported `SessionState`
+- [x] Given the checklist written by this story, when Arthur reads it, then it lists every gesture to try (each split, each close, undo, each drag, zoom, presets, detach and reattach, rename, reorder) with the expected result
+- [x] Given a model op that panics in a test build, when it is caught, then the window keeps its last projected tree and logs the op, and the suite has a test for a failing op leaving the UI intact
 
 ---
 
@@ -516,11 +516,11 @@ The worker keeps one numbered log of what happens (terminals, layout, agents, co
 **Paneflow sites:** `crates/paneflow-serve/src/server.rs:599-700`, `protocol.rs:20-71`; `protocol/controller-conformance-v1.json`; `ARCHITECTURE.md:692-696`.
 
 **Acceptance Criteria:**
-- [ ] Given `worker.hello`, `worker.status`, `worker.shutdown`, `agent.snapshot`, `agent.follow`, `agent.activity_log`, `agent.acknowledge` and the `usage.*` methods, when they are called, then each is served through `paneflow-api` and `crates/paneflow-serve/tests/controller_conformance.rs` passes unchanged
-- [ ] Given `system.describe` on the worker endpoint, when it is called, then it returns the worker's methods
-- [ ] Given a client that has not sent `worker.hello`, when it calls another method, then it is refused as today
-- [ ] Given `ARCHITECTURE.md`, when this story ends, then its "No front door" paragraph is rewritten: the worker answers the method families it owns, still forwards nothing to the core, and the reason (it is replaced on every update and owns no terminal) is stated
-- [ ] Given the worker's capability file `protocol/host-capabilities-v1.json`, when a new method family is added later, then a client that reads an older set refuses the call before a frame leaves, as today
+- [x] Given `worker.hello`, `worker.status`, `worker.shutdown`, `agent.snapshot`, `agent.follow`, `agent.activity_log`, `agent.acknowledge` and the `usage.*` methods, when they are called, then each is served through `paneflow-api` and `crates/paneflow-serve/tests/controller_conformance.rs` passes unchanged
+- [x] Given `system.describe` on the worker endpoint, when it is called, then it returns the worker's methods
+- [x] Given a client that has not sent `worker.hello`, when it calls another method, then it is refused as today
+- [x] Given `ARCHITECTURE.md`, when this story ends, then its "No front door" paragraph is rewritten: the worker answers the method families it owns, still forwards nothing to the core, and the reason (it is replaced on every update and owns no terminal) is stated
+- [x] Given the worker's capability file `protocol/host-capabilities-v1.json`, when a new method family is added later, then a client that reads an older set refuses the call before a frame leaves, as today
 
 #### US-022: The event log and `events.follow`
 **Description:** As a script author, I want to follow events with a sequence number so that I never miss or repeat one.
@@ -530,14 +530,14 @@ The worker keeps one numbered log of what happens (terminals, layout, agents, co
 **Dependencies:** Blocked by US-021
 
 **Acceptance Criteria:**
-- [ ] Given the log, when an event is appended, then it gets the next `seq` (starting at 1 for a worker start), a `ts` in milliseconds, a `type`, the ids that apply (`workspace_id`, `tab_id`, `pane_id`, `surface_id`, `session`) and a `data` object
-- [ ] Given `events.follow` with no parameter, when it is called, then the stream sends a header with the current `seq` and the worker's `epoch`, then every later event in order
-- [ ] Given `events.follow` with `since` and the same `epoch`, when the events after `since` are still in the ring, then the stream replays them first, with no gap and no duplicate
-- [ ] Given `since` older than the ring, or an `epoch` that is not the worker's, when `events.follow` is called, then it replies with a typed `evicted` error carrying the current `seq` and `epoch`
-- [ ] Given `types` (exact names or a `prefix.*` form) and `workspace_id`, when they are passed, then only matching events are sent, and the `seq` values of sent events stay those of the log
-- [ ] Given a follower whose unsent backlog exceeds 8 MiB, when the next event is queued, then the worker closes that connection and other followers are unaffected
-- [ ] Given the ring, when more than 1,024 events exist, then the oldest are dropped from the ring and `seq` keeps increasing
-- [ ] Given no frame for the keepalive interval `agent.follow` uses (`FOLLOW_KEEPALIVE`, 2 s, `crates/paneflow-serve/src/server.rs:31`), when a follower is connected, then it receives a keepalive frame
+- [x] Given the log, when an event is appended, then it gets the next `seq` (starting at 1 for a worker start), a `ts` in milliseconds, a `type`, the ids that apply (`workspace_id`, `tab_id`, `pane_id`, `surface_id`, `session`) and a `data` object
+- [x] Given `events.follow` with no parameter, when it is called, then the stream sends a header with the current `seq` and the worker's `epoch`, then every later event in order
+- [x] Given `events.follow` with `since` and the same `epoch`, when the events after `since` are still in the ring, then the stream replays them first, with no gap and no duplicate
+- [x] Given `since` older than the ring, or an `epoch` that is not the worker's, when `events.follow` is called, then it replies with a typed `evicted` error carrying the current `seq` and `epoch`
+- [x] Given `types` (exact names or a `prefix.*` form) and `workspace_id`, when they are passed, then only matching events are sent, and the `seq` values of sent events stay those of the log
+- [x] Given a follower whose unsent backlog exceeds 8 MiB, when the next event is queued, then the worker closes that connection and other followers are unaffected
+- [x] Given the ring, when more than 1,024 events exist, then the oldest are dropped from the ring and `seq` keeps increasing
+- [x] Given no frame for the keepalive interval `agent.follow` uses (`FOLLOW_KEEPALIVE`, 2 s, `crates/paneflow-serve/src/server.rs:31`), when a follower is connected, then it receives a keepalive frame
 
 #### US-023: Terminal and agent events from the host stream
 **Description:** As a script author, I want events for directory changes, title changes, bells and program exits so that scripts react without polling.
@@ -549,13 +549,13 @@ The worker keeps one numbered log of what happens (terminals, layout, agents, co
 **Paneflow sites:** `crates/paneflow-serve/src/core_link.rs:45-155`, `state.rs:94-118,473-528`, `worker.rs:268-332`; `crates/paneflow-host/src/agent.rs:168-198`.
 
 **Acceptance Criteria:**
-- [ ] Given a session whose working directory changes, when the host frame arrives, then one `terminal.cwd_changed` event is appended with the new `cwd` and the session id
-- [ ] Given a title change, a new `bell_at_ms` value, or a lifecycle that becomes exited, when the frame arrives, then one `terminal.title_changed`, `terminal.bell` or `terminal.exited` (with `exit_code` when the host recorded one) is appended
-- [ ] Given an agent session whose projected state changes, when the worker's reducer applies it, then one `agent.state_changed` event is appended with the tool, the previous state and the new state
-- [ ] Given a plain shell with no agent, when it changes directory and exits, then the events above are appended for it (validates A2)
-- [ ] Given the worker reconnecting to the host after a dropped stream, when it takes a fresh snapshot, then it appends events only for fields that differ from its last known values, and none for unchanged sessions
-- [ ] Given a worker start, when it rebuilds from the host manifests, then no event is appended for the initial state
-- [ ] The host crate is not modified by this story
+- [x] Given a session whose working directory changes, when the host frame arrives, then one `terminal.cwd_changed` event is appended with the new `cwd` and the session id
+- [x] Given a title change, a new `bell_at_ms` value, or a lifecycle that becomes exited, when the frame arrives, then one `terminal.title_changed`, `terminal.bell` or `terminal.exited` (with `exit_code` when the host recorded one) is appended
+- [x] Given an agent session whose projected state changes, when the worker's reducer applies it, then one `agent.state_changed` event is appended with the tool, the previous state and the new state
+- [x] Given a plain shell with no agent, when it changes directory and exits, then the events above are appended for it (validates A2)
+- [x] Given the worker reconnecting to the host after a dropped stream, when it takes a fresh snapshot, then it appends events only for fields that differ from its last known values, and none for unchanged sessions
+- [x] Given a worker start, when it rebuilds from the host manifests, then no event is appended for the initial state
+- [x] The host crate is not modified by this story
 
 #### US-024: Layout events from the window
 **Description:** As a script author, I want events for panes, tabs and workspaces being created, closed, focused and renamed so that scripts follow the layout.
@@ -565,12 +565,12 @@ The worker keeps one numbered log of what happens (terminals, layout, agents, co
 **Dependencies:** Blocked by US-022, US-019
 
 **Acceptance Criteria:**
-- [ ] Given a model op applied in the window, when it returns events, then the window sends them to the worker with `events.publish` on a background thread, in the order the ops were applied
-- [ ] Given `workspace.created`, `workspace.closed`, `workspace.renamed`, `workspace.selected`, `tab.created`, `tab.closed`, `tab.renamed`, `tab.selected`, `pane.created`, `pane.closed`, `pane.focused`, `surface.created`, `surface.closed`, `surface.renamed` and `layout.changed` (with the revision), when the matching op is applied, then exactly one event of that type is appended with the model ids
-- [ ] Given the worker unreachable, when ops are applied, then their events are kept in a bounded window-side queue of 1,024 and sent in order on reconnect, and if the queue overflows the window sends one `layout.resync` event instead of the lost ones
-- [ ] Given a divider drag, when it ends, then exactly one `layout.changed` is published for it
-- [ ] Given `events.publish` with an event type outside the layout family, when it is called, then it is refused with `-32602`
-- [ ] Given the legacy `events.subscribe` on the window's socket, when it is used, then its frames and types are unchanged
+- [x] Given a model op applied in the window, when it returns events, then the window sends them to the worker with `events.publish` on a background thread, in the order the ops were applied
+- [x] Given `workspace.created`, `workspace.closed`, `workspace.renamed`, `workspace.selected`, `tab.created`, `tab.closed`, `tab.renamed`, `tab.selected`, `pane.created`, `pane.closed`, `pane.focused`, `surface.created`, `surface.closed`, `surface.renamed` and `layout.changed` (with the revision), when the matching op is applied, then exactly one event of that type is appended with the model ids
+- [x] Given the worker unreachable, when ops are applied, then their events are kept in a bounded window-side queue of 1,024 and sent in order on reconnect, and if the queue overflows the window sends one `layout.resync` event instead of the lost ones
+- [x] Given a divider drag, when it ends, then exactly one `layout.changed` is published for it
+- [x] Given `events.publish` with an event type outside the layout family, when it is called, then it is refused with `-32602`
+- [x] Given the legacy `events.subscribe` on the window's socket, when it is used, then its frames and types are unchanged
 
 #### US-025: Follow events from the CLI
 **Description:** As a user, I want to watch the event log from a shell so that I can see what a script would receive.
@@ -580,11 +580,11 @@ The worker keeps one numbered log of what happens (terminals, layout, agents, co
 **Dependencies:** Blocked by US-022, US-006
 
 **Acceptance Criteria:**
-- [ ] Given `paneflow events`, when it runs, then it prints one line per event with `seq`, type and ids until interrupted, and `--json` prints one JSON object per line
-- [ ] Given `--types terminal.*,pane.closed` and `--since <seq>`, when they are passed, then they map to the `events.follow` parameters
-- [ ] Given the worker restarting while the command runs, when the stream ends, then the command reconnects, prints one line saying the sequence restarted, and continues
-- [ ] Given no worker, when the command runs, then it exits with the existing "no instance" code
-- [ ] `paneflow watch` and `paneflow wait` are unchanged
+- [x] Given `paneflow events`, when it runs, then it prints one line per event with `seq`, type and ids until interrupted, and `--json` prints one JSON object per line
+- [x] Given `--types terminal.*,pane.closed` and `--since <seq>`, when they are passed, then they map to the `events.follow` parameters
+- [x] Given the worker restarting while the command runs, when the stream ends, then the command reconnects, prints one line saying the sequence restarted, and continues
+- [x] Given no worker, when the command runs, then it exits with the existing "no instance" code
+- [x] `paneflow watch` and `paneflow wait` are unchanged
 
 ---
 
@@ -1515,37 +1515,81 @@ Everything the earlier epics wrote for Windows by inspection is run on Arthur's 
 
 ## Layout Operation Inventory
 
-Seed from the code map of 2026-11-19, to be completed and corrected by US-007. Rows marked "gap" were not traced.
+Completed by US-007 on 2026-11-20 from the code at `a5d8a705`. Every path is under `src-app/src/`; `wo` is `app/workspace_ops`, `eh` is `app/event_handlers/mod.rs`, `ipc` is `app/ipc_handler`. "Hold" exists only where an undo record is pushed: every close goes through `perform_close` (`app/close_policy.rs:161-207`), and with `CloseIntent::Hold`, `hold_closed_sessions` keeps only the sessions named by an undo record and stops the others at once (`app/hosted_sessions.rs:222-241`). The grace is `CLOSED_SESSION_GRACE_MS = 5_000` and the history keeps `MAX_CLOSED_PANES = 5` records (`app/constants.rs:301-303`). The seed table of 2026-11-19 was wrong on four rows: closing a surface, closing a workspace, closing a pane from its menu or header, and IPC `restore_layout` all stop their sessions at once.
 
-| Operation | Entry point | Mutator today | Session effect |
-|-----------|-------------|---------------|----------------|
-| Split (key) | `workspace_ops/mod.rs:693-788` | `LayoutTree::split_at_pane` (`layout/mutations.rs:77`) | spawn |
-| Split (IPC) | `ipc_handler/split.rs:170,306` | gap | spawn |
-| Close focused pane | `workspace_ops/mod.rs:797-882`, `close_policy.rs:134-205` | `close_focused` (`layout/close.rs:8`) | hold 5 s, undo record |
-| Remove a given pane | `event_handlers/mod.rs:231,525-575`, `tmux_compat.rs:360` | prune `saved_layout` or `root` | stop at once, no undo record |
-| Close surface | `close_policy.rs:179` | `Pane::remove_surface` | hold |
-| Close tab | `workspace_ops/tab.rs:225-277,391` | `Workspace::close_tab` (`workspace/mod.rs:378`) | hold, undo record |
-| Close workspace | `workspace_ops/mod.rs:964-1084`; IPC `workspace_methods.rs:726` (gap) | `workspaces.remove` | stop, worktree teardown |
-| New tab | `workspace_ops/tab.rs:51,106` | `Workspace::open_tab` (`workspace/mod.rs:343`) | spawn |
-| New surface in a pane | `event_handlers/mod.rs:200-229` | `Pane::push_surface` | spawn |
-| New workspace | `workspace_ops/mod.rs:649,955`; IPC `workspace.create`, `workspace.up` | gap | spawn |
-| Swap panes | `event_handlers/mod.rs:336-368` | `swap_panes` (`layout/mutations.rs:121`) | none |
-| Move pane to an edge | `event_handlers/mod.rs:369-393` | `remove_pane` then `split_pane_at_edge` | none |
-| Move surface | `event_handlers/mod.rs:441-515` | `push_surface` or `split_pane_at_edge` | none |
-| Drop an agent session | `event_handlers/mod.rs:249` | `split_pane_at_edge` | spawn with resume |
-| Move pane to a new tab | `workspace_ops/tab.rs:589-662` | `exit_zoom`, `remove_pane`, `open_pane_in_new_workspace_tab` | rehome |
-| Move tab to a workspace | `workspace_ops/tab.rs:499-565` | `close_tab`, `open_tab`, `reorder_tab` | rehome |
-| Reorder tabs | `workspace_ops/tab.rs:475` | `Workspace::reorder_tab` (`workspace/mod.rs:365`) | none |
-| Reorder workspaces | `workspace_ops/mod.rs:1095` | `spaces::reorder_in_space` | none |
-| Divider resize | `layout/render.rs:176-182`, `app/render.rs:384-386` | ratio cells written during the drag | none |
-| Equalize | `workspace_ops/layout.rs:196` | `equalize_ratios` | none |
-| Presets | `workspace_ops/layout.rs:52,131-187` | rebuild from leaves | none |
-| Zoom | `workspace_ops/layout.rs:15-45`, `workspace/tab.rs:187-201` | tree swap into `saved_layout` | none |
-| Detach and reattach | `detached_panes/window.rs:147-281`, `detached_panes/mod.rs:13-117` | `pane.detached` field | none |
-| Undo close | `workspace_ops/mod.rs:886-940`, `tab.rs:281` | `split_at_focused`, `from_layout_node` | reattach or spawn |
-| Rename | `workspace_ops/tab.rs:405-426`, `mod.rs:1192`; IPC `surface_methods.rs:1034` | title fields | none |
-| Restore layout | `workspace_methods.rs:417,747-791`, `workspace_ops/layout.rs:79-124` | reuse first N panes, spawn the rest | spawn, close surplus |
-| Templates | `template_launch.rs:140-141` | direct `root` assignment | spawn |
+| Operation | Entry points | Mutator | Focus rule | Session effect | Zoom / limits |
+|---|---|---|---|---|---|
+| Split (key, palette, fork) | `wo/mod.rs:780-795` → `split` 693; palette `app/pane_palette.rs:439` through `PaneEvent::Split` eh:404-437; fork `app/conversation_restore.rs:393` | `split_with_target` wo/mod.rs:729 → `LayoutTree::split_at_pane` `layout/mutations.rs:77` | the new pane (wo/mod.rs:774) | spawn (757-759) | refused when zoomed (702, 741) and at MAX_PANES (709, 747) |
+| Split (IPC `surface.split`, tmux) | `ipc/split.rs:306`; tmux `ipc/tmux_compat.rs:314` | `place_split` split.rs:223 | unchanged | spawn (404-413) | refused when zoomed (188), at MAX_PANES (196), at the tab cap for a new worktree tab (216-219) |
+| Close focused pane | `ClosePane` wo/mod.rs:797 → `request_close` | `remove_focused_pane` wo/mod.rs:818 → `close_focused` `layout/close.rs:8` | previous sibling's last leaf, else the next sibling's first leaf (close.rs:75-83); a fresh pane when the tab empties (859-880) | hold the active surface + undo record; the pane's other surfaces stop | leaves zoom and removes the zoomed pane (832-843) |
+| Close pane (menu, header, detached window) | `app/context_menu.rs:597-599`, `pane.rs:850,1357`, `app/detached_panes/window.rs:420` → `PaneEvent::CloseRequested` eh:157 | `remove_pane_from_layout` eh:525 | none set; a fresh pane when the tab empties (563-575) | stop at once (Hold intent, but no record) | prunes `saved_layout` or `root` (548-560); closing the zoomed pane ends zoom |
+| Remove a given pane | `PaneEvent::Remove` eh:231 (last surface closed, `pane.rs:877-879`); tmux `ipc/tmux_compat.rs:368` | `remove_pane_from_layout` eh:525, Stop intent | same | stop at once, no record | same |
+| Close surface | `PaneEvent::CloseSurfaceRequested` eh:160 (`pane.rs:854`); tmux 366 | `Pane::remove_surface` (`close_policy.rs:180` → `pane.rs:873`) | the active index shifts (`pane.rs:882-884`) | stop at once, no record | ignores zoom |
+| Close tab | `CloseTab` wo/tab.rs:391; `app/context_menu.rs:446`; `app/keyboard.rs:370`; `app/tab_row.rs:206`; palette `app/pane_palette.rs:361`; bulk `app/selection.rs:837` | `remove_workspace_tab` wo/tab.rs:243 → `Workspace::close_tab` `workspace/mod.rs:378` | first pane of the new active tab (wo/tab.rs:266-268) | hold one surface per leaf + undo record; the rest stop | ignores zoom (the record reads `saved_layout` or `root`, wo/mod.rs:296) |
+| Close workspace (UI) | `CloseWorkspace` wo/mod.rs:964; `app/context_menu.rs:428`; `macos_menu.rs:98`; bulk `app/selection.rs:850` | `remove_workspace` wo/mod.rs:1054 | first pane of the new active workspace, else the welcome screen (1084-1089) | stop at once + worktree teardown (1067-1069) | ignores zoom |
+| Close workspace (IPC) | `workspace_close` `ipc/workspace_methods.rs:737` | `remove_workspace` through `close_without_prompt` (`close_policy.rs:122`) | none (no window) | stop at once | refuses the last workspace (745); unsaved files answer `confirmation_required` (751-753) |
+| New tab | `NewTab` wo/tab.rs:106 → palette → `app/pane_palette.rs:432` | `open_tab_with_surface` wo/tab.rs:51 (fills an empty active tab at 82, else `Workspace::open_tab` `workspace/mod.rs:343`) | first pane through `focus_workspace_tab` (wo/tab.rs:100) | spawn | MAX_TABS_PER_WORKSPACE toast (88-90) |
+| New surface in a pane | `PaneEvent::NewTab` eh:170, `NewTabPreset` eh:198; detached "+" `app/detached_panes/window.rs:423` | `Pane::push_surface` `pane.rs:824` | the pane (`pending_pane_focus`, eh:186, 227) | spawn | MAX_PANE_TABS = 8 (`pane.rs:301`, eh:172, 200); ignores zoom |
+| New workspace (UI) | `NewWorkspace` wo/mod.rs:955, `window_chrome/title_bar_menus.rs:92`, `app/sidebar/mod.rs:424,584`, `app/welcome.rs:169`, `app/status_groups.rs:219`, `macos_menu.rs:92` → `create_workspace_with_picker` wo/mod.rs:649; folder drops `app/drop.rs:128`, `app/sidebar/mod.rs:910`; `app/welcome.rs:132`; `app/clone_bubble.rs:624` | `open_workspace_folders` wo/mod.rs:610 → `add_workspace` `app/spaces.rs:330` | `active_idx` set with no focus call (644); a folder already open goes through `activate_workspace_without_window` (640-642) | none (an empty tab, 632) | none |
+| New workspace (IPC `workspace.create`) | `ipc/workspace_methods.rs:342` | `finish_workspace_create` 383, plus `apply_layout_from_json` when a layout is given | none | spawn | a layout holds at most MAX_PANES (`wo/layout.rs:90`) |
+| New workspace (IPC `workspace.up`) | `ipc/workspace_methods.rs:321` | `finish_workspace_up` 441, `Workspace::restored_with_id` | the requested pane through `pending_pane_focus` (540-542) | spawn | MAX_PANES per batch (84); tabs above MAX_TABS_PER_WORKSPACE truncated silently (`workspace/mod.rs:275-281`) |
+| Swap panes | `PaneEvent::DropPaneMove { edge: None }` eh:336 | `swap_panes` eh:368 (`layout/mutations.rs:121`) | the source pane (400) | none | no explicit check; the source is searched in `root` only (359-365), so it never matches a hidden pane while zoomed |
+| Move pane to an edge | `PaneEvent::DropPaneMove { edge }` eh:369-395 | `remove_pane` then `split_pane_at_edge`, falling back to a first-leaf split (381-389) | the source pane | none | as swap; the pane count is unchanged |
+| Move surface | `PaneEvent::DropSurfaceMove` eh:129 → `move_surface_to_pane` 441 | `push_surface` or `split_pane_at_edge` (497-519) | the destination | none | refused silently when zoomed (460) or detached (474); MAX_PANES (492); MAX_PANE_TABS (489); same tab only (466-473) |
+| Drop an agent session | `PaneEvent::DropSessionSplit` eh:249 | `split_pane_at_edge` (316) or `open_pane_in_new_workspace_tab` (327) | the new pane (323, 330) | spawn with a resume command (298-306) | zoom refused only for an edge drop (269-277); MAX_PANES refused with no toast (278-285) |
+| Move pane to a new tab | `app/drop.rs:87` | `move_pane_to_new_tab` wo/tab.rs:589 | first pane of the destination tab (711) | rehome (673, 696) | leaves zoom (628-635); tab cap (619-626); refused for the only pane of the same workspace (610-617) |
+| Move tab to a workspace | `app/drop.rs:83` | `move_tab_to_workspace` wo/tab.rs:499 | `focus_workspace_tab` (546) | rehome (535-536, 551-565) | zoom moves with the tab; destination tab cap (520) |
+| Reorder tabs | `app/drop.rs:81`, `app/keyboard.rs:225` | `reorder_workspace_tab` wo/tab.rs:475 → `Workspace::reorder_tab` `workspace/mod.rs:365` | unchanged | none | an index past the end is a no-op when `to > len`, and is clamped otherwise (`workspace/mod.rs:366-370`) |
+| Reorder workspaces | `app/drop.rs:99`, `app/keyboard.rs:242` | `reorder_workspace` wo/mod.rs:1095 → `reorder_in_space` `app/spaces.rs:207` | unchanged | none | the move is confined to the workspace's space |
+| Divider resize | `layout/render.rs:176-238` | ratio cells written in place (220-223); a save on drag end `app/render.rs:384-386` | unchanged | none | only the visible `root` |
+| Equalize | `SplitEqualize` `wo/layout.rs:196` | `equalize_ratios` `layout/queries.rs:191` | unchanged | none | while zoomed it acts on the single zoomed leaf: a silent no-op |
+| Presets | `wo/layout.rs:131-194` | `apply_layout_preset` 52 (`layout/presets.rs`); main vertical 157 | first leaf (73); the main pane (182) | none | leaves zoom (58, 163); ratios rebuilt |
+| Zoom | `ToggleZoom` `wo/layout.rs:15` | tree swap (43-45); `Tab::exit_zoom` `workspace/tab.rs:191` | the zoomed pane | none | needs at least two leaves (34) |
+| Detach and reattach | `ToggleDetachedPane` `app/detached_panes/mod.rs:47`; `app/context_menu.rs:596`; `PaneEvent::ToggleDetached` eh:138 | the `pane.detached` field (`detached_panes/window.rs:233-239`, `mod.rs:124`); the tree is untouched | the source window's first leaf (window.rs:240-245); reattach focuses that pane (mod.rs:138-155) | none | leaves zoom (`mod.rs:104`); MAX_DETACHED_PANE_WINDOWS (window.rs:47-51) |
+| Undo close pane | `UndoClosePane` wo/mod.rs:886 (`app/render.rs:564`) | `split_at_focused`, else `split_first_leaf`, horizontal (934-941); focus is first moved to the tab's first docked pane by `activate_workspace_at` (914) | the restored pane (949) | reattach while held, else spawn (`surface_reopen` 181-187); a session from another worktree is stopped (922-926) | refused when zoomed (264) and at MAX_PANES (267); lands next to the first docked pane, not at its old position |
+| Undo close tab | `UndoClosePane` when the newest record is a tab (894-896); toast action `app/notifications.rs:268` → wo/tab.rs:281 | `restore_closed_tab` wo/tab.rs:293 → `LayoutTree::from_layout_node` | `focus_workspace_tab` (361) | reattach or spawn; fresh spawns do not get the tab's worktree (330) | tab cap (310) |
+| Rename tab | `begin_tab_rename` wo/tab.rs:405 (`app/context_menu.rs:444`, `app/keyboard.rs:366`, `app/tab_row.rs:289`) → `commit_rename` wo/mod.rs:1192 → `commit_tab_title` 1310; reset wo/tab.rs:426; process title wo/tab.rs:447 | `Tab::set_title` | unchanged | none | none |
+| Rename surface (IPC) | `surface_rename` `ipc/surface_methods.rs:1040` | the terminal's `custom_name` (1055) | unchanged | none | none |
+| Rename workspace | none: the only write to a workspace title is a repair during session load (`app/session.rs:1020`) | none | none | none | none |
+| Restore layout | IPC only, `ipc/workspace_methods.rs:757` | closes the surplus panes (781-798), then `apply_layout_from_json` `wo/layout.rs:79` | none | stop the surplus at once; spawn the missing leaves | leaves zoom (`wo/layout.rs:95`); 1 to MAX_PANES leaves (775) |
+| Templates | `app/context_menu.rs:411` → `wo/template_launch.rs:34`; Settings `app/settings/tabs/workspaces/mod.rs:403` | direct `root =` (`wo/template_launch.rs:140-141`) | `pending_pane_focus` (153-155) | spawn; the replaced panes are dropped with no close | refused when zoomed (90) and above MAX_PANES (93) |
+| Focus in a direction | `wo/focus.rs:64-104` | none | the neighbor | none | zoomed: one leaf only |
+| Select tab | `select_workspace_tab` wo/tab.rs:156; next and previous tab 117-154 | `Workspace::set_active_tab` | first pane (187) | none | none |
+| Select workspace (UI) | `select_workspace` wo/mod.rs:487, `activate_workspace_at` 496 | `point_at_workspace` | first docked pane, or a given pane after `reveal_pane` (510-520) | none | `reveal_pane` leaves zoom when the pane is hidden (`workspace/tab.rs:203-213`) |
+| Select workspace, focus (IPC) | `workspace_select` `ipc/workspace_methods.rs:721`; `surface_focus` `ipc/surface_methods.rs:1062` | `activate_workspace_without_window` wo/mod.rs:550; `reveal_surface` 371 | `workspace.select`: none; `surface.focus`: deferred pane focus (1078-1089) | none | `surface.focus` leaves zoom |
+
+### Operations with several entry points
+
+- **Split, not identical.** The key always uses the Normal profile and no command; the palette passes a preset's profile, environment and command; the IPC split never moves focus and refuses an anchor `surface_id` that is not its pane's active surface (defect b below).
+- **Pane close, not identical.** The `ClosePane` key pushes an undo record and holds the session for 5 s. The context menu, the header button and the detached window's close push no record and stop the session at once.
+- **Workspace close, not identical.** The UI opens the unsaved-files dialog and moves focus. IPC refuses the last workspace, answers `confirmation_required` instead of a dialog, and moves no focus.
+- **New workspace, not identical.** The UI creates an empty, de-duplicated workspace with no session. `workspace.create` spawns a terminal and, given a layout in the same space, leaves the new workspace active (`ipc/workspace_methods.rs:418-424`); without a layout it does not select it (`app/spaces.rs:335-343`). `workspace.up` selects the new workspace without a window.
+- **Workspace select, not identical.** The UI focuses a pane; IPC moves no focus.
+- **Close tab, identical** across its six entry points: each ends in `remove_workspace_tab`.
+- **Reorder tabs and reorder workspaces, identical** between drag and keyboard.
+
+### Paths left untraced on 2026-11-19
+
+- **IPC `surface.split`.** `prepare_split` (`ipc/split.rs:318`) resolves the anchor through `find_pane_by_surface_id` (287), or takes the active tab when there is no anchor. It checks first (347), resolves the working directory and worktree off the main thread (170-175), checks again in `finish_split` (398-402), and `place_split` then splits the anchor, splits the first leaf (245), or opens a new worktree tab that becomes active (250-255). The terminal is created before `place_split` (404-420); if placement then fails the view is dropped.
+- **IPC `workspace.close`.** `ipc/workspace_methods.rs:737-755` → `close_without_prompt` (`close_policy.rs:122`) → `perform_close(Workspace, Hold)` → `remove_workspace` with no window. No record is pushed, so every session stops at once.
+- **`create_workspace_with_picker`.** `wo/mod.rs:649-672` opens a folder prompt, then `open_workspace_folders` (610), which calls `path.is_dir()` on the main thread (618). This is a pre-existing breach of "the render thread never blocks", out of scope for this epic.
+- **`open_pane_in_new_workspace_tab`.** `eh:35-60` calls `Workspace::open_tab(Tab::new("", Leaf))`, which replaces an empty shell tab (`workspace/mod.rs:344-348`) and shows a toast at the tab cap. Its callers are eh:327 and wo/tab.rs:680.
+- **`split_pane_at_edge`.** `eh:19-33` is `split_at_pane` followed by a swap when the edge puts the new pane first (`pane_drag.rs:74-81`). It checks neither zoom nor limits; its callers (eh:316, 380, 509) do.
+- **Templates.** `wo/templates.rs` only builds `LayoutNode` values (19-181). `wo/template_launch.rs:139-141` replaces the active tab's tree and clears `saved_layout`; the old panes get no `perform_close`, so their sessions are neither held nor stopped by this path.
+- **`detached_panes/persistence.rs`.** The save keys each detached pane by position (workspace index, tab index, leaf index) over `saved_layout` or `root` (13-18, 62-85). The restore skips an entry whose leaf count changed (45-47) and calls `detach_pane` (55).
+
+### Suspected defects
+
+- **a. Undo of a pane holding several surfaces restores one: confirmed.** `capture_closed_surface_record` reads only `pane.surface()`, which is `surfaces[active_surface]` (`wo/mod.rs:199-205`, `pane.rs:790-792`); `ClosedPaneRecord` holds a single `surface` (`app/window.rs:217-222`), and undo rebuilds a one-surface pane (`wo/mod.rs:931`). Tab undo does the same, one surface per leaf (296-301, 326-334). The close still hands every terminal of the pane to `hold_closed_sessions` (`close_policy.rs:79`), which stops each one that no record names (`app/hosted_sessions.rs:237-241`): the other surfaces' sessions are stopped at close time. Kept for parity by this PRD (Non-Goals).
+- **b. A non-active surface resolves to its terminal but not to its pane: confirmed.** `find_terminal_in_tree` scans every terminal (`ipc/surface_methods.rs:99-106`), while `find_pane_in_tree` checks only `active_terminal_opt()` (151-155). IPC split answers "Surface not found" (split.rs:287-288), `surface.focus` answers not found (1070-1072), and attention (`app/attention.rs:176`), fleet search (`app/fleet_search.rs:214`), the sessions sidebar (`app/sessions_sidebar.rs:582`) and jump-to-waiting (`wo/focus.rs:119`) skip the surface. `surface.read`, `rename` and `send` work because they resolve the terminal (795). US-019 removes the defect.
+
+### Direct assignments to a tab's `root` or `saved_layout`
+
+31 in production code: 11 `take()` calls (eh:372, 514, 549, 557; `wo/focus.rs:15`; `wo/layout.rs:43`, 104-105; `wo/mod.rs:836`, 845; `wo/tab.rs:639`; `workspace/tab.rs:193`) and 20 assignments (eh:392, 515 through `*root`, 552, 554, 559, 573; `wo/focus.rs:20`; `wo/layout.rs:44`, 45, 124; `wo/mod.rs:839`, 848, 875, 940; `wo/tab.rs:82`, 646, 662; `wo/template_launch.rs:140`, 141; `workspace/tab.rs:194`). Seven more mutate a tree in place through `&mut` (eh:314, 355/368, 506; `ipc/split.rs:237`; `wo/mod.rs:761`, 934; `wo/tab.rs:684`), and `workspace/mod.rs:345` replaces a whole tab. `save_session` has 68 call sites in 25 files (defined at `app/session.rs:103`).
+
+### Operations that a test cannot drive without a display
+
+A pointer drag (pane, surface or agent session drop, divider drag) and a detached window need a real window and pointer. Their model ops are pinned through the event the drop emits (`PaneEvent::DropPaneMove`, `DropSurfaceMove`, `DropSessionSplit`) and through the model's own tests; the gesture itself is on the US-020 checklist.
 
 ## Functional Requirements
 

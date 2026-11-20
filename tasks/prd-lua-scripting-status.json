@@ -9,26 +9,26 @@
     {
       "id": "EP-001",
       "title": "One typed, self-describing API",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 6,
-      "stories_done": 0
+      "stories_done": 6
     },
     {
       "id": "EP-002",
       "title": "The layout becomes plain data with stable ids",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 14,
-      "stories_done": 0
+      "stories_done": 14
     },
     {
       "id": "EP-003",
       "title": "A gap-free event log",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 5,
-      "stories_done": 0
+      "stories_done": 5
     },
     {
       "id": "EP-004",
@@ -92,329 +92,329 @@
       "id": "US-001",
       "title": "Pin the app's wire format in a conformance case file",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-002",
       "title": "Create `paneflow-api` and migrate the read methods",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-001"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-003",
       "title": "Migrate the remaining methods and delete the hand-written dispatch",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-002"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-004",
       "title": "`system.describe` and a checked-in schema snapshot",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-003"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-005",
       "title": "`paneflow api list`, `describe` and `call`",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-004"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-006",
       "title": "Route each call to its owner",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-004"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-007",
       "title": "Complete the operation inventory",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-008",
       "title": "Pin today's behavior: create, close, undo, focus, rename",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-007"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-009",
       "title": "Pin today's behavior: move, reorder, resize, zoom, presets, restore",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-007"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-010",
       "title": "`paneflow-layout`: the model, ids and the view",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-008",
         "US-009"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-011",
       "title": "Operations, part 1: create, close, focus, rename",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-010"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-012",
       "title": "Operations, part 2: move and reorder",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-011"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-013",
       "title": "Operations, part 3: resize, zoom, presets, restore",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-011"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-014",
       "title": "Undo close in the model",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-011"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-015",
       "title": "The window projects the model",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-012",
         "US-013",
         "US-014"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-016",
       "title": "Drag-and-drop and dividers go through the model",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-015"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-017",
       "title": "Detached panes are keyed by pane id",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-015"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-018",
       "title": "IPC paths go through the model and direct assignments end",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-016",
         "US-017"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-019",
       "title": "Stable ids on the wire and one save path",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-018",
         "US-003"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-020",
       "title": "Prove parity",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-019"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-021",
       "title": "The worker serves its methods through the registry",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-004"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-022",
       "title": "The event log and `events.follow`",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-021"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-023",
       "title": "Terminal and agent events from the host stream",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-022"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-024",
       "title": "Layout events from the window",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-022",
         "US-019"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-025",
       "title": "Follow events from the CLI",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-022",
         "US-006"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-026",
