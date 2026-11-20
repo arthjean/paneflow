@@ -88,6 +88,15 @@ pub(crate) fn trailing_inset(reserved_from: f32, content_right: f32) -> f32 {
     (content_right - reserved_from + CONTROL_GAP).max(0.)
 }
 
+pub(crate) fn band_trailing_inset(
+    reserved_from: f32,
+    content_right: f32,
+    dock_left: Option<f32>,
+) -> f32 {
+    let panes_right = dock_left.map_or(content_right, |left| left.min(content_right));
+    trailing_inset(reserved_from, panes_right)
+}
+
 const CONTROL_GAP: f32 = 8.;
 
 #[cfg(test)]
@@ -144,6 +153,16 @@ mod tests {
                 in_band: false
             }
         );
+    }
+
+    #[test]
+    fn a_dock_narrower_than_the_window_controls_leaves_the_panes_clear_of_them() {
+        assert_eq!(band_trailing_inset(1700., 1849., Some(1800.)), 108.);
+    }
+
+    #[test]
+    fn a_dock_column_that_covers_the_window_controls_reserves_nothing() {
+        assert_eq!(band_trailing_inset(1700., 1849., Some(1300.)), 0.);
     }
 
     #[test]

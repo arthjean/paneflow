@@ -475,14 +475,11 @@ impl Render for PaneFlowApp {
                 brand_extent,
                 primary_sidebar_width,
             ),
-            trailing_inset: if dock_zone_x.is_some() {
-                0.
-            } else {
-                crate::window_chrome::title_band::trailing_inset(
-                    trailing_origin,
-                    content_width - right_rail_width,
-                )
-            },
+            trailing_inset: crate::window_chrome::title_band::band_trailing_inset(
+                trailing_origin,
+                content_width - right_rail_width,
+                dock_zone_x,
+            ),
             window_corners: flush_window_corners,
         });
         if crate::window_chrome::title_band::set(title_band) {

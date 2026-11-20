@@ -714,6 +714,7 @@ pub struct Pane {
     dim_alpha: Rc<Cell<f32>>,
     dim_seq: usize,
     card_frame: crate::layout::CardFrame,
+    grid_edges: gpui::Edges<bool>,
     shimmer_drawn: Cell<bool>,
     shimmer_ticker: Option<gpui::Task<()>>,
     tab_bar_width: Rc<Cell<f32>>,
@@ -776,6 +777,7 @@ impl Pane {
             dim_alpha: Rc::new(Cell::new(0.0)),
             dim_seq: 0,
             card_frame: crate::layout::CardFrame::Card,
+            grid_edges: gpui::Edges::default(),
             shimmer_drawn: Cell::new(false),
             shimmer_ticker: None,
             tab_bar_width: Rc::new(Cell::new(0.)),
@@ -924,10 +926,12 @@ impl Pane {
     pub(crate) fn set_card_frame(
         &mut self,
         frame: crate::layout::CardFrame,
+        grid_edges: gpui::Edges<bool>,
         cx: &mut Context<Self>,
     ) {
-        if self.card_frame != frame {
+        if self.card_frame != frame || self.grid_edges != grid_edges {
             self.card_frame = frame;
+            self.grid_edges = grid_edges;
             cx.notify();
         }
     }
@@ -937,14 +941,15 @@ impl Pane {
         self.card_frame
     }
 
-    fn title_band_slot(&self) -> Option<crate::window_chrome::title_band::HeaderSlot> {
+    pub(crate) fn title_band_slot(&self) -> Option<crate::window_chrome::title_band::HeaderSlot> {
         if self.is_detached() {
             return None;
         }
         let outer = match self.card_frame {
             crate::layout::CardFrame::Card => gpui::Edges::default(),
-            crate::layout::CardFrame::Flush(outer)
-            | crate::layout::CardFrame::Morph { outer, .. } => outer,
+            crate::layout::CardFrame::Flush(_) | crate::layout::CardFrame::Morph { .. } => {
+                self.grid_edges
+            }
         };
         crate::window_chrome::title_band::active().map(|band| band.header_slot(outer))
     }

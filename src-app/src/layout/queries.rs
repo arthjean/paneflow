@@ -117,20 +117,29 @@ impl LayoutTree {
         split_preview: Option<(&Entity<Pane>, SplitDirection)>,
         cx: &mut App,
     ) -> CardFrame {
+        let shape = |grid: Edges<bool>| Edges {
+            right: grid.right && outer.right,
+            ..grid
+        };
         let mut frames = Vec::new();
         let mut preview_frame = density.frame(outer);
-        self.docked_leaf_edges(outer, cx, &mut |pane, edges| {
+        let grid = Edges {
+            right: true,
+            ..outer
+        };
+        self.docked_leaf_edges(grid, cx, &mut |pane, edges| {
             let edges = match split_preview {
                 Some((target, direction)) if target == pane => {
-                    preview_frame = density.frame(child_edges(edges, direction, false, true));
+                    preview_frame =
+                        density.frame(shape(child_edges(edges, direction, false, true)));
                     child_edges(edges, direction, true, false)
                 }
                 _ => edges,
             };
-            frames.push((pane.clone(), density.frame(edges)));
+            frames.push((pane.clone(), density.frame(shape(edges)), edges));
         });
-        for (pane, frame) in frames {
-            pane.update(cx, |pane, cx| pane.set_card_frame(frame, cx));
+        for (pane, frame, grid_edges) in frames {
+            pane.update(cx, |pane, cx| pane.set_card_frame(frame, grid_edges, cx));
         }
         preview_frame
     }
@@ -273,6 +282,37 @@ mod tests {
             bottom,
             left,
         })
+    }
+
+    #[gpui::test]
+    fn the_top_right_pane_beside_the_dock_keeps_clear_of_the_window_controls(
+        cx: &mut TestAppContext,
+    ) {
+        let left = test_pane(cx);
+        let right = test_pane(cx);
+        let tree = split(
+            SplitDirection::Vertical,
+            vec![
+                LayoutTree::Leaf(left.clone()),
+                LayoutTree::Leaf(right.clone()),
+            ],
+        );
+        crate::window_chrome::title_band::set(Some(crate::window_chrome::title_band::TitleBand {
+            height: 40.,
+            leading_inset: 0.,
+            trailing_inset: 108.,
+            window_corners: gpui::Corners::default(),
+        }));
+        cx.update(|cx| tree.sync_card_frames(PaneDensity::COMPACT, grid_edges(false), None, cx));
+        let reserve = |pane: &Entity<Pane>, cx: &mut TestAppContext| {
+            cx.update(|cx| pane.read(cx).title_band_slot().map(|slot| slot.trailing))
+        };
+        let (left_reserve, right_reserve) = (reserve(&left, cx), reserve(&right, cx));
+        let right_frame = cx.update(|cx| right.read(cx).card_frame());
+        crate::window_chrome::title_band::set(None);
+        assert_eq!(right_reserve, Some(108.));
+        assert_eq!(left_reserve, Some(0.));
+        assert_eq!(right_frame, edges(true, false, true, false));
     }
 
     #[gpui::test]
