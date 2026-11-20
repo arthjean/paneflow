@@ -111,7 +111,7 @@ pub(crate) fn space_mark(
     }
     match color {
         Some(color) => circular_image(
-            crate::space_avatar::space_color_image(color),
+            crate::space_avatar::space_color_image(color, size),
             size,
             placeholder,
         ),
@@ -121,7 +121,7 @@ pub(crate) fn space_mark(
 
 pub(crate) fn default_space_mark(size: f32, ui: crate::theme::UiColors) -> AnyElement {
     circular_image(
-        crate::space_avatar::default_space_image(),
+        crate::space_avatar::default_space_image(size),
         size,
         color_circle(None, ui.muted, size),
     )

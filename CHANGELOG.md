@@ -8,6 +8,7 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 ### Changed
 
 - **Settings › Spaces is a list with one page per space.** Clicking a space now opens its own page, reached back through the `Spaces` breadcrumb or Escape, instead of unfolding a form inside the list. The page leads with the space's image, its name, editable in place, and its color, then lists its environment variables in the terminal font with secret values masked, its agent setup with each runtime's logo, and the delete action. With no space yet, the page offers `Work`, `Personal` and `Client` presets, each created with its color in one click, and `Custom`.
+- **Space colors are now plates in the style of paneflow.dev.** Each color draws a long-exposure streak of one luminous ink on a dark mineral ground, with a fine grain: oxide for Red, moss for Green, ochre for Yellow, slate for Blue, plum for Magenta and ice for Cyan. Default turns neutral, a bone streak on anthracite, so it no longer looks like any color. Each mark is drawn at its own size, so it stays smooth from the 14 px chips to the 56 px image of a space.
 
 ### Fixed
 

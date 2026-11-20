@@ -1,8 +1,8 @@
-use std::f32::consts::TAU;
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::io::{self, Cursor};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use image::imageops::FilterType;
 use image::{DynamicImage, ImageDecoder, ImageError, ImageFormat, ImageReader, Limits};
@@ -15,149 +15,249 @@ const MAX_DECODE_BYTES: u64 = 768 * 1024 * 1024;
 const PRESCALE_FACTOR: u32 = 4;
 const UNREADABLE: &str =
     "Unable to read this image. Choose a PNG, JPEG, WebP, GIF, BMP, or TIFF file.";
-type MeshColors = [[u8; 3]; 5];
-const MESH_ANCHORS: [(f32, f32); 5] = [
-    (0.12, 0.18),
-    (0.88, 0.12),
-    (0.18, 0.88),
-    (0.86, 0.82),
-    (0.62, 0.40),
-];
-const DEFAULT_MESH: MeshColors = [
-    [0x5b, 0x8c, 0xff],
-    [0xf0, 0xa6, 0xca],
-    [0x5e, 0xea, 0xd4],
-    [0xa7, 0x8b, 0xfa],
-    [0xfd, 0xe6, 0x8a],
-];
-const COLOR_MESHES: [(SpaceColor, MeshColors); 6] = [
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Plate {
+    ground: [u8; 3],
+    ink: [u8; 3],
+    angle: f32,
+    seed: u32,
+}
+
+const DEFAULT_PLATE: Plate = Plate {
+    ground: [0x1d, 0x1a, 0x22],
+    ink: [0xdd, 0xd5, 0xc8],
+    angle: 0.55,
+    seed: 11,
+};
+const COLOR_PLATES: [(SpaceColor, Plate); 6] = [
     (
         SpaceColor::Red,
-        [
-            [0xff, 0x5f, 0x6d],
-            [0xff, 0x9a, 0x62],
-            [0xe2, 0x3b, 0x6b],
-            [0xff, 0x7a, 0xa2],
-            [0xff, 0xc9, 0xa3],
-        ],
+        Plate {
+            ground: [0x22, 0x10, 0x1c],
+            ink: [0xe0, 0x7a, 0x52],
+            angle: 0.62,
+            seed: 42,
+        },
     ),
     (
         SpaceColor::Green,
-        [
-            [0x2f, 0xcf, 0x8f],
-            [0xa3, 0xe0, 0x4a],
-            [0x0f, 0xa4, 0x7a],
-            [0x5f, 0xe0, 0xc4],
-            [0xd4, 0xf5, 0xa0],
-        ],
+        Plate {
+            ground: [0x14, 0x2e, 0x25],
+            ink: [0xa8, 0xc9, 0x8f],
+            angle: 0.48,
+            seed: 73,
+        },
     ),
     (
         SpaceColor::Yellow,
-        [
-            [0xf8, 0xb6, 0x2c],
-            [0xff, 0xe0, 0x5a],
-            [0xf0, 0x8c, 0x1f],
-            [0xff, 0xb6, 0x48],
-            [0xff, 0xf1, 0xb8],
-        ],
+        Plate {
+            ground: [0x2a, 0x18, 0x0b],
+            ink: [0xe6, 0xa8, 0x5a],
+            angle: 0.58,
+            seed: 104,
+        },
     ),
     (
         SpaceColor::Blue,
-        [
-            [0x3d, 0x7c, 0xf5],
-            [0x64, 0xb0, 0xff],
-            [0x5b, 0x5f, 0xf0],
-            [0x3c, 0xc2, 0xf5],
-            [0xbc, 0xd8, 0xff],
-        ],
+        Plate {
+            ground: [0x12, 0x1c, 0x40],
+            ink: [0x8f, 0xa6, 0xf0],
+            angle: 0.5,
+            seed: 135,
+        },
     ),
     (
         SpaceColor::Magenta,
-        [
-            [0xb8, 0x6b, 0xff],
-            [0xf4, 0x6f, 0xbd],
-            [0x8f, 0x4d, 0xf5],
-            [0xe5, 0x7c, 0xf2],
-            [0xf8, 0xc8, 0xec],
-        ],
+        Plate {
+            ground: [0x22, 0x10, 0x30],
+            ink: [0xd9, 0xa0, 0xe8],
+            angle: 0.66,
+            seed: 166,
+        },
     ),
     (
         SpaceColor::Cyan,
-        [
-            [0x1e, 0xc8, 0xe6],
-            [0x6f, 0xe6, 0xf7],
-            [0x13, 0xa8, 0xa0],
-            [0x3a, 0xa8, 0xf0],
-            [0xc8, 0xf7, 0xfb],
-        ],
+        Plate {
+            ground: [0x0f, 0x26, 0x33],
+            ink: [0x9f, 0xd6, 0xe0],
+            angle: 0.52,
+            seed: 197,
+        },
     ),
 ];
-const MESH_FALLOFF: f32 = 2.4;
-const MESH_WARP: f32 = 0.07;
+const STREAK_OFFSET: f32 = 0.04;
+const STREAK_WIDTH: f32 = 0.17;
+const ECHO_OFFSET: f32 = -0.27;
+const ECHO_WIDTH: f32 = 0.07;
+const ECHO_STRENGTH: f32 = 0.55;
+const HALO_OFFSET: f32 = 0.02;
+const HALO_WIDTH: f32 = 0.42;
+const HALO_STRENGTH: f32 = 0.22;
+const SMEAR_SCALE: (f32, f32) = (1.3, 7.0);
+const BREAK_SCALE: (f32, f32) = (2.6, 3.0);
+const BREAK_SEED_OFFSET: u32 = 51;
+const INK_CONTRAST: f32 = 1.15;
+const GRAIN: f32 = 0.022;
+const FALLBACK_INK_SHARE: f32 = 0.45;
+const MAX_NOISE_OCTAVES: u32 = 4;
+const PLATE_DENSITY: f32 = 2.0;
+const PLATE_MIN_PIXELS: u32 = 16;
+const PLATE_MAX_PIXELS: u32 = 256;
+const PLATE_SUBSAMPLES: u32 = 2;
 
-pub(crate) fn default_space_image() -> Arc<gpui::Image> {
-    static IMAGE: OnceLock<Arc<gpui::Image>> = OnceLock::new();
-    mesh_image(&IMAGE, DEFAULT_MESH)
+pub(crate) fn default_space_image(size: f32) -> Arc<gpui::Image> {
+    plate_image(None, size)
 }
 
-pub(crate) fn space_color_image(color: SpaceColor) -> Arc<gpui::Image> {
-    static IMAGES: [OnceLock<Arc<gpui::Image>>; COLOR_MESHES.len()] =
-        [const { OnceLock::new() }; COLOR_MESHES.len()];
-    let index = color_mesh_index(color);
-    mesh_image(&IMAGES[index], COLOR_MESHES[index].1)
+pub(crate) fn space_color_image(color: SpaceColor, size: f32) -> Arc<gpui::Image> {
+    plate_image(Some(color_plate_index(color)), size)
 }
 
 pub(crate) fn space_color_fill(color: SpaceColor) -> gpui::Hsla {
-    let [r, g, b] = COLOR_MESHES[color_mesh_index(color)].1[0];
+    let plate = COLOR_PLATES[color_plate_index(color)].1;
+    let [r, g, b] = oklab_to_srgb(mix_lab(
+        srgb_to_oklab(plate.ground),
+        srgb_to_oklab(plate.ink),
+        FALLBACK_INK_SHARE,
+    ));
     gpui::rgb(u32::from_be_bytes([0, r, g, b])).into()
 }
 
-fn color_mesh_index(color: SpaceColor) -> usize {
-    COLOR_MESHES
+fn color_plate_index(color: SpaceColor) -> usize {
+    COLOR_PLATES
         .iter()
         .position(|(candidate, _)| *candidate == color)
         .unwrap_or_default()
 }
 
-fn mesh_image(slot: &OnceLock<Arc<gpui::Image>>, colors: MeshColors) -> Arc<gpui::Image> {
-    slot.get_or_init(|| {
-        Arc::new(gpui::Image::from_bytes(
-            gpui::ImageFormat::Png,
-            mesh_gradient_png(colors),
-        ))
-    })
-    .clone()
+fn plate_image(index: Option<usize>, size: f32) -> Arc<gpui::Image> {
+    type Cache = Mutex<HashMap<(Option<usize>, u32), Arc<gpui::Image>>>;
+    static CACHE: OnceLock<Cache> = OnceLock::new();
+    let pixels = plate_pixels(size);
+    let cache = CACHE.get_or_init(Cache::default);
+    let mut cache = cache
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    cache
+        .entry((index, pixels))
+        .or_insert_with(|| {
+            let plate = index.map_or(DEFAULT_PLATE, |index| COLOR_PLATES[index].1);
+            Arc::new(gpui::Image::from_bytes(
+                gpui::ImageFormat::Png,
+                plate_png(plate, pixels),
+            ))
+        })
+        .clone()
 }
 
-fn mesh_gradient_png(colors: MeshColors) -> Vec<u8> {
-    let anchors: [(f32, f32, [f32; 3]); 5] = std::array::from_fn(|index| {
-        let (x, y) = MESH_ANCHORS[index];
-        (x, y, srgb_to_oklab(colors[index]))
-    });
-    let size = AVATAR_PIXELS as f32;
-    let mesh = image::RgbImage::from_fn(AVATAR_PIXELS, AVATAR_PIXELS, |column, row| {
-        let (u, v) = ((column as f32 + 0.5) / size, (row as f32 + 0.5) / size);
-        let (u, v) = (
-            u + MESH_WARP * (TAU * (v * 1.2 + 0.15)).sin(),
-            v + MESH_WARP * (TAU * (u * 0.9 + 0.6)).sin(),
-        );
-        let mut blend = [0.0_f32; 3];
-        let mut total = 0.0;
-        for (x, y, lab) in anchors {
-            let distance = (u - x).powi(2) + (v - y).powi(2);
-            let weight = 1.0 / (distance.powf(MESH_FALLOFF / 2.0) + 1e-4);
-            total += weight;
-            for (channel, value) in blend.iter_mut().zip(lab) {
-                *channel += weight * value;
+fn plate_pixels(size: f32) -> u32 {
+    ((size * PLATE_DENSITY).ceil() as u32).clamp(PLATE_MIN_PIXELS, PLATE_MAX_PIXELS)
+}
+
+fn plate_png(plate: Plate, pixels: u32) -> Vec<u8> {
+    let ground = srgb_to_oklab(plate.ground);
+    let ink = srgb_to_oklab(plate.ink);
+    let (sin, cos) = plate.angle.sin_cos();
+    let octaves = noise_octaves(pixels);
+    let size = pixels as f32;
+    let subsample = 1.0 / (PLATE_SUBSAMPLES as f32 * size);
+    let image = image::RgbImage::from_fn(pixels, pixels, |column, row| {
+        let mut light = 0.0;
+        for sub_y in 0..PLATE_SUBSAMPLES {
+            for sub_x in 0..PLATE_SUBSAMPLES {
+                let u = column as f32 / size + (sub_x as f32 + 0.5) * subsample - 0.5;
+                let v = row as f32 / size + (sub_y as f32 + 0.5) * subsample - 0.5;
+                let along = u * cos + v * sin;
+                let across = v * cos - u * sin;
+                light += streak_light(plate.seed, along, across, octaves);
             }
         }
-        image::Rgb(oklab_to_srgb(blend.map(|channel| channel / total)))
+        let light = light / (PLATE_SUBSAMPLES * PLATE_SUBSAMPLES) as f32;
+        let mut lab = mix_lab(ground, ink, light);
+        lab[0] += GRAIN * grain(plate.seed, column, row);
+        image::Rgb(oklab_to_srgb(lab))
     });
     let mut png = Vec::new();
-    if let Err(error) = mesh.write_to(&mut Cursor::new(&mut png), ImageFormat::Png) {
-        log::warn!("spaces: unable to encode a space mesh image: {error}");
+    if let Err(error) = image.write_to(&mut Cursor::new(&mut png), ImageFormat::Png) {
+        log::warn!("spaces: unable to encode a space plate image: {error}");
     }
     png
+}
+
+fn noise_octaves(pixels: u32) -> u32 {
+    let nyquist = pixels as f32 / 2.0;
+    (0..MAX_NOISE_OCTAVES)
+        .take_while(|octave| SMEAR_SCALE.1 * 2f32.powi(*octave as i32) < nyquist)
+        .count()
+        .max(1) as u32
+}
+
+fn streak_light(seed: u32, along: f32, across: f32, octaves: u32) -> f32 {
+    let band = |offset: f32, width: f32| (-((across - offset) / width).powi(2)).exp();
+    let main = band(STREAK_OFFSET, STREAK_WIDTH);
+    let echo = ECHO_STRENGTH * band(ECHO_OFFSET, ECHO_WIDTH);
+    let halo = HALO_STRENGTH * band(HALO_OFFSET, HALO_WIDTH);
+    let smear = fbm(
+        seed,
+        along * SMEAR_SCALE.0 + 5.0,
+        across * SMEAR_SCALE.1 + 5.0,
+        octaves,
+    );
+    let breaks = fbm(
+        seed + BREAK_SEED_OFFSET,
+        along * BREAK_SCALE.0 + 2.0,
+        across * BREAK_SCALE.1 + 1.0,
+        octaves,
+    );
+    let light = halo + (main + echo) * (0.25 + 1.1 * smear) * (0.55 + 0.7 * breaks);
+    light.clamp(0.0, 1.0).powf(INK_CONTRAST)
+}
+
+fn mix_lab(from: [f32; 3], to: [f32; 3], share: f32) -> [f32; 3] {
+    std::array::from_fn(|channel| from[channel] + (to[channel] - from[channel]) * share)
+}
+
+fn fbm(seed: u32, x: f32, y: f32, octaves: u32) -> f32 {
+    let (mut total, mut amplitude, mut norm, mut frequency) = (0.0, 1.0, 0.0, 1.0);
+    for octave in 0..octaves {
+        total += amplitude * value_noise(seed + octave * 17, x * frequency, y * frequency);
+        norm += amplitude;
+        amplitude *= 0.5;
+        frequency *= 2.0;
+    }
+    total / norm
+}
+
+fn value_noise(seed: u32, x: f32, y: f32) -> f32 {
+    let (x0, y0) = (x.floor(), y.floor());
+    let smooth = |t: f32| t * t * (3.0 - 2.0 * t);
+    let (tx, ty) = (smooth(x - x0), smooth(y - y0));
+    let (cx, cy) = (x0 as i32, y0 as i32);
+    let corner = |dx: i32, dy: i32| lattice(seed, cx + dx, cy + dy);
+    let top = corner(0, 0) + (corner(1, 0) - corner(0, 0)) * tx;
+    let bottom = corner(0, 1) + (corner(1, 1) - corner(0, 1)) * tx;
+    top + (bottom - top) * ty
+}
+
+fn lattice(seed: u32, x: i32, y: i32) -> f32 {
+    (mix_bits(seed, x as u32, y as u32) >> 8) as f32 / (1u32 << 24) as f32
+}
+
+fn grain(seed: u32, column: u32, row: u32) -> f32 {
+    let bits = mix_bits(seed ^ 0x9e37_79b9, column, row);
+    let first = (bits & 0xffff) as f32 / 65_535.0;
+    let second = (bits >> 16) as f32 / 65_535.0;
+    first + second - 1.0
+}
+
+fn mix_bits(seed: u32, x: u32, y: u32) -> u32 {
+    let mut hash =
+        seed.wrapping_mul(0x27d4_eb2d) ^ x.wrapping_mul(0x85eb_ca6b) ^ y.wrapping_mul(0xc2b2_ae35);
+    hash ^= hash >> 15;
+    hash = hash.wrapping_mul(0x2c1b_3c6d);
+    hash ^= hash >> 12;
+    hash = hash.wrapping_mul(0x297a_2d39);
+    hash ^ (hash >> 15)
 }
 
 fn srgb_to_oklab(rgb: [u8; 3]) -> [f32; 3] {
@@ -314,40 +414,63 @@ mod tests {
     }
 
     #[test]
-    fn the_default_space_image_is_a_stable_mesh_from_its_anchor_colors() {
-        let png = mesh_gradient_png(DEFAULT_MESH);
-        assert_eq!(png, mesh_gradient_png(DEFAULT_MESH));
-        let mesh = image::load_from_memory_with_format(&png, ImageFormat::Png)
+    fn the_default_space_plate_is_a_stable_neutral_duotone() {
+        let pixels = plate_pixels(56.0);
+        let png = plate_png(DEFAULT_PLATE, pixels);
+        assert_eq!(png, plate_png(DEFAULT_PLATE, pixels));
+        let plate = image::load_from_memory_with_format(&png, ImageFormat::Png)
             .unwrap()
             .to_rgb8();
-        assert_eq!(mesh.dimensions(), (AVATAR_PIXELS, AVATAR_PIXELS));
-        let [r, g, b] = mesh.get_pixel(0, 0).0;
-        assert!(b > r && b > g, "the top left leans on the blue anchor");
-        let [r, g, b] = mesh.get_pixel(0, AVATAR_PIXELS - 1).0;
-        assert!(g > r && g > b, "the bottom left leans on the mint anchor");
+        assert_eq!(plate.dimensions(), (112, 112));
+        let mut darkest = u8::MAX;
+        let mut brightest = 0;
+        for pixel in plate.pixels() {
+            let [r, g, b] = pixel.0;
+            let (low, high) = (r.min(g).min(b), r.max(g).max(b));
+            assert!(high - low <= 24, "the default plate stays neutral");
+            darkest = darkest.min(high);
+            brightest = brightest.max(high);
+        }
+        assert!(darkest < 60, "the ground stays dark");
+        assert!(brightest > 150, "the streak lights the plate");
     }
 
     #[test]
-    fn every_space_color_has_its_own_mesh_led_by_its_hue() {
+    fn a_plate_is_drawn_at_twice_its_size_and_drops_the_octaves_it_cannot_resolve() {
+        assert_eq!(plate_pixels(16.0), 32);
+        assert_eq!(plate_pixels(56.0), 112);
+        assert_eq!(plate_pixels(4.0), PLATE_MIN_PIXELS);
+        assert_eq!(plate_pixels(400.0), PLATE_MAX_PIXELS);
+        assert_eq!(noise_octaves(32), 2);
+        assert_eq!(noise_octaves(112), 3);
+        assert_eq!(noise_octaves(PLATE_MIN_PIXELS), 1);
+        assert_eq!(noise_octaves(PLATE_MAX_PIXELS), MAX_NOISE_OCTAVES);
+    }
+
+    #[test]
+    fn every_space_color_has_its_own_plate_whose_ink_carries_its_hue() {
         let colors = crate::settings::tabs::spaces::SPACE_COLORS;
-        assert_eq!(colors.len(), COLOR_MESHES.len());
+        assert_eq!(colors.len(), COLOR_PLATES.len());
         for color in colors {
-            let (owner, mesh) = COLOR_MESHES[color_mesh_index(color)];
+            let (owner, plate) = COLOR_PLATES[color_plate_index(color)];
             assert_eq!(owner, color);
-            assert_ne!(mesh, DEFAULT_MESH);
+            assert_ne!(plate, DEFAULT_PLATE);
         }
-        let [r, g, b] = COLOR_MESHES[color_mesh_index(SpaceColor::Red)].1[0];
+        let ink = |color| COLOR_PLATES[color_plate_index(color)].1.ink;
+        let [r, g, b] = ink(SpaceColor::Red);
         assert!(r > g && r > b);
-        let [r, g, b] = COLOR_MESHES[color_mesh_index(SpaceColor::Blue)].1[0];
+        let [r, g, b] = ink(SpaceColor::Green);
+        assert!(g > r && g > b);
+        let [r, g, b] = ink(SpaceColor::Blue);
         assert!(b > r && b > g);
     }
 
     #[test]
-    fn oklab_round_trips_each_anchor_color() {
-        for rgb in COLOR_MESHES
+    fn oklab_round_trips_each_plate_color() {
+        for rgb in COLOR_PLATES
             .iter()
-            .flat_map(|(_, mesh)| *mesh)
-            .chain(DEFAULT_MESH)
+            .flat_map(|(_, plate)| [plate.ground, plate.ink])
+            .chain([DEFAULT_PLATE.ground, DEFAULT_PLATE.ink])
         {
             assert_eq!(oklab_to_srgb(srgb_to_oklab(rgb)), rgb);
         }

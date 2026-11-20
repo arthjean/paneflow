@@ -805,10 +805,9 @@ folder-plus glyph), and a third, `New tab` behind a 15 px plus glyph, while
 the rail is grouped by status. Once a space is declared, the space picker replaces the
 `Workspaces` label: a 22 px trigger at radius 7 holding, in a 20 px slot on
 the folder column, the active space's 16 px mark (its image cropped to a
-circle, else the mesh gradient of its color, else a 1 px `muted` outline;
-Default shows its own mesh, five OKLab anchors in blue, pink, mint,
-violet, and pale yellow blended by inverse distance over a slight sine warp,
-each mesh rendered once into a 96 px PNG by `space_avatar`), then the name at 13 px Medium in `text`
+circle, else the plate of its color, else a 1 px `muted` outline;
+Default shows its own neutral plate, bone ink on an anthracite ground),
+then the name at 13 px Medium in `text`
 and a 12 px chevron. It takes the hover tint, and the active row tint while
 its menu is open. The menu (`menu_panel`, 240 wide) lists Default, then the
 declared spaces with their 16 px mark, a hidden space's attention mark and a
@@ -1537,8 +1536,8 @@ panes and the docks, and the fixed heading, intro line, and filter keep a
 20 px gap above the scrolling rows.
 
 The Spaces page is a list that drills into one page per space. With no space
-yet, the heading stands alone over a welcome card: the `Default` mesh and the
-blue, green, and magenta meshes at 36 px, each in a 3 px ring of the card
+yet, the heading stands alone over a welcome card: the `Default` plate and the
+blue, green, and magenta plates at 36 px, each in a 3 px ring of the card
 surface and overlapping by 12 px, then `Keep your contexts apart` at 14
 Semibold, one 12 px muted sentence capped at 380 px and centered, and preset
 chips (`Work` blue, `Personal` green, `Client` magenta, then `Custom` with the
@@ -1561,9 +1560,8 @@ environment editor or the delete question first, then returns to the list. The
 page stacks, 24 px apart: an identity card (16 px padding) with the 56 px mark
 and, beside it, the name field (32 px tall, 14 Medium, 320 px at most) over the
 color marks at 16 px in 24 px circular targets, the first one aligned with the
-field edge: an outline for no color, then one mesh per color, each five hues
-around its own (red leans coral and rose, blue leans azure and indigo), fixed
-across themes. `Remove image` sits at the trailing end of the color row while an
+field edge: an outline for no color, then one plate per color, fixed across
+themes. `Remove image` sits at the trailing end of the color row while an
 image is set. The mark wears a 22 px badge at its bottom right (card surface
 ring of 2 px, `text` at 0.14 inside, an 11 px add or pencil glyph), and hovering
 it lays a black scrim at 0.5 with a white 18 px pencil over it. Clicking it
@@ -1585,6 +1583,21 @@ space`. Buttons inside a card are squircle 14 of `text` at 0.06, 0.1 on hover,
 because `subtle` vanishes on the dark card. Errors read in `vc_deleted` and
 warnings in `text` after an amber glyph, because the fixed red and
 `vc_modified` fall under 4.5:1 as text on the light card.
+
+A space plate (`space_avatar`) follows the abstract plates of paneflow.dev:
+a duotone of one dark mineral ground and one luminous ink, mixed in OKLab,
+lit by a long-exposure streak. A main band 0.17 wide runs along the plate's
+angle with a thin echo below it and a wide halo around it; value noise
+stretched along the band smears it and breaks it, and a grain of 0.022 in
+lightness settles over the whole. The pairs are Default bone `#ddd5c8` on
+`#1d1a22`, Red oxide `#e07a52` on `#22101c`, Green moss `#a8c98f` on
+`#142e25`, Yellow ochre `#e6a85a` on `#2a180b`, Blue slate `#8fa6f0` on
+`#121c40`, Magenta plum `#d9a0e8` on `#221030`, and Cyan ice `#9fd6e0` on
+`#0f2633`. Each plate is drawn at twice the size it shows, at least 16 and at
+most 256 px, with 2 by 2 subsamples per pixel and only the noise octaves that
+size resolves, then cached per color and size, because GPUI scales an image
+without mipmaps and a large plate shrunk to 16 px aliases into hard stripes.
+While a plate loads, the mark shows its ink mixed 45 percent into its ground.
 
 The Usage page (`src-app/src/app/usage/page.rs`), under Integrations between
 Agents and Plugins with the 15 px `chart-bar-line` glyph, has the 26 px heading, a
