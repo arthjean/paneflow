@@ -132,7 +132,7 @@ Web research was not run: every design question was answered by source code (Pan
 | A3 | GPUI's `BlurredView` follows the window's rounded corners and leaves the shadow intact under Paneflow's client-side chrome on macOS. | High: not verifiable on Linux, and no Mac is confirmed available. | US-010, which stays `BLOCKED` until a Mac confirms it; Open Question 2 |
 | A4 | With Reduce transparency on, macOS renders the `NSVisualEffectView` solid, so no desktop content shows through the veil, with no code of ours. | Medium | US-010 |
 | A5 | With Transparency effects off, or the window inactive, the Acrylic system backdrop is solid, so no desktop content shows through the veil and the window is not black. | Medium | US-014 |
-| A6 | The Wayland probe, one registry round trip, usually answers before the first frame is presented; when it does not, the first frames use the thick veil and the veil thins once. | Low | US-007 logs the probe's duration |
+| A6 | The Wayland probe, one registry round trip, usually answers before the first frame is presented; when it does not, the first frames use the thick veil and the veil thins once. | Low | US-007 logs the probe's duration. Measured 2026-11-20 on GNOME Shell 51.1 Wayland (debug build, `ep003-blur` tagged home): 2.5 ms and 4.1 ms at startup, 0.36 ms on a hot reload from Themed to Blended |
 | A7 | KDE's `org_kde_kwin_blur_manager` path in the vendored backend blurs as the `ext-background-effect-v1` path does. Only GNOME 51 was tested live (R6). | Low: the path is upstream GPUI code, unchanged here, and a failure leaves today's sharp veil. | None on Arthur's machine; accepted, Open Question 5 |
 
 Constraints: no blocking work on the GPUI main thread (`AGENTS.md`, "The render thread never blocks"); no source comments; `cfg(windows)` code is linted only by the Windows CI leg and any item added to a file with a `mod tests` goes before it; Windows behavior is verified on real hardware after a push, in the last epic.
@@ -282,15 +282,15 @@ Blended asks the compositor for blur by itself, and the probe's answer drives th
 **Dependencies:** Blocked by US-005
 
 **Acceptance Criteria:**
-- [ ] Given Blended on a Wayland session whose registry lists `ext_background_effect_manager_v1` or `org_kde_kwin_blur_manager`, when the window opens, then its background appearance becomes `Blurred` and `BlurSupport` is `Full`
-- [ ] Given the same session and a config that holds only `"background_style": "blended"`, when the window opens on GNOME 51 with Blur my Shell disabled, then the desktop behind the window is blurred, checked on a debug build with its own tagged home
-- [ ] Given Themed, when the window opens on any session, then no blur is requested and the appearance is the unblurred one the decision table returns today
-- [ ] Given Blended while the probe has not answered, when a frame renders, then `BlurSupport` is `None`
-- [ ] Given the probe answers `Offered`, when the next frame renders, then `BlurSupport` is `Full` without a restart
-- [ ] The probe runs off the GPUI main thread, as `request_compositor_blur` does today
-- [ ] The probe's duration is logged once at debug level (assumption A6)
-- [ ] Given a detached pane window, when it opens under Blended, then it follows the same rules as the main window
-- [ ] `window_backdrop_requests_blur` and every read of `window_backdrop` are removed from `src-app/src/window_chrome/linux_backdrop.rs` and its callers
+- [x] Given Blended on a Wayland session whose registry lists `ext_background_effect_manager_v1` or `org_kde_kwin_blur_manager`, when the window opens, then its background appearance becomes `Blurred` and `BlurSupport` is `Full`
+- [x] Given the same session and a config that holds only `"background_style": "blended"`, when the window opens on GNOME 51 with Blur my Shell disabled, then the desktop behind the window is blurred, checked on a debug build with its own tagged home (observed 2026-11-21 on GNOME Shell 51.1 Wayland, `ep003-blur` tagged home, Blur my Shell disabled: the wallpaper's stars and streaks read as smooth color bands behind the window, against sharp stars behind the same 0.72 veil on an XWayland reference run with `PANEFLOW_DEV_BLUR_SUPPORT=full`; screenshots kept as local evidence)
+- [x] Given Themed, when the window opens on any session, then no blur is requested and the appearance is the unblurred one the decision table returns today
+- [x] Given Blended while the probe has not answered, when a frame renders, then `BlurSupport` is `None`
+- [x] Given the probe answers `Offered`, when the next frame renders, then `BlurSupport` is `Full` without a restart
+- [x] The probe runs off the GPUI main thread, as `request_compositor_blur` does today
+- [x] The probe's duration is logged once at debug level (assumption A6)
+- [x] Given a detached pane window, when it opens under Blended, then it follows the same rules as the main window
+- [x] `window_backdrop_requests_blur` and every read of `window_backdrop` are removed from `src-app/src/window_chrome/linux_backdrop.rs` and its callers
 
 #### US-008: Degrade on sessions that cannot blur
 **Description:** As a user on X11, sway or an older GNOME, I want Blended to switch to the thick veil so that the windows behind show through at no more than 7 % strength.
@@ -299,11 +299,11 @@ Blended asks the compositor for blur by itself, and the probe's answer drives th
 **Dependencies:** Blocked by US-007
 
 **Acceptance Criteria:**
-- [ ] Given Blended on a Wayland session with neither blur global, when the window renders, then `BlurSupport` is `None` and the appearance is `Transparent`
-- [ ] Given Blended on X11, when the window renders, then `BlurSupport` is `None` whatever the probe state
-- [ ] Given the probe cannot connect to the compositor, when Blended renders, then `BlurSupport` is `None` and one warning is logged
-- [ ] Given Blended falls back to `None`, when the session runs, then the fallback is logged once and the log line no longer names `window_backdrop`
-- [ ] The decision-table tests in `linux_backdrop.rs` cover every combination of style, surface kind and probe state
+- [x] Given Blended on a Wayland session with neither blur global, when the window renders, then `BlurSupport` is `None` and the appearance is `Transparent`
+- [x] Given Blended on X11, when the window renders, then `BlurSupport` is `None` whatever the probe state
+- [x] Given the probe cannot connect to the compositor, when Blended renders, then `BlurSupport` is `None` and one warning is logged
+- [x] Given Blended falls back to `None`, when the session runs, then the fallback is logged once and the log line no longer names `window_backdrop`
+- [x] The decision-table tests in `linux_backdrop.rs` cover every combination of style, surface kind and probe state
 
 ---
 
