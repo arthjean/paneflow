@@ -427,7 +427,7 @@ fn limit_flags_and_fail_fast_are_read_from_the_command_line() {
         "{}",
         stderr(&output)
     );
-    assert_eq!(stdout(&output), "survived\n");
+    assert_eq!(stdout(&output).lines().collect::<Vec<_>>(), ["survived"]);
 
     let output = run(home.path(), &["--fail-fast", "-e", failing]);
     assert_eq!(output.status.code(), Some(1));
