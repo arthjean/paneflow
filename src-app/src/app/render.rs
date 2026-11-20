@@ -375,7 +375,6 @@ impl Render for PaneFlowApp {
             window.focus(&self.welcome_focus, cx);
         }
         let main_content = if self.settings_section.is_some() {
-            self.tick_agents_list_animation(window);
             self.render_settings_content_panel(window, cx)
                 .into_any_element()
         } else if let Some(ws) = self.active_workspace() {

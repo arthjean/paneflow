@@ -22,6 +22,7 @@ impl PaneFlowApp {
         self.workspace_template_detail_open = false;
         self.workspace_template_delete_armed = false;
         self.agent_profile_editor = None;
+        self.agent_detail = None;
         self.space_name_editor = None;
         self.space_delete_armed = None;
         self.space_detail = None;
@@ -84,6 +85,7 @@ impl PaneFlowApp {
         self.workspace_template_detail_open = false;
         self.workspace_template_delete_armed = false;
         self.agent_profile_editor = None;
+        self.agent_detail = None;
         self.space_name_editor = None;
         self.space_delete_armed = None;
         self.space_detail = None;
@@ -399,6 +401,8 @@ impl PaneFlowApp {
                 theme_preset_menu: self.theme_dropdown_open,
                 workspace_template_dropdown: self.workspace_template_dropdown.is_some(),
                 agent_profile_editor: self.agent_profile_editor.is_some(),
+                agent_detail: self.settings_section == Some(SettingsSection::Agents)
+                    && self.agent_detail_is_open(),
                 space_detail: self.settings_section == Some(SettingsSection::Spaces)
                     && self.space_detail.is_some(),
                 workspace_template_detail: self.settings_section
@@ -412,6 +416,7 @@ impl PaneFlowApp {
                     self.workspace_template_dropdown = None;
                 }
                 SettingsEscape::AgentProfileEditor => self.close_agent_profile_editor(cx),
+                SettingsEscape::AgentDetail => self.step_back_from_agent_detail(window, cx),
                 SettingsEscape::SpaceDetail => self.step_back_from_space_detail(window, cx),
                 SettingsEscape::WorkspaceTemplateDetail => {
                     self.step_back_from_workspace_template(window, cx);
@@ -652,6 +657,7 @@ struct SettingsOverlays {
     theme_preset_menu: bool,
     workspace_template_dropdown: bool,
     agent_profile_editor: bool,
+    agent_detail: bool,
     space_detail: bool,
     workspace_template_detail: bool,
 }
@@ -663,6 +669,7 @@ enum SettingsEscape {
     ThemePresetMenu,
     WorkspaceTemplateDropdown,
     AgentProfileEditor,
+    AgentDetail,
     SpaceDetail,
     WorkspaceTemplateDetail,
     CloseSettings,
@@ -679,6 +686,8 @@ fn settings_escape_target(open: SettingsOverlays) -> SettingsEscape {
         SettingsEscape::WorkspaceTemplateDropdown
     } else if open.agent_profile_editor {
         SettingsEscape::AgentProfileEditor
+    } else if open.agent_detail {
+        SettingsEscape::AgentDetail
     } else if open.space_detail {
         SettingsEscape::SpaceDetail
     } else if open.workspace_template_detail {
@@ -782,6 +791,23 @@ mod tests {
         assert_eq!(
             settings_escape_target(template_detail),
             SettingsEscape::WorkspaceTemplateDetail
+        );
+        let agent_page = SettingsOverlays {
+            agent_detail: true,
+            ..SettingsOverlays::default()
+        };
+        assert_eq!(
+            settings_escape_target(agent_page),
+            SettingsEscape::AgentDetail
+        );
+        let profile_on_agent_page = SettingsOverlays {
+            agent_profile_editor: true,
+            agent_detail: true,
+            ..SettingsOverlays::default()
+        };
+        assert_eq!(
+            settings_escape_target(profile_on_agent_page),
+            SettingsEscape::AgentProfileEditor
         );
         let agent_menu_over_template = SettingsOverlays {
             workspace_template_dropdown: true,

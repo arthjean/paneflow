@@ -1537,6 +1537,41 @@ red `Reset`. The scrollbar of the list sits at the panel edge, as in the
 panes and the docks, and the fixed heading, intro line, and filter keep a
 20 px gap above the scrolling rows.
 
+The Agents page (`src-app/src/settings/tabs/agents.rs`) follows the same list
+and drill-in grammar for the agents found on PATH. The heading is followed by
+one 12 px muted intro line and one card of inset rows (squircle 14 in 6 px of
+padding): the 24 px logo, the name at 13 Medium over `{binary} {version}`,
+its profile count, and `Hidden from the picker` at 11 muted, then
+`{version} available` after the 12 px up arrow when an update exists (a
+spinner while it runs), the picker toggle, and a chevron. A hidden agent dims
+its logo to 0.45 and its name to `muted`. Agents that are not installed sit
+under the `Not installed` eyebrow with their count, as one card of 16 px logos
+at 0.55 beside their 12 px muted names, wrapped with 14 px gaps, each naming
+the binary it looks for in a tooltip; no row, no folding. With no agent on
+PATH, a welcome card says `No coding agent on your PATH` at 14 Semibold over
+one 12 px muted sentence and the same strip, centered. Profiles whose agent is
+not installed, or that cannot be read, are listed under `Other profiles`, and
+their editor keeps the base agent select. `Permissions` closes the page.
+
+Clicking an agent opens its page under an `Agents › {name}` breadcrumb, and
+Escape closes the profile editor or the update method select, then returns to
+the list. The page stacks, 24 px apart: an identity card (16 px padding) with
+the 28 px logo on a 48 px plate (`text` at 0.06, radius 12), `Version {n}` at
+14 Semibold over the update status at 12 (`vc_deleted` on failure) and, while
+an update is pending, the open sessions it will not reach, then `Update to
+{n}` (inverse fill, up arrow) or a spinner at its trailing edge. Under
+`Installation`, one card holds `Update with` (a 220 px select, only when
+several methods apply, with its errors and second copy warning), `Update
+command`, and `Location`, the last two in the terminal font with a copy
+button. Under `Integration`, `Hooks and MCP` carries its toggle. Under
+`Profiles`, with a soft `New profile` once one exists, inset rows show each
+profile's name over its variables and arguments as chips, and a pencil
+appears on hover; with none, one row offers `New profile`. Clicking a row
+swaps it for the editor, a squircle 14 of `text` at 0.04 with 12 px padding:
+`Name`, `Variables`, `Arguments`, the `Launches {command}` preview or the
+error, then `Delete` (a ghost in `vc_deleted` that asks again as the red
+`Delete profile`), `Cancel`, and the blue `Save`.
+
 The Spaces page is a list that drills into one page per space. With no space
 yet, the heading stands alone over a welcome card: the `Default` plate and the
 blue, green, and magenta plates at 36 px, each in a 3 px ring of the card

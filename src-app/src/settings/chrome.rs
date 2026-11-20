@@ -436,6 +436,8 @@ impl PaneFlowApp {
             .child(section_title(section));
         let title = if section == SettingsSection::Usage {
             self.render_usage_heading(title_text, window, cx)
+        } else if section == SettingsSection::Agents {
+            self.render_agents_heading(title_text, cx)
         } else if section == SettingsSection::Spaces {
             self.render_spaces_heading(title_text, cx)
         } else if section == SettingsSection::Workspaces {
@@ -485,7 +487,7 @@ impl PaneFlowApp {
                 .render_appearance_content(window, cx)
                 .into_any_element(),
             SettingsSection::Terminal => self.render_terminal_content(cx).into_any_element(),
-            SettingsSection::Agents => self.render_agents_content(cx).into_any_element(),
+            SettingsSection::Agents => self.render_agents_content(cx),
             SettingsSection::Usage => self.render_usage_content(window, cx),
             SettingsSection::McpServers => self.render_mcp_servers_content(cx).into_any_element(),
             SettingsSection::Workspaces => self.render_workspaces_content(cx).into_any_element(),
@@ -637,6 +639,9 @@ impl PaneFlowApp {
         self.workspace_template_detail_open = false;
         self.workspace_template_delete_armed = false;
         self.workspace_template_notice = None;
+        self.agent_detail = None;
+        self.agent_profile_editor = None;
+        self.agent_update_menu_open = None;
         if self.recording_shortcut.is_some() {
             self.recording_shortcut = None;
             crate::keybindings::apply_keybindings(cx, &self.cached_config.shortcuts);

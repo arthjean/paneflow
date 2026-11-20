@@ -334,7 +334,15 @@ const APPEARANCE_HEADERS: &[&str] = &["Theme", "Preferences", "System", "Light",
 const TERMINAL_HEADERS: &[&str] = &["Cursor", "Display", "Window"];
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
 const TERMINAL_HEADERS: &[&str] = &["Cursor", "Display"];
-const AGENTS_HEADERS: &[&str] = &["Agents", "Not installed", "Profiles", "Permissions"];
+const AGENTS_HEADERS: &[&str] = &[
+    "Agents",
+    "Profiles",
+    "Updates",
+    "Hooks",
+    "Not installed",
+    "Other profiles",
+    "Permissions",
+];
 const MCP_HEADERS: &[&str] = &["MCP bridge"];
 const USAGE_HEADERS: &[&str] = &["Plan limits", "Sidebar", "Activity by agent"];
 const WORKSPACES_HEADERS: &[&str] = &["Workspace templates"];
