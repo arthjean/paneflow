@@ -489,7 +489,7 @@ pub fn secondary_button(
     ui: crate::theme::UiColors,
     on_click: impl Fn(&ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
 ) -> Stateful<Div> {
-    let hover_bg = lerp_color(ui.subtle, ui.text, 0.06);
+    let hover_bg = lerp_color(ui.subtle, ui.text, CONTROL_HOVER_TOWARD_TEXT);
     let id = id.into();
 
     squircle_skin(
@@ -659,6 +659,9 @@ pub fn soft_button(
     .on_click(on_click)
 }
 
+pub(crate) const CONTROL_HOVER_TOWARD_TEXT: f32 = 0.06;
+const SOFT_PRESSED_LAYER: f32 = 0.06;
+
 pub(crate) fn soft_skin(
     element: Stateful<Div>,
     group: impl Into<SharedString>,
@@ -670,12 +673,12 @@ pub(crate) fn soft_skin(
         element.cursor(CursorStyle::PointingHand),
         group.clone(),
         radius,
-        ui.subtle,
-        lerp_color(ui.subtle, card_color(), 0.1),
+        with_alpha(ui.text, CARD_BUTTON_FILL_REST),
+        with_alpha(ui.text, CARD_BUTTON_FILL_HOVER),
     )
     .child(pressed_layer(
         &group,
-        squircle_fill(radius, lerp_color(ui.subtle, card_color(), 0.2)),
+        squircle_fill(radius, with_alpha(ui.text, SOFT_PRESSED_LAYER)),
     ))
 }
 
@@ -740,18 +743,29 @@ fn icon_button_frame(id: ElementId, ink: Hsla) -> Stateful<Div> {
         .text_color(ink)
 }
 
+pub(crate) const GHOST_HOVER_ALPHA: f32 = 0.1;
+
 pub(crate) fn ghost_skin(
     element: Stateful<Div>,
     group: impl Into<SharedString>,
     radius: Pixels,
     ui: crate::theme::UiColors,
 ) -> AnimatedHover {
+    ghost_tint_skin(element, group, radius, ui.text)
+}
+
+pub(crate) fn ghost_tint_skin(
+    element: Stateful<Div>,
+    group: impl Into<SharedString>,
+    radius: Pixels,
+    ink: Hsla,
+) -> AnimatedHover {
     animated_squircle_skin(
         element.cursor(CursorStyle::PointingHand),
         group,
         radius,
-        with_alpha(ui.subtle, 0.),
-        ui.subtle,
+        with_alpha(ink, 0.),
+        with_alpha(ink, GHOST_HOVER_ALPHA),
     )
 }
 
@@ -1733,7 +1747,7 @@ pub(crate) fn switch_blue() -> Hsla {
 
 pub(crate) const PAGE_TITLE_SIZE: f32 = 26.;
 pub(crate) const CARD_BUTTON_FILL_REST: f32 = 0.06;
-pub(crate) const CARD_BUTTON_FILL_HOVER: f32 = 0.1;
+pub(crate) const CARD_BUTTON_FILL_HOVER: f32 = 0.12;
 
 pub(crate) fn settings_breadcrumb(
     id: &'static str,

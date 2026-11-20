@@ -301,6 +301,8 @@ theme load until it clears APCA Lc 45 against the selection background.
 | Menu surface | `surface` lifted by 0.035 lightness | `overlay` | `select_menu_surface` |
 | Menu border | `text` at 0.12 | same | `menu_surface`, on the surface shape of 4.9 |
 | Control hover | `subtle` moved 6 percent toward `text` | same | `select_trigger`, `secondary_button` |
+| Ghost hover | the ink at 0.10: `text`, or `vc_deleted` on a destructive ghost; never `subtle`, which several themes paint at the card's own value | same | `ghost_skin`, `ghost_tint_skin` |
+| Card and soft button | `text` at 0.06, 0.12 on hover, plus a `text` layer at 0.06 while pressed; never `subtle`, which several light themes paint at the page's own value | same | `card_button`, `soft_skin` |
 | Hairline | `border` at 0.5 | same | `hairline` |
 | Unfocused pane dim | terminal background at `1 - unfocused_pane_opacity` | same | `unfocused_pane_opacity`, default 1.0, so off unless set |
 | Attention border | `vc_conflict` at 0.7 | same | `pane.rs` |

@@ -9,8 +9,8 @@ use super::*;
 use crate::WorkspaceTemplateDropdown;
 use crate::settings::components::{
     CARD_PADDING_X, SETTINGS_ROW_PADDING_Y, card_button, deferred_select_menu, destructive_color,
-    ghost_skin, hairline, input_frame, raised_button, row_text, select_chevron, select_menu,
-    select_option, select_trigger, settings_label, soft_icon_button, text_field,
+    ghost_skin, ghost_tint_skin, hairline, input_frame, raised_button, row_text, select_chevron,
+    select_menu, select_option, select_trigger, settings_label, soft_icon_button, text_field,
 };
 use crate::ui_primitives::{TooltipDelayExt, squircle::squircle_border, text_tooltip};
 
@@ -466,7 +466,7 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let kind = pane_kind(pane);
-        let remove = ghost_skin(
+        let remove = ghost_tint_skin(
             div()
                 .id("workspace-pane-remove")
                 .flex_none()
@@ -477,7 +477,7 @@ impl PaneFlowApp {
                 .text_color(ui.vc_deleted),
             "workspace-pane-remove-squircle",
             ROW_RADIUS,
-            ui,
+            ui.vc_deleted,
         )
         .accessible_control(gpui::accesskit::Role::Button, "Remove pane")
         .child("Remove pane")
@@ -739,7 +739,7 @@ impl PaneFlowApp {
                 )
                 .into_any_element()
         } else {
-            ghost_skin(
+            ghost_tint_skin(
                 div()
                     .id("workspace-template-delete")
                     .flex_none()
@@ -750,7 +750,7 @@ impl PaneFlowApp {
                     .text_color(ui.vc_deleted),
                 "workspace-template-delete-squircle",
                 ROW_RADIUS,
-                ui,
+                ui.vc_deleted,
             )
             .accessible_control(gpui::accesskit::Role::Button, "Delete template")
             .child("Delete")

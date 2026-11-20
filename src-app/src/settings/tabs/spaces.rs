@@ -15,10 +15,11 @@ use crate::agent_launcher::TerminalAgent;
 use crate::app::spaces::SPACE_LIMIT_REASON;
 use crate::settings::components::{
     CARD_BUTTON_FILL_HOVER, CARD_BUTTON_FILL_REST, CARD_PADDING_X, CARD_PADDING_Y,
-    SETTINGS_ROW_PADDING_Y, card_button, destructive_color, ghost_icon_button, ghost_skin,
-    hairline, hairline_inset, input_frame, inverse_fill, primary_button, raised_button,
-    raised_icon_button, render_logo, row_text, section_header, section_header_with_action,
-    select_menu_surface, setting_card, settings_breadcrumb, soft_button, with_alpha,
+    GHOST_HOVER_ALPHA, SETTINGS_ROW_PADDING_Y, card_button, destructive_color, ghost_icon_button,
+    ghost_tint_skin, hairline, hairline_inset, input_frame, inverse_fill, primary_button,
+    raised_button, raised_icon_button, render_logo, row_text, section_header,
+    section_header_with_action, select_menu_surface, setting_card, settings_breadcrumb,
+    soft_button, with_alpha,
 };
 use crate::settings::search::Block;
 use crate::settings::tabs::agents::{
@@ -1226,7 +1227,7 @@ impl PaneFlowApp {
                         target.border_1().border_color(with_alpha(ui.text, 0.6))
                     })
                     .when(!selected, |target| {
-                        target.hover(|style| style.bg(with_alpha(ui.text, 0.06)))
+                        target.hover(|style| style.bg(with_alpha(ui.text, GHOST_HOVER_ALPHA)))
                     })
                     .role(gpui::accesskit::Role::RadioButton)
                     .aria_label(label)
@@ -1381,7 +1382,7 @@ impl PaneFlowApp {
                             .when(removable, |d| {
                                 let group = format!("space-env-remove-{row_idx}-squircle");
                                 d.child(
-                                    ghost_skin(
+                                    ghost_tint_skin(
                                         div()
                                             .id(SharedString::from(format!(
                                                 "space-env-remove-{row_idx}"
@@ -1393,7 +1394,7 @@ impl PaneFlowApp {
                                             .justify_center(),
                                         group.clone(),
                                         px(7.),
-                                        ui,
+                                        destructive_color(),
                                     )
                                     .child(
                                         svg()
@@ -1653,7 +1654,7 @@ impl PaneFlowApp {
                 )
                 .into_any_element()
         } else {
-            ghost_skin(
+            ghost_tint_skin(
                 div()
                     .id(SharedString::from(format!("space-delete-{}", space.id)))
                     .flex_none()
@@ -1664,7 +1665,7 @@ impl PaneFlowApp {
                     .text_color(ui.vc_deleted),
                 format!("space-delete-{}-squircle", space.id),
                 ROW_RADIUS,
-                ui,
+                ui.vc_deleted,
             )
             .accessible_control(gpui::accesskit::Role::Button, "Delete space")
             .child("Delete")
