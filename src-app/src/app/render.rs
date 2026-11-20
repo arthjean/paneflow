@@ -337,11 +337,8 @@ impl Render for PaneFlowApp {
 
         self.settle_dock_restore_focus(window, cx);
         self.settle_diff_dock_picker_focus(window, cx);
-        if let Some(pane) = self.pending_pane_focus.take()
-            && !Self::focus_pane_window(pane.clone(), cx)
-        {
-            pane.read(cx).focus_handle(cx).focus(window, cx);
-        }
+        self.settle_layout_focus(window, cx);
+        self.note_layout_focus(window, cx);
         if std::mem::take(&mut self.pending_palette_focus) {
             if let Some(palette) = self.pane_palette.as_mut() {
                 palette.restore_focus.capture_once(window, cx);
@@ -381,8 +378,8 @@ impl Render for PaneFlowApp {
         } else if let Some(ws) = self.active_workspace() {
             if let Some(root) = &ws.active_tab().root {
                 let app_weak = cx.weak_entity();
-                let on_resize_end = std::rc::Rc::new(move |cx: &mut App| {
-                    let _ = app_weak.update(cx, |app, cx| app.save_session(cx));
+                let on_resize_end = std::rc::Rc::new(move |split: usize, cx: &mut App| {
+                    let _ = app_weak.update(cx, |app, cx| app.divider_drag_ended(split, cx));
                 });
                 root.sync_unfocused_dim(window, cx);
                 let split_palette = self.pending_split_palette();

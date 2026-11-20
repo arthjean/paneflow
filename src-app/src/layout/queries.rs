@@ -6,13 +6,43 @@ use super::density::{CardFrame, PaneDensity, child_edges};
 use super::tree::{LayoutTree, SplitDirection};
 
 impl LayoutTree {
-    pub(crate) fn cancel_resize(&self) {
-        if let Self::Container { children, drag, .. } = self {
-            drag.set(None);
-            for child in children {
-                child.node.cancel_resize();
+    pub(crate) fn cancel_resize(&self) -> bool {
+        match self {
+            Self::Leaf(_) => false,
+            Self::Container { children, drag, .. } => {
+                let mut cancelled = drag.take().is_some();
+                for child in children {
+                    cancelled |= child.node.cancel_resize();
+                }
+                cancelled
             }
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn drag_cell(
+        &self,
+        key: usize,
+    ) -> Option<std::rc::Rc<std::cell::Cell<Option<super::tree::DragState>>>> {
+        let Self::Container { children, drag, .. } = self else {
+            return None;
+        };
+        if std::rc::Rc::as_ptr(drag) as usize == key {
+            return Some(drag.clone());
+        }
+        children.iter().find_map(|child| child.node.drag_cell(key))
+    }
+
+    pub(crate) fn split_ratios(&self, key: usize) -> Option<Vec<f32>> {
+        let Self::Container { children, drag, .. } = self else {
+            return None;
+        };
+        if std::rc::Rc::as_ptr(drag) as usize == key {
+            return Some(children.iter().map(|child| child.ratio.get()).collect());
+        }
+        children
+            .iter()
+            .find_map(|child| child.node.split_ratios(key))
     }
 
     pub(crate) fn has_docked_panes(&self, cx: &App) -> bool {
@@ -188,35 +218,11 @@ impl LayoutTree {
         self.any_leaf(&mut |p| p == pane)
     }
 
-    pub fn equalize_ratios(&self) {
-        if let LayoutTree::Container { children, .. } = self {
-            let n = children.len();
-            let equal = 1.0 / n as f32;
-            for (i, child) in children.iter().enumerate() {
-                if i == n - 1 {
-                    child.ratio.set(1.0 - equal * (n - 1) as f32);
-                } else {
-                    child.ratio.set(equal);
-                }
-                child.node.equalize_ratios();
-            }
-        }
-    }
-
     pub fn first_leaf(&self) -> Option<Entity<Pane>> {
         match self {
             LayoutTree::Leaf(pane) => Some(pane.clone()),
             LayoutTree::Container { children, .. } => {
                 children.first().and_then(|c| c.node.first_leaf())
-            }
-        }
-    }
-
-    pub fn last_leaf(&self) -> Option<Entity<Pane>> {
-        match self {
-            LayoutTree::Leaf(pane) => Some(pane.clone()),
-            LayoutTree::Container { children, .. } => {
-                children.last().and_then(|c| c.node.last_leaf())
             }
         }
     }

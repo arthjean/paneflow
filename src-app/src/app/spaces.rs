@@ -49,56 +49,6 @@ pub(crate) fn enter_space(
         .or_else(|| first_in_space(workspaces, active_space.as_ref()))
 }
 
-pub(crate) fn point_at(
-    workspaces: &[Workspace],
-    active_idx: &mut usize,
-    active_space: &mut Option<SpaceId>,
-    memory: &mut SpaceMemory,
-    idx: usize,
-) -> bool {
-    let shown_before = shown_index(workspaces, *active_idx, active_space.as_ref());
-    if workspaces[idx].space != *active_space {
-        enter_space(
-            workspaces,
-            *active_idx,
-            active_space,
-            memory,
-            workspaces[idx].space.clone(),
-        );
-    }
-    *active_idx = idx;
-    shown_before != Some(idx)
-}
-
-pub(crate) fn active_idx_after_removal(
-    remaining: &[Workspace],
-    active_idx: usize,
-    removed: usize,
-    active_space: Option<&SpaceId>,
-) -> usize {
-    if remaining.is_empty() {
-        return 0;
-    }
-    if active_idx != removed {
-        return if active_idx > removed {
-            active_idx - 1
-        } else {
-            active_idx
-        };
-    }
-    let split = removed.min(remaining.len());
-    remaining[split..]
-        .iter()
-        .position(|workspace| in_space(workspace, active_space))
-        .map(|offset| split + offset)
-        .or_else(|| {
-            remaining[..split]
-                .iter()
-                .rposition(|workspace| in_space(workspace, active_space))
-        })
-        .unwrap_or(split.min(remaining.len() - 1))
-}
-
 pub(crate) fn is_declared(config: &PaneFlowConfig, space: Option<&SpaceId>) -> bool {
     space.is_none_or(|id| config.space(id).is_some())
 }
@@ -204,50 +154,6 @@ pub(crate) fn declared_space_label<'a>(
     (!config.spaces.is_empty()).then(|| space_label(config, workspace.space.as_ref()))
 }
 
-pub(crate) fn reorder_in_space(
-    workspaces: &mut Vec<Workspace>,
-    active_idx: &mut usize,
-    from: usize,
-    to: usize,
-) -> bool {
-    if from >= workspaces.len() {
-        return false;
-    }
-    let space = workspaces[from].space.clone();
-    let mut naive: Vec<usize> = (0..workspaces.len()).collect();
-    let moved = naive.remove(from);
-    naive.insert(to.min(naive.len()), moved);
-    let mut members = naive
-        .into_iter()
-        .filter(|&idx| workspaces[idx].space == space);
-    let order: Vec<usize> = (0..workspaces.len())
-        .map(|idx| {
-            if workspaces[idx].space == space {
-                members.next().unwrap_or(idx)
-            } else {
-                idx
-            }
-        })
-        .collect();
-    if order.iter().enumerate().all(|(slot, &idx)| slot == idx) {
-        return false;
-    }
-    let shown = workspaces.get(*active_idx).map(|workspace| workspace.id);
-    let mut slots: Vec<Option<Workspace>> =
-        std::mem::take(workspaces).into_iter().map(Some).collect();
-    *workspaces = order
-        .into_iter()
-        .filter_map(|idx| slots[idx].take())
-        .collect();
-    if let Some(id) = shown {
-        *active_idx = workspaces
-            .iter()
-            .position(|workspace| workspace.id == id)
-            .unwrap_or(0);
-    }
-    true
-}
-
 pub(crate) const SPACE_LIMIT_REASON: &str = "9 spaces maximum";
 
 pub(crate) fn next_space_name(config: &PaneFlowConfig) -> String {
@@ -317,29 +223,22 @@ impl PaneFlowApp {
         )
     }
 
-    pub(crate) fn point_at_workspace(&mut self, idx: usize) -> bool {
-        point_at(
-            &self.workspaces,
-            &mut self.active_idx,
-            &mut self.active_space,
-            &mut self.space_last_shown,
-            idx,
-        )
-    }
-
-    pub(crate) fn add_workspace(&mut self, workspace: Workspace) -> usize {
+    pub(crate) fn add_workspace(
+        &mut self,
+        workspace: Workspace,
+        cx: &mut gpui::Context<Self>,
+    ) -> usize {
         let space = self.active_space.clone();
-        self.add_workspace_in(workspace, space)
+        self.add_workspace_in(workspace, space, cx)
     }
 
     pub(crate) fn add_workspace_in(
         &mut self,
-        mut workspace: Workspace,
+        workspace: Workspace,
         space: Option<SpaceId>,
+        cx: &mut gpui::Context<Self>,
     ) -> usize {
-        workspace.set_space(space);
-        self.workspaces.push(workspace);
-        self.workspaces.len() - 1
+        self.insert_workspace_through_model(workspace, space, cx)
     }
 
     pub(crate) fn activate_space(
@@ -607,16 +506,6 @@ mod tests {
             entry
         }
 
-        fn activate(&mut self, workspaces: &[Workspace], idx: usize) -> bool {
-            point_at(
-                workspaces,
-                &mut self.active_idx,
-                &mut self.active_space,
-                &mut self.memory,
-                idx,
-            )
-        }
-
         fn shown(&self, workspaces: &[Workspace]) -> Option<usize> {
             shown_index(workspaces, self.active_idx, self.active_space.as_ref())
         }
@@ -694,117 +583,6 @@ mod tests {
     }
 
     #[test]
-    fn activating_a_workspace_of_another_space_switches_to_that_space() {
-        let workspaces = mixed();
-        let mut view = View::new(0, Some(space(1)));
-
-        assert!(view.activate(&workspaces, 3));
-        assert_eq!(view.active_space, Some(space(2)));
-        assert_eq!(view.shown(&workspaces), Some(3));
-        assert_eq!(
-            view.memory.get(&Some(space(1))),
-            Some(&10),
-            "the space left behind remembers its workspace"
-        );
-
-        assert!(view.activate(&workspaces, 4));
-        assert_eq!(view.active_space, None);
-        assert_eq!(view.shown(&workspaces), Some(4));
-
-        assert!(!view.activate(&workspaces, 4), "already shown");
-        assert!(view.activate(&workspaces, 1));
-        assert_eq!(view.active_space, None, "same space, no switch");
-    }
-
-    #[test]
-    fn activating_from_an_empty_space_switches_and_reports_a_change() {
-        let workspaces = mixed();
-        let mut view = View::new(1, Some(space(3)));
-        assert_eq!(view.shown(&workspaces), None);
-        assert!(view.activate(&workspaces, 1));
-        assert_eq!(view.active_space, None);
-        assert_eq!(view.shown(&workspaces), Some(1));
-    }
-
-    #[test]
-    fn every_activation_path_leaves_the_shown_workspace_in_the_active_space() {
-        let workspaces = mixed();
-        for start in 0..workspaces.len() {
-            for target in 0..workspaces.len() {
-                let mut view = View::new(start, workspaces[start].space.clone());
-                view.activate(&workspaces, target);
-                let shown = view.shown(&workspaces).expect("a workspace shows");
-                assert!(in_space(&workspaces[shown], view.active_space.as_ref()));
-                assert_eq!(shown, target);
-            }
-        }
-    }
-
-    #[test]
-    fn closing_the_shown_workspace_shows_its_nearest_neighbor_in_the_space() {
-        let mut workspaces = mixed();
-        workspaces.remove(2);
-        assert_eq!(
-            active_idx_after_removal(&workspaces, 2, 2, Some(&space(1))),
-            0,
-            "no following workspace of the space, so the preceding one"
-        );
-
-        let mut workspaces = mixed();
-        workspaces.remove(1);
-        assert_eq!(
-            active_idx_after_removal(&workspaces, 1, 1, None),
-            3,
-            "the next default workspace, skipping the other spaces"
-        );
-
-        let mut workspaces = mixed();
-        workspaces.remove(3);
-        let after = active_idx_after_removal(&workspaces, 3, 3, Some(&space(2)));
-        assert!(after < workspaces.len());
-        assert_eq!(
-            shown_index(&workspaces, after, Some(&space(2))),
-            None,
-            "the space is now empty"
-        );
-    }
-
-    #[test]
-    fn closing_another_workspace_keeps_the_shown_one() {
-        let mut workspaces = mixed();
-        workspaces.remove(0);
-        assert_eq!(active_idx_after_removal(&workspaces, 3, 0, None), 2);
-        assert_eq!(active_idx_after_removal(&[], 0, 0, None), 0);
-    }
-
-    #[test]
-    fn without_spaces_closing_matches_the_previous_index_rule() {
-        for len in 1..5usize {
-            for removed in 0..len {
-                for active in 0..len {
-                    let mut workspaces: Vec<_> =
-                        (0..len as u64).map(|id| workspace(id, None)).collect();
-                    workspaces.remove(removed);
-                    let previous = if workspaces.is_empty() {
-                        0
-                    } else if active >= workspaces.len() {
-                        workspaces.len() - 1
-                    } else if active > removed {
-                        active - 1
-                    } else {
-                        active
-                    };
-                    assert_eq!(
-                        active_idx_after_removal(&workspaces, active, removed, None),
-                        previous,
-                        "len {len} removed {removed} active {active}"
-                    );
-                }
-            }
-        }
-    }
-
-    #[test]
     fn undeclared_spaces_fall_back_to_the_default_space() {
         let mut workspaces = mixed();
         let mut active_space = Some(space(2));
@@ -837,51 +615,6 @@ mod tests {
         let empty_space = restored_active_idx(&workspaces, 0, Some(&space(3)));
         assert_eq!(shown_index(&workspaces, empty_space, Some(&space(3))), None);
         assert_eq!(restored_active_idx(&[], 4, None), 0);
-    }
-
-    fn ids(workspaces: &[Workspace]) -> Vec<u64> {
-        workspaces.iter().map(|workspace| workspace.id).collect()
-    }
-
-    #[test]
-    fn reordering_inside_a_space_leaves_other_spaces_in_place() {
-        let mut workspaces = mixed();
-        let mut active_idx = 3;
-        assert!(reorder_in_space(&mut workspaces, &mut active_idx, 0, 2));
-        assert_eq!(ids(&workspaces), vec![12, 11, 10, 13, 14]);
-        assert_eq!(active_idx, 3, "the shown workspace keeps its identity");
-
-        let mut workspaces = mixed();
-        let mut active_idx = 0;
-        assert!(reorder_in_space(&mut workspaces, &mut active_idx, 4, 0));
-        assert_eq!(ids(&workspaces), vec![10, 14, 12, 13, 11]);
-        assert_eq!(workspaces[active_idx].id, 10);
-    }
-
-    #[test]
-    fn the_trailing_drop_slot_moves_a_workspace_last_in_its_space() {
-        let mut workspaces = mixed();
-        let mut active_idx = 1;
-        let len = workspaces.len();
-        assert!(reorder_in_space(
-            &mut workspaces,
-            &mut active_idx,
-            1,
-            len - 1
-        ));
-        assert_eq!(ids(&workspaces), vec![10, 14, 12, 13, 11]);
-        assert_eq!(workspaces[active_idx].id, 11);
-    }
-
-    #[test]
-    fn without_spaces_reordering_matches_a_plain_move() {
-        let mut workspaces: Vec<Workspace> = (0..4).map(|id| workspace(id, None)).collect();
-        let mut active_idx = 2;
-        assert!(reorder_in_space(&mut workspaces, &mut active_idx, 0, 3));
-        assert_eq!(ids(&workspaces), vec![1, 2, 3, 0]);
-        assert_eq!(active_idx, 1);
-        assert!(!reorder_in_space(&mut workspaces, &mut active_idx, 1, 1));
-        assert!(!reorder_in_space(&mut workspaces, &mut active_idx, 9, 0));
     }
 
     #[test]

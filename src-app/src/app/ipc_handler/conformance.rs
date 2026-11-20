@@ -456,9 +456,9 @@ impl PaneFlowApp {
             let ws_id = next_workspace_id_in(None);
             let terminal = cx.new(|cx| TerminalView::new(ws_id, cx));
             terminal.read(cx).terminal.write_output(FIXTURE_TEXT);
-            let surface_id = terminal.entity_id().as_u64();
+            let surface_id = terminal.read(cx).surface_id();
             let pane = self.create_pane(terminal, ws_id, cx);
-            let idx = self.add_workspace_in(Workspace::with_id(ws_id, title, pane), None);
+            let idx = self.add_workspace_in(Workspace::with_id(ws_id, title, pane), None, cx);
             if title == "alpha" {
                 self.workspaces[idx]
                     .agent_sessions

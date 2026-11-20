@@ -19,6 +19,8 @@ pub(crate) mod detached_panes;
 pub mod diff_dock;
 pub mod drag;
 pub mod event_handlers;
+#[cfg(test)]
+pub(crate) mod fake_host;
 pub mod file_finder;
 pub mod files_git;
 pub mod files_sidebar;
@@ -27,6 +29,9 @@ pub mod fleet_search;
 pub(crate) mod host_agents;
 pub(crate) mod hosted_sessions;
 pub mod ipc_handler;
+pub(crate) mod layout_bridge;
+#[cfg(test)]
+pub(crate) mod layout_pins;
 #[cfg(target_os = "macos")]
 pub mod macos_menu;
 pub(crate) mod menu_icons;
@@ -43,6 +48,8 @@ pub mod settings;
 pub mod sidebar;
 pub mod sidebar_actions_menu;
 pub(crate) mod spaces;
+#[cfg(test)]
+pub(crate) mod split_probe;
 pub mod system_info_dialog;
 pub mod tab_worktree;
 pub mod telemetry_events;

@@ -183,12 +183,15 @@ mod tests {
         );
         let mut ws = Workspace::with_layout_and_id(1, "ws", std::path::PathBuf::new(), flat);
 
-        let mut zoomed = Tab::new("zoomed", Some(LayoutTree::Leaf(c.clone())));
-        zoomed.saved_layout = Some(LayoutTree::new_split(
-            SplitDirection::Horizontal,
-            LayoutTree::Leaf(c.clone()),
-            LayoutTree::Leaf(d.clone()),
-        ));
+        let zoomed = Tab::zoomed_for_test(
+            "zoomed",
+            c.clone(),
+            LayoutTree::new_split(
+                SplitDirection::Horizontal,
+                LayoutTree::Leaf(c.clone()),
+                LayoutTree::Leaf(d.clone()),
+            ),
+        );
         assert!(ws.open_tab(zoomed), "opening the second tab must succeed");
         assert_eq!(ws.active_tab_idx(), 1);
         assert!(ws.is_zoomed(), "the active tab is the zoomed one");

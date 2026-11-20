@@ -1,21 +1,17 @@
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use gpui::{App, Context, Entity, Window};
 use paneflow_config::schema::{SessionGeneration, SessionId};
 use paneflow_host::SessionLifecycle;
 use paneflow_host::protocol::ERR_PROCESS_UNVERIFIED;
 
-use crate::app::workspace_ops::{
-    expire_held_sessions, settle_closed_sessions, take_undo_window_sessions,
-    undo_window_session_ids,
-};
 use crate::pane::{Pane, PaneSurface};
 use crate::terminal::TerminalView;
 use crate::terminal::host_link::{self, HostLinkState};
 use crate::workspace::Tab;
-use crate::{CLOSED_SESSION_GRACE_MS, PaneFlowApp, SessionHold, StopSession};
+use crate::{PaneFlowApp, StopSession};
 
 pub(crate) type StopTarget = (PathBuf, SessionId, SessionGeneration);
 
@@ -219,55 +215,21 @@ impl PaneFlowApp {
         Some((endpoint, row.session.clone(), row.generation))
     }
 
-    pub(crate) fn hold_closed_sessions(
-        &mut self,
-        terminals: Vec<Entity<TerminalView>>,
-        cx: &mut Context<Self>,
-    ) {
-        let until = Instant::now() + Duration::from_millis(CLOSED_SESSION_GRACE_MS);
-        let closed: HashSet<SessionId> = terminals
-            .iter()
-            .map(|terminal| terminal.read(cx).terminal.session_id.clone())
-            .collect();
-        let kept = settle_closed_sessions(
-            &mut self.closed_panes,
-            &closed,
-            Some(SessionHold::UndoWindow { until }),
-        );
-        let unkept = terminals
-            .into_iter()
-            .filter(|terminal| !kept.contains(&terminal.read(cx).terminal.session_id))
-            .collect();
-        self.stop_terminals(unkept, cx);
-        if kept.is_empty() {
-            return;
-        }
-        let executor = cx.background_executor().clone();
-        cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
-            loop {
-                let left = until.saturating_duration_since(Instant::now());
-                if left.is_zero() {
-                    break;
-                }
-                executor.timer(left).await;
-            }
-            let _ = this.update(cx, |app, cx| app.expire_closed_sessions(cx));
-        })
-        .detach();
+    pub(crate) fn expire_closed_sessions(&mut self, cx: &mut Context<Self>) {
+        self.expire_closed_sessions_at(Instant::now(), cx);
     }
 
-    pub(crate) fn expire_closed_sessions(&mut self, cx: &mut Context<Self>) {
-        let expired = expire_held_sessions(&mut self.closed_panes, Instant::now());
-        self.stop_hosted_sessions(expired, cx);
+    pub(crate) fn expire_closed_sessions_at(&mut self, now: Instant, cx: &mut Context<Self>) {
+        self.expire_layout_holds(now, cx);
     }
 
     pub(crate) fn release_undo_window_sessions(&mut self) -> Vec<StopTarget> {
-        take_undo_window_sessions(&mut self.closed_panes)
+        self.release_layout_holds()
     }
 
     fn held_session_ids(&self, cx: &App) -> HashSet<SessionId> {
         let mut held = self.attached_session_ids(cx);
-        held.extend(undo_window_session_ids(&self.closed_panes));
+        held.extend(self.layout_held_sessions());
         held
     }
 
@@ -281,6 +243,16 @@ impl PaneFlowApp {
             .filter(|(_, session, _)| !self.owned_sessions.forgetting.contains(session))
             .collect();
         if targets.is_empty() {
+            return;
+        }
+        #[cfg(test)]
+        if crate::app::fake_host::installed(cx) {
+            for (_, session, _) in targets {
+                crate::app::fake_host::record(
+                    cx,
+                    crate::app::fake_host::HostRequest::Stop { session },
+                );
+            }
             return;
         }
         let attempted: Vec<SessionId> = targets
@@ -477,7 +449,7 @@ impl PaneFlowApp {
         self.resume_batch = Some(ResumeBatch {
             pending: terminals
                 .iter()
-                .map(|terminal| terminal.entity_id().as_u64())
+                .map(|terminal| terminal.read(cx).surface_id())
                 .collect(),
             requested: terminals.len(),
             resumed: 0,
@@ -490,7 +462,7 @@ impl PaneFlowApp {
         terminal: &Entity<TerminalView>,
         cx: &mut Context<Self>,
     ) {
-        let surface = terminal.entity_id().as_u64();
+        let surface = terminal.read(cx).surface_id();
         let resumed = terminal.read(cx).terminal.host_link.accepts_input();
         let Some(batch) = self.resume_batch.as_mut() else {
             return;

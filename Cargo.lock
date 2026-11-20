@@ -4675,6 +4675,7 @@ dependencies = [
  "paneflow-home",
  "paneflow-host",
  "paneflow-ipc-client",
+ "paneflow-layout",
  "paneflow-mcp-install",
  "paneflow-minisign",
  "paneflow-process",
@@ -4820,6 +4821,17 @@ dependencies = [
  "serde_json",
  "tempfile",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "paneflow-layout"
+version = "0.1.0"
+dependencies = [
+ "paneflow-config",
+ "serde",
+ "serde_json",
+ "tracing",
+ "tracing-test",
 ]
 
 [[package]]

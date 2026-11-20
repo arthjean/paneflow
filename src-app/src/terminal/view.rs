@@ -540,6 +540,7 @@ impl TerminalView {
                 confine_to: None,
                 fallback_to: None,
                 space_env: None,
+                surface_id: 0,
             },
             SessionIntent::Create,
             None,
@@ -564,6 +565,7 @@ impl TerminalView {
                 confine_to: spawn.confine_to,
                 fallback_to: spawn.fallback,
                 space_env: None,
+                surface_id: 0,
             },
             SessionIntent::Create,
             None,
@@ -588,6 +590,7 @@ impl TerminalView {
                 confine_to: None,
                 fallback_to: None,
                 space_env: None,
+                surface_id: 0,
             },
             SessionIntent::Reattach,
             Some(session),
@@ -604,12 +607,17 @@ impl TerminalView {
         Self::attach_restored(workspace_id, cwd, None, session, cx)
     }
 
+    pub(crate) fn surface_id(&self) -> u64 {
+        self.launch.surface_id
+    }
+
     fn open(
         mut launch: HostedLaunch,
         intent: SessionIntent,
         session: Option<paneflow_config::schema::SessionId>,
         cx: &mut Context<Self>,
     ) -> Self {
+        launch.surface_id = crate::layout_ids::surface_id_for_new_terminal();
         #[cfg(test)]
         if cx.has_global::<DisplayOnlyTerminals>() {
             let mut terminal = TerminalState::new_display_only(24, 80);
@@ -617,9 +625,24 @@ impl TerminalView {
             if let Some(session) = session {
                 terminal.session_id = session;
             }
+            if crate::app::fake_host::installed(cx) {
+                terminal.hosted = Some(crate::app::fake_host::hosted_session());
+                let session = terminal.session_id.clone();
+                crate::app::fake_host::record(
+                    cx,
+                    match intent {
+                        SessionIntent::Reattach => {
+                            crate::app::fake_host::HostRequest::Reattach { session }
+                        }
+                        SessionIntent::Create | SessionIntent::Restart { .. } => {
+                            crate::app::fake_host::HostRequest::Create { session }
+                        }
+                    },
+                );
+            }
             return Self::from_terminal_state(launch, terminal, cx);
         }
-        let surface_id = cx.entity_id().as_u64();
+        let surface_id = launch.surface_id;
         let config = crate::config_snapshot::current(cx);
         launch.space_env = crate::space_env::workspace_env(&config, launch.workspace_id);
         let (params, shell_notice) = launch.spawn_params(surface_id, &config);
@@ -822,6 +845,7 @@ impl TerminalView {
                 confine_to: None,
                 fallback_to: None,
                 space_env: None,
+                surface_id: crate::layout_ids::allocate(),
             },
             terminal,
             cx,
@@ -845,6 +869,7 @@ struct HostedLaunch {
     confine_to: Option<std::path::PathBuf>,
     fallback_to: Option<std::path::PathBuf>,
     space_env: Option<std::collections::HashMap<String, String>>,
+    surface_id: u64,
 }
 
 impl HostedLaunch {
@@ -1948,6 +1973,7 @@ mod tests {
             profile: TerminalSurfaceProfile::Normal,
             confine_to: None,
             fallback_to: None,
+            surface_id: 1,
             space_env: Some(std::collections::HashMap::from([
                 (
                     "CLAUDE_CONFIG_DIR".to_string(),

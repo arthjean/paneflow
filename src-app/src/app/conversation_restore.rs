@@ -7,7 +7,6 @@ use serde_json::Value;
 
 use crate::PaneFlowApp;
 use crate::agent_resume::ConversationTemplate;
-use crate::app::ipc_handler::find_terminal_by_surface_id;
 use crate::app::workspace_ops::SurfaceLaunch;
 use crate::layout::SplitDirection;
 use crate::terminal::TerminalView;
@@ -203,7 +202,7 @@ impl PaneFlowApp {
                     if !view.conversation_restore_pending() {
                         continue;
                     }
-                    let surface = terminal.entity_id().as_u64();
+                    let surface = terminal.read(cx).surface_id();
                     candidates.push(RestoreCandidate {
                         surface,
                         runtime: recorded.runtime.clone(),
@@ -244,7 +243,7 @@ impl PaneFlowApp {
             let terminal = self
                 .conversation_restore
                 .front()
-                .and_then(|surface| find_terminal_by_surface_id(&self.workspaces, surface, cx));
+                .and_then(|surface| self.terminal_for_surface(surface));
             let front = match terminal.as_ref().map(|terminal| terminal.read(cx)) {
                 Some(view) if view.conversation_restore_ready() => FrontState::Ready,
                 Some(view) if view.conversation_restore_pending() => FrontState::Waiting,
@@ -337,7 +336,7 @@ impl PaneFlowApp {
         surface_id: u64,
         cx: &mut Context<Self>,
     ) {
-        let Some(terminal) = find_terminal_by_surface_id(&self.workspaces, surface_id, cx) else {
+        let Some(terminal) = self.terminal_for_surface(surface_id) else {
             return;
         };
         terminal.update(cx, |view, cx| {

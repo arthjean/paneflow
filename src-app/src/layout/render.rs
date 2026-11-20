@@ -11,7 +11,7 @@ use super::tree::{
     DIVIDER_HIT_PX, DragState, LayoutTree, MIN_PANE_SIZE, SplitDirection, resize_adjacent_ratios,
 };
 
-pub(crate) type ResizeEndCallback = Rc<dyn Fn(&mut App)>;
+pub(crate) type ResizeEndCallback = Rc<dyn Fn(usize, &mut App)>;
 
 pub(crate) struct SplitPreview {
     pub(crate) target: Entity<crate::pane::Pane>,
@@ -20,14 +20,14 @@ pub(crate) struct SplitPreview {
 }
 
 fn finish_drag(
-    drag: &Cell<Option<DragState>>,
+    drag: &Rc<Cell<Option<DragState>>>,
     on_resize_end: Option<&ResizeEndCallback>,
     cx: &mut App,
 ) {
     if drag.take().is_some()
         && let Some(on_resize_end) = on_resize_end
     {
-        on_resize_end(cx);
+        on_resize_end(Rc::as_ptr(drag) as usize, cx);
     }
 }
 

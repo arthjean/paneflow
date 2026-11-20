@@ -183,7 +183,7 @@ impl PaneFlowApp {
             .flat_map(|pane| {
                 pane.read(cx)
                     .terminals()
-                    .map(|t| t.entity_id().as_u64())
+                    .map(|t| t.read(cx).surface_id())
                     .collect::<Vec<_>>()
             })
             .collect();

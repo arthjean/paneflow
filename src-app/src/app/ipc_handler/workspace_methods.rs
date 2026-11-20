@@ -409,31 +409,19 @@ impl PaneFlowApp {
             Workspace::with_id(ws_id, &name, pane)
         };
         Self::spawn_initial_git_stats(ws_id, ws.cwd.clone(), cx);
-        let idx = self.add_workspace_in(ws, space);
+        let idx = self.add_workspace_in(ws, space, cx);
 
         let panes = if let Some(ref mut layout) = layout {
-            let previous_idx = self.active_idx;
-            let previous_space =
-                std::mem::replace(&mut self.active_space, self.workspaces[idx].space.clone());
-            self.active_idx = idx;
-            let applied = self.apply_layout_from_json(layout, cx);
-            let panes = self.workspaces[idx].pane_count();
-            if self.active_space != previous_space {
-                self.active_space = previous_space;
-                self.active_idx = previous_idx;
-            }
-            if let Err(e) = applied {
-                self.workspaces.remove(idx);
-                self.active_idx = previous_idx.min(self.workspaces.len().saturating_sub(1));
+            if let Err(e) = self.apply_layout_to(idx, layout, cx) {
+                self.close_workspace_through_model(idx, false, cx);
                 return JsonRpcError::invalid_params(format!("layout could not be applied: {e}"))
                     .into_value();
             }
-            panes
+            self.workspaces[idx].pane_count()
         } else {
             1
         };
 
-        self.save_session(cx);
         cx.notify();
         serde_json::json!({"index": idx, "title": name, "panes": panes})
     }
@@ -535,7 +523,7 @@ impl PaneFlowApp {
         let mut ws = Workspace::restored_with_id(ws_id, &name, ws_cwd, tabs, active_tab);
         ws.managed_worktrees = managed_worktrees;
         Self::spawn_initial_git_stats(ws_id, ws.cwd.clone(), cx);
-        let idx = self.add_workspace_in(ws, space);
+        let idx = self.add_workspace_in(ws, space, cx);
         self.activate_workspace_without_window(idx, cx);
         if let Some(pane) = requested_focus.and_then(|i| panes.get(i)) {
             self.pending_pane_focus = Some(pane.clone());
@@ -543,7 +531,7 @@ impl PaneFlowApp {
 
         let mut surface_ids: Vec<u64> = Vec::with_capacity(launches.len());
         for (i, (terminal, command, prompt)) in launches.into_iter().enumerate() {
-            surface_ids.push(terminal.entity_id().as_u64());
+            surface_ids.push(terminal.read(cx).surface_id());
             if let Some(cmd) = command.filter(|c| !c.is_empty()) {
                 Self::schedule_launch_command(&terminal, cmd, prompt, i, cx);
             } else if let Some(prompt) = prompt.filter(|p| !p.is_empty()) {
@@ -787,14 +775,6 @@ impl PaneFlowApp {
             if let Some(refusal) = self.close_refusal(&target, cx) {
                 return JsonRpcError::confirmation_required(refusal.message()).into_value();
             }
-        }
-        for pane in surplus {
-            self.perform_close(
-                crate::app::close_policy::CloseTarget::Pane(pane),
-                crate::app::close_policy::CloseIntent::Hold,
-                None,
-                cx,
-            );
         }
         match self.apply_layout_from_json(&mut layout, cx) {
             Ok(()) => {
@@ -1153,32 +1133,6 @@ mod tests {
         );
         assert_eq!(list[2]["active"], true);
         assert_eq!(list[1]["active"], false);
-    }
-
-    #[test]
-    fn selecting_a_workspace_in_a_hidden_space_switches_to_that_space() {
-        let workspaces = vec![
-            spaced_workspace(1, None),
-            spaced_workspace(2, Some(space(1))),
-        ];
-        let mut active_idx = 0;
-        let mut active_space = None;
-        let mut memory = crate::app::spaces::SpaceMemory::new();
-
-        let changed = crate::app::spaces::point_at(
-            &workspaces,
-            &mut active_idx,
-            &mut active_space,
-            &mut memory,
-            1,
-        );
-
-        assert!(changed);
-        assert_eq!(active_space, Some(space(1)));
-        assert_eq!(
-            crate::app::spaces::shown_index(&workspaces, active_idx, active_space.as_ref()),
-            Some(1)
-        );
     }
 
     #[test]

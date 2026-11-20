@@ -92,7 +92,7 @@ impl PaneFlowApp {
         for pane in &panes {
             let pane = pane.read(cx);
             for terminal in pane.terminals() {
-                surfaces.insert(terminal.entity_id().as_u64());
+                surfaces.insert(terminal.read(cx).surface_id());
                 if let Some(agent) = terminal.read(cx).terminal.detected_agent {
                     tab_agents.insert(agent.binary().to_string());
                 }

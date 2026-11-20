@@ -659,7 +659,7 @@ pub(super) fn agent_surface_location(
                     let surface_idx = pane.read(cx).surfaces().iter().position(|surface| {
                         surface
                             .as_terminal()
-                            .is_some_and(|terminal| terminal.entity_id().as_u64() == surface_id)
+                            .is_some_and(|terminal| terminal.read(cx).surface_id() == surface_id)
                     })?;
                     Some((workspace_idx, pane, surface_idx))
                 })
@@ -2278,7 +2278,7 @@ mod tests {
         for (index, title) in tabs.iter().enumerate() {
             let terminal =
                 cx.new(|cx| TerminalView::display_only_for_test(id * 10 + index as u64, cx));
-            surfaces.push(terminal.entity_id().as_u64());
+            surfaces.push(terminal.read_with(cx, |view, _| view.surface_id()));
             let pane = cx.new(|cx| Pane::new(terminal, id, cx));
             match workspace.as_mut() {
                 None => workspace = Some(Workspace::with_id(id, name, pane)),
@@ -2733,7 +2733,7 @@ mod tests {
         let cx = cx.add_empty_window();
         let (workspace, surfaces) = workspace_with_agents(cx, 1, "paneflow", &["a", "b"]);
         let second_terminal = cx.new(|cx| TerminalView::display_only_for_test(99, cx));
-        let second_surface = second_terminal.entity_id().as_u64();
+        let second_surface = second_terminal.read_with(cx, |view, _| view.surface_id());
         let pane = workspace.tabs()[1].collect_panes()[0].clone();
         cx.update(|_, cx| {
             pane.update(cx, |pane, cx| {

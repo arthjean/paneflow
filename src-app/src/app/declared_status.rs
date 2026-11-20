@@ -298,7 +298,7 @@ impl PaneFlowApp {
                     pane.read(cx).terminals().cloned().collect();
                 let mut pane_changed = false;
                 for terminal in terminals {
-                    let surface_id = terminal.entity_id().as_u64();
+                    let surface_id = terminal.read(cx).surface_id();
                     live.insert(surface_id);
                     let row = self.host_agents.row(&terminal.read(cx).terminal.session_id);
                     let declared = row.and_then(|row| row.declared_status.clone());

@@ -96,10 +96,15 @@ pub(crate) fn install(
                             let left = mount(left);
                             let top = mount(top);
                             let bottom = mount(bottom);
-                            let mut root = LayoutTree::Leaf(left.clone());
-                            root.split_at_pane(&left, SplitDirection::Vertical, top.clone());
-                            root.split_at_pane(&top, SplitDirection::Horizontal, bottom);
-                            root
+                            LayoutTree::new_split(
+                                SplitDirection::Vertical,
+                                LayoutTree::Leaf(left),
+                                LayoutTree::new_split(
+                                    SplitDirection::Horizontal,
+                                    LayoutTree::Leaf(top),
+                                    LayoutTree::Leaf(bottom),
+                                ),
+                            )
                         }
                     }
                 } else {

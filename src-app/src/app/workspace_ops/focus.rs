@@ -10,17 +10,6 @@ impl PaneFlowApp {
             .and_then(|ws| ws.active_tab().root.as_ref())
     }
 
-    pub(crate) fn take_nav_root(&mut self) -> Option<LayoutTree> {
-        self.active_workspace_mut()
-            .and_then(|ws| ws.active_tab_mut().root.take())
-    }
-
-    pub(crate) fn put_nav_root(&mut self, root: Option<LayoutTree>) {
-        if let Some(ws) = self.active_workspace_mut() {
-            ws.active_tab_mut().root = root;
-        }
-    }
-
     pub(crate) fn pane_grid_mounted(&self) -> bool {
         self.settings_section.is_none()
             && self.diff_dock.maximized.is_none()
@@ -52,12 +41,6 @@ impl PaneFlowApp {
         match window.focus_lost_restore_target(cx) {
             Some(ancestor) => window.focus(&ancestor, cx),
             None => self.focus_active_pane(window, cx),
-        }
-    }
-
-    pub(crate) fn exit_nav_zoom(&mut self, cx: &mut Context<Self>) {
-        if let Some(ws) = self.active_workspace_mut() {
-            ws.exit_zoom(cx);
         }
     }
 
@@ -115,10 +98,7 @@ impl PaneFlowApp {
             cx,
         )
         .into_iter()
-        .filter(|&surface_id| {
-            crate::app::ipc_handler::find_pane_by_surface_id(&self.workspaces, surface_id, cx)
-                .is_some()
-        })
+        .filter(|&surface_id| self.locate_surface(surface_id).is_some())
         .collect();
         let Some(next) = next_in_cycle(&ids, self.jump_cursor) else {
             return;

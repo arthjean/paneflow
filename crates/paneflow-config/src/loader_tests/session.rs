@@ -2,6 +2,7 @@ use crate::schema::*;
 
 fn make_workspace(title: &str, cwd: &str, tabs: Vec<TabSession>) -> WorkspaceSession {
     WorkspaceSession {
+        layout_id: None,
         id: None,
         title: title.to_string(),
         cwd: cwd.to_string(),
@@ -70,6 +71,7 @@ fn make_surface(cwd: &str) -> SurfaceDefinition {
 #[test]
 fn test_session_roundtrip_single_workspace() {
     let state = SessionState {
+        next_layout_id: None,
         version: SESSION_SCHEMA_VERSION,
         active_workspace: 0,
         workspaces: vec![make_workspace(
@@ -90,6 +92,7 @@ fn test_session_roundtrip_single_workspace() {
 #[test]
 fn test_session_roundtrip_multiple_workspaces() {
     let state = SessionState {
+        next_layout_id: None,
         version: SESSION_SCHEMA_VERSION,
         active_workspace: 1,
         workspaces: vec![
@@ -122,6 +125,7 @@ fn test_session_roundtrip_multiple_workspaces() {
 #[test]
 fn test_session_roundtrip_nested_splits() {
     let state = SessionState {
+        next_layout_id: None,
         version: SESSION_SCHEMA_VERSION,
         active_workspace: 0,
         workspaces: vec![make_workspace(
@@ -164,6 +168,7 @@ fn test_session_roundtrip_nested_splits() {
 #[test]
 fn test_session_roundtrip_with_scrollback() {
     let state = SessionState {
+        next_layout_id: None,
         version: SESSION_SCHEMA_VERSION,
         active_workspace: 0,
         workspaces: vec![make_workspace(
@@ -696,6 +701,7 @@ fn test_a_tab_built_in_process_is_preset() {
 #[test]
 fn test_tab_title_source_survives_a_roundtrip() {
     let state = SessionState {
+        next_layout_id: None,
         version: SESSION_SCHEMA_VERSION,
         active_workspace: 0,
         workspaces: vec![make_workspace(
@@ -703,6 +709,7 @@ fn test_tab_title_source_survives_a_roundtrip() {
             "/home/user/project",
             vec![
                 TabSession {
+                    layout_ids: None,
                     title: "sprint 3".to_string(),
                     title_source: Some(TabTitleSource::User),
                     layout: None,
@@ -713,6 +720,7 @@ fn test_tab_title_source_survives_a_roundtrip() {
                     dock: None,
                 },
                 TabSession {
+                    layout_ids: None,
                     title: "wire up the parser".to_string(),
                     title_source: Some(TabTitleSource::Prompt),
                     layout: None,
@@ -790,6 +798,7 @@ fn detached_windows_survive_restart_and_older_sessions_remain_docked() {
         .unwrap()
         .contains("detached_panes"));
     state.detached_panes = vec![DetachedPaneSession {
+        pane: None,
         layout_leaf_count: Some(4),
         location: DetachedPaneLocation {
             workspace: 1,
@@ -933,6 +942,7 @@ fn space_membership_and_the_active_space_round_trip_as_additive_fields() {
     workspaces[0].space = Some(work.clone());
     workspaces[1].space = Some(home);
     let state = SessionState {
+        next_layout_id: None,
         version: SESSION_SCHEMA_VERSION,
         active_workspace: 0,
         workspaces,
@@ -985,6 +995,7 @@ fn the_previous_version_reads_a_session_that_carries_spaces() {
     let mut workspace = make_workspace("api", "/work/api", vec![]);
     workspace.space = Some(SpaceId::parse(WORK_SPACE).unwrap());
     let state = SessionState {
+        next_layout_id: None,
         version: SESSION_SCHEMA_VERSION,
         active_workspace: 0,
         workspaces: vec![workspace],

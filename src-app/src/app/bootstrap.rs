@@ -445,7 +445,7 @@ impl PaneFlowApp {
             #[cfg(target_os = "windows")]
             windows_backdrop_acrylic: None,
             jump_cursor: None,
-            closed_panes: Vec::new(),
+            layout: crate::app::layout_bridge::LayoutBridge::default(),
             owned_sessions: Default::default(),
             resume_batch: None,
             conversation_restore: Default::default(),
@@ -596,6 +596,7 @@ impl PaneFlowApp {
             ),
         );
 
+        app.adopt_layout(cx);
         app
     }
 

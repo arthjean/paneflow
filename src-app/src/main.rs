@@ -49,6 +49,7 @@ mod keys;
 mod launch;
 mod launch_cwd;
 mod layout;
+mod layout_ids;
 mod limits;
 mod login_shell_env;
 mod markdown;
@@ -91,9 +92,8 @@ mod workspace;
 use crate::window_chrome::title_bar;
 
 use gpui::{
-    App, Context, CursorStyle, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    Pixels, Point, Render, Styled, Window, WindowBounds, WindowDecorations, WindowOptions, div,
-    prelude::*, px,
+    App, Context, CursorStyle, Entity, FocusHandle, InteractiveElement, IntoElement, Pixels, Point,
+    Render, Styled, Window, WindowBounds, WindowDecorations, WindowOptions, div, prelude::*, px,
 };
 use gpui_platform::application;
 
@@ -109,7 +109,7 @@ use window_chrome::{
 pub use app::actions::*;
 pub(crate) use app::bootstrap::warn_if_legacy_run_install;
 pub(crate) use app::constants::{
-    CLOSED_SESSION_GRACE_MS, MAX_CLOSED_PANES, RESIZE_BORDER, SIDEBAR_WIDTH, TOAST_HOLD_MS,
+    CLOSED_SESSION_GRACE_MS, RESIZE_BORDER, SIDEBAR_WIDTH, TOAST_HOLD_MS,
 };
 pub(crate) use app::drag::{TabDrag, WorkspaceDrag, WorkspaceDragPreview};
 #[cfg(target_os = "macos")]
@@ -338,7 +338,7 @@ struct PaneFlowApp {
     #[cfg(target_os = "windows")]
     windows_backdrop_acrylic: Option<bool>,
     jump_cursor: Option<u64>,
-    closed_panes: Vec<crate::app::workspace_ops::ClosedRecord>,
+    layout: crate::app::layout_bridge::LayoutBridge,
     owned_sessions: crate::app::hosted_sessions::OwnedSessions,
     resume_batch: Option<crate::app::hosted_sessions::ResumeBatch>,
     conversation_restore: crate::app::conversation_restore::ConversationRestoreQueue,

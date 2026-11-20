@@ -172,8 +172,7 @@ impl PaneFlowApp {
                     let surface = team.surface_of(local);
                     team.set_title(local, title.clone());
                     if let Some(surface) = surface
-                        && let Some(terminal) =
-                            find_terminal_by_surface_id(&self.workspaces, surface, cx)
+                        && let Some(terminal) = self.terminal_for_surface(surface)
                         && let Some(name) = sanitize_pane_name(&title)
                     {
                         terminal.update(cx, |view, cx| {
@@ -353,7 +352,7 @@ impl PaneFlowApp {
                 let count = pane_ref.terminals().count();
                 pane_ref
                     .terminals()
-                    .find(|terminal| terminal.entity_id().as_u64() == surface)
+                    .find(|terminal| terminal.read(cx).surface_id() == surface)
                     .map(|terminal| (pane.clone(), terminal.clone(), count))
             })
         });

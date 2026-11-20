@@ -4,10 +4,8 @@ use paneflow_config::schema::{LayoutNode, TabTitleSource};
 use crate::layout::LayoutTree;
 use crate::pane::Pane;
 
-static NEXT_TAB_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-
 pub fn next_tab_id() -> u64 {
-    NEXT_TAB_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    crate::layout_ids::allocate()
 }
 
 pub const CONFINE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
@@ -164,6 +162,7 @@ impl Tab {
         self.title_source.is_settled()
     }
 
+    #[cfg(test)]
     pub fn set_title(&mut self, title: &str, source: TabTitleSource) -> bool {
         let title = title.trim();
         if title.is_empty() || !self.title_source.yields_to(source) {
@@ -178,6 +177,14 @@ impl Tab {
         true
     }
 
+    pub(crate) fn project_title(&mut self, title: &str, source: TabTitleSource) {
+        if self.title != title {
+            self.title = title.to_string();
+        }
+        self.title_source = source;
+    }
+
+    #[cfg(test)]
     pub fn unlock_title(&mut self) -> bool {
         let changed = self.title_source != TabTitleSource::Preset;
         self.title_source = TabTitleSource::Preset;
@@ -186,30 +193,6 @@ impl Tab {
 
     pub fn is_zoomed(&self) -> bool {
         self.saved_layout.is_some()
-    }
-
-    pub fn exit_zoom(&mut self, cx: &mut App) -> Option<Entity<Pane>> {
-        let zoomed_pane = self.root.as_ref().and_then(|root| root.first_leaf());
-        let saved = self.saved_layout.take()?;
-        self.root = Some(saved);
-        if let Some(pane) = &zoomed_pane {
-            pane.update(cx, |pane, _| {
-                pane.zoomed = false;
-            });
-        }
-        zoomed_pane
-    }
-
-    pub fn reveal_pane(&mut self, pane: &Entity<Pane>, cx: &mut App) -> bool {
-        let hidden = self.is_zoomed()
-            && !self
-                .root
-                .as_ref()
-                .is_some_and(|root| root.contains_leaf(pane));
-        if hidden {
-            self.exit_zoom(cx);
-        }
-        hidden
     }
 
     pub fn pane_count(&self) -> usize {
@@ -251,7 +234,7 @@ impl Tab {
         let mut ids = std::collections::HashSet::new();
         for pane in self.collect_panes() {
             for terminal in pane.read(cx).terminals() {
-                ids.insert(terminal.entity_id().as_u64());
+                ids.insert(terminal.read(cx).surface_id());
             }
         }
         ids

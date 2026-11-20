@@ -145,21 +145,22 @@ impl PaneFlowApp {
         worktree: Option<std::path::PathBuf>,
         cx: &mut Context<Self>,
     ) {
-        let Some(ws) = self.workspaces.get_mut(ws_idx) else {
+        let Some(ws) = self.workspaces.get(ws_idx) else {
             return;
         };
         let ws_id = ws.id;
-        let Some(tab) = ws.tab_mut(tab_idx) else {
+        let Some(tab) = ws.tabs().get(tab_idx) else {
             return;
         };
-        if !tab.bind_worktree(worktree.clone()) {
+        if tab.worktree == worktree {
+            return;
+        }
+        if !self.bind_tab_worktree_through_model(tab.id, worktree.clone(), cx) {
             return;
         }
         if let Some(path) = worktree {
             Self::spawn_initial_git_stats(ws_id, path.to_string_lossy().into_owned(), cx);
         }
-        self.save_session(cx);
-        cx.notify();
     }
 
     pub(crate) fn spawn_worktree_listing(&mut self, ws_idx: usize, cx: &mut Context<Self>) {

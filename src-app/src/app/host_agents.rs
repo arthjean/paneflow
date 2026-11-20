@@ -638,7 +638,7 @@ impl PaneFlowApp {
                     pane.read(cx).terminals().cloned().collect();
                 let mut pane_changed = false;
                 for tv in terminals {
-                    let surface_id = tv.entity_id().as_u64();
+                    let surface_id = tv.read(cx).surface_id();
                     let observed =
                         host_observed_agent(self.host_agents.row(&tv.read(cx).terminal.session_id));
                     if let Some(agent) = observed {
@@ -742,7 +742,7 @@ impl PaneFlowApp {
                 pane.read(cx)
                     .terminals()
                     .find(|terminal| &terminal.read(cx).terminal.session_id == session)
-                    .map(|terminal| (ws.id, terminal.entity_id().as_u64()))
+                    .map(|terminal| (ws.id, terminal.read(cx).surface_id()))
             })
         })
     }
@@ -907,7 +907,7 @@ impl PaneFlowApp {
             ws.collect_panes().iter().find_map(|pane| {
                 pane.read(cx)
                     .terminals()
-                    .find(|terminal| terminal.entity_id().as_u64() == surface_id)
+                    .find(|terminal| terminal.read(cx).surface_id() == surface_id)
                     .map(|terminal| crate::pane::Pane::terminal_surface_title(terminal, cx))
             })
         })

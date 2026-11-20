@@ -38,25 +38,6 @@ pub(super) const DIVIDER_PX: f32 = 8.0;
 pub(super) const DIVIDER_HIT_PX: f32 = 7.0;
 pub(crate) const MIN_PANE_SIZE: f32 = 80.0;
 
-pub(super) fn normalize_ratios(children: &[LayoutChild]) {
-    let sum: f32 = children.iter().map(|c| c.ratio.get()).sum();
-    if sum > 0.0 && (sum - 1.0).abs() > f32::EPSILON {
-        for child in children {
-            child.ratio.set(child.ratio.get() / sum);
-        }
-    }
-}
-
-pub(super) fn redistribute_equal(children: &[LayoutChild], removed_ratio: f32) {
-    if children.is_empty() {
-        return;
-    }
-    let share = removed_ratio / children.len() as f32;
-    for child in children {
-        child.ratio.set(child.ratio.get() + share);
-    }
-}
-
 pub(super) fn resize_adjacent_ratios(
     start_ratio_before: f32,
     start_ratio_after: f32,
@@ -93,33 +74,9 @@ pub(super) fn resize_adjacent_ratios(
     Some((new_before, pair_sum - new_before))
 }
 
-pub(super) fn insert_sibling(children: &mut Vec<LayoutChild>, idx: usize, new_pane: Entity<Pane>) {
-    debug_assert!(idx < children.len(), "insert_sibling: idx out of bounds");
-    let half = {
-        let Some(target) = children.get(idx) else {
-            return;
-        };
-        let old_ratio = target.ratio.get();
-        debug_assert!(old_ratio.is_finite(), "insert_sibling: ratio is NaN/inf");
-        let half = if old_ratio.is_finite() {
-            old_ratio / 2.0
-        } else {
-            0.5
-        };
-        target.ratio.set(half);
-        half
-    };
-    children.insert(
-        idx + 1,
-        LayoutChild {
-            node: LayoutTree::Leaf(new_pane),
-            ratio: Rc::new(Cell::new(half)),
-        },
-    );
-}
-
 impl LayoutTree {
-    pub(super) fn new_split(
+    #[cfg(test)]
+    pub(crate) fn new_split(
         direction: SplitDirection,
         first: LayoutTree,
         second: LayoutTree,
@@ -208,6 +165,54 @@ impl LayoutTree {
                         .fold(MIN_PANE_SIZE, f32::max)
                 }
             }
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct SplitCells {
+    drag: Rc<Cell<Option<DragState>>>,
+    container_size: Rc<Cell<f32>>,
+}
+
+impl SplitCells {
+    pub(crate) fn new() -> Self {
+        Self {
+            drag: Rc::new(Cell::new(None)),
+            container_size: Rc::new(Cell::new(0.0)),
+        }
+    }
+
+    pub(crate) fn key(&self) -> usize {
+        Rc::as_ptr(&self.drag) as usize
+    }
+}
+
+impl LayoutTree {
+    pub(crate) fn projected_split(
+        direction: SplitDirection,
+        children: Vec<LayoutChild>,
+        cells: &SplitCells,
+    ) -> Self {
+        Self::Container {
+            direction,
+            children,
+            drag: cells.drag.clone(),
+            container_size: cells.container_size.clone(),
+        }
+    }
+
+    pub(crate) fn split_cells(&self) -> Option<SplitCells> {
+        match self {
+            Self::Leaf(_) => None,
+            Self::Container {
+                drag,
+                container_size,
+                ..
+            } => Some(SplitCells {
+                drag: drag.clone(),
+                container_size: container_size.clone(),
+            }),
         }
     }
 }

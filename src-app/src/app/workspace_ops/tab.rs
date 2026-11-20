@@ -1,12 +1,6 @@
-use std::collections::VecDeque;
-
-use gpui::{App, AppContext, AsyncApp, Context, Entity, WeakEntity, Window};
+use gpui::{App, AppContext, Context, Entity, Window};
 use paneflow_config::schema::{TabTitleSource, TerminalSurfaceProfile};
 
-use super::{
-    ClosedRecord, ClosedTabRecord, capture_closed_tab_record, push_closed_record,
-    restore_closed_surface_record, take_closed_tab_record,
-};
 use crate::PaneFlowApp;
 use crate::app::close_policy::CloseTarget;
 use crate::app::workspace_ops::SurfaceLaunch;
@@ -75,16 +69,9 @@ impl PaneFlowApp {
             .detach();
         let pane = self.create_pane(terminal.clone(), ws_id, cx);
         let root = LayoutTree::Leaf(pane);
-        let opened = self.workspaces.get_mut(ws_idx).is_some_and(|ws| {
-            let active = ws.active_tab_mut();
-            if active.root.is_none() && active.saved_layout.is_none() {
-                active.set_title(&title, TabTitleSource::Preset);
-                active.root = Some(root);
-                true
-            } else {
-                ws.open_tab(Tab::new(title, Some(root)))
-            }
-        });
+        let opened = self
+            .open_tab_through_model(ws_idx, title, Some(root), None, fills_active_tab, cx)
+            .is_ok();
         if !opened {
             self.show_toast("Tab limit reached for this workspace", cx);
             return false;
@@ -98,7 +85,6 @@ impl PaneFlowApp {
         }
         let tab_idx = self.workspaces[ws_idx].active_tab_idx();
         self.focus_workspace_tab(ws_idx, tab_idx, window, cx);
-        self.save_session(cx);
         cx.notify();
         true
     }
@@ -180,14 +166,21 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(ws) = self.workspaces.get_mut(ws_idx) {
-            ws.set_active_tab(tab_idx);
-        }
-        if self.shown_workspace_idx() == Some(ws_idx) {
+        let shown = self.shown_workspace_idx() == Some(ws_idx);
+        let pending = self.pending_pane_focus.clone();
+        self.select_tab_through_model(ws_idx, tab_idx, cx);
+        if shown {
+            self.pending_pane_focus = pending;
             self.workspaces[ws_idx].focus_first(window, cx);
-            self.save_session(cx);
-        } else {
-            self.select_workspace(ws_idx, window, cx);
+        } else if ws_idx < self.workspaces.len() {
+            self.pending_pane_focus = pending;
+            self.after_workspace_activated(
+                ws_idx,
+                true,
+                crate::app::workspace_ops::WorkspaceFocusTarget::FirstPane,
+                window,
+                cx,
+            );
         }
         self.acknowledge_visible_completions(cx);
     }
@@ -244,18 +237,20 @@ impl PaneFlowApp {
         &mut self,
         ws_idx: usize,
         tab_idx: usize,
+        keep_sessions: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(ws) = self.workspaces.get_mut(ws_idx) else {
+        let Some(ws_id) = self.workspaces.get(ws_idx).map(|ws| ws.id) else {
             return;
         };
-        let ws_id = ws.id;
-        let Some(tab) = ws.close_tab(tab_idx) else {
+        let Some(closed) = self.close_tab_through_model(ws_idx, tab_idx, keep_sessions, cx) else {
+            if self.workspaces.get(ws_idx).is_some_and(|ws| ws.id == ws_id) {
+                self.prune_parked_diff_docks(cx);
+                self.prune_worktree_states();
+            }
             return;
         };
-        let record = capture_closed_tab_record(&tab, ws_id, tab_idx, cx);
-        drop(tab);
         if self
             .renaming_tab
             .is_some_and(|key| key.workspace_id == ws_id)
@@ -263,19 +258,10 @@ impl PaneFlowApp {
             self.renaming_tab = None;
         }
         self.dismiss_transient_surfaces();
-        if self.shown_workspace_idx() == Some(ws_idx) {
-            self.workspaces[ws_idx].focus_first(window, cx);
-        }
-        self.save_session(cx);
-        cx.notify();
+        self.settle_layout_focus(window, cx);
         self.prune_parked_diff_docks(cx);
         self.prune_worktree_states();
-        if let Some(record) = record {
-            let tab_id = record.tab_id;
-            let evicted = push_closed_record(&mut self.closed_panes, ClosedRecord::Tab(record));
-            self.stop_hosted_sessions(evicted, cx);
-            self.show_tab_closed_toast(tab_id, cx);
-        }
+        self.show_tab_closed_toast(closed.get(), cx);
     }
 
     pub(crate) fn reopen_closed_tab(
@@ -284,108 +270,7 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match take_closed_tab_record(&mut self.closed_panes, tab_id) {
-            Some(record) => self.restore_closed_tab(record, window, cx),
-            None => self.show_toast("Could not reopen the tab, it left the undo history", cx),
-        }
-    }
-
-    pub(super) fn restore_closed_tab(
-        &mut self,
-        record: ClosedTabRecord,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let ws_idx = self
-            .workspaces
-            .iter()
-            .position(|ws| ws.id == record.workspace_id)
-            .or(self.shown_workspace_idx())
-            .unwrap_or(usize::MAX);
-        let Some(ws) = self.workspaces.get(ws_idx) else {
-            self.closed_panes.push(ClosedRecord::Tab(record));
-            self.show_toast("No workspace to reopen the tab in", cx);
-            return;
-        };
-        if !ws.can_open_tab() {
-            self.closed_panes.push(ClosedRecord::Tab(record));
-            self.show_toast("Tab limit reached for this workspace", cx);
-            return;
-        }
-        let ws_id = ws.id;
-        let ClosedTabRecord {
-            tab_idx,
-            title,
-            title_source,
-            worktree,
-            layout,
-            surfaces,
-            ..
-        } = record;
-        let attached = self.attached_session_ids(cx);
-        let mut panes: VecDeque<Entity<Pane>> = surfaces
-            .into_iter()
-            .map(|surface| {
-                let (surface, reopen) =
-                    restore_closed_surface_record(surface, ws_id, None, &attached, cx);
-                self.finish_surface_reopen(&surface, reopen, ws_id, cx);
-                self.create_pane_with_existing_surface(surface, ws_id, cx)
-            })
-            .collect();
-        let root = LayoutTree::from_layout_node(&layout, &mut panes, &mut |_| {
-            let cwd = self.new_terminal_cwd(None);
-            let terminal = cx.new(|cx| {
-                TerminalView::spawned(
-                    ws_id,
-                    cwd,
-                    None,
-                    paneflow_config::schema::TerminalSurfaceProfile::Normal,
-                    cx,
-                )
-            });
-            self.create_pane(terminal, ws_id, cx)
-        });
-        let tab = Tab::restored(title, title_source, Some(root), None);
-        let restored_id = tab.id;
-        let terminals = crate::app::hosted_sessions::tab_terminals(&tab, cx);
-        if !self.workspaces[ws_idx].open_tab(tab) {
-            log::warn!("tab undo: workspace refused the tab after the cap check");
-            self.stop_terminals(terminals, cx);
-            return;
-        }
-        let ws = &mut self.workspaces[ws_idx];
-        let last = ws.tab_count().saturating_sub(1);
-        ws.reorder_tab(last, tab_idx.min(last));
-        ws.sidebar_expanded = true;
-        let restored_idx = ws.active_tab_idx();
-        self.focus_workspace_tab(ws_idx, restored_idx, window, cx);
-        if let Some(path) = worktree {
-            Self::rebind_restored_tab_worktree(ws_id, restored_id, path, cx);
-        }
-        self.save_session(cx);
-        cx.notify();
-    }
-
-    fn rebind_restored_tab_worktree(
-        ws_id: u64,
-        tab_id: u64,
-        path: std::path::PathBuf,
-        cx: &mut Context<Self>,
-    ) {
-        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let probe = path.clone();
-            if !smol::unblock(move || probe.is_dir()).await {
-                return;
-            }
-            let _ = cx.update(|cx| {
-                this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                    if let Some((ws_idx, tab_idx)) = app.tab_position(ws_id, tab_id) {
-                        app.set_tab_worktree(ws_idx, tab_idx, Some(path), cx);
-                    }
-                })
-            });
-        })
-        .detach();
+        self.undo_close_through_model(Some(paneflow_layout::TabId(tab_id)), window, cx);
     }
 
     pub(crate) fn handle_close_tab(
@@ -424,12 +309,7 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn reset_tab_name(&mut self, ws_idx: usize, tab_idx: usize, cx: &mut Context<Self>) {
-        let unlocked = self
-            .workspaces
-            .get_mut(ws_idx)
-            .and_then(|ws| ws.tab_mut(tab_idx))
-            .is_some_and(Tab::unlock_title);
-        if !unlocked {
+        if !self.unlock_tab_title_through_model(ws_idx, tab_idx, cx) {
             return;
         }
         if let Some(terminal) = self
@@ -440,7 +320,6 @@ impl PaneFlowApp {
         {
             self.apply_process_title(&terminal, cx);
         }
-        self.save_session(cx);
         cx.notify();
     }
 
@@ -452,7 +331,7 @@ impl PaneFlowApp {
         let Some(ws_idx) = self.workspace_idx_for_terminal(terminal, cx) else {
             return;
         };
-        let surface_id = terminal.entity_id().as_u64();
+        let surface_id = terminal.read(cx).surface_id();
         let Some((tab_idx, 1)) =
             crate::app::ipc_handler::tab_for_surface(&self.workspaces[ws_idx], surface_id, cx)
         else {
@@ -463,13 +342,7 @@ impl PaneFlowApp {
         else {
             return;
         };
-        if self.workspaces[ws_idx]
-            .tab_mut(tab_idx)
-            .is_some_and(|tab| tab.set_title(&title, TabTitleSource::Process))
-        {
-            self.save_session(cx);
-            cx.notify();
-        }
+        self.retitle_tab_through_model(ws_idx, tab_idx, &title, TabTitleSource::Process, cx);
     }
 
     pub(crate) fn reorder_workspace_tab(
@@ -479,7 +352,7 @@ impl PaneFlowApp {
         target_idx: usize,
         cx: &mut Context<Self>,
     ) {
-        let Some(ws) = self.workspaces.get_mut(target_ws_idx) else {
+        let Some(ws) = self.workspaces.get(target_ws_idx) else {
             return;
         };
         if ws.id != drag.workspace_id {
@@ -491,9 +364,17 @@ impl PaneFlowApp {
         if from == target_idx {
             return;
         }
-        ws.reorder_tab(from, target_idx);
-        self.save_session(cx);
-        cx.notify();
+        self.adopt_layout(cx);
+        let Some(tab) = self.layout_tab_id(drag.tab_id) else {
+            return;
+        };
+        let _ = self.apply_layout_op(
+            paneflow_layout::Op::ReorderTab {
+                tab,
+                to: target_idx,
+            },
+            cx,
+        );
     }
 
     pub(crate) fn move_tab_to_workspace(
@@ -521,40 +402,74 @@ impl PaneFlowApp {
             self.show_toast("Tab limit reached for this workspace", cx);
             return;
         }
-        let Some(tab_idx) = self
+        let Some(tab) = self
             .workspaces
             .get(source_ws_idx)
-            .and_then(|ws| ws.tabs().iter().position(|tab| tab.id == drag.tab_id))
+            .and_then(|ws| ws.tabs().iter().find(|tab| tab.id == drag.tab_id))
         else {
-            return;
-        };
-        let Some(tab) = self.workspaces[source_ws_idx].close_tab(tab_idx) else {
             return;
         };
         let surfaces = tab.surface_ids(cx);
         self.hand_surfaces_between(source_ws_idx, dest_ws_idx, &surfaces);
-        self.rehome_panes(&tab.collect_panes(), dest_ws_idx, cx);
-        if !self.workspaces[dest_ws_idx].open_tab(tab) {
+        self.adopt_layout(cx);
+        let (Some(model_tab), Some(workspace)) = (
+            self.layout_tab_id(drag.tab_id),
+            self.layout_workspace_id(self.workspaces[dest_ws_idx].id),
+        ) else {
+            return;
+        };
+        if self
+            .apply_layout_op(
+                paneflow_layout::Op::MoveTab {
+                    tab: model_tab,
+                    workspace,
+                    index: Some(insert_idx),
+                },
+                cx,
+            )
+            .is_err()
+        {
             log::warn!("tab move: destination refused the tab after the cap check");
             return;
         }
-        let last = self.workspaces[dest_ws_idx].tab_count().saturating_sub(1);
-        self.workspaces[dest_ws_idx].reorder_tab(last, insert_idx.min(last));
+        let Some(dest_ws_idx) = self
+            .workspaces
+            .iter()
+            .position(|ws| self.layout_workspace_id(ws.id) == Some(workspace))
+        else {
+            return;
+        };
         self.renaming_tab = None;
         self.workspaces[dest_ws_idx].sidebar_expanded = true;
         let dest_tab_idx = self.workspaces[dest_ws_idx].active_tab_idx();
         self.focus_workspace_tab(dest_ws_idx, dest_tab_idx, window, cx);
-        self.save_session(cx);
-        cx.notify();
     }
 
-    fn rehome_panes(&self, panes: &[Entity<Pane>], dest_ws_idx: usize, cx: &mut Context<Self>) {
+    pub(crate) fn rehome_panes(
+        &self,
+        panes: &[Entity<Pane>],
+        dest_ws_idx: usize,
+        cx: &mut Context<Self>,
+    ) {
         let Some(dest) = self.workspaces.get(dest_ws_idx) else {
             return;
         };
         let durable = dest.durable_id.clone();
         let sessions = move_panes_to_workspace(panes, dest.id, cx);
         if sessions.is_empty() {
+            return;
+        }
+        #[cfg(test)]
+        if crate::app::fake_host::installed(cx) {
+            for session in sessions {
+                crate::app::fake_host::record(
+                    cx,
+                    crate::app::fake_host::HostRequest::Assign {
+                        session,
+                        workspace: durable.clone(),
+                    },
+                );
+            }
             return;
         }
         cx.background_executor()
@@ -590,7 +505,7 @@ impl PaneFlowApp {
         &mut self,
         pane_id: u64,
         dest_ws_idx: usize,
-        mut insert_idx: usize,
+        insert_idx: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -624,93 +539,51 @@ impl PaneFlowApp {
             self.show_toast("Tab limit reached for this workspace", cx);
             return;
         }
-
-        if self.workspaces[src_ws_idx]
+        let source_tab = self.workspaces[src_ws_idx]
             .tabs()
             .get(src_tab_idx)
-            .is_some_and(|tab| tab.is_zoomed())
-            && let Some(tab) = self.workspaces[src_ws_idx].tab_mut(src_tab_idx)
-        {
-            tab.exit_zoom(cx);
-        }
-
-        let Some(tree) = self.workspaces[src_ws_idx]
-            .tab_mut(src_tab_idx)
-            .and_then(|tab| tab.root.take())
-        else {
-            return;
-        };
-        let (pruned, removed) = tree.remove_pane(&pane);
-        if !removed {
-            if let Some(tab) = self.workspaces[src_ws_idx].tab_mut(src_tab_idx) {
-                tab.root = pruned;
-            }
-            return;
-        }
-        let emptied_tab = pruned
-            .is_none()
-            .then(|| {
-                self.workspaces[src_ws_idx]
-                    .tabs()
-                    .get(src_tab_idx)
-                    .map(|tab| tab.id)
-            })
-            .flatten();
-        match pruned {
-            Some(rest) => {
-                if let Some(tab) = self.workspaces[src_ws_idx].tab_mut(src_tab_idx) {
-                    tab.root = Some(rest);
-                }
-            }
-            None => {
-                self.workspaces[src_ws_idx].close_tab(src_tab_idx);
-                if src_ws_idx == dest_ws_idx && src_tab_idx < insert_idx {
-                    insert_idx -= 1;
-                }
-            }
-        }
-
-        self.rehome_panes(std::slice::from_ref(&pane), dest_ws_idx, cx);
+            .map(|tab| (tab.id, tab.pane_count() <= 1));
         let surfaces: std::collections::HashSet<u64> = pane
             .read(cx)
             .terminals()
-            .map(|terminal| terminal.entity_id().as_u64())
+            .map(|terminal| terminal.read(cx).surface_id())
             .collect();
-
-        if !self.open_pane_in_new_workspace_tab(dest_ws_idx, pane.clone(), cx) {
-            log::warn!("pane move: destination refused the tab after the cap check");
-            let reattached = self.workspaces[src_ws_idx]
-                .tab_mut(src_tab_idx)
-                .and_then(|tab| tab.root.as_mut())
-                .is_some_and(|root| {
-                    root.first_leaf().is_some_and(|anchor| {
-                        root.split_at_pane(&anchor, crate::layout::SplitDirection::Vertical, pane)
-                    })
-                });
-            if !reattached {
-                log::error!("pane move: dropped pane could not be re-attached");
-            }
-            cx.notify();
+        self.hand_surfaces_between(src_ws_idx, dest_ws_idx, &surfaces);
+        self.adopt_layout(cx);
+        let (Some(model_pane), Some(workspace)) = (
+            self.layout_pane_id(&pane),
+            self.layout_workspace_id(self.workspaces[dest_ws_idx].id),
+        ) else {
+            return;
+        };
+        let new_tab = paneflow_layout::TabId(self.reserve_layout_id());
+        if self
+            .apply_layout_op(
+                paneflow_layout::Op::MovePaneToNewTab {
+                    pane: model_pane,
+                    workspace,
+                    tab: new_tab,
+                    index: Some(insert_idx),
+                },
+                cx,
+            )
+            .is_err()
+        {
             return;
         }
-        self.hand_surfaces_between(src_ws_idx, dest_ws_idx, &surfaces);
-
-        let last = self.workspaces[dest_ws_idx].tab_count().saturating_sub(1);
-        if let (Some(from), Some(to)) = (
-            emptied_tab,
-            self.workspaces[dest_ws_idx]
-                .tabs()
-                .get(last)
-                .map(|tab| tab.id),
-        ) {
+        let Some(dest_ws_idx) = self
+            .workspaces
+            .iter()
+            .position(|ws| self.layout_workspace_id(ws.id) == Some(workspace))
+        else {
+            return;
+        };
+        if let (Some((from, true)), Some(to)) = (source_tab, self.layout_app_tab_id(new_tab)) {
             self.transfer_diff_dock(from, to);
         }
-        self.workspaces[dest_ws_idx].reorder_tab(last, insert_idx.min(last));
         self.workspaces[dest_ws_idx].sidebar_expanded = true;
         let dest_tab_idx = self.workspaces[dest_ws_idx].active_tab_idx();
         self.focus_workspace_tab(dest_ws_idx, dest_tab_idx, window, cx);
-        self.save_session(cx);
-        cx.notify();
     }
 }
 

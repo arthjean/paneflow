@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use paneflow_config::schema::{HostInstanceToken, SessionGeneration, SessionId, WorkspaceId};
@@ -1136,6 +1136,36 @@ fn workspace_to_assign<'a>(
     requested: Option<&'a WorkspaceId>,
 ) -> Option<&'a WorkspaceId> {
     requested.filter(|requested| current != Some(*requested))
+}
+
+pub(crate) fn spawned_surface_ids(sessions: &[SessionId]) -> HashMap<SessionId, u64> {
+    let Some(target) = host_endpoint() else {
+        return HashMap::new();
+    };
+    let Ok(mut client) = connect(&target.endpoint) else {
+        return HashMap::new();
+    };
+    let mut spawned = HashMap::new();
+    for session in sessions {
+        let summary = match inspect_optional(&mut client, session) {
+            Ok(Some(summary)) => summary,
+            Ok(None) => continue,
+            Err(error) => {
+                log::warn!("session restore: the host stopped answering id lookups: {error}");
+                break;
+            }
+        };
+        if let Some(id) = summary
+            .manifest
+            .launch
+            .env
+            .get("PANEFLOW_SURFACE_ID")
+            .and_then(|value| value.trim().parse::<u64>().ok())
+        {
+            spawned.insert(session.clone(), id);
+        }
+    }
+    spawned
 }
 
 pub(crate) fn assign_workspace(sessions: &[SessionId], workspace: &WorkspaceId) {

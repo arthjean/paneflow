@@ -354,7 +354,7 @@ impl TerminalView {
         fresh_identity: bool,
         cx: &mut Context<Self>,
     ) {
-        let surface_id = cx.entity_id().as_u64();
+        let surface_id = self.launch.surface_id;
         let (params, shell_notice) = self
             .launch
             .spawn_params(surface_id, &crate::config_snapshot::current(cx));

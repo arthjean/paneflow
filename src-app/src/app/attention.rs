@@ -7,7 +7,6 @@ use paneflow_config::schema::SpaceId;
 use crate::PaneFlowApp;
 use crate::ai_types::AgentState;
 use crate::app::declared_status::surface_has_agent;
-use crate::app::ipc_handler::find_pane_by_surface_id;
 use crate::app::workspace_ops::WorkspaceFocusTarget;
 use crate::workspace::Workspace;
 
@@ -97,7 +96,7 @@ impl PaneFlowApp {
         for (ws_idx, ws) in self.workspaces.iter().enumerate() {
             for pane in ws.collect_panes() {
                 for t in pane.read(cx).terminals() {
-                    let surface_id = t.entity_id().as_u64();
+                    let surface_id = t.read(cx).surface_id();
                     live_surfaces.insert(surface_id);
                     session_surfaces
                         .insert(t.read(cx).terminal.session_id.clone(), (surface_id, ws_idx));
@@ -138,7 +137,7 @@ impl PaneFlowApp {
         for (ws_idx, ws) in self.workspaces.iter().enumerate() {
             for pane in ws.collect_panes() {
                 for terminal in pane.read(cx).terminals() {
-                    let surface_id = terminal.entity_id().as_u64();
+                    let surface_id = terminal.read(cx).surface_id();
                     let view = terminal.read(cx);
                     let row = self.host_agent_row(&view.terminal.session_id);
                     if surface_has_agent(ws, surface_id, row) {
@@ -173,7 +172,7 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(loc) = find_pane_by_surface_id(&self.workspaces, surface_id, cx) else {
+        let Some(loc) = self.locate_surface(surface_id) else {
             cx.notify();
             return;
         };
@@ -281,58 +280,5 @@ mod tests {
         let counts = space_attention(&workspaces, &[]);
 
         assert_eq!(counts.get(&Some(space(1))), None);
-    }
-
-    #[gpui::test]
-    fn activating_a_hidden_agent_switches_to_its_space(cx: &mut gpui::TestAppContext) {
-        use crate::pane::Pane;
-        use crate::terminal::TerminalView;
-        use gpui::AppContext as _;
-
-        let cx = cx.add_empty_window();
-        let mut terminals = Vec::new();
-        let workspaces: Vec<Workspace> = [(1, None), (2, Some(space(1)))]
-            .into_iter()
-            .map(|(id, space)| {
-                let terminal = cx.new(|cx| TerminalView::display_only_for_test(id, cx));
-                terminals.push(terminal.entity_id().as_u64());
-                let pane = cx.new(|cx| Pane::new(terminal, id, cx));
-                let mut workspace = Workspace::with_id(id, format!("ws{id}"), pane);
-                workspace.space = space;
-                workspace
-            })
-            .collect();
-        let mut active_idx = 0;
-        let mut active_space = None;
-        let mut memory = crate::app::spaces::SpaceMemory::new();
-        let closed = cx.new(|cx| TerminalView::display_only_for_test(3, cx));
-        let closed = closed.entity_id().as_u64();
-
-        let gone = cx.update(|_, cx| find_pane_by_surface_id(&workspaces, closed, cx));
-        assert!(gone.is_none());
-        assert_eq!((active_idx, active_space.clone()), (0, None));
-
-        let destination = cx
-            .update(|_, cx| find_pane_by_surface_id(&workspaces, terminals[1], cx))
-            .expect("the waiting agent's pane is found");
-        assert!(crate::app::spaces::point_at(
-            &workspaces,
-            &mut active_idx,
-            &mut active_space,
-            &mut memory,
-            destination.workspace_idx,
-        ));
-
-        assert_eq!(active_space, Some(space(1)));
-        assert_eq!(active_idx, 1);
-        let focused = cx.update(|_, cx| {
-            destination
-                .pane
-                .read(cx)
-                .terminals()
-                .next()
-                .map(|terminal| terminal.entity_id().as_u64())
-        });
-        assert_eq!(focused, Some(terminals[1]));
     }
 }

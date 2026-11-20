@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context as _;
 use gpui::{App, AppContext, Context, Entity, Window};
-use paneflow_config::schema::{LayoutNode, TabTitleSource};
+use paneflow_config::schema::{LayoutNode, SessionId, TabTitleSource};
 
 use crate::PaneFlowApp;
 use crate::agent_launcher::TerminalAgent;
@@ -15,7 +15,9 @@ use crate::layout::{LayoutTree, MAX_PANES};
 use crate::limits::MAX_SESSION_SIZE_BYTES;
 use crate::pane::Pane;
 use crate::terminal::TerminalView;
-use crate::workspace::{MAX_TABS_PER_WORKSPACE, Tab, Workspace, next_workspace_id_in};
+use crate::workspace::{
+    MAX_TABS_PER_WORKSPACE, Tab, Workspace, next_workspace_id_in, restored_workspace_id_in,
+};
 
 const MAX_CORRUPTION_BACKUPS: usize = 5;
 
@@ -44,8 +46,9 @@ pub(crate) struct SessionCorruptionInfo {
 }
 
 impl PaneFlowApp {
-    fn build_session_state(&self, cx: &App) -> paneflow_config::schema::SessionState {
+    pub(crate) fn build_session_state(&self, cx: &App) -> paneflow_config::schema::SessionState {
         paneflow_config::schema::SessionState {
+            next_layout_id: Some(self.next_layout_id()),
             detached_panes: self.serialize_detached_panes(cx),
             version: paneflow_config::schema::SESSION_SCHEMA_VERSION,
             active_workspace: self.active_idx,
@@ -54,6 +57,7 @@ impl PaneFlowApp {
                 .workspaces
                 .iter()
                 .map(|ws| paneflow_config::schema::WorkspaceSession {
+                    layout_id: self.workspace_layout_id(ws),
                     id: Some(ws.durable_id.clone()),
                     title: ws.title.clone(),
                     cwd: ws.cwd.clone(),
@@ -62,6 +66,7 @@ impl PaneFlowApp {
                         .into_iter()
                         .zip(ws.tabs())
                         .map(|(mut tab_session, tab)| {
+                            tab_session.layout_ids = self.tab_layout_ids(tab, cx);
                             tab_session.dock = self.dock_session_for_tab(
                                 tab.id,
                                 &ws.cwd,
@@ -525,11 +530,22 @@ impl PaneFlowApp {
         Option<paneflow_config::schema::SpaceId>,
     ) {
         let mut workspaces = Vec::new();
+        let mut ids = RestoredIds::default();
+        let spawned = match session.next_layout_id {
+            Some(next) => {
+                crate::layout_ids::claim(next.saturating_sub(1));
+                std::collections::HashMap::new()
+            }
+            None => host_spawned_surface_ids(&hosted_sessions_of(session), cx),
+        };
 
         for ws_session in &session.workspaces {
             let cwd = restored_workspace_cwd(&ws_session.cwd);
             let title = ws_session.title.clone();
-            let ws_id = next_workspace_id_in(ws_session.space.as_ref());
+            let ws_id = match ids.take(ws_session.layout_id) {
+                Some(id) => restored_workspace_id_in(id, ws_session.space.as_ref()),
+                None => next_workspace_id_in(ws_session.space.as_ref()),
+            };
 
             if ws_session.tabs.len() > MAX_TABS_PER_WORKSPACE {
                 log::warn!(
@@ -544,6 +560,8 @@ impl PaneFlowApp {
                     .clone()
                     .map(without_persisted_scrollback)
                     .map(canonicalize_persisted_layout);
+                let saved_ids = tab_session.layout_ids.as_ref();
+                let mut pane_index = 0usize;
                 let root = restored_layout.map(|layout| {
                     let mut pane_deque: VecDeque<Entity<Pane>> = VecDeque::new();
                     let ws_cwd = cwd.clone();
@@ -552,7 +570,40 @@ impl PaneFlowApp {
                             LayoutNode::Pane { surfaces } => surfaces.as_slice(),
                             _ => &[],
                         };
-                        Self::spawn_pane_from_surfaces(ws_id, surfaces, &ws_cwd, cx)
+                        let surface_ids: Vec<Option<u64>> = surfaces
+                            .iter()
+                            .enumerate()
+                            .map(|(idx, definition)| {
+                                ids.take(
+                                    saved_ids
+                                        .and_then(|saved| saved.surfaces.get(pane_index))
+                                        .and_then(|pane| pane.get(idx))
+                                        .copied()
+                                        .or_else(|| {
+                                            definition
+                                                .session
+                                                .as_ref()
+                                                .and_then(|session| spawned.get(session))
+                                                .copied()
+                                        }),
+                                )
+                            })
+                            .collect();
+                        let pane_id = ids.take(
+                            saved_ids
+                                .and_then(|saved| saved.panes.get(pane_index))
+                                .copied(),
+                        );
+                        pane_index += 1;
+                        let pane = Self::spawn_pane_from_surfaces(
+                            ws_id,
+                            surfaces,
+                            &surface_ids,
+                            &ws_cwd,
+                            cx,
+                        );
+                        pane.update(cx, |pane, _| pane.restored_layout_id = pane_id);
+                        pane
                     })
                 });
                 let mut tab = Tab::restored(
@@ -561,6 +612,9 @@ impl PaneFlowApp {
                     root,
                     restored_tab_worktree(tab_session),
                 );
+                if let Some(id) = ids.take(saved_ids.map(|saved| saved.tab)) {
+                    tab.id = id;
+                }
                 tab.files_sidebar_open = tab_session.dock.as_ref().is_some_and(|dock| dock.tree);
                 tab.restored_dock = tab_session.dock.clone();
                 tabs.push(tab);
@@ -626,7 +680,7 @@ impl PaneFlowApp {
         (workspaces, active_idx, active_space)
     }
 
-    fn build_restored_surface(
+    pub(crate) fn build_restored_surface(
         workspace_id: u64,
         surface: &paneflow_config::schema::SurfaceDefinition,
         fallback_cwd: &std::path::Path,
@@ -731,15 +785,21 @@ impl PaneFlowApp {
     pub(crate) fn spawn_pane_from_surfaces(
         workspace_id: u64,
         surfaces: &[paneflow_config::schema::SurfaceDefinition],
+        surface_ids: &[Option<u64>],
         fallback_cwd: &std::path::Path,
         cx: &mut Context<Self>,
     ) -> Entity<Pane> {
         let mut built: Vec<crate::pane::PaneSurface> = Vec::new();
         let mut active = None;
-        for definition in surfaces.iter().take(crate::pane::MAX_PANE_TABS) {
-            let Some(surface) =
+        for (idx, definition) in surfaces.iter().take(crate::pane::MAX_PANE_TABS).enumerate() {
+            let build = |cx: &mut Context<Self>| {
                 Self::build_restored_surface(workspace_id, definition, fallback_cwd, cx)
-            else {
+            };
+            let built_surface = match surface_ids.get(idx).copied().flatten() {
+                Some(id) => crate::layout_ids::assigning_surface(id, || build(cx)),
+                None => build(cx),
+            };
+            let Some(surface) = built_surface else {
                 continue;
             };
             if definition.focus == Some(true) && active.is_none() {
@@ -766,6 +826,64 @@ impl PaneFlowApp {
             cx.new(|cx| Pane::new_with_surfaces(built, active.unwrap_or(0), workspace_id, cx));
         cx.subscribe(&pane, Self::handle_pane_event).detach();
         pane
+    }
+}
+
+fn hosted_sessions_of(session: &paneflow_config::schema::SessionState) -> Vec<SessionId> {
+    fn walk(node: &LayoutNode, sessions: &mut Vec<SessionId>) {
+        match node {
+            LayoutNode::Pane { surfaces } => {
+                sessions.extend(
+                    surfaces
+                        .iter()
+                        .filter_map(|surface| surface.session.clone()),
+                );
+            }
+            LayoutNode::Split { children, .. } => {
+                for child in children {
+                    walk(child, sessions);
+                }
+            }
+        }
+    }
+    let mut sessions = Vec::new();
+    for tab in session.workspaces.iter().flat_map(|ws| ws.tabs.iter()) {
+        if let Some(layout) = &tab.layout {
+            walk(layout, &mut sessions);
+        }
+    }
+    sessions
+}
+
+#[cfg(test)]
+fn host_spawned_surface_ids(
+    sessions: &[SessionId],
+    cx: &App,
+) -> std::collections::HashMap<SessionId, u64> {
+    match cx.try_global::<crate::app::fake_host::FakeHost>() {
+        Some(host) => host.spawned_surface_ids(sessions),
+        None => crate::terminal::host_link::spawned_surface_ids(sessions),
+    }
+}
+
+#[cfg(not(test))]
+fn host_spawned_surface_ids(
+    sessions: &[SessionId],
+    _: &App,
+) -> std::collections::HashMap<SessionId, u64> {
+    crate::terminal::host_link::spawned_surface_ids(sessions)
+}
+
+#[derive(Default)]
+struct RestoredIds {
+    claimed: std::collections::HashSet<u64>,
+}
+
+impl RestoredIds {
+    fn take(&mut self, saved: Option<u64>) -> Option<u64> {
+        let id = saved.filter(|id| *id != 0 && self.claimed.insert(*id))?;
+        crate::layout_ids::claim(id);
+        Some(id)
     }
 }
 
@@ -1674,9 +1792,11 @@ mod tests {
             ],
         };
         let mut state = paneflow_config::schema::SessionState {
+            next_layout_id: None,
             version: paneflow_config::schema::SESSION_SCHEMA_VERSION,
             active_workspace: 0,
             workspaces: vec![paneflow_config::schema::WorkspaceSession {
+                layout_id: None,
                 id: None,
                 title: "repo".to_string(),
                 cwd: "/repo".to_string(),
@@ -2238,6 +2358,7 @@ mod tests {
         let mut state = session_with_tabs(15);
         state.detached_panes = (0..15)
             .map(|tab| paneflow_config::schema::DetachedPaneSession {
+                pane: None,
                 location: paneflow_config::schema::DetachedPaneLocation {
                     workspace: 0,
                     tab,
@@ -2629,11 +2750,13 @@ mod tests {
             })
             .collect();
         let state = paneflow_config::schema::SessionState {
+            next_layout_id: None,
             version: paneflow_config::schema::SESSION_SCHEMA_VERSION,
             active_workspace,
             workspaces: spaces
                 .iter()
                 .map(|space| paneflow_config::schema::WorkspaceSession {
+                    layout_id: None,
                     id: None,
                     title: String::new(),
                     cwd: String::new(),

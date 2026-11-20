@@ -1,8 +1,8 @@
 use gpui::{App, AppContext, Context, Entity};
 use paneflow_config::schema::TerminalSurfaceProfile;
 
-use crate::app::close_policy::{CloseIntent, CloseTarget};
-use crate::layout::{LayoutTree, MAX_PANES};
+use crate::app::close_policy::CloseTarget;
+use crate::layout::MAX_PANES;
 use crate::pane::{self, Pane};
 use crate::pane_drag::DropEdge;
 use crate::terminal::{self, TerminalView};
@@ -16,35 +16,6 @@ mod session_reaper;
 pub(crate) use cwd_tracking::CwdProbeSequence;
 use pane_scan::*;
 
-pub(crate) fn split_pane_at_edge(
-    root: &mut LayoutTree,
-    target: &Entity<Pane>,
-    edge: DropEdge,
-    new_pane: Entity<Pane>,
-) -> bool {
-    let (direction, swap) = edge.to_split();
-    if !root.split_at_pane(target, direction, new_pane.clone()) {
-        return false;
-    }
-    if swap {
-        root.swap_panes(target, &new_pane);
-    }
-    true
-}
-
-fn open_pane_in_new_workspace_tab(
-    workspaces: &mut [crate::workspace::Workspace],
-    ws_idx: usize,
-    pane: Entity<Pane>,
-) -> bool {
-    workspaces.get_mut(ws_idx).is_some_and(|ws| {
-        ws.open_tab(crate::workspace::Tab::new(
-            String::new(),
-            Some(crate::layout::LayoutTree::Leaf(pane)),
-        ))
-    })
-}
-
 impl PaneFlowApp {
     pub(crate) fn open_pane_in_new_workspace_tab(
         &mut self,
@@ -52,7 +23,16 @@ impl PaneFlowApp {
         pane: Entity<Pane>,
         cx: &mut Context<Self>,
     ) -> bool {
-        let opened = open_pane_in_new_workspace_tab(&mut self.workspaces, ws_idx, pane);
+        let opened = self
+            .open_tab_through_model(
+                ws_idx,
+                String::new(),
+                Some(crate::layout::LayoutTree::Leaf(pane)),
+                None,
+                false,
+                cx,
+            )
+            .is_ok();
         if !opened {
             self.show_toast("Tab limit reached for this workspace", cx);
         }
@@ -149,11 +129,14 @@ impl PaneFlowApp {
         match event {
             pane::PaneEvent::DropSurfaceMove { .. } => {}
             pane::PaneEvent::ToggleDetached { .. } => {}
-            pane::PaneEvent::SurfacesChanged => {
-                self.save_session(cx);
+            pane::PaneEvent::SurfacesChanged => cx.notify(),
+            pane::PaneEvent::ActiveSurfaceChanged => {
+                self.select_surface_through_model(&pane, cx);
                 cx.notify();
             }
-            pane::PaneEvent::ActiveSurfaceChanged => cx.notify(),
+            pane::PaneEvent::CloseViewRequested(surface) => {
+                self.close_surface_entity_through_model(*surface, cx);
+            }
             pane::PaneEvent::CloseRequested => {
                 self.request_close(CloseTarget::Pane(pane), None, cx);
             }
@@ -177,15 +160,22 @@ impl PaneFlowApp {
                     return;
                 }
                 let cwd = self.new_surface_cwd(&pane, ws_id, cx);
-                let terminal = cx.new(|cx| TerminalView::with_cwd(ws_id, cwd, None, cx));
-                cx.subscribe(&terminal, Self::handle_terminal_event)
-                    .detach();
-                pane.update(cx, |pane, cx| {
-                    pane.push_surface(pane::PaneSurface::Terminal(terminal), cx);
-                });
-                self.pending_pane_focus = Some(pane);
-                self.save_session(cx);
-                cx.notify();
+                let added = self.add_surface_through_model(
+                    &pane,
+                    Box::new(move |_, ws_id, cx| {
+                        crate::app::layout_bridge::subscribed_terminal(
+                            cx.new(|cx| TerminalView::with_cwd(ws_id, cwd, None, cx)),
+                            cx,
+                        )
+                    }),
+                    cx,
+                );
+                if added.is_none() {
+                    self.show_toast(
+                        format!("Maximum tab count reached ({})", pane::MAX_PANE_TABS),
+                        cx,
+                    );
+                }
             }
             pane::PaneEvent::OpenNewTabMenu => {
                 let ws_id = pane.read(cx).workspace_id;
@@ -212,24 +202,29 @@ impl PaneFlowApp {
                 let command = preset.command(&self.cached_config);
                 let env = preset.env();
                 let profile = preset.profile();
-                let terminal = cx.new(|cx| {
-                    TerminalView::with_cwd_env_and_profile(ws_id, cwd, None, env, profile, cx)
-                });
-                cx.subscribe(&terminal, Self::handle_terminal_event)
-                    .detach();
-                pane.update(cx, |pane, cx| {
-                    pane.push_surface(pane::PaneSurface::Terminal(terminal.clone()), cx);
-                });
+                let added = self.add_surface_through_model(
+                    &pane,
+                    Box::new(move |_, ws_id, cx| {
+                        let view = cx.new(|cx| {
+                            TerminalView::with_cwd_env_and_profile(
+                                ws_id, cwd, None, env, profile, cx,
+                            )
+                        });
+                        crate::app::layout_bridge::subscribed_terminal(view, cx)
+                    }),
+                    cx,
+                );
+                let Some(pane::PaneSurface::Terminal(terminal)) = added else {
+                    self.show_toast(
+                        format!("Maximum tab count reached ({})", pane::MAX_PANE_TABS),
+                        cx,
+                    );
+                    return;
+                };
                 if let Some(command) = command.as_deref() {
                     terminal.read(cx).send_command(command);
                     terminal.update(cx, |view, _cx| view.declare_agent_from_command(command));
                 }
-                self.pending_pane_focus = Some(pane);
-                self.save_session(cx);
-                cx.notify();
-            }
-            pane::PaneEvent::Remove => {
-                self.perform_close(CloseTarget::Pane(pane), CloseIntent::Stop, None, cx);
             }
             pane::PaneEvent::ToggleAgentSessions => {
                 if self.agent_sessions.sessions_sidebar_open {
@@ -309,18 +304,9 @@ impl PaneFlowApp {
                 match edge {
                     Some(edge) => {
                         let new_pane = self.create_pane(term, ws_id, cx);
-                        let inserted = if let Some(root) = self.workspaces[ws_idx]
-                            .tab_mut(tab_idx)
-                            .and_then(|tab| tab.root.as_mut())
-                        {
-                            split_pane_at_edge(root, &target, edge, new_pane.clone())
-                        } else {
-                            false
-                        };
-                        if !inserted {
+                        if !self.split_with_pane_through_model(&target, edge, &new_pane, cx) {
                             return;
                         }
-                        self.pending_pane_focus = Some(new_pane);
                     }
                     None => {
                         let new_pane = self.create_pane(term, ws_id, cx);
@@ -330,7 +316,6 @@ impl PaneFlowApp {
                         self.pending_pane_focus = Some(new_pane);
                     }
                 }
-                self.save_session(cx);
                 cx.notify();
             }
             pane::PaneEvent::DropPaneMove {
@@ -343,63 +328,13 @@ impl PaneFlowApp {
                 if target.entity_id().as_u64() == source_pane_id {
                     return;
                 }
-                let Some((ws_idx, tab_idx)) =
-                    self.workspaces.iter().enumerate().find_map(|(idx, ws)| {
-                        ws.tab_index_containing_pane(&target).map(|t| (idx, t))
-                    })
-                else {
-                    return;
-                };
-                let Some(root) = self.workspaces[ws_idx]
-                    .tab_mut(tab_idx)
-                    .and_then(|tab| tab.root.as_mut())
-                else {
-                    return;
-                };
-                let Some(source) = root
-                    .collect_leaves()
+                let Some(source) = crate::workspace::panes_across(&self.workspaces)
                     .into_iter()
                     .find(|p| p.entity_id().as_u64() == source_pane_id)
                 else {
                     return;
                 };
-
-                let moved = match edge {
-                    None => root.swap_panes(&source, &target),
-                    Some(edge) => {
-                        let Some(mut tree) = self.workspaces[ws_idx]
-                            .tab_mut(tab_idx)
-                            .and_then(|tab| tab.root.take())
-                        else {
-                            return;
-                        };
-                        let (pruned, removed) = tree.remove_pane(&source);
-                        let mut moved = false;
-                        tree = pruned.unwrap_or_else(|| LayoutTree::Leaf(source.clone()));
-                        if removed && tree.contains_leaf(&target) {
-                            moved = split_pane_at_edge(&mut tree, &target, edge, source.clone());
-                            if !moved {
-                                moved = tree.first_leaf().is_some_and(|anchor| {
-                                    tree.split_at_pane(
-                                        &anchor,
-                                        crate::layout::SplitDirection::Vertical,
-                                        source.clone(),
-                                    )
-                                });
-                            }
-                        }
-                        if let Some(tab) = self.workspaces[ws_idx].tab_mut(tab_idx) {
-                            tab.root = Some(tree);
-                        }
-                        moved
-                    }
-                };
-                if !moved {
-                    return;
-                }
-                self.pending_pane_focus = Some(source);
-                self.save_session(cx);
-                cx.notify();
+                self.move_pane_through_model(&source, &target, edge, cx);
             }
             pane::PaneEvent::Split(direction) => {
                 let direction = *direction;
@@ -446,39 +381,18 @@ impl PaneFlowApp {
         edge: Option<DropEdge>,
         cx: &mut Context<Self>,
     ) {
-        let Some((w, t)) = self
-            .workspaces
-            .iter()
-            .enumerate()
-            .find_map(|(w, ws)| ws.tab_index_containing_pane(&target).map(|t| (w, t)))
-        else {
-            return;
-        };
-        let Some(tab) = self.workspaces[w].tabs().get(t) else {
-            return;
-        };
-        if tab.is_zoomed() {
-            return;
-        }
-        let Some(root) = tab.root.as_ref() else {
-            return;
-        };
-        let leaves = root.collect_leaves();
-        let Some(source) = leaves
-            .iter()
+        let Some(source) = crate::workspace::panes_across(&self.workspaces)
+            .into_iter()
             .find(|p| p.entity_id().as_u64() == source_id)
-            .cloned()
         else {
             return;
         };
-        if source.read(cx).is_detached() || target.read(cx).is_detached() {
-            return;
-        }
-        let Some(index) = source
+        let Some(surface) = source
             .read(cx)
             .surfaces()
             .iter()
-            .position(|s| s.entity_id() == surface_id)
+            .find(|s| s.entity_id() == surface_id)
+            .cloned()
         else {
             return;
         };
@@ -486,95 +400,11 @@ impl PaneFlowApp {
         if source == target && (edge.is_none() || last) {
             return;
         }
-        if edge.is_none() && !target.read(cx).can_add_surface() {
-            return;
-        }
-        if edge.is_some() && !last && leaves.len() >= MAX_PANES {
-            self.show_toast(format!("Maximum pane count reached ({MAX_PANES})"), cx);
-            return;
-        }
-        let surface = source.read(cx).surfaces()[index].clone();
-        let destination = if edge.is_some() {
-            let workspace_id = target.read(cx).workspace_id;
-            self.create_pane_with_existing_surface(surface, workspace_id, cx)
-        } else {
-            target.update(cx, |pane, cx| pane.push_surface(surface, cx));
-            target.clone()
-        };
-        let root = &mut self.workspaces[w].tab_mut(t).expect("validated tab").root;
-        if let Some(edge) = edge {
-            let Some(tree) = root.as_mut() else {
-                return;
-            };
-            if !split_pane_at_edge(tree, &target, edge, destination.clone()) {
-                return;
-            }
-        }
-        if last {
-            if let Some(tree) = root.take() {
-                *root = tree.remove_pane(&source).0;
-            }
-        } else {
-            source.update(cx, |pane, cx| pane.remove_surface_at(index, cx));
-        }
-        self.pending_pane_focus = Some(destination);
-        self.save_session(cx);
-        cx.notify();
+        self.move_surface_through_model(&surface, &target, edge, cx);
     }
 
     pub(crate) fn remove_pane_from_layout(&mut self, pane: Entity<Pane>, cx: &mut Context<Self>) {
-        let Some((ws_idx, tab_idx)) = self
-            .workspaces
-            .iter()
-            .enumerate()
-            .find_map(|(idx, ws)| ws.tab_index_containing_pane(&pane).map(|t| (idx, t)))
-        else {
-            return;
-        };
-
-        let Some(tab) = self.workspaces[ws_idx].tabs().get(tab_idx) else {
-            return;
-        };
-        let root_contains = tab
-            .root
-            .as_ref()
-            .is_some_and(|root| root.contains_leaf(&pane));
-        let saved_contains = tab
-            .saved_layout
-            .as_ref()
-            .is_some_and(|saved| saved.contains_leaf(&pane));
-
-        if let Some(tab) = self.workspaces[ws_idx].tab_mut(tab_idx) {
-            if saved_contains {
-                if let Some(saved) = tab.saved_layout.take() {
-                    let (new_saved, _) = saved.remove_pane(&pane);
-                    if root_contains {
-                        tab.root = new_saved;
-                    } else {
-                        tab.saved_layout = new_saved;
-                    }
-                }
-            } else if let Some(root) = tab.root.take() {
-                let (new_root, _) = root.remove_pane(&pane);
-                tab.root = new_root;
-            }
-        }
-
-        let tab_is_empty = self.workspaces[ws_idx]
-            .tabs()
-            .get(tab_idx)
-            .is_none_or(|tab| tab.root.is_none());
-        if tab_is_empty {
-            let ws_id = self.workspaces[ws_idx].id;
-            let cwd = std::path::PathBuf::from(&self.workspaces[ws_idx].cwd);
-            let terminal = cx.new(|cx| TerminalView::with_cwd(ws_id, Some(cwd), None, cx));
-            let new_pane = self.create_pane(terminal, ws_id, cx);
-            if let Some(tab) = self.workspaces[ws_idx].tab_mut(tab_idx) {
-                tab.root = Some(LayoutTree::Leaf(new_pane));
-            }
-        }
-        self.save_session(cx);
-        cx.notify();
+        self.close_pane_through_model(&pane, false, cx);
     }
 
     pub(crate) fn handle_terminal_event(
@@ -649,7 +479,7 @@ impl PaneFlowApp {
                 self.tree_file_dropped(terminal, path.clone(), root.clone(), *window, cx);
             }
             terminal::TerminalEvent::ProgramNotification { title, body } => {
-                let surface_id = terminal.entity_id().as_u64();
+                let surface_id = terminal.read(cx).surface_id();
                 let ws_id = self.workspace_id_for_surface(surface_id, cx);
                 let seen = ws_id
                     .and_then(|ws_id| self.surfaces_under_user_eye(ws_id, cx))
@@ -671,7 +501,7 @@ impl PaneFlowApp {
             terminal::TerminalEvent::ShellPromptReady => {
                 let child_pid = terminal.read(cx).terminal.child_pid;
                 let reaped = self.reap_sessions_at_shell_prompt(
-                    terminal.entity_id().as_u64(),
+                    terminal.read(cx).surface_id(),
                     child_pid,
                     cx,
                 );
@@ -684,10 +514,10 @@ impl PaneFlowApp {
                 cx.notify();
             }
             terminal::TerminalEvent::ConversationReady => {
-                self.conversation_ready(terminal.entity_id().as_u64(), cx);
+                self.conversation_ready(terminal.read(cx).surface_id(), cx);
             }
             terminal::TerminalEvent::ChildExited => {
-                self.purge_sessions_for_surface(terminal.entity_id().as_u64(), cx);
+                self.purge_sessions_for_surface(terminal.read(cx).surface_id(), cx);
             }
             terminal::TerminalEvent::HostLinkResolved => {
                 self.note_host_link_resolved(&terminal, cx);
@@ -730,88 +560,5 @@ impl PaneFlowApp {
         self.workspaces
             .iter()
             .position(|ws| ws.any_pane(|pane| pane.read(cx).contains_terminal(terminal)))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-
-    #[gpui::test]
-    fn edgeless_drop_opens_a_new_workspace_tab(cx: &mut gpui::TestAppContext) {
-        use gpui::AppContext;
-
-        let cx = cx.add_empty_window();
-        let new_pane = |cx: &mut gpui::VisualTestContext| {
-            let terminal = cx.new(|cx| crate::terminal::TerminalView::display_only_for_test(1, cx));
-            cx.new(|cx| crate::pane::Pane::new(terminal, 1, cx))
-        };
-
-        let target = new_pane(cx);
-        let target_surface = cx.update(|_, cx| target.read(cx).active_terminal_opt().cloned());
-        let mut workspaces = vec![crate::workspace::Workspace::with_layout_and_id(
-            1,
-            "ws",
-            std::path::PathBuf::new(),
-            crate::layout::LayoutTree::Leaf(target.clone()),
-        )];
-
-        assert_eq!(
-            crate::pane_drag::compute_drop_edge(
-                100.0,
-                100.0,
-                50.0,
-                50.0,
-                crate::pane_drag::SPLIT_EDGE_BAND
-            ),
-            None
-        );
-
-        let dropped = new_pane(cx);
-        assert!(super::open_pane_in_new_workspace_tab(
-            &mut workspaces,
-            0,
-            dropped.clone()
-        ));
-
-        assert_eq!(workspaces[0].tab_count(), 2, "the drop opened a new tab");
-        assert_eq!(
-            workspaces[0].active_tab_idx(),
-            1,
-            "the new tab is the active one"
-        );
-        assert_eq!(
-            workspaces[0].tabs()[1]
-                .root
-                .as_ref()
-                .map(|root| root.collect_leaves()),
-            Some(vec![dropped]),
-            "the new tab holds the dropped surface alone"
-        );
-        assert_eq!(
-            workspaces[0].tabs()[0]
-                .root
-                .as_ref()
-                .map(|root| root.collect_leaves()),
-            Some(vec![target.clone()])
-        );
-        assert_eq!(
-            cx.update(|_, cx| target.read(cx).active_terminal_opt().cloned()),
-            target_surface,
-            "the pane dropped onto keeps its own surface"
-        );
-
-        while workspaces[0].tab_count() < crate::workspace::MAX_TABS_PER_WORKSPACE {
-            assert!(workspaces[0].open_tab(crate::workspace::Tab::empty()));
-        }
-        let refused = new_pane(cx);
-        assert!(!super::open_pane_in_new_workspace_tab(
-            &mut workspaces,
-            0,
-            refused
-        ));
-        assert_eq!(
-            workspaces[0].tab_count(),
-            crate::workspace::MAX_TABS_PER_WORKSPACE
-        );
     }
 }
