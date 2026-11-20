@@ -33,7 +33,7 @@
     {
       "id": "EP-004",
       "title": "Lua scripts from the CLI",
-      "status": "BLOCKED",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "stories_total": 9,
       "stories_done": 0
@@ -420,7 +420,7 @@
       "id": "US-026",
       "title": "Validate the engine on every target",
       "epic": "EP-004",
-      "status": "BLOCKED",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "blocked_by": [],
       "started_at": "2026-11-20",

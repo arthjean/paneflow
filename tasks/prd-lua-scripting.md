@@ -605,7 +605,7 @@ A user runs a Lua script against Paneflow with `paneflow do`. The script can cal
 
 **Acceptance Criteria:**
 - [x] Given the new crate `crates/paneflow-script` depending on `mlua = "=0.12.2"` with features `lua54`, `vendored`, `async` and `serialize` (and without `send`), when the workspace builds, then it compiles on Linux x86_64 locally
-- [ ] Given the branch pushed for this story, when `run_tests` completes, then the Linux aarch64, macOS and `Windows x86_64 libghostty check` legs compile and lint the workspace with the new crate
+- [x] Given the branch pushed for this story, when `run_tests` completes, then the Linux aarch64, macOS and `Windows x86_64 libghostty check` legs compile and lint the workspace with the new crate
 - [x] Given `deny.toml`, when the story ends, then no license outside MIT was added to it for mlua or its dependencies, and no advisory is ignored for them
 - [x] Given the seven probe cases of R13, when the suite runs, then each is a test: direct call, nested call, call under `pcall`, call inside `__index`, two concurrent calls with a computation, a call inside a `table.sort` comparator (asserts an error), a call inside a coroutine the script created (asserts today's behavior, to be replaced by US-033)
 - [x] Given a release build before and after the dependency, when their sizes and the clean build time are measured, then both deltas are recorded in the story report, and no helper binary links `mlua`
