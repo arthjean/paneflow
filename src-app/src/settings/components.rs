@@ -1156,7 +1156,7 @@ pub fn menu_surface_filled<E: Styled + ParentElement>(
 
 pub(crate) const MENU_MAX_HEIGHT: Pixels = px(400.);
 
-const LIST_CARD_PADDING: Pixels = px(6.);
+pub(crate) const LIST_CARD_PADDING: Pixels = px(6.);
 const CHROME_EDGE_ALPHA: f32 = 0.6;
 const SURFACE_EDGE_ALPHA: f32 = 0.12;
 const CLASSIC_EDGE_ALPHA: f32 = 0.07;

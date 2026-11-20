@@ -473,7 +473,7 @@ impl PaneFlowApp {
         }
 
         if !self.shortcut_capture_active {
-            return false;
+            return self.navigate_shortcut_list(keystroke, window, cx);
         }
 
         if keystroke.key == "escape" {

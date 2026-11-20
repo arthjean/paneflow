@@ -442,6 +442,8 @@ impl PaneFlowApp {
             self.render_spaces_heading(title_text, cx)
         } else if section == SettingsSection::Workspaces {
             self.render_workspaces_heading(title_text, cx)
+        } else if section == SettingsSection::Shortcuts {
+            self.render_shortcuts_heading(title_text, cx)
         } else {
             title_text.pb(px(20.)).into_any_element()
         };
@@ -647,6 +649,7 @@ impl PaneFlowApp {
             crate::keybindings::apply_keybindings(cx, &self.cached_config.shortcuts);
         }
         self.shortcut_reset_armed_at = None;
+        self.shortcut_cursor = None;
         self.clear_shortcut_filters(cx);
         if section == SettingsSection::Shortcuts {
             self.rebuild_shortcut_rows(cx);

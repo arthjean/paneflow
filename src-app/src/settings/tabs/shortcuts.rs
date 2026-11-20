@@ -1,7 +1,8 @@
 use gpui::{
-    AnyElement, App, ClickEvent, Context, CursorStyle, Div, InteractiveElement, IntoElement,
-    ListAlignment, ListState, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels,
-    Point, Stateful, StatefulInteractiveElement, Styled, div, list, prelude::*, px, svg,
+    AnyElement, App, ClickEvent, Context, CursorStyle, Div, Hsla, InteractiveElement, IntoElement,
+    ListAlignment, ListOffset, ListState, MouseButton, MouseDownEvent, MouseMoveEvent,
+    ParentElement, Pixels, Point, Stateful, StatefulInteractiveElement, Styled, Window, div, list,
+    prelude::*, px, svg,
 };
 
 use std::collections::HashMap;
@@ -9,24 +10,55 @@ use std::collections::HashMap;
 use crate::keybindings::ShortcutGroup;
 use crate::settings::chrome::{SETTINGS_COLUMN_PADDING, settings_column};
 use crate::settings::components::{
-    KEYCAP_HEIGHT, KEYCAP_RADIUS, destructive_color, ghost_skin, keycap, keycap_tones, list_card,
-    menu_row, menu_row_height, raised_button, with_alpha,
+    KEYCAP_HEIGHT, KEYCAP_RADIUS, LIST_CARD_PADDING, destructive_color, ghost_icon_button,
+    ghost_skin, keycap, keycap_tones, list_card, menu_row_inset, raised_button, select_item_shaped,
+    with_alpha,
 };
+use crate::ui_primitives::interface_style::with_surface_shape;
 use crate::ui_primitives::{
-    BODY, BODY_EMPHASIS, FOCUS_BLUE, LABEL_SM, ROW_RADIUS, TooltipDelayExt, text_tooltip,
+    AccessibleControlExt, BODY, BODY_EMPHASIS, FOCUS_BLUE, LABEL_SM, ROW_RADIUS, TooltipDelayExt,
+    action_menu, section_eyebrow, text_tooltip,
 };
 use crate::widgets::scrollbar::{self, ScrollableHandle as _};
 use crate::{PaneFlowApp, config_writer, keybindings};
 
-const SHORTCUT_SECTION_GAP: Pixels = px(20.);
+const SHORTCUT_SECTION_GAP: Pixels = px(24.);
+const SHORTCUT_LIST_BOTTOM: Pixels = px(32.);
+const SHORTCUT_FILTER_GAP: Pixels = px(24.);
+const FILTER_HEIGHT: Pixels = px(36.);
+const CAPTURE_TOGGLE_SIZE: Pixels = px(28.);
+const CAPTURE_ACTIVE_ALPHA: f32 = 0.15;
+const CAPTURE_HOVER_ALPHA: f32 = 0.06;
+const RESET_GLYPH_SIZE: Pixels = px(22.);
+const RESET_GLYPH_REST_OPACITY: f32 = 0.5;
+const RECORDING_FIELD_TINT: f32 = 0.12;
+const EMPTY_GLYPH_ALPHA: f32 = 0.6;
+const EMPTY_STATE_TOP: Pixels = px(48.);
+const SHORTCUT_ROW_HEIGHT: Pixels = px(30.);
+const SHORTCUT_ROW_CORNER: Pixels = px(8.);
+const GROUP_HEADER_HEIGHT: Pixels = px(26.);
+const REVEAL_MARGIN: Pixels = px(8.);
+const DESCRIPTION_MIN_WIDTH: Pixels = px(96.);
+const EMPTY_GLYPH_SIZE: Pixels = px(20.);
+const CHORD_GAP: Pixels = px(6.);
+const CAPTURE_PROMPT: &str = "Press a shortcut to see what it does";
+const RECORDING_PROMPT: &str = "Press a shortcut";
+const RECORDING_HINT: &str = if cfg!(target_os = "macos") {
+    "Esc cancels · Delete clears"
+} else {
+    "Esc cancels · Backspace clears"
+};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub(crate) enum ShortcutListRow {
-    Group {
-        group: ShortcutGroup,
-        indices: Vec<usize>,
-    },
-    Footer,
+pub(crate) struct ShortcutListRow {
+    group: ShortcutGroup,
+    indices: Vec<usize>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct ShortcutCursor {
+    pub(crate) action: &'static str,
+    pub(crate) keyboard: bool,
 }
 
 pub(crate) struct ShortcutConflict {
@@ -39,6 +71,21 @@ pub(crate) fn new_shortcut_list_state() -> ListState {
     ListState::new(0, ListAlignment::Top, px(0.)).measure_all()
 }
 
+fn group_label_inset() -> Pixels {
+    LIST_CARD_PADDING + menu_row_inset()
+}
+
+fn group_top_gap(first: bool) -> Pixels {
+    if first { px(0.) } else { SHORTCUT_SECTION_GAP }
+}
+
+fn row_top_in_group(first: bool, position: usize) -> Pixels {
+    group_top_gap(first)
+        + GROUP_HEADER_HEIGHT
+        + LIST_CARD_PADDING
+        + SHORTCUT_ROW_HEIGHT * position as f32
+}
+
 impl PaneFlowApp {
     fn shortcut_rows_for(&self, cx: &App) -> Vec<ShortcutListRow> {
         let query = self
@@ -47,7 +94,6 @@ impl PaneFlowApp {
             .value()
             .trim()
             .to_lowercase();
-        let filtering = !query.is_empty();
 
         let matches = |entry: &keybindings::ShortcutEntry| -> bool {
             if query.is_empty() {
@@ -72,19 +118,15 @@ impl PaneFlowApp {
             }
         }
 
-        let mut rows = Vec::with_capacity(ShortcutGroup::ALL.len() + 1);
-        for group in ShortcutGroup::ALL {
-            if let Some(indices) = by_group.remove(group) {
-                rows.push(ShortcutListRow::Group {
+        ShortcutGroup::ALL
+            .iter()
+            .filter_map(|group| {
+                by_group.remove(group).map(|indices| ShortcutListRow {
                     group: *group,
                     indices,
-                });
-            }
-        }
-        if !filtering && !rows.is_empty() {
-            rows.push(ShortcutListRow::Footer);
-        }
-        rows
+                })
+            })
+            .collect()
     }
 
     pub(crate) fn rebuild_shortcut_rows(&mut self, cx: &mut Context<Self>) {
@@ -98,6 +140,178 @@ impl PaneFlowApp {
         if len > 0 && len == previous_len {
             self.shortcut_list.scroll_to(previous_top);
         }
+    }
+
+    fn changed_shortcut_count(&self) -> usize {
+        self.effective_shortcuts
+            .iter()
+            .filter(|entry| entry.customized)
+            .count()
+    }
+
+    fn visible_shortcut_order(&self) -> Vec<(usize, usize, &'static str)> {
+        self.shortcut_rows
+            .iter()
+            .enumerate()
+            .flat_map(|(group_ix, row)| {
+                row.indices
+                    .iter()
+                    .enumerate()
+                    .filter_map(move |(position, idx)| {
+                        self.effective_shortcuts
+                            .get(*idx)
+                            .map(|entry| (group_ix, position, entry.action_name))
+                    })
+            })
+            .collect()
+    }
+
+    pub(crate) fn navigate_shortcut_list(
+        &mut self,
+        keystroke: &gpui::Keystroke,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if keystroke.modifiers.modified() {
+            return false;
+        }
+        let order = self.visible_shortcut_order();
+        let current = self.shortcut_cursor.and_then(|cursor| {
+            order
+                .iter()
+                .position(|(_, _, action)| *action == cursor.action)
+        });
+        let last = order.len().saturating_sub(1);
+        let next = match keystroke.key.as_str() {
+            "down" if !order.is_empty() => current.map_or(0, |at| (at + 1).min(last)),
+            "up" if !order.is_empty() => current.map_or(last, |at| at.saturating_sub(1)),
+            "enter" => {
+                let Some(at) = current else {
+                    return false;
+                };
+                let action = order[at].2;
+                self.start_shortcut_recording(action, cx);
+                self.settings_focus.focus(window, cx);
+                cx.notify();
+                return true;
+            }
+            _ => return false,
+        };
+        let (group_ix, position, action) = order[next];
+        self.shortcut_cursor = Some(ShortcutCursor {
+            action,
+            keyboard: true,
+        });
+        self.reveal_shortcut_row(group_ix, position);
+        cx.notify();
+        true
+    }
+
+    fn reveal_shortcut_row(&self, group_ix: usize, position: usize) {
+        let first = group_ix == 0;
+        let row_top = row_top_in_group(first, position);
+        let reveal_top = if position == 0 {
+            group_top_gap(first)
+        } else {
+            row_top - REVEAL_MARGIN
+        };
+        let Some(item) = self.shortcut_list.bounds_for_item(group_ix) else {
+            self.shortcut_list.scroll_to(ListOffset {
+                item_ix: group_ix,
+                offset_in_item: reveal_top.max(px(0.)),
+            });
+            return;
+        };
+        let viewport = self.shortcut_list.viewport_bounds();
+        let top = item.top() + reveal_top;
+        let bottom = item.top() + row_top + SHORTCUT_ROW_HEIGHT + REVEAL_MARGIN;
+        if top < viewport.top() {
+            self.shortcut_list.scroll_by(top - viewport.top());
+        } else if bottom > viewport.bottom() {
+            self.shortcut_list.scroll_by(bottom - viewport.bottom());
+        }
+    }
+
+    pub(crate) fn render_shortcuts_heading(
+        &self,
+        title: Div,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let ui = crate::theme::ui_colors();
+        div()
+            .pb(px(20.))
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .gap(px(12.))
+            .child(title.min_w_0())
+            .children(self.render_shortcut_reset_control(ui, cx))
+            .into_any_element()
+    }
+
+    fn render_shortcut_reset_control(
+        &self,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let changed = self.changed_shortcut_count();
+        if self.shortcut_reset_armed_at.is_some() {
+            let question = match changed {
+                1 => "Reset 1 changed shortcut?".to_string(),
+                n => format!("Reset {n} changed shortcuts?"),
+            };
+            return Some(
+                div()
+                    .flex_none()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(4.))
+                    .child(
+                        div()
+                            .pr(px(8.))
+                            .text_size(BODY)
+                            .text_color(ui.muted)
+                            .child(question),
+                    )
+                    .child(
+                        ghost_pill("reset-shortcuts-cancel", ui)
+                            .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+                                this.shortcut_reset_armed_at = None;
+                                cx.notify();
+                            }))
+                            .child("Cancel"),
+                    )
+                    .child(
+                        raised_button(
+                            "reset-shortcuts-confirm",
+                            "Reset",
+                            destructive_color(),
+                            gpui::white(),
+                        )
+                        .on_click(cx.listener(
+                            |this, _: &ClickEvent, _w, cx| {
+                                this.confirm_shortcut_reset(cx);
+                            },
+                        )),
+                    )
+                    .into_any_element(),
+            );
+        }
+        (changed > 0).then(|| {
+            ghost_icon_button(
+                "reset-shortcuts",
+                "Reset all",
+                "icons/settings/undo.svg",
+                ui,
+            )
+            .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+                this.arm_shortcut_reset();
+                cx.notify();
+            }))
+            .into_any_element()
+        })
     }
 
     pub(crate) fn render_shortcuts_page(
@@ -114,28 +328,7 @@ impl PaneFlowApp {
             .is_empty();
 
         let body = if self.shortcut_rows.is_empty() {
-            let empty = if self.shortcut_capture_active {
-                format!(
-                    "Nothing is bound to {}",
-                    self.shortcut_search_input.read(cx).value().trim()
-                )
-            } else {
-                "No shortcut matches this filter".to_string()
-            };
-            list_column(
-                list_card(div(), ui).child(
-                    div()
-                        .h(menu_row_height())
-                        .px(px(8.))
-                        .flex()
-                        .items_center()
-                        .text_size(BODY)
-                        .text_color(ui.muted)
-                        .child(empty),
-                ),
-            )
-            .flex_none()
-            .into_any_element()
+            self.render_shortcut_empty_state(ui, cx)
         } else {
             self.render_shortcut_list(ui, cx)
         };
@@ -153,26 +346,51 @@ impl PaneFlowApp {
                 list_column(
                     div()
                         .pt(SETTINGS_COLUMN_PADDING)
+                        .pb(SHORTCUT_FILTER_GAP)
                         .child(heading)
-                        .child(
-                            div()
-                                .flex_none()
-                                .pb(px(16.))
-                                .text_size(BODY)
-                                .line_height(px(18.))
-                                .text_color(ui.muted)
-                                .child(
-                                    "Click a row and press the new chord. Backspace clears it, \
-                                     Esc cancels. A dot marks a binding you changed.",
-                                ),
-                        )
-                        .child(self.render_shortcut_filter(ui, filtering, cx))
-                        .pb(SHORTCUT_SECTION_GAP),
+                        .child(self.render_shortcut_filter(ui, filtering, cx)),
                 )
                 .flex_none(),
             )
             .child(body)
             .into_any_element()
+    }
+
+    fn render_shortcut_empty_state(
+        &self,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let query = self
+            .shortcut_search_input
+            .read(cx)
+            .value()
+            .trim()
+            .to_string();
+        let message = if self.shortcut_capture_active {
+            format!("Nothing uses {query}")
+        } else {
+            format!("No shortcut matches \u{201c}{query}\u{201d}")
+        };
+        list_column(
+            div()
+                .w_full()
+                .pt(EMPTY_STATE_TOP)
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(px(10.))
+                .child(
+                    svg()
+                        .size(EMPTY_GLYPH_SIZE)
+                        .flex_none()
+                        .path("icons/settings/keyboard.svg")
+                        .text_color(with_alpha(ui.muted, EMPTY_GLYPH_ALPHA)),
+                )
+                .child(div().text_size(BODY).text_color(ui.muted).child(message)),
+        )
+        .flex_none()
+        .into_any_element()
     }
 
     fn render_shortcut_list(
@@ -186,12 +404,8 @@ impl PaneFlowApp {
                 let Some(row) = this.shortcut_rows.get(index).cloned() else {
                     return gpui::Empty.into_any_element();
                 };
-                match row {
-                    ShortcutListRow::Group { group, indices } => {
-                        this.render_shortcut_group(ui, group, &indices, index == 0, cx)
-                    }
-                    ShortcutListRow::Footer => this.render_shortcut_footer(ui, cx),
-                }
+                let last = index + 1 == this.shortcut_rows.len();
+                this.render_shortcut_group(ui, row.group, &row.indices, index == 0, last, cx)
             }),
         )
         .size_full();
@@ -269,9 +483,10 @@ impl PaneFlowApp {
             div()
                 .flex_1()
                 .min_w_0()
+                .truncate()
                 .text_size(BODY_EMPHASIS)
                 .text_color(ui.muted)
-                .child("Press a chord to see what owns it")
+                .child(CAPTURE_PROMPT)
         } else {
             div()
                 .flex_1()
@@ -292,7 +507,7 @@ impl PaneFlowApp {
                 .rounded_full()
                 .bg(ui.muted.opacity(0.2))
                 .cursor(CursorStyle::PointingHand)
-                .delayed_tooltip(text_tooltip("Clear filter"))
+                .accessible_control(gpui::accesskit::Role::Button, "Clear search")
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
                     this.shortcut_search_input.update(cx, |input, cx| {
@@ -308,33 +523,57 @@ impl PaneFlowApp {
                 )
         });
 
-        let modes = div()
+        let accent = ui.accent;
+        let toggle_rest = if capture {
+            with_alpha(accent, CAPTURE_ACTIVE_ALPHA)
+        } else {
+            with_alpha(ui.text, 0.)
+        };
+        let toggle_hover = if capture {
+            toggle_rest
+        } else {
+            with_alpha(ui.text, CAPTURE_HOVER_ALPHA)
+        };
+        let capture_toggle = div()
+            .id("shortcut-filter-by-key")
+            .size(CAPTURE_TOGGLE_SIZE)
             .flex_none()
             .flex()
-            .flex_row()
-            .gap(px(2.))
-            .child(
-                filter_mode_button("shortcut-filter-by-name", "Name", !capture, ui).on_click(
-                    cx.listener(|this, _: &ClickEvent, _window, cx| {
-                        this.clear_shortcut_filters(cx);
-                        cx.notify();
-                    }),
-                ),
+            .items_center()
+            .justify_center()
+            .rounded_full()
+            .bg(toggle_rest)
+            .hover(move |style| style.bg(toggle_hover))
+            .cursor(CursorStyle::PointingHand)
+            .accessible_control(
+                gpui::accesskit::Role::Button,
+                if capture {
+                    "Stop finding by keys"
+                } else {
+                    "Find by keys"
+                },
             )
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                if capture {
+                    this.clear_shortcut_filters(cx);
+                } else {
+                    this.set_shortcut_capture(true, cx);
+                    this.settings_focus.focus(window, cx);
+                }
+                cx.notify();
+            }))
             .child(
-                filter_mode_button("shortcut-filter-by-key", "Key", capture, ui).on_click(
-                    cx.listener(|this, _: &ClickEvent, window, cx| {
-                        this.set_shortcut_capture(true, cx);
-                        this.settings_focus.focus(window, cx);
-                        cx.notify();
-                    }),
-                ),
+                svg()
+                    .size(px(16.))
+                    .path("icons/settings/keyboard.svg")
+                    .text_color(if capture { accent } else { ui.muted }),
             );
 
         div()
             .id("shortcut-search")
             .flex_none()
-            .h(px(36.))
+            .h(FILTER_HEIGHT)
             .pl(px(12.))
             .pr(px(4.))
             .flex()
@@ -357,16 +596,12 @@ impl PaneFlowApp {
                 svg()
                     .size(px(16.))
                     .flex_none()
-                    .path(if capture {
-                        "icons/settings/keyboard.svg"
-                    } else {
-                        "icons/settings/search-01.svg"
-                    })
-                    .text_color(if capture { ui.accent } else { ui.muted }),
+                    .path("icons/settings/search-01.svg")
+                    .text_color(ui.muted),
             )
             .child(body)
             .children(clear)
-            .child(modes)
+            .child(capture_toggle)
             .into_any_element()
     }
 
@@ -376,35 +611,27 @@ impl PaneFlowApp {
         group: ShortcutGroup,
         indices: &[usize],
         first: bool,
+        last: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let label = match group.context_hint() {
-            Some(hint) => format!("{} · {}", group.label(), hint),
-            None => group.label().to_string(),
-        };
         let header = div()
+            .h(GROUP_HEADER_HEIGHT)
             .pb(px(8.))
-            .px(px(4.))
+            .px(group_label_inset())
             .flex()
             .flex_row()
             .items_baseline()
-            .justify_between()
-            .gap(px(12.))
-            .child(
+            .gap(px(6.))
+            .min_w_0()
+            .child(section_eyebrow(group.label(), ui).flex_none())
+            .children(group.context_hint().map(|hint| {
                 div()
                     .min_w_0()
-                    .text_size(LABEL_SM)
-                    .text_color(ui.muted)
                     .truncate()
-                    .child(label),
-            )
-            .child(
-                div()
-                    .flex_none()
                     .text_size(LABEL_SM)
                     .text_color(ui.muted)
-                    .child(indices.len().to_string()),
-            );
+                    .child(hint)
+            }));
 
         let rows = indices
             .iter()
@@ -412,7 +639,8 @@ impl PaneFlowApp {
 
         list_column(
             div()
-                .when(!first, |d| d.pt(SHORTCUT_SECTION_GAP))
+                .pt(group_top_gap(first))
+                .when(last, |d| d.pb(SHORTCUT_LIST_BOTTOM))
                 .child(header)
                 .child(shortcut_group_card(ui, rows)),
         )
@@ -432,40 +660,26 @@ impl PaneFlowApp {
         let is_recording = self.recording_shortcut == Some(action_name);
         let conflict = self.shortcut_conflict.as_ref().filter(|_| is_recording);
         let row_group = format!("shortcut-{idx}-squircle");
+        let keyboard_focused = !is_recording
+            && self
+                .shortcut_cursor
+                .is_some_and(|cursor| cursor.keyboard && cursor.action == action_name);
+        let chord_label = if entry.key == "Unassigned" {
+            "unassigned".to_string()
+        } else {
+            entry.key.clone()
+        };
 
         let trailing = if let Some(conflict) = conflict {
-            div()
-                .flex_none()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(8.))
-                .child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(4.))
-                        .text_size(LABEL_SM)
-                        .text_color(ui.vc_conflict)
-                        .child(
-                            svg()
-                                .size(px(12.))
-                                .flex_none()
-                                .path("icons/settings/alert-02.svg")
-                                .text_color(ui.vc_conflict),
-                        )
-                        .child(format!("Also {} · press again to take it", conflict.owner)),
-                )
-                .child(keycaps(ui, &conflict.label, KeycapTone::Conflict))
+            conflict_trailing(ui, conflict)
         } else if is_recording {
-            recording_field()
+            recording_trailing(ui)
         } else {
             let reset = entry.customized.then(|| {
                 ghost_skin(
                     div()
                         .id(("shortcut-reset", idx))
-                        .size(px(24.))
+                        .size(RESET_GLYPH_SIZE)
                         .flex_none()
                         .flex()
                         .items_center()
@@ -474,9 +688,9 @@ impl PaneFlowApp {
                     ROW_RADIUS,
                     ui,
                 )
-                .invisible()
-                .group_hover(row_group.clone(), |style| style.visible())
-                .delayed_tooltip(text_tooltip("Reset to default"))
+                .opacity(RESET_GLYPH_REST_OPACITY)
+                .group_hover(row_group.clone(), |style| style.opacity(1.))
+                .accessible_control(gpui::accesskit::Role::Button, "Reset to default")
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                     cx.stop_propagation();
@@ -489,7 +703,7 @@ impl PaneFlowApp {
                     svg()
                         .size(px(13.))
                         .path("icons/settings/undo.svg")
-                        .text_color(with_alpha(ui.text, 0.8)),
+                        .text_color(ui.text),
                 )
             });
             div()
@@ -497,124 +711,58 @@ impl PaneFlowApp {
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(6.))
+                .gap(px(8.))
                 .children(reset)
-                .child(if entry.key == "Unassigned" {
-                    unassigned_cap(ui)
-                } else {
-                    keycaps(ui, &entry.key, KeycapTone::Normal)
-                })
-                .children(entry.extra_raw_keys.iter().map(|raw| {
-                    keycaps(ui, &keybindings::format_keystroke(raw), KeycapTone::Normal)
-                }))
+                .child(chord_list(ui, entry))
         };
 
-        menu_row(("shortcut", idx), false, ui)
+        shortcut_row(("shortcut", idx), is_recording || keyboard_focused, ui)
+            .relative()
+            .role(gpui::accesskit::Role::Button)
+            .aria_label(format!("{}, {chord_label}", entry.description))
+            .when(keyboard_focused, |row| {
+                row.child(crate::app::usage::focus_ring(SHORTCUT_ROW_CORNER, ui))
+            })
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.shortcut_cursor = Some(ShortcutCursor {
+                    action: action_name,
+                    keyboard: false,
+                });
                 this.start_shortcut_recording(action_name, cx);
                 this.settings_focus.focus(window, cx);
                 cx.notify();
             }))
             .child(
                 div()
-                    .size(px(5.))
-                    .flex_none()
-                    .rounded_full()
-                    .when(entry.customized, |dot| dot.bg(ui.accent)),
-            )
-            .child(
-                div()
+                    .id(("shortcut-label", idx))
                     .flex_1()
-                    .min_w_0()
-                    .text_color(ui.text)
-                    .truncate()
-                    .child(entry.description.clone()),
-            )
-            .child(trailing)
-            .into_any_element()
-    }
-
-    fn render_shortcut_footer(
-        &self,
-        ui: crate::theme::UiColors,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let total = self.effective_shortcuts.len();
-        let changed = self
-            .effective_shortcuts
-            .iter()
-            .filter(|entry| entry.customized)
-            .count();
-
-        let row = div()
-            .h(menu_row_height())
-            .pl(px(8.))
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .gap(px(12.));
-
-        let row = if self.shortcut_reset_armed_at.is_some() {
-            row.child(
-                div()
+                    .min_w(DESCRIPTION_MIN_WIDTH)
                     .text_size(BODY)
                     .text_color(ui.text)
-                    .child(format!("Reset all {total} shortcuts to their defaults?")),
+                    .truncate()
+                    .delayed_tooltip(text_tooltip(entry.description.clone()))
+                    .child(entry.description.clone()),
             )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(4.))
-                    .child(
-                        ghost_pill("reset-shortcuts-cancel", ui)
-                            .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
-                                this.shortcut_reset_armed_at = None;
-                                cx.notify();
-                            }))
-                            .child("Cancel"),
-                    )
-                    .child(
-                        raised_button(
-                            "reset-shortcuts-confirm",
-                            "Reset",
-                            destructive_color(),
-                            gpui::white(),
-                        )
-                        .on_click(cx.listener(
-                            |this, _: &ClickEvent, _w, cx| {
-                                this.confirm_shortcut_reset(cx);
-                            },
-                        )),
-                    ),
-            )
-        } else {
-            let summary = match changed {
-                0 => "Every shortcut is at its default.".to_string(),
-                1 => "1 shortcut differs from its default.".to_string(),
-                n => format!("{n} shortcuts differ from their defaults."),
-            };
-            row.child(div().text_size(BODY).text_color(ui.muted).child(summary))
-                .child(
-                    ghost_pill("reset-shortcuts", ui)
-                        .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
-                            this.arm_shortcut_reset();
-                            cx.notify();
-                        }))
-                        .child("Reset all to defaults"),
-                )
-        };
-
-        list_column(
-            div()
-                .pt(SHORTCUT_SECTION_GAP)
-                .pb(px(20.))
-                .child(list_card(div(), ui).child(row)),
-        )
-        .into_any_element()
+            .child(trailing.min_w_0())
+            .into_any_element()
     }
+}
+
+fn shortcut_row(
+    id: impl Into<gpui::ElementId>,
+    selected: bool,
+    ui: crate::theme::UiColors,
+) -> Stateful<Div> {
+    with_surface_shape(|| {
+        select_item_shaped(
+            id,
+            selected,
+            ui,
+            with_alpha(ui.text, action_menu::HIGHLIGHT_ALPHA),
+            SHORTCUT_ROW_CORNER,
+        )
+        .h(SHORTCUT_ROW_HEIGHT)
+    })
 }
 
 fn shortcut_group_card(
@@ -640,12 +788,12 @@ fn ghost_pill(id: &'static str, ui: crate::theme::UiColors) -> crate::ui_primiti
             .id(id)
             .flex_none()
             .h(px(28.))
-            .px(px(8.))
+            .px(px(10.))
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(8.))
             .text_size(px(12.))
+            .font_weight(gpui::FontWeight::MEDIUM)
             .text_color(ui.text),
         format!("{id}-squircle"),
         ROW_RADIUS,
@@ -653,33 +801,107 @@ fn ghost_pill(id: &'static str, ui: crate::theme::UiColors) -> crate::ui_primiti
     )
 }
 
-fn filter_mode_button(
-    id: &'static str,
-    label: &'static str,
-    selected: bool,
-    ui: crate::theme::UiColors,
-) -> Stateful<Div> {
-    let selected_bg = with_alpha(ui.text, 0.10);
-    let hover_bg = if selected {
-        selected_bg
-    } else {
-        with_alpha(ui.text, 0.05)
-    };
-    div()
-        .id(id)
-        .h(px(28.))
-        .px(px(10.))
+fn chord_list(ui: crate::theme::UiColors, entry: &keybindings::ShortcutEntry) -> Div {
+    let row = div()
+        .flex_none()
         .flex()
+        .flex_row()
         .items_center()
-        .rounded_full()
-        .when(selected, |button| button.bg(selected_bg))
-        .hover(move |style| style.bg(hover_bg))
-        .cursor(CursorStyle::PointingHand)
-        .text_size(LABEL_SM)
-        .font_weight(gpui::FontWeight::MEDIUM)
-        .text_color(if selected { ui.text } else { ui.muted })
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .child(label)
+        .gap(CHORD_GAP);
+    if entry.key == "Unassigned" {
+        return row.child(
+            div()
+                .text_size(LABEL_SM)
+                .text_color(ui.muted)
+                .child("Unassigned"),
+        );
+    }
+    let chords = std::iter::once(entry.key.clone()).chain(
+        entry
+            .extra_raw_keys
+            .iter()
+            .map(|raw| keybindings::format_keystroke(raw)),
+    );
+    let mut row = row;
+    for (position, chord) in chords.enumerate() {
+        if position > 0 {
+            row = row.child(div().text_size(LABEL_SM).text_color(ui.muted).child("or"));
+        }
+        row = row.child(keycaps(ui, &chord, KeycapTone::Normal));
+    }
+    row
+}
+
+fn recording_trailing(ui: crate::theme::UiColors) -> Div {
+    let blue: Hsla = gpui::rgb(FOCUS_BLUE).into();
+    div()
+        .min_w_0()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(10.))
+        .child(
+            div()
+                .min_w_0()
+                .truncate()
+                .text_size(LABEL_SM)
+                .text_color(ui.muted)
+                .child(RECORDING_HINT),
+        )
+        .child(
+            div()
+                .flex_none()
+                .h(KEYCAP_HEIGHT)
+                .px(px(8.))
+                .flex()
+                .items_center()
+                .rounded(KEYCAP_RADIUS)
+                .bg(with_alpha(blue, RECORDING_FIELD_TINT))
+                .border_1()
+                .border_color(blue)
+                .text_size(LABEL_SM)
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .text_color(ui.text)
+                .child(RECORDING_PROMPT),
+        )
+}
+
+fn conflict_trailing(ui: crate::theme::UiColors, conflict: &ShortcutConflict) -> Div {
+    div()
+        .min_w_0()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(10.))
+        .child(
+            div()
+                .min_w_0()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(5.))
+                .text_size(LABEL_SM)
+                .child(
+                    svg()
+                        .size(px(12.))
+                        .flex_none()
+                        .path("icons/settings/alert-02.svg")
+                        .text_color(ui.vc_conflict),
+                )
+                .child(
+                    div()
+                        .text_color(ui.vc_conflict)
+                        .child(format!("Used by {}", conflict.owner)),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(ui.muted)
+                        .child("· press again to reassign"),
+                ),
+        )
+        .child(keycaps(ui, &conflict.label, KeycapTone::Conflict))
 }
 
 #[derive(Clone, Copy)]
@@ -710,37 +932,6 @@ fn keycaps(ui: crate::theme::UiColors, formatted: &str, tone: KeycapTone) -> Div
         )
 }
 
-fn recording_field() -> Div {
-    div()
-        .flex_none()
-        .h(KEYCAP_HEIGHT)
-        .px(px(8.))
-        .flex()
-        .items_center()
-        .rounded(KEYCAP_RADIUS)
-        .bg(gpui::rgb(FOCUS_BLUE))
-        .text_size(LABEL_SM)
-        .font_weight(gpui::FontWeight::MEDIUM)
-        .text_color(gpui::white())
-        .child("Press keys…")
-}
-
-fn unassigned_cap(ui: crate::theme::UiColors) -> Div {
-    div()
-        .flex_none()
-        .h(KEYCAP_HEIGHT)
-        .px(px(7.))
-        .flex()
-        .items_center()
-        .rounded(KEYCAP_RADIUS)
-        .border_1()
-        .border_dashed()
-        .border_color(with_alpha(ui.muted, 0.5))
-        .text_size(LABEL_SM)
-        .text_color(ui.muted)
-        .child("Unassigned")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -760,7 +951,7 @@ mod tests {
                 let ui = crate::theme::ui_colors();
                 list(self.state.clone(), move |index, _window, _cx| {
                     let rows = (0..3).map(|row| {
-                        menu_row(("probe", index * 10 + row), false, ui)
+                        shortcut_row(("probe", index * 10 + row), false, ui)
                             .child(
                                 div()
                                     .flex_1()

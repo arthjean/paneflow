@@ -166,8 +166,8 @@ impl PaneFlowApp {
             cx.notify();
         })
         .detach();
-        let shortcut_search_input = cx
-            .new(|cx| crate::widgets::text_input::TextInput::new("", "Filter by action name", cx));
+        let shortcut_search_input =
+            cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Search shortcuts", cx));
         cx.observe(&shortcut_search_input, |this: &mut Self, _, cx| {
             this.rebuild_shortcut_rows(cx);
             cx.notify();
@@ -359,6 +359,7 @@ impl PaneFlowApp {
             shortcut_reset_armed_at: None,
             shortcut_conflict: None,
             shortcut_rows: Vec::new(),
+            shortcut_cursor: None,
             shortcut_list: crate::settings::tabs::shortcuts::new_shortcut_list_state(),
             shortcut_drag: None,
             settings_focus: cx.focus_handle(),

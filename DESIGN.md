@@ -1511,31 +1511,45 @@ icon sits in a 2 px `text` ring at 0.85 with radius 14, and the others show
 that ring at 0.32 on hover. Picking an icon keeps the gallery open, and leaving
 the page folds it.
 
-The Keyboard Shortcuts page is a register, not a tree. Under the heading, one
-12 px muted line carries the contract: click a row, press the new chord,
-Backspace clears it, Escape cancels, and a dot marks a change. One 36 px
-capsule field on `subtle` filters the list, with a `Name` | `Key` segmented
-pair of full-radius pills at its trailing edge: `Name` filters on the action
-label or an ASCII spelling of the chord, `Key` captures the next chord and
-shows what owns it. Groups are the 11 px muted eyebrow of 5.5 with the count
-on the trailing edge and, for context-bound groups, the context after a
-middle dot (`Terminal · while a pane has focus`); they never fold. Each group
-is one `list_card` of 5.6 (radius 14, lifted surface, no border, 6 px
-padding, no gap) whose rows are `menu_row` (30 px, radius 8, `text` at
-0.05 on hover): a 5 px accent dot when the binding differs from the default,
-the action at 12 px, and the chord as keycaps (20 px, radius 5, `subtle` with
-a 1 px edge lifted 8 percent toward `text`, 11 Medium, gap 3), or a dashed
-`Unassigned` cap. Hovering a changed row reveals a 24 px reset glyph before
-the caps. While recording, the caps give way to one solid `Press keys…` cap
-in the system blue `#007aff` of 4.3 with a white label, and nothing else on the row
-changes. A chord another action owns is held rather than saved, drawn in
-`vc_conflict` with `Also <action> · press again to take it`, and a second
-press of the same chord takes it. The list ends with one more menu panel that
-counts the changed bindings and holds `Reset all to defaults` as a menu row;
-the confirmation swaps the row for the question, a `Cancel` menu row, and the
-red `Reset`. The scrollbar of the list sits at the panel edge, as in the
-panes and the docks, and the fixed heading, intro line, and filter keep a
-20 px gap above the scrolling rows.
+The Keyboard Shortcuts page is a register, not a tree, and it teaches in
+place rather than up front: no intro line, each instruction appears only in
+the state that needs it. The heading row carries `Reset all` (a
+`ghost_icon_button` with the undo glyph) at its trailing edge, shown only
+while at least one binding differs from its default; arming it swaps the
+button for `Reset {n} changed shortcuts?` at 12 px muted, a `Cancel` ghost
+pill, and the red `Reset`. Below, 24 px above the list, one 36 px capsule
+field on `subtle` searches the action label or an ASCII spelling of the
+chord, with the 18 px clear button and, at its trailing edge, a 28 px round
+keyboard toggle (`Find by keys`) that captures the next chord and shows what
+owns it: while active it takes `accent` at 0.15 behind an `accent` glyph and
+the field reads `Press a shortcut to see what it does`. Groups are the 11 px
+Semibold eyebrow of `section_eyebrow`, inset by the card padding plus the row
+inset so the eyebrow and the row labels share one left edge, followed for
+context-bound groups by the context at 11 px regular in `muted`
+(`Terminal  while a pane has focus`); no count, and they never fold. Each
+group is one `list_card` of 5.6 (radius 14, lifted surface, no border, 6 px
+padding, no gap) whose rows are 30 px at radius 8, concentric with the card
+(`text` at 0.05 on hover, pointing hand): the action at 12 px, truncated with
+its full text in a tooltip and never narrower than 96 px, and the chord as keycaps
+(20 px, radius 5, `subtle` with a 1 px edge lifted 8 percent toward `text`,
+11 Medium, gap 3), alternate chords separated by a muted `or`, or a plain
+`Unassigned` at 11 px in `muted`. A binding that differs from its
+default shows a 22 px undo glyph before its caps, at 0.5 opacity and full
+opacity while the row is hovered: it is both the mark of the change and the
+way back (`Reset to default`). While recording, the row takes the selected
+tint and its caps give way to `Esc cancels · Backspace clears` (`Delete` on
+macOS) at 11 px muted, the first thing to truncate,
+beside one `Press a shortcut` cap ringed in the system blue `#007aff` of 4.3
+over that blue at 0.12, with a `text` label. A chord another action owns is
+held rather than saved, drawn in `vc_conflict` with `Used by <action>` and a
+muted `· press again to reassign`, and a second press of the same chord takes
+it. Up and Down move a keyboard cursor through the visible rows, drawn as
+the selected tint plus the focus ring of the Usage page and scrolled into
+view with its group header for the first row; Enter records the row under
+it. A click moves the cursor without drawing the ring. An empty result centers a 20 px keyboard glyph over one 12 px muted line that quotes the query,
+48 px below the field, with no card. The scrollbar of the list sits at the
+panel edge, as in the panes and the docks, and the last group keeps 32 px
+below it.
 
 The Agents page (`src-app/src/settings/tabs/agents.rs`) follows the same list
 and drill-in grammar for the agents found on PATH. The heading is followed by

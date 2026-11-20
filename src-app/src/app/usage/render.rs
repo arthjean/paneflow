@@ -504,7 +504,7 @@ pub(super) fn runtime_logo(slug: &str, size: f32, ui: UiColors) -> AnyElement {
     )
 }
 
-pub(super) fn focus_ring(radius: gpui::Pixels, ui: UiColors) -> AnyElement {
+pub(crate) fn focus_ring(radius: gpui::Pixels, ui: UiColors) -> AnyElement {
     div()
         .absolute()
         .inset_0()

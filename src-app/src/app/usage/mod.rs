@@ -3,6 +3,8 @@ pub(crate) mod model;
 mod page;
 mod render;
 
+pub(crate) use render::focus_ring;
+
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 

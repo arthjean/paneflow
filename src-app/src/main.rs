@@ -293,6 +293,7 @@ struct PaneFlowApp {
     shortcut_reset_armed_at: Option<std::time::Instant>,
     shortcut_conflict: Option<crate::settings::tabs::shortcuts::ShortcutConflict>,
     shortcut_rows: Vec<crate::settings::tabs::shortcuts::ShortcutListRow>,
+    shortcut_cursor: Option<crate::settings::tabs::shortcuts::ShortcutCursor>,
     shortcut_list: gpui::ListState,
     shortcut_drag: Option<crate::widgets::scrollbar::ScrollDragState>,
     settings_focus: FocusHandle,
