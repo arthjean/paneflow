@@ -210,6 +210,8 @@ pub fn worker_declarations() -> Vec<Descriptor> {
         Descriptor::of::<worker::UsageSnapshotMethod>(),
         Descriptor::of::<worker::UsageRefresh>(),
         Descriptor::of::<worker::UsageImport>(),
+        Descriptor::of::<events::Follow>(),
+        Descriptor::of::<events::Publish>(),
     ]
 }
 

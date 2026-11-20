@@ -5,6 +5,7 @@ mod gestures;
 #[cfg(test)]
 mod guard;
 mod project;
+pub(crate) mod publish;
 mod select;
 mod stage;
 
@@ -48,6 +49,7 @@ pub(crate) struct LayoutBridge {
     staged_surfaces: HashMap<SurfaceId, Spawner>,
     staged_workspaces: HashMap<WorkspaceId, Workspace>,
     held: HashMap<SessionId, HeldSurface>,
+    events: publish::LayoutEventSink,
 }
 
 impl Default for LayoutBridge {
@@ -77,7 +79,16 @@ impl LayoutBridge {
             staged_surfaces: HashMap::new(),
             staged_workspaces: HashMap::new(),
             held: HashMap::new(),
+            events: publish::LayoutEventSink::default(),
         }
+    }
+
+    pub(crate) fn publish_applied(&self, applied: &Applied) {
+        self.events.publish(publish::published_events(
+            &applied.events,
+            &applied.scopes,
+            applied.revision,
+        ));
     }
 
     #[cfg(test)]
@@ -252,7 +263,10 @@ impl PaneFlowApp {
         let model = &mut self.layout.model;
         let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| apply(model, now_ms)));
         let applied = match outcome {
-            Ok(Ok(applied)) => applied,
+            Ok(Ok(applied)) => {
+                self.layout.publish_applied(&applied);
+                applied
+            }
             Ok(Err(error)) => {
                 self.layout.prune();
                 return Err(error);
@@ -276,6 +290,19 @@ impl PaneFlowApp {
         self.layout_revision_changed(cx);
         cx.notify();
         Ok(applied)
+    }
+
+    pub(crate) fn start_layout_event_stream(&mut self) {
+        if let Some(endpoint) = paneflow_home::serve_endpoint_path_for_current_home() {
+            self.layout.events.start(endpoint);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_layout_events(
+        &self,
+    ) -> Vec<paneflow_api::methods::events::PublishedEvent> {
+        self.layout.events.pending()
     }
 
     pub(crate) fn layout_revision_changed(&mut self, cx: &mut Context<Self>) {

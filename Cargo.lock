@@ -4894,6 +4894,7 @@ dependencies = [
  "jiff",
  "log",
  "paneflow-agent-config",
+ "paneflow-api",
  "paneflow-config",
  "paneflow-home",
  "paneflow-host",

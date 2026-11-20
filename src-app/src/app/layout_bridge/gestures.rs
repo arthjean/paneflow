@@ -50,8 +50,9 @@ impl PaneFlowApp {
             return;
         }
         let now_ms = self.layout.ms_at(std::time::Instant::now());
-        if let Err(error) = self.layout.model.apply(Op::FocusPane { pane: id }, now_ms) {
-            log::debug!("layout: the focused pane was refused: {error}");
+        match self.layout.model.apply(Op::FocusPane { pane: id }, now_ms) {
+            Ok(applied) => self.layout.publish_applied(&applied),
+            Err(error) => log::debug!("layout: the focused pane was refused: {error}"),
         }
     }
 

@@ -938,10 +938,10 @@ impl PaneFlowApp {
             Err(e) => return e.into_value(),
         };
         let new_name = parse_rename_name(params);
+        self.rename_surface_through_model(terminal.entity_id(), new_name.clone(), cx);
         terminal.update(cx, |view, _cx| {
             view.terminal.custom_name = new_name.clone();
         });
-        self.rename_surface_through_model(terminal.entity_id(), new_name.clone(), cx);
         serde_json::json!({"renamed": true, "name": new_name})
     }
 

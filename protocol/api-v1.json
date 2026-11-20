@@ -3617,6 +3617,235 @@
       },
       "stream": false,
       "summary": "Start importing past activity from the agents' local logs."
+    },
+    {
+      "examples": [
+        {
+          "params": {
+            "types": [
+              "terminal.*",
+              "pane.closed"
+            ]
+          },
+          "result": {
+            "epoch": "1a2b-19a7c3f0e00-0",
+            "seq": 41,
+            "type": "following"
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "none",
+      "gate_note": null,
+      "in_capabilities": false,
+      "name": "events.follow",
+      "owner": "worker",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "epoch": {
+            "description": "The epoch since belongs to; a different epoch is refused with an evicted error",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "since": {
+            "description": "Replay the events after this seq first; refused with an evicted error when they left the ring",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "types": {
+            "description": "Only send these types: exact names or a family such as terminal.*",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "workspace_id": {
+            "description": "Only send events about this layout workspace id",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "title": "FollowParams",
+        "type": "object"
+      },
+      "reply": "stream",
+      "result": {
+        "$defs": {
+          "FollowingKind": {
+            "enum": [
+              "following"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "epoch": {
+            "description": "Names this worker start; a new epoch restarts seq at 1",
+            "type": "string"
+          },
+          "seq": {
+            "description": "The seq of the last event appended before the stream opened, 0 when none",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": {
+            "$ref": "#/$defs/FollowingKind"
+          }
+        },
+        "required": [
+          "type",
+          "seq",
+          "epoch"
+        ],
+        "title": "FollowHeader",
+        "type": "object"
+      },
+      "stream": true,
+      "summary": "Stream the worker's numbered event log: a following header, then every event with consecutive seq values, keepalive frames when quiet, and an end frame when the worker closes the stream. A since that left the ring, or an epoch from another worker start, is refused with -32040 and data {reason: evicted, seq, epoch}."
+    },
+    {
+      "examples": [
+        {
+          "params": {
+            "events": [
+              {
+                "pane_id": 5,
+                "tab_id": 2,
+                "type": "pane.created",
+                "workspace_id": 1
+              }
+            ]
+          },
+          "result": {
+            "seqs": [
+              42
+            ]
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "none",
+      "gate_note": null,
+      "in_capabilities": false,
+      "name": "events.publish",
+      "owner": "worker",
+      "params": {
+        "$defs": {
+          "PublishedEvent": {
+            "properties": {
+              "data": {
+                "additionalProperties": true,
+                "default": {},
+                "type": "object"
+              },
+              "pane_id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "session": {
+                "description": "The terminal session id the host assigned",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "surface_id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "tab_id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "type": {
+                "description": "A layout event type: workspace.*, tab.*, pane.*, surface.* or layout.*",
+                "type": "string"
+              },
+              "workspace_id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "events": {
+            "description": "Events in the order their ops were applied",
+            "items": {
+              "$ref": "#/$defs/PublishedEvent"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "events"
+        ],
+        "title": "PublishParams",
+        "type": "object"
+      },
+      "reply": "ready",
+      "result": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "seqs": {
+            "description": "The seq each event received, in order",
+            "items": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "seqs"
+        ],
+        "title": "Published",
+        "type": "object"
+      },
+      "stream": false,
+      "summary": "Append layout events to the worker's log, in order. Any event outside the layout family refuses the whole batch with -32602."
     }
   ]
 }

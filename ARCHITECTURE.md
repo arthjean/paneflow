@@ -689,11 +689,39 @@ stale code.
   only when its recorded child pid with a matching kernel start time is
   absent. An unknown or recycled pid stays `non_resumable` and is never
   signaled.
-- **No front door.** The worker answers only `worker.*`, `host.hello`, the
-  `agent.*` methods and the `usage.*` methods of the next section, and forwards
-  nothing to the core. The CLI and MCP reach
+- **The method families it owns, nothing more.** The worker answers the
+  methods `crates/paneflow-api` declares with the worker as owner (`worker.*`,
+  `agent.*`, `usage.*`, `events.*`), plus `host.hello` as a greeting and
+  `system.describe`, which lists exactly those methods. Its dispatch is the
+  registry in `crates/paneflow-serve/src/registry.rs`: a worker method with no
+  handler, or a handler whose reply kind differs from its declaration, fails
+  the registry build, and every call is validated against its declared
+  parameter schema. It still forwards nothing to the core, because it is
+  replaced on every update and owns no terminal: a request relayed through it
+  would add a hop and fail whenever an update swaps it. The CLI and MCP reach
   `session.*` and `surface.*` on the host endpoint directly when no desktop is
-  running.
+  running, and a client routes each method to its owner from the descriptor.
+  A new method family also enters `protocol/host-capabilities-v1.json`, and
+  the Controller refuses a method its worker does not advertise before any
+  frame leaves.
+- **One numbered event log.** The worker keeps the log in
+  `crates/paneflow-serve/src/event_log.rs`: every event gets the next `seq`
+  (from 1 for each worker start, named by an `epoch`), a `ts`, a dotted
+  `type`, the ids that apply and a `data` object, and the last 1,024 stay in a
+  ring. `events.follow` sends a header with the current `seq` and `epoch`,
+  replays the events after `since` when they are all still in the ring, and
+  otherwise refuses with an `evicted` error (-32040) carrying where the log
+  stands, so a follower either sees every event once or knows it missed some.
+  A follower more than 8 MiB behind is closed alone. Terminal and agent events
+  are derived from the host's `agent.follow` frames by comparing each row with
+  the worker's last known values, so a reconnect or a worker start announces
+  only what moved; layout events come from the window, which publishes the
+  events each model op returns with `events.publish` from a background thread
+  and keeps at most 1,024 unsent, replaced by one `layout.resync` when they
+  overflow. `protocol/events-conformance-v1.json` lists the cases
+  `crates/paneflow-serve/tests/events_conformance.rs` runs against a real host
+  and worker. The window's legacy `events.subscribe` is a separate stream and
+  is unchanged.
 
 ### Plan usage and the activity ledger
 

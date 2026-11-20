@@ -175,6 +175,11 @@ impl PaneFlowApp {
                         && let Some(terminal) = self.terminal_for_surface(surface)
                         && let Some(name) = sanitize_pane_name(&title)
                     {
+                        self.rename_surface_through_model(
+                            terminal.entity_id(),
+                            Some(name.clone()),
+                            cx,
+                        );
                         terminal.update(cx, |view, cx| {
                             view.terminal.custom_name = Some(name);
                             cx.notify();

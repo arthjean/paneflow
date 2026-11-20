@@ -44,6 +44,93 @@ impl Event {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EventScope {
+    pub workspace: Option<WorkspaceId>,
+    pub tab: Option<TabId>,
+    pub pane: Option<PaneId>,
+    pub surface: Option<SurfaceId>,
+    pub session: Option<paneflow_config::schema::SessionId>,
+}
+
+fn tab_workspace(state: &State, tab: TabId) -> Option<WorkspaceId> {
+    let (ws, _) = state.find_tab(tab)?;
+    Some(state.workspaces.get(ws)?.id)
+}
+
+fn pane_tab(state: &State, pane: PaneId) -> Option<(WorkspaceId, TabId)> {
+    let (ws, tab) = state.find_pane(pane)?;
+    let workspace = state.workspaces.get(ws)?;
+    Some((workspace.id, workspace.tabs.get(tab)?.id))
+}
+
+impl Event {
+    pub fn scope(&self, before: &State, after: &State) -> EventScope {
+        let either =
+            |find: &dyn Fn(&State) -> Option<WorkspaceId>| find(after).or_else(|| find(before));
+        match *self {
+            Self::WorkspaceCreated { workspace }
+            | Self::WorkspaceClosed { workspace }
+            | Self::WorkspaceRenamed { workspace }
+            | Self::WorkspaceSelected { workspace } => EventScope {
+                workspace: Some(workspace),
+                ..EventScope::default()
+            },
+            Self::TabCreated { workspace, tab }
+            | Self::TabClosed { workspace, tab }
+            | Self::TabSelected { workspace, tab } => EventScope {
+                workspace: Some(workspace),
+                tab: Some(tab),
+                ..EventScope::default()
+            },
+            Self::TabRenamed { tab } | Self::LayoutChanged { tab } => EventScope {
+                workspace: either(&|state| tab_workspace(state, tab)),
+                tab: Some(tab),
+                ..EventScope::default()
+            },
+            Self::PaneCreated { tab, pane }
+            | Self::PaneClosed { tab, pane }
+            | Self::PaneFocused { tab, pane } => EventScope {
+                workspace: either(&|state| tab_workspace(state, tab)),
+                tab: Some(tab),
+                pane: Some(pane),
+                ..EventScope::default()
+            },
+            Self::SurfaceCreated { pane, surface } | Self::SurfaceClosed { pane, surface } => {
+                surface_scope(before, after, Some(pane), surface)
+            }
+            Self::SurfaceRenamed { surface } => surface_scope(before, after, None, surface),
+        }
+    }
+}
+
+fn surface_scope(
+    before: &State,
+    after: &State,
+    pane: Option<PaneId>,
+    surface: SurfaceId,
+) -> EventScope {
+    let located = after
+        .find_surface(surface)
+        .map(|location| (after, location))
+        .or_else(|| {
+            before
+                .find_surface(surface)
+                .map(|location| (before, location))
+        });
+    let pane = pane.or(located.map(|(_, location)| location.pane));
+    let owner = pane.and_then(|pane| pane_tab(after, pane).or_else(|| pane_tab(before, pane)));
+    EventScope {
+        workspace: owner.map(|(workspace, _)| workspace),
+        tab: owner.map(|(_, tab)| tab),
+        pane,
+        surface: Some(surface),
+        session: located
+            .and_then(|(state, _)| state.surface(surface))
+            .and_then(|known| known.session().cloned()),
+    }
+}
+
 type TabEntry<'a> = (
     WorkspaceId,
     &'a str,

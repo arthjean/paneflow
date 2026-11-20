@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 
 use paneflow_config::schema::SessionId;
 
-pub use events::Event;
+pub use events::{Event, EventScope};
 pub use ids::{IdSource, PaneId, SplitId, SurfaceId, TabId, WorkspaceId};
 pub use model::{
     Child, Direction, MAX_PANE_SURFACES, MAX_PANES, MAX_TABS_PER_WORKSPACE, Node, Pane, Split,
@@ -80,6 +80,7 @@ pub enum Effect {
 pub struct Applied {
     pub revision: u64,
     pub events: Vec<Event>,
+    pub scopes: Vec<EventScope>,
     pub effects: Vec<Effect>,
     pub focus: Option<PaneId>,
 }
@@ -252,6 +253,10 @@ impl Model {
         };
         ops::run(&mut scratch, op)?;
         let events = events::diff(&self.state, &scratch.state);
+        let scopes = events
+            .iter()
+            .map(|event| event.scope(&self.state, &scratch.state))
+            .collect();
         self.state = scratch.state;
         self.counter
             .claim(scratch.counter.next_value().saturating_sub(1));
@@ -261,6 +266,7 @@ impl Model {
         Ok(Applied {
             revision: self.revision,
             events,
+            scopes,
             effects: scratch.effects,
             focus: scratch.focus,
         })

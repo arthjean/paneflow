@@ -572,6 +572,7 @@ impl PaneFlowApp {
             app.refresh_owned_sessions(cx);
             app.refresh_space_integrations_at_launch(cx);
             app.start_host_agent_stream();
+            app.start_layout_event_stream();
             app.refresh_usage_inventory(false, cx);
             app.start_usage_auto_refresh(cx);
             app.start_write_approval_stream();

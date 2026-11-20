@@ -1776,3 +1776,50 @@ fn a_reopened_tab_keeps_its_worktree() {
         Some("/repo/wt-a".to_string())
     );
 }
+
+#[test]
+fn every_event_of_an_op_is_scoped_with_the_ids_it_concerns_even_once_closed() {
+    let mut fx = Fixture::new();
+    let workspace = fx.workspace("one", "a");
+    let tab = fx.tab_id(0, 0);
+    let split = fx.split("a", Direction::Horizontal, "b");
+    assert_eq!(split.scopes.len(), split.events.len());
+    let b = fx.pane_id("b");
+    let b_surface = fx.surface_id("b");
+    for (event, scope) in split.events.iter().zip(&split.scopes) {
+        assert_eq!(scope.workspace, Some(workspace), "{event:?}");
+        assert_eq!(scope.tab, Some(tab), "{event:?}");
+        match event {
+            Event::PaneCreated { pane, .. } | Event::PaneFocused { pane, .. } => {
+                assert_eq!(scope.pane, Some(*pane));
+            }
+            Event::SurfaceCreated { surface, .. } => {
+                assert_eq!(scope.pane, Some(b));
+                assert_eq!(scope.surface, Some(*surface));
+                assert_eq!(scope.session, Some(session("b")));
+            }
+            Event::LayoutChanged { .. } => assert_eq!(scope.pane, None),
+            other => panic!("unexpected event of a split: {other:?}"),
+        }
+    }
+
+    let closed = fx.apply(Op::ClosePane {
+        pane: b,
+        keep_undo: true,
+    });
+    let surface_closed = closed
+        .events
+        .iter()
+        .position(|event| matches!(event, Event::SurfaceClosed { .. }))
+        .expect("closing a pane closes its surface");
+    let scope = &closed.scopes[surface_closed];
+    assert_eq!(scope.workspace, Some(workspace));
+    assert_eq!(scope.tab, Some(tab));
+    assert_eq!(scope.pane, Some(b));
+    assert_eq!(scope.surface, Some(b_surface));
+    assert_eq!(
+        scope.session,
+        Some(session("b")),
+        "a closed surface is resolved in the state before the op"
+    );
+}

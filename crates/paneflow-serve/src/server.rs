@@ -12,14 +12,13 @@ use paneflow_host::work_counters::{Counter, counters_value};
 use paneflow_ipc_client::line_wire::{LineRead, Wire};
 use serde_json::{Value, json};
 
+use crate::event_log::{Delivery, EventLog, Filter};
 use crate::protocol::{
-    DEFAULT_ACTIVITY_LOG_LIMIT, ERR_BUSY, ERR_FRAME_TOO_LARGE, ERR_HANDSHAKE_REQUIRED,
-    ERR_INVALID_REQUEST, ERR_METHOD_NOT_FOUND, ERR_PARSE, MAX_CONTROL_FRAME_BYTES,
-    METHOD_AGENT_ACKNOWLEDGE, METHOD_AGENT_ACTIVITY_LOG, METHOD_AGENT_FOLLOW,
-    METHOD_AGENT_SNAPSHOT, METHOD_HOST_HELLO, METHOD_USAGE_IMPORT, METHOD_USAGE_REFRESH,
-    METHOD_USAGE_SNAPSHOT, METHOD_WORKER_HELLO, METHOD_WORKER_SHUTDOWN, METHOD_WORKER_STATUS,
-    WorkerIdentity, error_envelope, result_envelope,
+    DEFAULT_ACTIVITY_LOG_LIMIT, ERR_BUSY, ERR_EVICTED, ERR_FRAME_TOO_LARGE, ERR_HANDSHAKE_REQUIRED,
+    ERR_INVALID_REQUEST, ERR_PARSE, MAX_CONTROL_FRAME_BYTES, MAX_EVENT_LINE_BYTES,
+    METHOD_HOST_HELLO, METHOD_WORKER_HELLO, WorkerIdentity, error_envelope, result_envelope,
 };
+use crate::registry::{RegistryBuilder, ServeError, Served, registry};
 use crate::state::WorkerState;
 use crate::usage::Usage;
 use crate::usage::probe::{self, ProbeSlots};
@@ -45,6 +44,7 @@ pub struct Worker {
     pub broadcast_snapshot: Mutex<Option<Vec<Value>>>,
     pub usage: Mutex<Usage>,
     pub probe_slots: ProbeSlots,
+    pub events: EventLog,
 }
 
 impl Worker {
@@ -279,6 +279,58 @@ impl Worker {
         self.shutdown.store(true, Ordering::Release);
         self.shutdown_requested.notify_all();
         self.bus.disconnect_all();
+        self.events.close();
+    }
+
+    pub fn absorb_state_events(&self) {
+        let mut state = self.lock_state();
+        let events = state.drain_events();
+        if events.is_empty() {
+            return;
+        }
+        self.events.append_all(events.into_iter().map(|event| {
+            (
+                event.kind.to_string(),
+                paneflow_api::methods::events::EventIds {
+                    session: Some(event.session.to_string()),
+                    ..Default::default()
+                },
+                event.data,
+            )
+        }));
+        drop(state);
+    }
+
+    pub fn identity_value(&self) -> Value {
+        serde_json::to_value(&self.identity).unwrap_or_else(|_| json!({}))
+    }
+
+    pub fn publish_events(
+        &self,
+        params: paneflow_api::methods::events::PublishParams,
+    ) -> Result<Value, ServeError> {
+        for event in &params.events {
+            if !paneflow_api::methods::events::is_layout_event_type(&event.kind) {
+                return Err(ServeError::invalid_params(format!(
+                    "events.publish accepts layout events only; '{}' is not one",
+                    event.kind
+                )));
+            }
+            let size = serde_json::to_vec(event).map_or(usize::MAX, |bytes| bytes.len());
+            if size > MAX_EVENT_LINE_BYTES {
+                return Err(ServeError::invalid_params(format!(
+                    "a {} event of {size} bytes exceeds the {MAX_EVENT_LINE_BYTES} byte event limit",
+                    event.kind
+                )));
+            }
+        }
+        let seqs = self.events.append_all(
+            params
+                .events
+                .into_iter()
+                .map(|event| (event.kind, event.ids, event.data)),
+        );
+        Ok(json!({"seqs": seqs}))
     }
 
     pub fn wait_for_shutdown(&self) {
@@ -521,9 +573,21 @@ fn serve_connections(listener: &Listener, worker: Arc<Worker>, shutdown: Arc<Ato
     }
 }
 
-enum Flow {
+pub(crate) enum Flow {
     Continue,
     Close,
+}
+
+pub(crate) fn write_error(wire: &mut Wire, id: &Value, error: &ServeError) -> Flow {
+    match wire.write_json(&error_envelope(
+        id,
+        error.code,
+        error.message.clone(),
+        error.data.clone(),
+    )) {
+        Ok(()) => Flow::Continue,
+        Err(_) => Flow::Close,
+    }
 }
 
 fn handle_connection(mut wire: Wire, worker: Arc<Worker>, shutdown: Arc<AtomicBool>) {
@@ -589,38 +653,31 @@ fn handle_connection(mut wire: Wire, worker: Arc<Worker>, shutdown: Arc<AtomicBo
                 return;
             }
             greeted = true;
-            let identity = serde_json::to_value(&worker.identity).unwrap_or_else(|_| json!({}));
-            if wire.write_json(&result_envelope(&id, identity)).is_err() {
+            if wire
+                .write_json(&result_envelope(&id, worker.identity_value()))
+                .is_err()
+            {
                 return;
             }
             continue;
         }
-        let flow = match method {
-            METHOD_AGENT_FOLLOW => stream_follow(&mut wire, &worker, &shutdown, &id),
-            METHOD_WORKER_SHUTDOWN => {
-                let answered = wire.write_json(&result_envelope(
-                    &id,
-                    json!({"stopping": true, "pid": worker.identity.pid}),
-                ));
-                worker.request_shutdown();
-                let _ = answered;
+        let method = if method == METHOD_HOST_HELLO {
+            METHOD_WORKER_HELLO
+        } else {
+            method
+        };
+        let served = match registry() {
+            Ok(registry) => registry.serve(&mut wire, &worker, &shutdown, &id, method, &params),
+            Err(error) => Served::Reply(Err(error)),
+        };
+        let flow = match served {
+            Served::Reply(answer) => reply(&mut wire, &id, answer),
+            Served::ReplyThenClose(answer, after) => {
+                let _ = reply(&mut wire, &id, answer);
+                after(&worker);
                 Flow::Close
             }
-            _ => {
-                let envelope = match dispatch(&worker, method, &params) {
-                    Ok(result) => result_envelope(&id, result),
-                    Err(DispatchError::MethodNotFound) => error_envelope(
-                        &id,
-                        ERR_METHOD_NOT_FOUND,
-                        format!("method not handled by the worker: {method}"),
-                        None,
-                    ),
-                };
-                match wire.write_json(&envelope) {
-                    Ok(()) => Flow::Continue,
-                    Err(_) => Flow::Close,
-                }
-            }
+            Served::Streamed(flow) => flow,
         };
         if matches!(flow, Flow::Close) {
             return;
@@ -628,31 +685,45 @@ fn handle_connection(mut wire: Wire, worker: Arc<Worker>, shutdown: Arc<AtomicBo
     }
 }
 
-enum DispatchError {
-    MethodNotFound,
+fn reply(wire: &mut Wire, id: &Value, answer: Result<Value, ServeError>) -> Flow {
+    match answer {
+        Ok(result) => match wire.write_json(&result_envelope(id, result)) {
+            Ok(()) => Flow::Continue,
+            Err(_) => Flow::Close,
+        },
+        Err(error) => write_error(wire, id, &error),
+    }
 }
 
-fn dispatch(worker: &Arc<Worker>, method: &str, params: &Value) -> Result<Value, DispatchError> {
-    match method {
-        METHOD_WORKER_HELLO | METHOD_HOST_HELLO => {
-            Ok(serde_json::to_value(&worker.identity).unwrap_or_else(|_| json!({})))
-        }
-        METHOD_WORKER_STATUS => Ok(worker.status_frame()),
-        METHOD_AGENT_SNAPSHOT => Ok(worker.snapshot_frame()),
-        METHOD_AGENT_ACTIVITY_LOG => {
-            let limit = params["limit"]
-                .as_u64()
-                .and_then(|limit| usize::try_from(limit).ok())
+pub(crate) fn register_methods(builder: RegistryBuilder) -> RegistryBuilder {
+    use paneflow_api::methods::{events, system, worker};
+
+    builder
+        .ready::<worker::Hello>(|worker, _| Ok(worker.identity_value()))
+        .ready::<worker::Status>(|worker, _| Ok(worker.status_frame()))
+        .closing::<worker::Shutdown>(
+            |worker, _| Ok(json!({"stopping": true, "pid": worker.identity.pid})),
+            Worker::request_shutdown,
+        )
+        .ready::<worker::Snapshot>(|worker, _| Ok(worker.snapshot_frame()))
+        .stream::<worker::Follow>(|stream| {
+            stream_follow(stream.wire, stream.worker, stream.shutdown, stream.id)
+        })
+        .ready::<worker::ActivityLogMethod>(|worker, call| {
+            let limit = call
+                .params
+                .limit
                 .filter(|limit| *limit > 0)
                 .unwrap_or(DEFAULT_ACTIVITY_LOG_LIMIT);
             Ok(json!({"entries": worker.lock_state().activity_log().to_values(limit)}))
-        }
-        METHOD_AGENT_ACKNOWLEDGE => Ok(worker.acknowledge(params)),
-        METHOD_USAGE_SNAPSHOT => Ok(worker.lock_usage().snapshot()),
-        METHOD_USAGE_REFRESH => Ok(worker.refresh_usage(params)),
-        METHOD_USAGE_IMPORT => Ok(worker.import_usage(params)),
-        _ => Err(DispatchError::MethodNotFound),
-    }
+        })
+        .ready::<worker::Acknowledge>(|worker, call| Ok(worker.acknowledge(call.raw)))
+        .ready::<worker::UsageSnapshotMethod>(|worker, _| Ok(worker.lock_usage().snapshot()))
+        .ready::<worker::UsageRefresh>(|worker, call| Ok(worker.refresh_usage(call.raw)))
+        .ready::<worker::UsageImport>(|worker, call| Ok(worker.import_usage(call.raw)))
+        .stream::<events::Follow>(stream_events)
+        .ready::<events::Publish>(|worker, call| worker.publish_events(call.params))
+        .inline::<system::Describe>(|_, call| registry()?.describe(call.params.method.as_deref()))
 }
 
 fn stream_follow(wire: &mut Wire, worker: &Worker, shutdown: &AtomicBool, id: &Value) -> Flow {
@@ -702,4 +773,112 @@ fn stream_follow(wire: &mut Wire, worker: &Worker, shutdown: &AtomicBool, id: &V
             }
         }
     }
+}
+
+fn stream_events(
+    stream: crate::registry::Stream<'_, paneflow_api::methods::events::FollowParams>,
+) -> Flow {
+    let crate::registry::Stream {
+        wire,
+        worker,
+        shutdown,
+        id,
+        params,
+    } = stream;
+    let filter = match Filter::new(params.types.as_deref(), params.workspace_id) {
+        Ok(filter) => filter,
+        Err(message) => return write_error(wire, id, &ServeError::invalid_params(message)),
+    };
+    let subscription = match worker
+        .events
+        .follow(params.since, params.epoch.as_deref(), filter)
+    {
+        Ok(subscription) => subscription,
+        Err(evicted) => {
+            return write_error(
+                wire,
+                id,
+                &ServeError {
+                    code: ERR_EVICTED,
+                    message: format!(
+                        "evicted: the events after seq {} are no longer in the log; resume from seq {} of epoch {}",
+                        params.since.unwrap_or_default(),
+                        evicted.seq,
+                        evicted.epoch
+                    ),
+                    data: Some(json!({
+                        "reason": "evicted",
+                        "seq": evicted.seq,
+                        "epoch": evicted.epoch,
+                    })),
+                },
+            );
+        }
+    };
+    let finish = |wire: &mut Wire, reason: &str| {
+        worker.events.unfollow(subscription.id);
+        let _ = wire.write_json(&json!({"type": "end", "reason": reason}));
+        Flow::Close
+    };
+    let header = json!({
+        "type": "following",
+        "seq": subscription.seq,
+        "epoch": subscription.epoch,
+    });
+    if wire.write_json(&result_envelope(id, header)).is_err() {
+        worker.events.unfollow(subscription.id);
+        return Flow::Close;
+    }
+    for logged in &subscription.replay {
+        if write_event(wire, &logged.line).is_err() {
+            worker.events.unfollow(subscription.id);
+            return Flow::Close;
+        }
+    }
+    let mut last_frame_at = Instant::now();
+    loop {
+        if shutdown.load(Ordering::Acquire) {
+            return finish(wire, "the worker is stopping");
+        }
+        let until_keepalive = FOLLOW_KEEPALIVE.saturating_sub(last_frame_at.elapsed());
+        match subscription.next(until_keepalive) {
+            Delivery::Event(logged) => {
+                if write_event(wire, &logged.line).is_err() {
+                    worker.events.unfollow(subscription.id);
+                    return Flow::Close;
+                }
+                last_frame_at = Instant::now();
+            }
+            Delivery::Quiet => {
+                if last_frame_at.elapsed() >= FOLLOW_KEEPALIVE {
+                    if wire.write_json(&json!({"type": "keepalive"})).is_err() {
+                        worker.events.unfollow(subscription.id);
+                        return Flow::Close;
+                    }
+                    last_frame_at = Instant::now();
+                }
+            }
+            Delivery::Overflowed => {
+                return finish(
+                    wire,
+                    "the follower fell more than 8 MiB behind the event log; follow again with since",
+                );
+            }
+            Delivery::Closed => {
+                let reason = if shutdown.load(Ordering::Acquire) {
+                    "the worker is stopping"
+                } else {
+                    "the stream was dropped"
+                };
+                return finish(wire, reason);
+            }
+        }
+    }
+}
+
+fn write_event(wire: &mut Wire, line: &str) -> io::Result<()> {
+    wire.write_line_with_timeout(
+        line.as_bytes(),
+        paneflow_ipc_client::line_wire::WRITE_DEADLINE,
+    )
 }

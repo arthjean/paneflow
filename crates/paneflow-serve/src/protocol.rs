@@ -27,7 +27,16 @@ pub const METHOD_USAGE_SNAPSHOT: &str = "usage.snapshot";
 pub const METHOD_USAGE_REFRESH: &str = "usage.refresh";
 pub const METHOD_USAGE_IMPORT: &str = "usage.import";
 
+pub const METHOD_EVENTS_FOLLOW: &str = "events.follow";
+pub const METHOD_EVENTS_PUBLISH: &str = "events.publish";
+
 pub const CAPABILITY_AGENT_FOLLOW: &str = "agent.follow";
+pub const CAPABILITY_EVENTS_FOLLOW: &str = "events.follow";
+pub const CAPABILITY_EVENTS_PUBLISH: &str = "events.publish";
+
+pub const ERR_EVICTED: i64 = -32040;
+
+pub const MAX_EVENT_LINE_BYTES: usize = 48 * 1024;
 pub const CAPABILITY_AGENT_UNREAD: &str = "agent.unread";
 pub const CAPABILITY_SESSION_RUNTIME_RESUME: &str = "session.runtime.resume";
 

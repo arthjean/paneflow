@@ -267,7 +267,8 @@ impl PaneFlowApp {
         let Some(id) = self.layout.pane_id(pane) else {
             return;
         };
-        let mut state = self.layout.model.state().clone();
+        let before = self.layout.model.state().clone();
+        let mut state = before.clone();
         let Some((ws, tab)) = state.find_pane(id) else {
             return;
         };
@@ -276,7 +277,14 @@ impl PaneFlowApp {
             return;
         }
         tab.focused = Some(id);
-        self.layout.model.resync(state);
+        if let Some(events) = self.layout.model.resync(state) {
+            let scopes = super::publish::scoped_events(&events, &before, self.layout.model.state());
+            self.layout.events.publish(super::publish::published_events(
+                &events,
+                &scopes,
+                self.layout.model.revision(),
+            ));
+        }
     }
 
     pub(crate) fn adopt_layout(&mut self, cx: &mut Context<Self>) {

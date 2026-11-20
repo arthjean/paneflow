@@ -15,6 +15,7 @@ interprocess.workspace = true
 jiff = { workspace = true, features = ["serde"] }
 log.workspace = true
 paneflow-agent-config = { workspace = true, features = ["config-io"] }
+paneflow-api.workspace = true
 paneflow-config.workspace = true
 paneflow-home.workspace = true
 paneflow-host.workspace = true

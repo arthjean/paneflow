@@ -90,6 +90,131 @@ impl Health {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalFacts {
+    pub cwd: Option<String>,
+    pub title: Option<String>,
+    pub bell_at_ms: Option<u64>,
+    pub bell_known: bool,
+    pub running: bool,
+}
+
+impl TerminalFacts {
+    fn from_manifest(manifest: &SessionManifest) -> Self {
+        Self {
+            cwd: Some(
+                manifest
+                    .current_cwd
+                    .clone()
+                    .unwrap_or_else(|| manifest.cwd.clone()),
+            ),
+            title: manifest.title.clone(),
+            bell_at_ms: None,
+            bell_known: false,
+            running: manifest.lifecycle.is_running(),
+        }
+    }
+
+    fn from_core_row(
+        raw: &Value,
+        held: Option<&TerminalFacts>,
+    ) -> (Self, Option<SessionLifecycle>) {
+        let lifecycle: Option<SessionLifecycle> =
+            serde_json::from_value(raw["lifecycle"].clone()).ok();
+        let facts = Self {
+            cwd: raw["cwd"]
+                .as_str()
+                .map(str::to_owned)
+                .or_else(|| held.and_then(|facts| facts.cwd.clone())),
+            title: raw["title"]
+                .as_str()
+                .map(str::to_owned)
+                .or_else(|| held.and_then(|facts| facts.title.clone())),
+            bell_at_ms: raw["bell_at_ms"].as_u64(),
+            bell_known: true,
+            running: lifecycle.as_ref().map_or_else(
+                || held.is_some_and(|facts| facts.running),
+                SessionLifecycle::is_running,
+            ),
+        };
+        (facts, lifecycle)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StateEvent {
+    pub kind: &'static str,
+    pub session: SessionId,
+    pub data: serde_json::Map<String, Value>,
+}
+
+impl StateEvent {
+    fn new(kind: &'static str, session: &SessionId, data: Value) -> Self {
+        Self {
+            kind,
+            session: session.clone(),
+            data: data.as_object().cloned().unwrap_or_default(),
+        }
+    }
+}
+
+pub const TERMINAL_CWD_CHANGED: &str = "terminal.cwd_changed";
+pub const TERMINAL_TITLE_CHANGED: &str = "terminal.title_changed";
+pub const TERMINAL_BELL: &str = "terminal.bell";
+pub const TERMINAL_EXITED: &str = "terminal.exited";
+pub const AGENT_STATE_CHANGED: &str = "agent.state_changed";
+
+fn terminal_events(
+    session: &SessionId,
+    before: &TerminalFacts,
+    after: &TerminalFacts,
+    lifecycle: Option<&SessionLifecycle>,
+) -> Vec<StateEvent> {
+    let mut events = Vec::new();
+    if after.cwd != before.cwd
+        && let Some(cwd) = &after.cwd
+    {
+        events.push(StateEvent::new(
+            TERMINAL_CWD_CHANGED,
+            session,
+            json!({"cwd": cwd}),
+        ));
+    }
+    if after.title != before.title
+        && let Some(title) = &after.title
+    {
+        events.push(StateEvent::new(
+            TERMINAL_TITLE_CHANGED,
+            session,
+            json!({"title": title}),
+        ));
+    }
+    if before.bell_known
+        && after.bell_at_ms != before.bell_at_ms
+        && let Some(bell_at_ms) = after.bell_at_ms
+    {
+        events.push(StateEvent::new(
+            TERMINAL_BELL,
+            session,
+            json!({"bell_at_ms": bell_at_ms}),
+        ));
+    }
+    if before.running
+        && !after.running
+        && let Some(lifecycle) = lifecycle
+    {
+        let mut data = json!({"lifecycle": lifecycle.label()});
+        if let SessionLifecycle::Exited { code, signal } = lifecycle {
+            data["exit_code"] = json!(code);
+            if let Some(signal) = signal {
+                data["signal"] = json!(signal);
+            }
+        }
+        events.push(StateEvent::new(TERMINAL_EXITED, session, data));
+    }
+    events
+}
+
 #[derive(Debug, Clone)]
 pub struct SessionEntry {
     pub hook_revision: u64,
@@ -116,10 +241,12 @@ pub struct SessionEntry {
     pub state_seq: u64,
     pub unread: bool,
     pub updated_at_ms: u64,
+    pub terminal: TerminalFacts,
 }
 
 impl SessionEntry {
     fn from_manifest(manifest: SessionManifest) -> Self {
+        let terminal = TerminalFacts::from_manifest(&manifest);
         let observed_runtime = manifest
             .runtime
             .and_then(|runtime| runtime.current_observation);
@@ -151,6 +278,7 @@ impl SessionEntry {
             state_seq: 0,
             unread: false,
             updated_at_ms: manifest.updated_at_ms,
+            terminal,
         };
         entry.adopt_declared_verdict();
         entry.refresh_health();
@@ -379,6 +507,7 @@ pub struct WorkerState {
     sessions: BTreeMap<SessionId, SessionEntry>,
     log: ActivityLog,
     turn_signals: Vec<TurnSignal>,
+    events: Vec<StateEvent>,
 }
 
 impl WorkerState {
@@ -388,7 +517,12 @@ impl WorkerState {
             sessions: BTreeMap::new(),
             log: ActivityLog::default(),
             turn_signals: Vec::new(),
+            events: Vec::new(),
         }
+    }
+
+    pub fn drain_events(&mut self) -> Vec<StateEvent> {
+        std::mem::take(&mut self.events)
     }
 
     pub fn drain_turn_signals(&mut self) -> Vec<TurnSignal> {
@@ -509,6 +643,7 @@ impl WorkerState {
         for session in sessions {
             self.derive(&session, now);
         }
+        self.events.clear();
         self.sessions.len()
     }
 
@@ -576,7 +711,18 @@ impl WorkerState {
             let capable_before = held
                 .as_ref()
                 .is_some_and(|entry| entry.program_status_capable);
+            let facts_before = held.as_ref().map(|entry| entry.terminal.clone());
+            let (facts_after, lifecycle) = TerminalFacts::from_core_row(raw, facts_before.as_ref());
+            if let Some(before) = &facts_before {
+                self.events.extend(terminal_events(
+                    &session,
+                    before,
+                    &facts_after,
+                    lifecycle.as_ref(),
+                ));
+            }
             let mut entry = merge_core_row(session.clone(), raw, held);
+            entry.terminal = facts_after;
             if entry.declared_status != declared_before
                 || entry.program_status_capable != capable_before
             {
@@ -709,6 +855,20 @@ impl WorkerState {
             .flatten();
         if entry.status != status {
             entry.state_seq += 1;
+            let tool = entry
+                .activity
+                .as_ref()
+                .map(|summary| summary.tool.clone())
+                .or_else(|| entry.foreground_runtime.map(str::to_owned));
+            self.events.push(StateEvent::new(
+                AGENT_STATE_CHANGED,
+                session,
+                json!({
+                    "tool": tool,
+                    "previous": entry.status.wire_str(),
+                    "state": status.wire_str(),
+                }),
+            ));
         }
         entry.status = status;
         entry.activity_source = source;
@@ -893,6 +1053,7 @@ fn merge_core_row(session: SessionId, raw: &Value, held: Option<SessionEntry>) -
         state_seq: held.as_ref().map_or(0, |entry| entry.state_seq),
         unread: false,
         updated_at_ms: now_ms(),
+        terminal: TerminalFacts::from_core_row(raw, held.as_ref().map(|entry| &entry.terminal)).0,
     };
     match held.filter(|_| same_generation) {
         Some(held) => {
@@ -1962,5 +2123,136 @@ mod tests {
         state.apply_core_session(&with_declared(core_row(&session), "working", ""));
         state.apply_core_session(&with_declared(core_row(&session), "done", ""));
         assert!(state.drain_turn_signals().is_empty());
+    }
+
+    fn kinds(events: &[StateEvent]) -> Vec<&'static str> {
+        events.iter().map(|event| event.kind).collect()
+    }
+
+    fn shell_row(session: &SessionId, cwd: &str, title: &str, bell: Option<u64>) -> Value {
+        let mut row = core_row(session);
+        row["cwd"] = json!(cwd);
+        row["title"] = json!(title);
+        if let Some(bell) = bell {
+            row["bell_at_ms"] = json!(bell);
+        }
+        row
+    }
+
+    #[test]
+    fn a_plain_shell_that_moves_retitles_rings_and_exits_appends_one_event_per_change() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = WorkerState::new(home.path());
+        state.apply_core_snapshot(&[shell_row(&session, "/a", "sh", None)]);
+        assert!(
+            state.drain_events().is_empty(),
+            "a session discovered by a snapshot announces no initial state"
+        );
+
+        state.apply_core_session(&shell_row(&session, "/b", "sh", None));
+        let events = state.drain_events();
+        assert_eq!(kinds(&events), [TERMINAL_CWD_CHANGED]);
+        assert_eq!(events[0].session, session);
+        assert_eq!(events[0].data["cwd"], "/b");
+
+        state.apply_core_session(&shell_row(&session, "/b", "vim", None));
+        let events = state.drain_events();
+        assert_eq!(kinds(&events), [TERMINAL_TITLE_CHANGED]);
+        assert_eq!(events[0].data["title"], "vim");
+
+        state.apply_core_session(&shell_row(&session, "/b", "vim", Some(42)));
+        let events = state.drain_events();
+        assert_eq!(kinds(&events), [TERMINAL_BELL]);
+        assert_eq!(events[0].data["bell_at_ms"], 42);
+
+        state.apply_core_session(&shell_row(&session, "/b", "vim", Some(42)));
+        assert!(
+            state.drain_events().is_empty(),
+            "an unchanged row says nothing"
+        );
+
+        let mut gone = exited(shell_row(&session, "/b", "vim", Some(42)));
+        gone["lifecycle"] = json!(SessionLifecycle::Exited {
+            code: 3,
+            signal: None,
+        });
+        state.apply_core_session(&gone);
+        let events = state.drain_events();
+        assert_eq!(kinds(&events), [TERMINAL_EXITED]);
+        assert_eq!(events[0].data["exit_code"], 3);
+        assert_eq!(events[0].data["lifecycle"], "exited");
+
+        state.apply_core_session(&gone);
+        assert!(state.drain_events().is_empty(), "an exit is announced once");
+    }
+
+    #[test]
+    fn a_fresh_snapshot_after_a_dropped_stream_announces_only_the_fields_that_moved() {
+        let home = tempfile::tempdir().unwrap();
+        let still = SessionId::new();
+        let moved = SessionId::new();
+        let mut state = WorkerState::new(home.path());
+        state.apply_core_snapshot(&[
+            shell_row(&still, "/s", "sh", Some(5)),
+            shell_row(&moved, "/m", "sh", Some(5)),
+        ]);
+        state.drain_events();
+
+        state.apply_core_snapshot(&[
+            shell_row(&still, "/s", "sh", Some(5)),
+            shell_row(&moved, "/m", "sh", Some(9)),
+        ]);
+        let events = state.drain_events();
+        assert_eq!(kinds(&events), [TERMINAL_BELL]);
+        assert_eq!(events[0].session, moved);
+    }
+
+    #[test]
+    fn a_worker_rebuilt_from_the_manifests_appends_nothing_for_the_initial_state() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut held = manifest(session.clone(), None);
+        held.declared_status = serde_json::from_value(declared("working", "")).ok();
+        held.title = Some("sh".to_string());
+        write_manifest(home.path(), &held).unwrap();
+
+        let mut state = WorkerState::new(home.path());
+        state.rebuild_from_home(home.path());
+        assert!(state.drain_events().is_empty());
+
+        let mut row = core_row(&session);
+        row["cwd"] = json!(held.cwd);
+        row["title"] = json!("sh");
+        row["bell_at_ms"] = json!(7);
+        row["declared_status"] = declared("working", "");
+        state.apply_core_snapshot(&[row]);
+        assert_eq!(
+            kinds(&state.drain_events()),
+            Vec::<&str>::new(),
+            "the first host snapshot matches the manifests, and a bell rung before the worker started is adopted silently"
+        );
+    }
+
+    #[test]
+    fn an_agent_whose_projected_state_moves_appends_its_tool_and_both_states() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = WorkerState::new(home.path());
+        state.apply_core_snapshot(&[agent_row(&session)]);
+        state.drain_events();
+
+        state.apply_core_session(&with_declared(agent_row(&session), "working", ""));
+        let events = state.drain_events();
+        assert_eq!(kinds(&events), [AGENT_STATE_CHANGED]);
+        assert_eq!(events[0].data["tool"], "claude");
+        assert_eq!(events[0].data["previous"], "idle");
+        assert_eq!(events[0].data["state"], "busy");
+
+        state.apply_core_session(&with_declared(agent_row(&session), "done", "All set"));
+        let events = state.drain_events();
+        assert_eq!(kinds(&events), [AGENT_STATE_CHANGED]);
+        assert_eq!(events[0].data["previous"], "busy");
+        assert_eq!(events[0].data["state"], "idle");
     }
 }

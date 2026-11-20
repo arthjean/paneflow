@@ -44,6 +44,16 @@
       "name": "agent.activity_log",
       "since": 1,
       "summary": "agent.activity_log returns the worker's bounded history of settled turns with their outcome: completed, failed:<reason>, expired or cancelled."
+    },
+    {
+      "name": "events.follow",
+      "since": 1,
+      "summary": "events.follow streams the worker's numbered event log: a following header with the current seq and epoch, a replay of the events after since, then every new event with consecutive seq values; a since that left the ring of 1,024 events is refused with an evicted error."
+    },
+    {
+      "name": "events.publish",
+      "since": 1,
+      "summary": "events.publish appends layout events a window applied to the worker's log, in order; any event outside the workspace, tab, pane, surface and layout families refuses the batch."
     }
   ]
 }

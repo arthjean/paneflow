@@ -5,6 +5,7 @@ use serde_json::Value;
 
 pub(crate) mod api_cmd;
 mod control_cmds;
+mod events_cmd;
 mod flow_cmd;
 mod flow_spec;
 mod host_cmd;
@@ -46,6 +47,7 @@ const VERBS: &[&str] = &[
     "host",
     "serve",
     "sessions",
+    "events",
     "agent",
     "list_panes",
     "read_pane",
@@ -422,6 +424,31 @@ enum Commands {
         #[arg(long, help = "Emit JSON lines instead of a human table")]
         json: bool,
     },
+    #[command(
+        about = "Follow the worker's numbered event log: one line per event with its seq, type and ids, reconnecting across a worker restart"
+    )]
+    Events {
+        #[arg(long, help = "Print one JSON object per event instead of a line")]
+        json: bool,
+        #[arg(
+            long,
+            value_name = "TYPES",
+            help = "Only these event types, comma-separated: exact names or a family such as terminal.*"
+        )]
+        types: Vec<String>,
+        #[arg(
+            long,
+            value_name = "SEQ",
+            help = "Replay the events after this seq first"
+        )]
+        since: Option<u64>,
+        #[arg(
+            long,
+            value_name = "ID",
+            help = "Only events about this layout workspace id"
+        )]
+        workspace_id: Option<u64>,
+    },
     #[command(about = "Stream lifecycle events from the running instance as JSONL (EP-002)")]
     Watch {
         #[arg(
@@ -545,6 +572,22 @@ pub fn run() -> i32 {
 
     if let Commands::Serve(command) = command {
         return match serve_cmd::run(command) {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("paneflow: {}", e.message);
+                e.code
+            }
+        };
+    }
+
+    if let Commands::Events {
+        json,
+        types,
+        since,
+        workspace_id,
+    } = command
+    {
+        return match events_cmd::run(&types, since, workspace_id, json) {
             Ok(code) => code,
             Err(e) => {
                 eprintln!("paneflow: {}", e.message);
@@ -753,6 +796,12 @@ fn dispatch(command: Commands, client: &CliTransport) -> Result<i32, CliError> {
             follow,
             json,
         } => sessions_cmd::run(command, follow, json),
+        Commands::Events {
+            json,
+            types,
+            since,
+            workspace_id,
+        } => events_cmd::run(&types, since, workspace_id, json),
     }
 }
 

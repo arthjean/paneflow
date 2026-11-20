@@ -125,6 +125,7 @@ fn open_with_build_id(home: &Path, build_id: String) -> Result<RunningWorker, Wo
     let mut state = WorkerState::new(home);
     let rebuilt = state.rebuild_from_home(home);
     log::info!("paneflow-serve: rebuilt {rebuilt} sessions from manifests and seeds");
+    let epoch = crate::event_log::fresh_epoch(identity.pid, identity.started_at_ms);
     let worker = Arc::new(Worker {
         identity,
         home: home.to_path_buf(),
@@ -139,6 +140,7 @@ fn open_with_build_id(home: &Path, build_id: String) -> Result<RunningWorker, Wo
         broadcast_snapshot: Mutex::new(None),
         usage: Mutex::new(crate::usage::Usage::open(home, now_ms())),
         probe_slots: crate::usage::probe::ProbeSlots::default(),
+        events: crate::event_log::EventLog::new(epoch),
     });
     let server = ServerHandle::spawn(Arc::clone(&worker), endpoint.clone()).map_err(|source| {
         WorkerError::Endpoint {
@@ -301,6 +303,7 @@ fn sweep(worker: &Arc<Worker>) {
     for projection in settled {
         broadcast_projection(worker, &projection, &json!({}));
     }
+    worker.absorb_state_events();
     worker.broadcast_snapshot_if_changed(sessions);
     worker.absorb_turn_signals();
     worker.sweep_usage();
@@ -323,6 +326,7 @@ fn refresh_core_snapshot(worker: &Arc<Worker>) {
             for projection in projections {
                 broadcast_projection(worker, &projection, &json!({}));
             }
+            worker.absorb_state_events();
         }
         Err(error) => {
             worker.core_connected.store(false, Ordering::Release);
@@ -333,6 +337,7 @@ fn refresh_core_snapshot(worker: &Arc<Worker>) {
 
 fn apply(worker: &Arc<Worker>, frame: CoreFrame, following: bool) -> bool {
     let following = apply_frame(worker, frame, following);
+    worker.absorb_state_events();
     worker.absorb_turn_signals();
     following
 }
