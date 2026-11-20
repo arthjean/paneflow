@@ -117,6 +117,28 @@ first. Regenerate the twenty files with
 `bash scripts/build-linux-app-icons.sh`, which needs ImageMagick 7 with its
 librsvg delegate.
 
+### macOS Dock tile plug-in
+
+`NSApplication.applicationIconImage` changes the Dock only while Paneflow
+runs. To keep the chosen icon once it quits, the bundle carries
+`Contents/PlugIns/PaneflowDockTile.docktileplugin`, named by the
+`NSDockTilePlugIn` key of `assets/Info.plist`. The Dock loads it into its
+helper process at login and when the tile is pinned, whether Paneflow runs or
+not, the mechanism Ghostty ships for its own icon setting.
+
+The plug-in is the `paneflow-dock-tile` crate: a Rust static library that
+`scripts/build-dock-tile-plugin.sh` links into a Mach-O bundle with
+`clang -bundle`, because a dylib is not a loadable bundle. The `bundle`
+feature registers its `PaneflowDockTilePlugIn` class when the bundle loads,
+since `objc2` otherwise registers a class at its first use. Its resources
+are every `<name>-macos-512.png`, renamed `<name>.png`. The app writes the
+chosen name under `PaneflowAppIcon` in its own preferences and posts
+`<bundle id>.app-icon-changed`; the plug-in reads the preferences of the app
+that contains it and draws that image, or clears its view for Glass. The
+helper process runs sandboxed, so the plug-in never reads the Paneflow home.
+`scripts/check-dock-tile-plugin.sh` loads the plug-in the way the Dock does
+and checks both directions in the macOS CI job.
+
 `src-app/src/assets.rs` leaves every `*-macos-*.png` out of the Windows and
 Linux binaries, and every `*-linux-*.png` out of the Windows and macOS ones,
 which never read them.

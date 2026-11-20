@@ -50,6 +50,8 @@
     <string>public.app-category.developer-tools</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
+    <key>NSDockTilePlugIn</key>
+    <string>PaneflowDockTile.docktileplugin</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>

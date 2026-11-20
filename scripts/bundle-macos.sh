@@ -92,4 +92,9 @@ install -m 0644 "$ICNS_SRC" "$RESOURCES_DIR/PaneFlow.icns"
 sed -e "s/@VERSION@/$VERSION/g" "$INFO_PLIST_SRC" > "$CONTENTS/Info.plist"
 chmod 0644 "$CONTENTS/Info.plist"
 
+bash "$SCRIPT_DIR/build-dock-tile-plugin.sh" \
+    --target "$TRIPLE" \
+    --version "$VERSION" \
+    --out "$CONTENTS/PlugIns"
+
 echo "Built bundle: $APP ($ARCH, v$VERSION)"
