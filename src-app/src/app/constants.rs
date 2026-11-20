@@ -230,7 +230,7 @@ pub(crate) fn sidebar_menu_background(
     ui: crate::theme::UiColors,
 ) -> Hsla {
     if style.is_some_and(|style| style != paneflow_config::schema::BackgroundStyle::Themed) {
-        sidebar_tab_active_background()
+        sidebar_tab_fill(SIDEBAR_TAB_ACTIVE_OPACITY, false)
     } else {
         crate::settings::components::select_menu_surface(ui)
     }
@@ -277,19 +277,26 @@ pub(crate) fn sidebar_tab_hover_background() -> Hsla {
 }
 
 fn sidebar_tab_background(opacity: f32) -> Hsla {
+    #[cfg(target_os = "linux")]
+    let translucent = crate::window_chrome::linux_backdrop::translucent_window_active();
+    #[cfg(not(target_os = "linux"))]
+    let translucent = true;
+
+    sidebar_tab_fill(opacity, translucent)
+}
+
+fn sidebar_tab_fill(opacity: f32, translucent: bool) -> Hsla {
     let theme = crate::theme::active_theme();
     let tint = crate::theme::ui_colors_with(&theme).text.opacity(opacity);
-
-    #[cfg(target_os = "linux")]
-    if !crate::window_chrome::linux_backdrop::translucent_window_active() {
-        return Hsla {
+    if translucent {
+        tint
+    } else {
+        Hsla {
             a: 1.0,
             ..theme.title_bar_background
         }
-        .blend(tint);
+        .blend(tint)
     }
-
-    tint
 }
 
 pub(crate) const TOAST_ENTER_MS: u64 = 180;
@@ -330,6 +337,20 @@ mod tests {
 #[cfg(test)]
 mod material_tests {
     use super::*;
+
+    #[test]
+    fn a_sidebar_menu_over_a_translucent_window_hides_the_rows_beneath_it() {
+        let ui = crate::theme::ui_colors_with(&crate::theme::active_theme());
+        let fill =
+            sidebar_menu_background(Some(paneflow_config::schema::BackgroundStyle::Blended), ui);
+
+        assert_eq!(
+            fill.a, 1.0,
+            "a sidebar menu at alpha {} lets the sidebar rows show through, \
+             since the compositor blur only reaches the desktop behind the window",
+            fill.a
+        );
+    }
 
     #[test]
     fn a_veiled_shell_carries_one_veil_and_clears_the_corner_masks() {

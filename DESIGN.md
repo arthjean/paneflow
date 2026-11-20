@@ -904,8 +904,10 @@ under the pointer.
 At the header's trailing edge, a 22 px button at radius 7 holds the 15 px
 Hugeicons `preference-horizontal` glyph in `muted` (`Customize agent rows`).
 It opens a 172 px menu 10 px above itself, right-aligned, on the usage
-bubble's fill (the active tab tint under Mica or Blended, the menu surface
-under Themed), that toggles the runtime logo, the workspace suffix and the
+bubble's fill (under Mica or Blended, the active tab tint laid opaque over
+the title bar color, since the compositor blur reaches only the desktop and a
+translucent fill would show the rows beneath; the menu surface under Themed),
+that toggles the runtime logo, the workspace suffix and the
 working title's shimmer (`sidebar_show.agent_logo`, `agent_workspace`,
 `agent_shimmer`, all on by default). A row
 always shows its status: hiding it would hide what the section is grouped by,
