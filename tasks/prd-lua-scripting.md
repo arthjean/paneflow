@@ -165,12 +165,12 @@ Every method the app serves is declared once, with types and a schema, and every
 **Paneflow sites:** `protocol/host-conformance-v1.json` and `crates/paneflow-host/tests/conformance.rs:14-49` (the pattern to follow); `src-app/tests/cli_controller.rs`, `src-app/tests/ipc_endpoint_fallback.rs`; `src-app/src/app/ipc_handler/jsonrpc.rs:10-17,112-157`.
 
 **Acceptance Criteria:**
-- [ ] Given `protocol/app-conformance-v1.json`, when it is read, then it holds at least one success case for each of the 23 methods listed in `gates.rs:92-123`, with the full result field set of each
-- [ ] Given the case file, when it is read, then it holds one invalid-parameter case per method that takes a required parameter, asserting code `-32602`
-- [ ] Given a gated method (`surface.send_text`, `surface.send_keystroke`) with its gate closed, when it is called, then the case asserts code `-32601`
-- [ ] Given a case listed in the file with no runner, when the test suite runs, then it fails naming the case id
-- [ ] Given an unknown method name, when it is sent, then the case asserts code `-32601` and the exact current message
-- [ ] The runner drives a real app IPC endpoint on a per-process socket or pipe, as the host conformance runner does, and needs no display
+- [x] Given `protocol/app-conformance-v1.json`, when it is read, then it holds at least one success case for each of the 23 methods listed in `gates.rs:92-123`, with the full result field set of each
+- [x] Given the case file, when it is read, then it holds one invalid-parameter case per method that takes a required parameter, asserting code `-32602`
+- [x] Given a gated method (`surface.send_text`, `surface.send_keystroke`) with its gate closed, when it is called, then the case asserts code `-32601`
+- [x] Given a case listed in the file with no runner, when the test suite runs, then it fails naming the case id
+- [x] Given an unknown method name, when it is sent, then the case asserts code `-32601` and the exact current message
+- [x] The runner drives a real app IPC endpoint on a per-process socket or pipe, as the host conformance runner does, and needs no display
 
 #### US-002: Create `paneflow-api` and migrate the read methods
 **Description:** As the maintainer, I want a registry crate where a method is one declaration so that dispatch and validation stop being written by hand.
@@ -182,13 +182,13 @@ Every method the app serves is declared once, with types and a schema, and every
 **Paneflow sites:** `src-app/src/app/ipc_handler/mod.rs:45-49,172-195`, `params.rs:3-57`, `surface_methods.rs:255-267,396-401,484-486,585-663`, `workspace_methods.rs:694-712`.
 
 **Acceptance Criteria:**
-- [ ] Given the new crate `crates/paneflow-api`, when its dependencies are listed, then it depends on neither `gpui`, `mlua` nor any `src-app` module
-- [ ] Given a method declaration, when it is read, then it carries a name, a one-line summary, a parameter type and a result type that both derive `serde` and `schemars::JsonSchema`, at least one example, an owner (`window`, `worker` or `host`) and a gate
-- [ ] Given `system.ping`, `system.identify`, `system.counters`, `system.capabilities`, `surface.read`, `surface.search`, `surface.list`, `surface.status`, `fleet.list`, `workspace.list` and `workspace.current`, when they are called, then each is served through the registry and the US-001 cases pass unchanged
-- [ ] Given a request whose parameter has the wrong JSON type, when it is dispatched, then the reply is `-32602` and its message names the parameter
-- [ ] Given a request with an unknown extra parameter, when it is dispatched, then it is accepted as today (no new rejection)
-- [ ] Given the three reply kinds `Ready`, `Deferred` and `Async`, when a handler is registered, then it declares its kind and the 5 s dispatch and 30 s reply timeouts of `ipc.rs:86-88` still apply
-- [ ] Given two declarations with the same method name, when the registry is built, then the build of the registry fails in a test, not at runtime in production
+- [x] Given the new crate `crates/paneflow-api`, when its dependencies are listed, then it depends on neither `gpui`, `mlua` nor any `src-app` module
+- [x] Given a method declaration, when it is read, then it carries a name, a one-line summary, a parameter type and a result type that both derive `serde` and `schemars::JsonSchema`, at least one example, an owner (`window`, `worker` or `host`) and a gate
+- [x] Given `system.ping`, `system.identify`, `system.counters`, `system.capabilities`, `surface.read`, `surface.search`, `surface.list`, `surface.status`, `fleet.list`, `workspace.list` and `workspace.current`, when they are called, then each is served through the registry and the US-001 cases pass unchanged
+- [x] Given a request whose parameter has the wrong JSON type, when it is dispatched, then the reply is `-32602` and its message names the parameter
+- [x] Given a request with an unknown extra parameter, when it is dispatched, then it is accepted as today (no new rejection)
+- [x] Given the three reply kinds `Ready`, `Deferred` and `Async`, when a handler is registered, then it declares its kind and the 5 s dispatch and 30 s reply timeouts of `ipc.rs:86-88` still apply
+- [x] Given two declarations with the same method name, when the registry is built, then the build of the registry fails in a test, not at runtime in production
 
 #### US-003: Migrate the remaining methods and delete the hand-written dispatch
 **Description:** As the maintainer, I want the write, layout and compatibility methods on the registry so that the string dispatch and the hand-written capability list can be deleted.
@@ -200,12 +200,12 @@ Every method the app serves is declared once, with types and a schema, and every
 **Paneflow sites:** `gates.rs:3-20,92-123,145-156`; `split.rs:37-46,306-445`; `workspace_methods.rs:25-44,319-436,556,714-791`; `surface_methods.rs:1034-1200`; `tmux_compat.rs:78`; `src-app/src/ipc.rs:887-931`.
 
 **Acceptance Criteria:**
-- [ ] Given `surface.rename`, `surface.focus`, `surface.send_text`, `surface.send_keystroke`, `surface.split`, `workspace.create`, `workspace.up`, `workspace.select`, `workspace.close`, `workspace.restore_layout` and the tmux compatibility method, when they are called, then each is served through the registry and the US-001 cases pass unchanged
-- [ ] Given `events.subscribe`, when the registry is listed, then it has a descriptor marked as a stream, and its frames (`subscribed`, `heartbeat`, `dropped`) are unchanged
-- [ ] Given `system.capabilities`, when it is called, then its `methods` array is computed from the registry and equals the array of US-001 byte for byte
-- [ ] Given the source tree, when `src-app/src/app/ipc_handler/mod.rs` is searched, then no `match` arm compares a method name string, and `capabilities_value` holds no literal list
-- [ ] Given `PANEFLOW_IPC_SCRIPTING` and `PANEFLOW_IPC_ORCHESTRATION` unset, when a gated method is called, then it is refused exactly as before, and the gate is read from the descriptor
-- [ ] Given a `layout` parameter with more leaves than `MAX_PANES`, when `workspace.restore_layout` is called, then it is refused with the same code and message as before
+- [x] Given `surface.rename`, `surface.focus`, `surface.send_text`, `surface.send_keystroke`, `surface.split`, `workspace.create`, `workspace.up`, `workspace.select`, `workspace.close`, `workspace.restore_layout` and the tmux compatibility method, when they are called, then each is served through the registry and the US-001 cases pass unchanged
+- [x] Given `events.subscribe`, when the registry is listed, then it has a descriptor marked as a stream, and its frames (`subscribed`, `heartbeat`, `dropped`) are unchanged
+- [x] Given `system.capabilities`, when it is called, then its `methods` array is computed from the registry and equals the array of US-001 byte for byte
+- [x] Given the source tree, when `src-app/src/app/ipc_handler/mod.rs` is searched, then no `match` arm compares a method name string, and `capabilities_value` holds no literal list
+- [x] Given `PANEFLOW_IPC_SCRIPTING` and `PANEFLOW_IPC_ORCHESTRATION` unset, when a gated method is called, then it is refused exactly as before, and the gate is read from the descriptor
+- [x] Given a `layout` parameter with more leaves than `MAX_PANES`, when `workspace.restore_layout` is called, then it is refused with the same code and message as before
 
 #### US-004: `system.describe` and a checked-in schema snapshot
 **Description:** As a client author, I want to ask a running Paneflow what each method takes and returns so that I can call it without reading source.
@@ -215,12 +215,12 @@ Every method the app serves is declared once, with types and a schema, and every
 **Dependencies:** Blocked by US-003
 
 **Acceptance Criteria:**
-- [ ] Given `system.describe` with no parameter, when it is called, then it returns every method this endpoint serves with name, summary, owner, gate, stream flag, input schema, output schema and examples
-- [ ] Given `system.describe` with `method`, when it is called with a known name, then it returns that one descriptor
-- [ ] Given `system.describe` with an unknown `method`, when it is called, then the reply is `-32602` and names the method
-- [ ] Given a method owned by another process, when the full list is requested, then it appears with its owner and without being callable on this endpoint
-- [ ] Given `protocol/api-v1.json`, when a test regenerates the description from the registry, then the two are equal, and the failure message tells how to regenerate the file
-- [ ] The emitted schemas are JSON Schema 2020-12 and each validates its own examples in a test
+- [x] Given `system.describe` with no parameter, when it is called, then it returns every method this endpoint serves with name, summary, owner, gate, stream flag, input schema, output schema and examples
+- [x] Given `system.describe` with `method`, when it is called with a known name, then it returns that one descriptor
+- [x] Given `system.describe` with an unknown `method`, when it is called, then the reply is `-32602` and names the method
+- [x] Given a method owned by another process, when the full list is requested, then it appears with its owner and without being callable on this endpoint
+- [x] Given `protocol/api-v1.json`, when a test regenerates the description from the registry, then the two are equal, and the failure message tells how to regenerate the file
+- [x] The emitted schemas are JSON Schema 2020-12 and each validates its own examples in a test
 
 #### US-005: `paneflow api list`, `describe` and `call`
 **Description:** As a user, I want to explore and call the API from the shell so that I can script without a reference page.
@@ -232,13 +232,13 @@ Every method the app serves is declared once, with types and a schema, and every
 **Paneflow sites:** `src-app/src/cli/mod.rs:22-25,570-624`.
 
 **Acceptance Criteria:**
-- [ ] Given a running app, when `paneflow api list` runs, then it prints one line per method with its owner and summary, and `--json` prints the descriptors
-- [ ] Given `paneflow api describe surface.read`, when it runs, then it prints the parameters with type, required or optional and default, the result fields, and one example invocation
-- [ ] Given `paneflow api call surface.list`, when it runs, then it prints the JSON result and exits 0
-- [ ] Given `paneflow api call surface.read lines=50 fenced=true`, when it runs, then `key=value` pairs are typed from the method's schema (`50` as an integer, `true` as a boolean), and `--args '{...}'` or `--args @file.json` passes raw JSON
-- [ ] Given an unknown method or a parameter the schema rejects, when `paneflow api call` runs, then it prints the registry's message and exits with the existing error exit code
-- [ ] Given no running window, worker or host, when any `paneflow api` verb runs, then it exits with the existing "no instance" code and message
-- [ ] No existing subcommand changes its flags, output or exit code
+- [x] Given a running app, when `paneflow api list` runs, then it prints one line per method with its owner and summary, and `--json` prints the descriptors
+- [x] Given `paneflow api describe surface.read`, when it runs, then it prints the parameters with type, required or optional and default, the result fields, and one example invocation
+- [x] Given `paneflow api call surface.list`, when it runs, then it prints the JSON result and exits 0
+- [x] Given `paneflow api call surface.read lines=50 fenced=true`, when it runs, then `key=value` pairs are typed from the method's schema (`50` as an integer, `true` as a boolean), and `--args '{...}'` or `--args @file.json` passes raw JSON
+- [x] Given an unknown method or a parameter the schema rejects, when `paneflow api call` runs, then it prints the registry's message and exits with the existing error exit code
+- [x] Given no running window, worker or host, when any `paneflow api` verb runs, then it exits with the existing "no instance" code and message
+- [x] No existing subcommand changes its flags, output or exit code
 
 #### US-006: Route each call to its owner
 **Description:** As a client author, I want one client that sends each method to the process that owns it so that scripts do not hard-code endpoints.
@@ -250,12 +250,12 @@ Every method the app serves is declared once, with types and a schema, and every
 **Paneflow sites:** `crates/paneflow-ipc-client/src/host_control.rs:64-114`; `src-app/src/cli/mod.rs:570-624`; `crates/paneflow-host/src/control.rs:26-49`; `crates/paneflow-serve/src/protocol.rs:20-31`.
 
 **Acceptance Criteria:**
-- [ ] Given the registry, when it is listed, then the host control methods and the worker's `worker.*`, `agent.*` and `usage.*` methods have descriptors with owner `host` or `worker`, and no host or worker code changes in this story
-- [ ] Given a router built on the registry, when a method owned by the window is called and the window listens, then the request goes to the window's socket
-- [ ] Given a method owned by the window and no window, when the host serves a control answer for it, then the router falls back to the host exactly as `resolve_control_target` does today
-- [ ] Given a method owned by the worker and no worker reachable, when it is called, then the error names the worker and the method, and nothing is sent to another endpoint
-- [ ] Given `paneflow api list` with a window and a worker running, when it runs, then it shows the union of the methods, each tagged with its owner
-- [ ] The router lives outside `paneflow-ipc-client`, so no helper binary links it, and each helper's `release-min` size is unchanged by the story
+- [x] Given the registry, when it is listed, then the host control methods and the worker's `worker.*`, `agent.*` and `usage.*` methods have descriptors with owner `host` or `worker`, and no host or worker code changes in this story
+- [x] Given a router built on the registry, when a method owned by the window is called and the window listens, then the request goes to the window's socket
+- [x] Given a method owned by the window and no window, when the host serves a control answer for it, then the router falls back to the host exactly as `resolve_control_target` does today
+- [x] Given a method owned by the worker and no worker reachable, when it is called, then the error names the worker and the method, and nothing is sent to another endpoint
+- [x] Given `paneflow api list` with a window and a worker running, when it runs, then it shows the union of the methods, each tagged with its owner
+- [x] The router lives outside `paneflow-ipc-client`, so no helper binary links it, and each helper's `release-min` size is unchanged by the story
 
 ---
 

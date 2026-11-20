@@ -9,10 +9,10 @@
     {
       "id": "EP-001",
       "title": "One typed, self-describing API",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 6,
-      "stories_done": 0
+      "stories_done": 6
     },
     {
       "id": "EP-002",
@@ -92,77 +92,77 @@
       "id": "US-001",
       "title": "Pin the app's wire format in a conformance case file",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-002",
       "title": "Create `paneflow-api` and migrate the read methods",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-001"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-003",
       "title": "Migrate the remaining methods and delete the hand-written dispatch",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-002"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-004",
       "title": "`system.describe` and a checked-in schema snapshot",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-003"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-005",
       "title": "`paneflow api list`, `describe` and `call`",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-004"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-006",
       "title": "Route each call to its owner",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-004"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-20",
+      "completed_at": "2026-11-20",
+      "reviewed_at": "2026-11-20"
     },
     {
       "id": "US-007",
