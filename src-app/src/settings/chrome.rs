@@ -4,7 +4,9 @@ use gpui::{
     Window, div, prelude::*, px, svg,
 };
 
+use crate::keybindings::ShortcutEntry;
 use crate::settings::search;
+use crate::settings::tabs::shortcuts::any_shortcut_matches;
 use crate::ui_primitives::squircle_skin;
 use crate::widgets::scrollbar;
 use crate::{PaneFlowApp, SettingsSection};
@@ -184,25 +186,38 @@ const NAV_GROUPS: &[NavGroup] = &[
     },
 ];
 
-fn nav_item_matches(item: &NavItem, query: &str) -> bool {
-    query.is_empty()
-        || item.label.to_lowercase().contains(query)
+fn nav_item_named(item: &NavItem, query: &str) -> bool {
+    item.label.to_lowercase().contains(query)
         || item.keywords.iter().any(|keyword| keyword.contains(query))
+}
+
+fn nav_item_matches(item: &NavItem, query: &str, shortcuts: &[ShortcutEntry]) -> bool {
+    query.is_empty()
+        || nav_item_named(item, query)
         || search::section_matches(item.section, query)
+        || (item.section == SettingsSection::Shortcuts && any_shortcut_matches(shortcuts, query))
 }
 
-fn nav_section_matches(section: SettingsSection, query: &str) -> bool {
+pub(crate) fn shortcuts_named_by(query: &str) -> bool {
+    !query.is_empty()
+        && NAV_GROUPS
+            .iter()
+            .flat_map(|group| group.items)
+            .any(|item| item.section == SettingsSection::Shortcuts && nav_item_named(item, query))
+}
+
+fn nav_section_matches(section: SettingsSection, query: &str, shortcuts: &[ShortcutEntry]) -> bool {
     NAV_GROUPS
         .iter()
         .flat_map(|group| group.items)
-        .any(|item| item.section == section && nav_item_matches(item, query))
+        .any(|item| item.section == section && nav_item_matches(item, query, shortcuts))
 }
 
-fn first_matching_section(query: &str) -> Option<SettingsSection> {
+fn first_matching_section(query: &str, shortcuts: &[ShortcutEntry]) -> Option<SettingsSection> {
     NAV_GROUPS
         .iter()
         .flat_map(|group| group.items)
-        .find(|item| nav_item_matches(item, query))
+        .find(|item| nav_item_matches(item, query, shortcuts))
         .map(|item| item.section)
 }
 
@@ -253,7 +268,7 @@ impl PaneFlowApp {
             let items: Vec<&NavItem> = group
                 .items
                 .iter()
-                .filter(|it| nav_item_matches(it, &query))
+                .filter(|it| nav_item_matches(it, &query, &self.effective_shortcuts))
                 .collect();
             if items.is_empty() {
                 continue;
@@ -467,7 +482,7 @@ impl PaneFlowApp {
             .min_h_0();
 
         if section.owns_its_scroll() {
-            return shell.child(self.render_shortcuts_page(heading, cx));
+            return shell.child(self.render_shortcuts_page(heading, window, cx));
         }
 
         let raw_query = search::normalize(&self.settings_search_input.read(cx).value());
@@ -610,10 +625,10 @@ impl PaneFlowApp {
             return;
         };
         let query = search::normalize(&self.settings_search_input.read(cx).value());
-        if query.is_empty() || nav_section_matches(current, &query) {
+        if query.is_empty() || nav_section_matches(current, &query, &self.effective_shortcuts) {
             return;
         }
-        if let Some(section) = first_matching_section(&query) {
+        if let Some(section) = first_matching_section(&query, &self.effective_shortcuts) {
             self.enter_settings_section(section, cx);
         }
     }
@@ -648,10 +663,10 @@ impl PaneFlowApp {
             self.recording_shortcut = None;
             crate::keybindings::apply_keybindings(cx, &self.cached_config.shortcuts);
         }
-        self.shortcut_reset_armed_at = None;
         self.shortcut_cursor = None;
-        self.clear_shortcut_filters(cx);
+        self.reset_shortcut_search(cx);
         if section == SettingsSection::Shortcuts {
+            self.seed_shortcut_search(cx);
             self.rebuild_shortcut_rows(cx);
         }
         if section == SettingsSection::McpServers {
@@ -676,7 +691,52 @@ impl PaneFlowApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{NAV_GROUPS, SETTINGS_NAV_ICON_SIZE};
+    use super::{
+        NAV_GROUPS, SETTINGS_NAV_ICON_SIZE, first_matching_section, nav_section_matches,
+        shortcuts_named_by,
+    };
+    use crate::SettingsSection;
+    use crate::keybindings::{ShortcutEntry, ShortcutGroup};
+
+    fn shortcut(description: &str, key: &str) -> ShortcutEntry {
+        ShortcutEntry {
+            key: key.to_string(),
+            raw_key: None,
+            extra_raw_keys: Vec::new(),
+            customized: false,
+            description: description.to_string(),
+            action_name: "probe",
+            group: ShortcutGroup::Panes,
+            search_key: key.to_lowercase(),
+        }
+    }
+
+    #[test]
+    fn the_settings_search_finds_a_shortcut_by_its_name() {
+        let shortcuts = [shortcut("Zoom the focused pane", "Ctrl+Shift+Enter")];
+        assert!(nav_section_matches(
+            SettingsSection::Shortcuts,
+            "zoom the focused",
+            &shortcuts
+        ));
+        assert_eq!(
+            first_matching_section("zoom the focused", &shortcuts),
+            Some(SettingsSection::Shortcuts)
+        );
+        assert!(!nav_section_matches(
+            SettingsSection::Shortcuts,
+            "zoom the focused",
+            &[]
+        ));
+    }
+
+    #[test]
+    fn naming_the_page_shows_every_shortcut() {
+        assert!(shortcuts_named_by("keyboard"));
+        assert!(shortcuts_named_by("hotkey"));
+        assert!(!shortcuts_named_by("split"));
+        assert!(!shortcuts_named_by(""));
+    }
 
     #[test]
     fn a_nav_icon_sits_between_the_cap_and_x_height_axes_of_its_label() {

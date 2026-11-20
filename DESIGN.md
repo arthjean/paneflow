@@ -586,7 +586,7 @@ cards. `interface_style::Shape` names the three shapes (`Rounded`, `Surface`,
 `Classic`), and `surface_shape` maps Rounded to Surface and leaves Classic
 unchanged. The builders of those surfaces in `settings/components.rs`
 (`menu_surface_filled`, `floating_menu_panel`, `select_menu`, `select_option`,
-`menu_row`, `menu_divider`, `setting_card`, `list_card`, `card_tint`) and the
+`menu_row`, `menu_divider`, `setting_card`, `card_tint`) and the
 usage bubble run inside `with_surface_shape`, and a squircle primitive keeps
 the shape it was built under until it paints. `pick(rounded, classic)` chooses
 a value by style; `pick_surface(rounded, surface, classic)` is for a value
@@ -614,7 +614,7 @@ The surface contract:
 | --- | --- | --- |
 | Menus, context menus, select popups | The menu contract of 5.6, identical in every interface style | `ui_primitives/action_menu.rs`, `settings/components.rs` |
 | Usage bubble | Radius 14, padding 6, a `text` edge at 0.12 and the surface shadow | `settings/components.rs` |
-| Settings card | Radius 12 and no border: `setting_card`, and the `list_card` of the Keyboard shortcuts groups, paint only their fill, and the card reads through its surface step above the page | `settings/components.rs` |
+| Settings card | Radius 12 and no border: `setting_card`, the Keyboard Shortcuts sections included, paints only its fill, and the card reads through its surface step above the page | `settings/components.rs` |
 
 Classic takes its geometry from the Claude Code side of the Claude desktop
 app, measured on 2026-11-13 at 100% scale from its accessibility tree and from
@@ -1511,45 +1511,70 @@ icon sits in a 2 px `text` ring at 0.85 with radius 14, and the others show
 that ring at 0.32 on hover. Picking an icon keeps the gallery open, and leaving
 the page folds it.
 
-The Keyboard Shortcuts page is a register, not a tree, and it teaches in
-place rather than up front: no intro line, each instruction appears only in
-the state that needs it. The heading row carries `Reset all` (a
-`ghost_icon_button` with the undo glyph) at its trailing edge, shown only
-while at least one binding differs from its default; arming it swaps the
-button for `Reset {n} changed shortcuts?` at 12 px muted, a `Cancel` ghost
-pill, and the red `Reset`. Below, 24 px above the list, one 36 px capsule
-field on `subtle` searches the action label or an ASCII spelling of the
-chord, with the 18 px clear button and, at its trailing edge, a 28 px round
-keyboard toggle (`Find by keys`) that captures the next chord and shows what
-owns it: while active it takes `accent` at 0.15 behind an `accent` glyph and
-the field reads `Press a shortcut to see what it does`. Groups are the 11 px
-Semibold eyebrow of `section_eyebrow`, inset by the card padding plus the row
-inset so the eyebrow and the row labels share one left edge, followed for
-context-bound groups by the context at 11 px regular in `muted`
-(`Terminal  while a pane has focus`); no count, and they never fold. Each
-group is one `list_card` of 5.6 (radius 14, lifted surface, no border, 6 px
-padding, no gap) whose rows are 30 px at radius 8, concentric with the card
-(`text` at 0.05 on hover, pointing hand): the action at 12 px, truncated with
-its full text in a tooltip and never narrower than 96 px, and the chord as keycaps
-(20 px, radius 5, `subtle` with a 1 px edge lifted 8 percent toward `text`,
-11 Medium, gap 3), alternate chords separated by a muted `or`, or a plain
-`Unassigned` at 11 px in `muted`. A binding that differs from its
-default shows a 22 px undo glyph before its caps, at 0.5 opacity and full
-opacity while the row is hovered: it is both the mark of the change and the
-way back (`Reset to default`). While recording, the row takes the selected
-tint and its caps give way to `Esc cancels · Backspace clears` (`Delete` on
-macOS) at 11 px muted, the first thing to truncate,
-beside one `Press a shortcut` cap ringed in the system blue `#007aff` of 4.3
-over that blue at 0.12, with a `text` label. A chord another action owns is
-held rather than saved, drawn in `vc_conflict` with `Used by <action>` and a
-muted `· press again to reassign`, and a second press of the same chord takes
-it. Up and Down move a keyboard cursor through the visible rows, drawn as
-the selected tint plus the focus ring of the Usage page and scrolled into
-view with its group header for the first row; Enter records the row under
-it. A click moves the cursor without drawing the ring. An empty result centers a 20 px keyboard glyph over one 12 px muted line that quotes the query,
-48 px below the field, with no card. The scrollbar of the list sits at the
-panel edge, as in the panes and the docks, and the last group keeps 32 px
-below it.
+The Keyboard Shortcuts page follows the Settings grammar of every other page:
+sections of cards of rows, each row a name with its control at its end. Under
+the 26 px title, one 13 px line in `muted` on a 20 px line says what the page
+is for (`The keys for what you do most. Click one to change it.`) and is the
+only place the page teaches: while a shortcut records it reads
+`Press the new shortcut. Escape cancels, Backspace removes it.` (`Delete` on
+macOS), and when the pressed chord belongs to another action it reads
+`{keys} is already assigned to {action}. Press it again to reassign.` in
+`vc_conflict`, a second press of the same chord taking it. `Restore defaults`
+(a `ghost_icon_button` with the undo glyph) sits at the heading's trailing
+edge, shown only while a binding differs from its default, and resets every
+binding at once. Under the heading, 16 px below its note and 20 px above the first section, the
+page's search field is the `filter_field` of the command palette
+(`FilterFieldStyle::palette`: a 34 px well of `text` at 0.07, radius 9, 14 px
+text) reading `Search by name or keys`, with the clear button and, at its
+trailing edge, a 24 px round `Find by keys` toggle holding the 14 px keyboard
+glyph in `muted`, `accent` over `accent` at 0.15 while armed. The query is
+parsed rather than matched as text: each token that reads as a chord
+(`ctrl+shift+d`, `Shift+Ctrl+D`, `cmd-k`, `⌘⇧D`, or modifiers alone such as
+`ctrl+alt`) is compared with every binding as a keystroke, whatever the order
+or spelling of its modifiers, `cmd` reading as the platform key on macOS and as
+Ctrl or Super elsewhere; the other words go through the command palette's
+matcher over the action, then its keys, then a subsequence of the action, then
+its section and action id, and `unassigned` finds the unbound actions. With a
+query, sections and their rows are ordered by how well they match (exact chord
+before a chord within a larger one, then the palette's ranks), the matched
+characters of each action and section name and the matched chord in its
+recorder take the semibold `filter_match_color`, the first row carries the
+keyboard cursor, and the note reads `Showing {n} of {total} shortcuts. Press
+Enter to change the selected one.` Armed, the toggle empties the field, its
+placeholder reads `Press the keys to look up…` and the note
+`Press the keys to see what they do. Escape cancels.`; the next chord fills
+the field and disarms it. A printable key pressed anywhere on the page starts
+a search, `Ctrl+F` (`⌘F` on macOS) selects the field, Escape clears the query
+and then leaves the field, and the Settings search in the sidebar, which also
+finds each shortcut and opens this page, hands its query to the field; a query
+that names the page itself (`keyboard`, `shortcuts`, `hotkey`) hands none.
+Each section is its group's name at 11 px in
+`muted` on a 16 px line, then, for a context-bound group, the context as a
+sentence on a second line at 0.7 of that ink (`While a pane has focus.`), then
+8 px, then one `setting_card` whose 44 px rows are separated by the 1 px
+`hairline` from edge to edge; sections are 24 px apart and they never fold.
+A row is the action at 12 px Medium in `text`, truncated with its full text in
+a tooltip and never narrower than 96 px, and its control 16 px after it: a
+24 px recorder button filled with `text` at 0.06 and 0.12 on hover, the
+fill of `soft_skin` so it reads on any card surface (pointing hand),
+showing the chord as one run of 12 px Medium text, alternate chords separated
+by a regular `or` in `muted`, or a muted `None` when unassigned. A
+binding that differs from its default puts a `Reset` ghost button at 12 px
+Medium in `muted` 8 px before the recorder. Clicking the recorder records:
+it reads `Press a shortcut…` over the system blue `#007aff` at 0.12 inside a
+1 px ring of that blue, a held conflicting chord shows in `vc_conflict` at
+0.14 with its edge at 0.5, and clicking it again or anywhere else cancels.
+Up and Down move a keyboard cursor through the visible rows, from the field
+as from the page, drawn as the
+focus ring of the Usage page around the recorder and scrolled into view with
+its section header for the first row; Enter records the row under it, or the
+first result of a query. A query
+that matches nothing centers a 20 px keyboard glyph over one 12 px muted line
+that quotes it, 48 px below the field, with no card; a lone complete chord
+that nothing uses reads `Nothing uses {keys}` over `It is free to assign.` at
+0.7 of that ink. The scrollbar of the
+list sits at the panel edge, as in the panes and the docks, and the last
+section keeps 32 px below it.
 
 The Agents page (`src-app/src/settings/tabs/agents.rs`) follows the same list
 and drill-in grammar for the agents found on PATH. The heading is followed by

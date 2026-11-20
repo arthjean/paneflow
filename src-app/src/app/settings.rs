@@ -33,6 +33,7 @@ impl PaneFlowApp {
         self.font_search.clear();
         self.theme_dropdown_open = false;
         self.clear_settings_search(cx);
+        self.reset_shortcut_search(cx);
         if section == SettingsSection::Shortcuts {
             self.rebuild_shortcut_rows(cx);
         }
@@ -51,31 +52,9 @@ impl PaneFlowApp {
         cx.notify();
     }
 
-    pub(crate) fn set_shortcut_capture(&mut self, active: bool, cx: &mut Context<Self>) {
-        let changed = self.shortcut_capture_active != active;
-        self.shortcut_capture_active = active;
-        if active {
-            self.shortcut_search_input.update(cx, |input, cx| {
-                input.clear(cx);
-            });
-            self.cancel_shortcut_recording();
-        } else if changed {
-            self.rebuild_shortcut_rows(cx);
-        }
-    }
-
-    pub(crate) fn clear_shortcut_filters(&mut self, cx: &mut Context<Self>) {
-        self.shortcut_capture_active = false;
-        self.shortcut_search_input.update(cx, |input, cx| {
-            input.clear(cx);
-        });
-        self.rebuild_shortcut_rows(cx);
-    }
-
     pub(crate) fn close_settings(&mut self, cx: &mut Context<Self>) {
         self.settings_section = None;
-        self.clear_shortcut_filters(cx);
-        self.shortcut_reset_armed_at = None;
+        self.reset_shortcut_search(cx);
         self.font_dropdown_open = false;
         self.font_search.clear();
         self.theme_dropdown_open = false;
@@ -104,28 +83,9 @@ impl PaneFlowApp {
         self.shortcut_conflict = None;
     }
 
-    pub(crate) fn start_shortcut_recording(
-        &mut self,
-        action_name: &'static str,
-        cx: &mut Context<Self>,
-    ) {
-        self.set_shortcut_capture(false, cx);
-        self.shortcut_reset_armed_at = None;
+    pub(crate) fn start_shortcut_recording(&mut self, action_name: &'static str) {
         self.recording_shortcut = Some(action_name);
         self.shortcut_conflict = None;
-    }
-
-    pub(crate) fn arm_shortcut_reset(&mut self) {
-        self.cancel_shortcut_recording();
-        self.shortcut_reset_armed_at = Some(std::time::Instant::now());
-    }
-
-    pub(crate) fn confirm_shortcut_reset(&mut self, cx: &mut Context<Self>) {
-        if !reset_confirmation_accepted(self.shortcut_reset_armed_at, std::time::Instant::now()) {
-            return;
-        }
-        self.shortcut_reset_armed_at = None;
-        self.persist_shortcut_change(config_writer::reset_shortcuts_checked, cx);
     }
 
     pub(crate) fn persist_shortcut_change(
@@ -212,15 +172,6 @@ pub(crate) fn config_after_background_style_save(
     let mut next = config.clone();
     next.set_background_style(style);
     Some(next)
-}
-
-const RESET_CONFIRM_DELAY: std::time::Duration = std::time::Duration::from_millis(400);
-
-pub(crate) fn reset_confirmation_accepted(
-    armed_at: Option<std::time::Instant>,
-    now: std::time::Instant,
-) -> bool {
-    armed_at.is_some_and(|armed| now.saturating_duration_since(armed) >= RESET_CONFIRM_DELAY)
 }
 
 impl PaneFlowApp {
@@ -509,10 +460,11 @@ impl PaneFlowApp {
 
         if self.recording_shortcut.is_some() {
             if self
-                .shortcut_search_input
+                .settings_search_input
                 .read(cx)
                 .focus_handle
                 .is_focused(window)
+                || self.shortcut_search_focused(window, cx)
             {
                 self.cancel_shortcut_recording();
                 cx.notify();
@@ -523,22 +475,7 @@ impl PaneFlowApp {
             return true;
         }
 
-        if !self.shortcut_capture_active {
-            return self.navigate_shortcut_list(keystroke, window, cx);
-        }
-
-        if keystroke.key == "escape" {
-            self.set_shortcut_capture(false, cx);
-            cx.notify();
-            return true;
-        }
-
-        let formatted = keybindings::format_keystroke(&keystroke.unparse(keybindings::host_os()));
-        self.shortcut_search_input.update(cx, |input, cx| {
-            input.set_value(formatted, cx);
-        });
-        cx.notify();
-        true
+        self.handle_shortcut_page_key(keystroke, window, cx)
     }
 
     pub(crate) fn handle_shortcut_recording(
@@ -996,17 +933,6 @@ mod tests {
             Some(16.0),
             "the second stepper click still shows after the first write reloads"
         );
-    }
-
-    #[test]
-    fn a_reset_confirmation_needs_a_deliberate_pause() {
-        let armed = std::time::Instant::now();
-        let at = |ms: u64| armed + std::time::Duration::from_millis(ms);
-
-        assert!(!reset_confirmation_accepted(None, at(1000)));
-        assert!(!reset_confirmation_accepted(Some(armed), at(0)));
-        assert!(!reset_confirmation_accepted(Some(armed), at(399)));
-        assert!(reset_confirmation_accepted(Some(armed), at(400)));
     }
 
     #[test]

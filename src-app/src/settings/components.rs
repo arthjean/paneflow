@@ -1148,7 +1148,6 @@ pub fn menu_surface_filled<E: Styled + ParentElement>(
 
 pub(crate) const MENU_MAX_HEIGHT: Pixels = px(400.);
 
-pub(crate) const LIST_CARD_PADDING: Pixels = px(6.);
 const CHROME_EDGE_ALPHA: f32 = 0.6;
 const SURFACE_EDGE_ALPHA: f32 = 0.12;
 const CLASSIC_EDGE_ALPHA: f32 = 0.07;
@@ -1216,19 +1215,6 @@ pub fn menu_panel<E: Styled + ParentElement>(el: E, ui: crate::theme::UiColors) 
         .border_color(with_alpha(ui.text, action_menu::EDGE_ALPHA))
         .bg(select_menu_surface(ui))
         .font_family(action_menu::FONT_FAMILY)
-}
-
-pub fn list_card<E: Styled + ParentElement>(el: E, ui: crate::theme::UiColors) -> E {
-    with_surface_shape(|| {
-        el.relative()
-            .child(squircle::squircle_fill(
-                MENU_RADIUS,
-                select_menu_surface(ui),
-            ))
-            .flex()
-            .flex_col()
-            .p(LIST_CARD_PADDING)
-    })
 }
 
 pub fn menu_row(

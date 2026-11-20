@@ -1,5 +1,5 @@
 mod catalog;
-mod matcher;
+pub(crate) mod matcher;
 
 use std::ops::Range;
 use std::rc::Rc;

@@ -163,14 +163,24 @@ impl PaneFlowApp {
             cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Search settings…", cx));
         cx.observe(&settings_search_input, |this: &mut Self, _, cx| {
             this.follow_settings_search(cx);
+            if this.settings_section == Some(crate::SettingsSection::Shortcuts) {
+                this.seed_shortcut_search(cx);
+            }
             cx.notify();
         })
         .detach();
-        let shortcut_search_input =
-            cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Search shortcuts", cx));
+        let shortcut_search_input = cx.new(|cx| {
+            crate::widgets::text_input::TextInput::new(
+                "",
+                crate::settings::tabs::shortcuts::SEARCH_PLACEHOLDER,
+                cx,
+            )
+            .with_accessible_name("Search shortcuts")
+        });
         cx.observe(&shortcut_search_input, |this: &mut Self, _, cx| {
-            this.rebuild_shortcut_rows(cx);
-            cx.notify();
+            if this.settings_section == Some(crate::SettingsSection::Shortcuts) {
+                this.shortcut_search_changed(cx);
+            }
         })
         .detach();
         let workspace_template_name_input = cx.new(|cx| {
@@ -355,10 +365,10 @@ impl PaneFlowApp {
             pending_settings: std::collections::HashMap::new(),
             background_style_save_sequence: 0,
             quit_choice_write: None,
-            shortcut_search_input,
-            shortcut_capture_active: false,
-            shortcut_reset_armed_at: None,
             shortcut_conflict: None,
+            shortcut_search_input,
+            shortcut_key_search: false,
+            shortcut_filter: Default::default(),
             shortcut_rows: Vec::new(),
             shortcut_cursor: None,
             shortcut_list: crate::settings::tabs::shortcuts::new_shortcut_list_state(),

@@ -17,36 +17,6 @@ pub struct ShortcutEntry {
     pub search_key: String,
 }
 
-pub fn keystroke_caps(formatted: &str) -> Vec<String> {
-    if formatted == "Unassigned" {
-        return Vec::new();
-    }
-    if cfg!(target_os = "macos") {
-        let mut caps = Vec::new();
-        let mut rest = String::new();
-        for ch in formatted.chars() {
-            if rest.is_empty() && matches!(ch, '\u{2318}' | '\u{2303}' | '\u{21E7}' | '\u{2325}') {
-                caps.push(ch.to_string());
-            } else {
-                rest.push(ch);
-            }
-        }
-        if !rest.is_empty() {
-            caps.push(rest);
-        }
-        caps
-    } else {
-        match formatted.strip_suffix("+-") {
-            Some(modifiers) => modifiers
-                .split('+')
-                .map(str::to_string)
-                .chain(std::iter::once("-".to_string()))
-                .collect(),
-            None => formatted.split('+').map(str::to_string).collect(),
-        }
-    }
-}
-
 pub fn default_keys(action_name: &str) -> Vec<&'static str> {
     DEFAULTS
         .iter()
@@ -369,21 +339,6 @@ mod tests {
         assert!(enter.ends_with("Enter"), "{enter}");
         assert!(space.ends_with("Space"), "{space}");
         assert!(format_keystroke("secondary-a").ends_with('A'));
-    }
-
-    #[test]
-    fn keystroke_caps_split_modifiers_and_keep_a_minus_key() {
-        if cfg!(target_os = "macos") {
-            assert_eq!(
-                keystroke_caps("\u{2318}\u{21E7}D"),
-                ["\u{2318}", "\u{21E7}", "D"]
-            );
-        } else {
-            assert_eq!(keystroke_caps("Ctrl+Shift+D"), ["Ctrl", "Shift", "D"]);
-            assert_eq!(keystroke_caps("Ctrl+-"), ["Ctrl", "-"]);
-            assert_eq!(keystroke_caps("Ctrl+Shift+="), ["Ctrl", "Shift", "="]);
-        }
-        assert!(keystroke_caps("Unassigned").is_empty());
     }
 
     #[test]
@@ -750,12 +705,6 @@ mod tests {
         );
         assert_eq!(format_keystroke("secondary-="), format!("{secondary}="));
         assert_eq!(format_keystroke("tab"), "Tab");
-        assert_eq!(
-            keystroke_caps(&format_keystroke("secondary--"))
-                .last()
-                .map(String::as_str),
-            Some("-")
-        );
     }
 
     #[test]

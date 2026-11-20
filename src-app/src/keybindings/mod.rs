@@ -1,4 +1,5 @@
 mod apply;
+mod chord_query;
 mod defaults;
 mod display;
 mod registry;
@@ -6,9 +7,9 @@ mod registry;
 pub use apply::{
     apply_keybindings, host_os, keyboard_layout_changed, keystrokes_conflict, parse_keystroke,
 };
+pub use chord_query::{ChordFit, ChordPattern};
 pub use display::{
     ShortcutEntry, default_keys, effective_shortcuts, format_keystroke, is_bare_modifier,
-    keystroke_caps,
 };
 pub use registry::ShortcutGroup;
 

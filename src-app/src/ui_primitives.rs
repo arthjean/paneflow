@@ -1047,6 +1047,13 @@ pub(crate) fn highlight_matches(text: String, query: &str) -> gpui::StyledText {
             }
         }
     }
+    highlight_ranges(text, ranges)
+}
+
+pub(crate) fn highlight_ranges(
+    text: String,
+    ranges: Vec<std::ops::Range<usize>>,
+) -> gpui::StyledText {
     gpui::StyledText::new(text).with_highlights(ranges.into_iter().map(|range| {
         (
             range,
