@@ -231,7 +231,7 @@ function timer:active() end
 ---@field stdout boolean|fun(chunk: string)? false discards, a function receives output as it arrives
 ---@field stderr boolean|fun(chunk: string)? false discards, a function receives output as it arrives
 ---@field text boolean? Decode output as text and turn CRLF into LF, true by default
----@field detach boolean? Keep the program running when the scope that started it ends
+---@field detach boolean? Keep the program running when the scope that started it ends; its output is discarded unless a function receives it
 
 ---@class paneflow.exec.handle
 ---@field pid integer

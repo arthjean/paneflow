@@ -193,6 +193,43 @@ mod unix {
     }
 
     #[test]
+    fn a_command_that_ignores_the_termination_signal_is_killed_when_the_script_stops() {
+        let harness = real_time();
+        let recorded = harness.recorder();
+        let outcome = harness.run(
+            "local stubborn = paneflow.exec.start({ 'sh', '-c', 'trap \"\" TERM; echo ready; while :; do sleep 0.2; done' }, \
+               { stdout = function(chunk) record(stubborn_pid) paneflow.stop(2) end }) \
+             stubborn_pid = stubborn.pid \
+             paneflow.sleep(30)",
+        );
+        assert_eq!(outcome, paneflow_script::Outcome::Stopped(2));
+        let stubborn = recorded.borrow()[0].as_u64().unwrap();
+        assert!(
+            eventually_gone(stubborn),
+            "a command that ignores SIGTERM outlived the script"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_detached_command_writes_to_no_pipe_the_script_would_close() {
+        let harness = real_time();
+        let recorded = harness.recorder();
+        returned(harness.run(
+            "local detached = paneflow.exec.start({ 'sleep', '30' }, { detach = true }) \
+             record(detached.pid) return true",
+        ));
+        let detached = recorded.borrow()[0].as_u64().unwrap();
+        for descriptor in [1, 2] {
+            let target = std::fs::read_link(format!("/proc/{detached}/fd/{descriptor}")).unwrap();
+            assert_eq!(target, std::path::Path::new("/dev/null"));
+        }
+        let _ = std::process::Command::new("kill")
+            .arg(detached.to_string())
+            .status();
+    }
+
+    #[test]
     fn a_timer_runs_while_a_command_is_waiting_for_output() {
         let harness = real_time();
         let recorded = harness.recorder();

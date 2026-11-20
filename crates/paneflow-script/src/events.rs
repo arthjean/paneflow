@@ -229,7 +229,6 @@ pub struct Events {
     waiters: RefCell<Vec<Rc<Waiter>>>,
     pump_running: Cell<bool>,
     pump_waker: RefCell<Option<Waker>>,
-    cursor: Cell<u64>,
     history: RefCell<VecDeque<Delivered>>,
     sessions: RefCell<HashMap<String, SessionIds>>,
 }
@@ -246,7 +245,6 @@ impl Events {
             waiters: RefCell::new(Vec::new()),
             pump_running: Cell::new(false),
             pump_waker: RefCell::new(None),
-            cursor: Cell::new(0),
             history: RefCell::new(VecDeque::new()),
             sessions: RefCell::new(HashMap::new()),
         }
@@ -415,11 +413,10 @@ fn record(shared: &Shared, event: &Delivered) {
     history.push_back(event.clone());
 }
 
-fn settle_waiters(lua: &Lua, shared: &Shared, event: &Delivered) {
+fn settle_waiters(lua: &Lua, shared: &Shared, event: &Delivered) -> bool {
     let waiters: Vec<Rc<Waiter>> = shared.events.waiters.borrow().clone();
     for waiter in waiters {
         if waiter.found.borrow().is_some()
-            || event.seq <= shared.events.cursor.get()
             || !waiter.pattern.matches(&event.kind)
             || !waiter.filter.accepts(lua, event, shared)
         {
@@ -429,8 +426,9 @@ fn settle_waiters(lua: &Lua, shared: &Shared, event: &Delivered) {
         if let Some(waker) = waiter.waker.borrow_mut().take() {
             waker.wake();
         }
-        break;
+        return true;
     }
+    false
 }
 
 async fn run_handlers(lua: &Lua, shared: &Rc<Shared>, event: &Delivered) {
@@ -505,8 +503,9 @@ fn ensure_pump(lua: &Lua, shared: &Rc<Shared>) {
                     if !event.in_scope(*shared.scope.borrow()) {
                         continue;
                     }
-                    record(&shared, &event);
-                    settle_waiters(&lua, &shared, &event);
+                    if !settle_waiters(&lua, &shared, &event) {
+                        record(&shared, &event);
+                    }
                     run_handlers(&lua, &shared, &event).await;
                 }
                 Next::Frame(FeedFrame::Idle | FeedFrame::Disconnected(_)) => {}
@@ -575,6 +574,11 @@ async fn wait(
     (event, filter, timeout): (String, LuaValue, Option<f64>),
 ) -> mlua::Result<MultiValue> {
     let shared = shared(&lua)?;
+    if let Some((_, TaskKind::Handler)) = shared.executor.current() {
+        return Err(mlua::Error::RuntimeError(
+            "paneflow.wait cannot run inside an event handler: handlers run one at a time, so no event is delivered until this handler returns. Wait at the top level or in a timer started with paneflow.after".to_string(),
+        ));
+    }
     let pattern = pattern(&lua, "paneflow.wait", &event)?;
     let filter = Filter::from_lua(&lua, filter)?;
     let timeout = timeout
@@ -588,15 +592,24 @@ async fn wait(
             ),
         ]));
     }
-    let cursor = shared.events.cursor.get();
-    let earlier: Option<Delivered> = shared
+    let candidates: Vec<Delivered> = shared
         .events
         .history
         .borrow()
         .iter()
-        .filter(|event| event.seq > cursor && pattern.matches(&event.kind))
-        .find(|event| filter.accepts(&lua, event, &shared))
-        .cloned();
+        .filter(|event| pattern.matches(&event.kind))
+        .cloned()
+        .collect();
+    let earlier: Option<Delivered> = candidates
+        .into_iter()
+        .find(|event| filter.accepts(&lua, event, &shared));
+    if let Some(found) = &earlier {
+        shared
+            .events
+            .history
+            .borrow_mut()
+            .retain(|event| event != found);
+    }
     let found = match earlier {
         Some(found) => Some(found),
         None => {
@@ -626,10 +639,6 @@ async fn wait(
     };
     match found {
         Some(event) => {
-            shared
-                .events
-                .cursor
-                .set(shared.events.cursor.get().max(event.seq));
             let (ev, ctx) = event_tables(&lua, &event)?;
             Ok(MultiValue::from_iter([
                 LuaValue::Table(ev),

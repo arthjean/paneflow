@@ -98,6 +98,7 @@ fn stop_later(shared: &Rc<Shared>, process: Rc<Proc>) {
         return;
     }
     process.tree.signal(SIGTERM);
+    shared.processes.keep_stopping(process.clone());
     let task_shared = shared.clone();
     shared.executor.spawn(TaskKind::Internal, async move {
         let exited = Watch {
@@ -118,6 +119,7 @@ fn stop_later(shared: &Rc<Shared>, process: Rc<Proc>) {
 #[derive(Default)]
 pub struct Processes {
     by_scope: RefCell<HashMap<TaskId, Vec<Rc<Proc>>>>,
+    stopping: RefCell<Vec<Rc<Proc>>>,
 }
 
 impl Processes {
@@ -129,6 +131,12 @@ impl Processes {
                 .or_default()
                 .push(process);
         }
+    }
+
+    fn keep_stopping(&self, process: Rc<Proc>) {
+        let mut stopping = self.stopping.borrow_mut();
+        stopping.retain(|other| !other.exited());
+        stopping.push(process);
     }
 
     pub(crate) fn end_scope(&self, shared: &Rc<Shared>, scope: TaskId) {
@@ -146,6 +154,7 @@ impl Processes {
             .borrow_mut()
             .drain()
             .flat_map(|(_, processes)| processes)
+            .chain(self.stopping.borrow_mut().drain(..))
             .collect();
         let deadline = Instant::now() + TERM_GRACE;
         let running: Vec<Rc<Proc>> = all
@@ -489,10 +498,12 @@ fn launch(lua: &Lua, shared: &Rc<Shared>, spec: &mut Spec) -> Result<Rc<Proc>, S
     let stderr_streams = matches!(spec.stderr, Capture::Stream(_));
     command.stdout(match spec.stdout {
         Capture::Discard => Stdio::null(),
+        Capture::Collect if spec.detach => Stdio::null(),
         _ => Stdio::piped(),
     });
     command.stderr(match spec.stderr {
         Capture::Discard => Stdio::null(),
+        Capture::Collect if spec.detach => Stdio::null(),
         _ => Stdio::piped(),
     });
     paneflow_process::isolate_process_tree(&mut command);

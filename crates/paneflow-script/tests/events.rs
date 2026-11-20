@@ -329,3 +329,95 @@ fn wait_with_no_event_stream_returns_nil_and_the_reason() {
         "{value}"
     );
 }
+
+#[test]
+fn a_later_wait_still_gets_an_event_that_arrived_before_one_already_returned() {
+    let (backend, feed) = FakeBackend::new().with_feed();
+    feed.send(event(
+        1,
+        "terminal.exited",
+        json!({"workspace_id": 1, "surface_id": 4}),
+        json!({"exit_code": 4}),
+    ))
+    .unwrap();
+    feed.send(event(
+        2,
+        "terminal.exited",
+        json!({"workspace_id": 1, "surface_id": 3}),
+        json!({"exit_code": 3}),
+    ))
+    .unwrap();
+    let harness = harness(backend);
+    let value = returned(harness.run(
+        "local first = paneflow.wait('terminal.exited', { surface_id = 3 }) \
+         local second = paneflow.wait('terminal.exited', { surface_id = 4 }, 2) \
+         local again, why = paneflow.wait('terminal.exited', nil, 2) \
+         return { first = first.exit_code, second = second and second.exit_code, again = again == nil, why = why }",
+    ));
+    assert_eq!(
+        value,
+        json!({"first": 3, "second": 4, "again": true, "why": "timeout"})
+    );
+}
+
+#[test]
+fn wait_keeps_hearing_events_after_a_restart_numbers_them_from_one_again() {
+    let (backend, feed) = FakeBackend::new().with_feed();
+    feed.send(event(
+        500,
+        "tab.created",
+        json!({"workspace_id": 1}),
+        json!({}),
+    ))
+    .unwrap();
+    feed.send(FeedFrame::Resync).unwrap();
+    feed.send(event(
+        1,
+        "tab.created",
+        json!({"workspace_id": 1}),
+        json!({}),
+    ))
+    .unwrap();
+    let harness = harness(backend);
+    let value = returned(harness.run(
+        "local before = paneflow.wait('tab.created') \
+         local after = paneflow.wait('tab.created', nil, 2) \
+         return { before = before.seq, after = after and after.seq }",
+    ));
+    assert_eq!(value, json!({"before": 500, "after": 1}));
+}
+
+#[test]
+fn wait_inside_a_handler_raises_an_error_that_names_the_limitation() {
+    let (backend, feed) = FakeBackend::new().with_feed();
+    feed.send(event(
+        1,
+        "tab.created",
+        json!({"workspace_id": 1}),
+        json!({}),
+    ))
+    .unwrap();
+    let harness = harness(backend);
+    let recorded = harness.recorder();
+    let outcome = harness.run(
+        "paneflow.on('tab.created', function() \
+           local ok, err = pcall(function() local ev = paneflow.wait('tab.closed') return ev end) record(err) paneflow.stop(0) \
+         end)",
+    );
+    assert_eq!(outcome, Outcome::Stopped(0));
+    let recorded = recorded.borrow();
+    let message = recorded[0].as_str().unwrap();
+    assert!(message.contains("inside an event handler"), "{message}");
+    assert!(message.starts_with("script.lua:1:"), "{message}");
+}
+
+#[test]
+fn for_ends_a_loop_that_never_waits_with_status_zero() {
+    let harness = harness_with(FakeBackend::new(), |options| {
+        options.run_for = Some(Duration::from_secs(2));
+    });
+    harness.define_clock();
+    let outcome = harness.run("advance(5) while true do end");
+    assert_eq!(outcome, Outcome::Returned(None));
+    assert_eq!(outcome.status(), 0);
+}

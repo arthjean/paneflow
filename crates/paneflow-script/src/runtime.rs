@@ -188,6 +188,7 @@ pub(crate) struct Shared {
     pub halt: RefCell<Option<Halt>>,
     pub interrupt: Arc<AtomicBool>,
     pub deadline: Option<Duration>,
+    pub expires_at: std::cell::Cell<Option<Duration>>,
     pub fail_fast: bool,
     pub origin: String,
     pub scope: RefCell<EventScope>,
@@ -262,6 +263,14 @@ fn install_hook(lua: &Lua, shared: &Rc<Shared>) -> mlua::Result<()> {
         if let Some(halt) = shared.halt.borrow().clone() {
             return Err(error::halt(halt));
         }
+        if shared
+            .expires_at
+            .get()
+            .is_some_and(|at| shared.executor.now() >= at)
+        {
+            shared.halt_with(Halt::Expired);
+            return Err(error::halt(Halt::Expired));
+        }
         if let Some(limit) = shared.deadline {
             let ran = shared
                 .executor
@@ -292,6 +301,7 @@ impl Runtime {
             halt: RefCell::new(None),
             interrupt: Arc::new(AtomicBool::new(false)),
             deadline: options.deadline,
+            expires_at: std::cell::Cell::new(None),
             fail_fast: options.fail_fast,
             origin: options.origin.clone(),
             scope: RefCell::new(EventScope::All),
@@ -419,10 +429,9 @@ impl Runtime {
             }
         });
         if let Some(limit) = self.run_for {
-            let sleep = self
-                .shared
-                .executor
-                .sleep_until(self.shared.executor.now() + limit);
+            let expires_at = self.shared.executor.now() + limit;
+            self.shared.expires_at.set(Some(expires_at));
+            let sleep = self.shared.executor.sleep_until(expires_at);
             let shared = self.shared.clone();
             self.shared.executor.spawn(TaskKind::Daemon, async move {
                 sleep.await;
