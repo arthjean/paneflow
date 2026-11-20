@@ -190,12 +190,13 @@ pub async fn invoke(lua: Lua, name: String, args: LuaValue) -> mlua::Result<Mult
             ),
         );
     }
-    let params = match arguments(&lua, &name, &args)
-        .and_then(|params| prepare(&info, params, &shared.context.borrow()))
-    {
-        Ok(params) => params,
-        Err(error) => return failure(&lua, &error),
-    };
+    let context =
+        crate::config::current_ids(&shared).unwrap_or_else(|| shared.context.borrow().clone());
+    let params =
+        match arguments(&lua, &name, &args).and_then(|params| prepare(&info, params, &context)) {
+            Ok(params) => params,
+            Err(error) => return failure(&lua, &error),
+        };
     let backend = shared.backend.clone();
     let method = name.clone();
     let answer = shared

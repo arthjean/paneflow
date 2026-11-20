@@ -53,6 +53,7 @@ macro_rules! method {
     };
 }
 
+pub mod config;
 pub mod events;
 pub mod host;
 pub mod surface;
@@ -190,6 +191,8 @@ pub fn window_declarations() -> Vec<Descriptor> {
         Descriptor::of::<surface::FleetList>(),
         Descriptor::of::<events::Subscribe>(),
         Descriptor::of::<tmux::Compat>(),
+        Descriptor::of::<config::ListBuiltinActions>(),
+        Descriptor::of::<config::DispatchAction>(),
         Descriptor::of::<system::Describe>(),
     ]
 }
@@ -212,6 +215,11 @@ pub fn worker_declarations() -> Vec<Descriptor> {
         Descriptor::of::<worker::UsageImport>(),
         Descriptor::of::<events::Follow>(),
         Descriptor::of::<events::Publish>(),
+        Descriptor::of::<config::Status>(),
+        Descriptor::of::<config::Reload>(),
+        Descriptor::of::<config::ListActions>(),
+        Descriptor::of::<config::InvokeAction>(),
+        Descriptor::of::<config::ListKeymap>(),
     ]
 }
 

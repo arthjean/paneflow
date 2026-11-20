@@ -4,6 +4,7 @@ use paneflow_ipc_client::{IpcClient, IpcTransport};
 use serde_json::Value;
 
 pub(crate) mod api_cmd;
+mod config_cmd;
 mod control_cmds;
 mod do_cmd;
 mod events_cmd;
@@ -31,6 +32,8 @@ pub const EXIT_TIMEOUT: i32 = 4;
 const VERBS: &[&str] = &[
     "api",
     "do",
+    "actions",
+    "config",
     "ls",
     "read",
     "search",
@@ -198,6 +201,19 @@ enum Commands {
         long_about = "Run a Lua 5.4 script in this process against Paneflow. The script reaches every method as paneflow.<namespace>.<method>{...}, reacts to events with paneflow.on and paneflow.wait, sets timers with paneflow.after and paneflow.every, and runs programs with paneflow.exec.\n\nkey=value pairs after the script fill paneflow.args, typed by spelling (n=2 is a number, on=true a boolean). A returned value is printed as one line of JSON. An error prints `Error: <message>` and exits 1; paneflow.stop(n) exits n; Ctrl-C exits 130.\n\nExamples:\n  paneflow do ./split.lua\n  paneflow do -e 'return paneflow.surface.list()'\n  echo 'return paneflow.args.n * 2' | paneflow do - n=21"
     )]
     Do(do_cmd::DoArgs),
+    #[command(
+        about = "List the actions init.lua declares, as the worker loaded them",
+        long_about = "List the actions init.lua declares, as the worker loaded them: name, title, category and where each is declared. Run one with `paneflow do <name> key=value`.\n\nExamples:\n  paneflow actions\n  paneflow actions --json"
+    )]
+    Actions {
+        #[arg(long, help = "Print the action.list result as JSON")]
+        json: bool,
+    },
+    #[command(
+        subcommand,
+        about = "Reload or check init.lua, the Lua configuration the worker runs"
+    )]
+    Config(config_cmd::ConfigCommand),
     #[command(alias = "list_panes", about = "List terminal surfaces")]
     Ls {
         #[arg(long, help = "Human-readable table instead of the default JSON")]
@@ -571,6 +587,26 @@ pub fn run() -> i32 {
         return do_cmd::run(args);
     }
 
+    if let Commands::Actions { json } = command {
+        return match config_cmd::actions(json) {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("paneflow: {}", e.message);
+                e.code
+            }
+        };
+    }
+
+    if let Commands::Config(command) = command {
+        return match config_cmd::run(command) {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("paneflow: {}", e.message);
+                e.code
+            }
+        };
+    }
+
     if let Commands::Host(command) = command {
         return match host_cmd::run(command) {
             Ok(code) => code,
@@ -801,6 +837,8 @@ fn dispatch(command: Commands, client: &CliTransport) -> Result<i32, CliError> {
         },
         Commands::Api(command) => api_cmd::run(command),
         Commands::Do(args) => Ok(do_cmd::run(args)),
+        Commands::Actions { json } => config_cmd::actions(json),
+        Commands::Config(command) => config_cmd::run(command),
         Commands::Host(command) => host_cmd::run(command),
         Commands::Serve(command) => serve_cmd::run(command),
         Commands::Sessions {

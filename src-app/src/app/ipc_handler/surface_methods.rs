@@ -667,7 +667,7 @@ impl PaneFlowApp {
         )
     }
 
-    fn workspace_id_for_workspace_idx(&self, idx: usize) -> Option<u64> {
+    pub(crate) fn workspace_id_for_workspace_idx(&self, idx: usize) -> Option<u64> {
         self.workspaces.get(idx).map(|workspace| workspace.id)
     }
 

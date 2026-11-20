@@ -14,6 +14,7 @@ path = "src/lib.rs"
 interprocess.workspace = true
 jiff = { workspace = true, features = ["serde"] }
 log.workspace = true
+notify.workspace = true
 paneflow-agent-config = { workspace = true, features = ["config-io"] }
 paneflow-api.workspace = true
 paneflow-config.workspace = true
@@ -22,6 +23,7 @@ paneflow-host.workspace = true
 paneflow-ipc-client.workspace = true
 paneflow-mcp-install.workspace = true
 paneflow-process.workspace = true
+paneflow-script.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"

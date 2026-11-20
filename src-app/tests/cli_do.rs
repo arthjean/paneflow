@@ -14,10 +14,22 @@ use serde_json::{Value, json};
 const LINE_WAIT: Duration = Duration::from_secs(30);
 
 fn command(home: &Path, args: &[&str]) -> Command {
+    let mut command = verb(home, "do");
+    command.args(args);
+    command
+}
+
+fn paneflow(home: &Path, args: &[&str]) -> Output {
+    let (verb_name, rest) = args.split_first().expect("a verb");
+    let mut command = verb(home, verb_name);
+    command.args(rest);
+    command.output().expect("paneflow runs")
+}
+
+fn verb(home: &Path, verb: &str) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_paneflow"));
     command
-        .arg("do")
-        .args(args)
+        .arg(verb)
         .env(paneflow_home::HOME_ENV, home)
         .env_remove("PANEFLOW_SOCKET_PATH")
         .env_remove("PANEFLOW_ALLOW_SOCKET_OVERRIDE");
@@ -233,10 +245,164 @@ fn a_missing_or_broken_file_exits_1_without_contacting_paneflow() {
     let output = run(home.path(), &["deploy"]);
     assert_eq!(output.status.code(), Some(1));
     assert!(
-        stderr(&output).contains("no action named 'deploy'"),
+        stderr(&output).contains("action.invoke is served by the Paneflow worker"),
         "{}",
         stderr(&output)
     );
+}
+
+const DEV_LAYOUT: &str = "paneflow.action{ name = 'dev_layout', title = 'Dev layout', args = { file = 'string' },\n\
+      run = function(ctx, args) return { file = args.file, origin = ctx.origin, where = WHERE } end }\n\
+    paneflow.action{ name = 'broken', title = 'Broken', run = function() error('it broke') end }";
+
+fn wait_loaded(home: &Path) {
+    let deadline = std::time::Instant::now() + LINE_WAIT;
+    loop {
+        let output = paneflow(home, &["actions", "--json"]);
+        if output.status.success()
+            && serde_json::from_str::<Value>(&stdout(&output)).is_ok_and(|listed| {
+                listed["actions"]
+                    .as_array()
+                    .is_some_and(|actions| !actions.is_empty())
+            })
+        {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "init.lua never loaded"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn an_action_name_runs_the_worker_action_and_prints_its_result() {
+    let home = tempfile::tempdir().unwrap();
+    std::fs::write(
+        paneflow_home::init_lua_path_in(home.path()),
+        format!("WHERE = 'worker'\n{DEV_LAYOUT}"),
+    )
+    .unwrap();
+    let worker = paneflow_serve::open(home.path()).expect("the worker takes the home");
+    wait_loaded(home.path());
+    let output = run(home.path(), &["dev_layout", "file=app.log"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let value: Value = serde_json::from_str(&stdout(&output)).unwrap();
+    assert_eq!(
+        value,
+        json!({"file": "app.log", "origin": "cli", "where": "worker"})
+    );
+
+    let output = run(home.path(), &["broken"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr(&output).contains("init.lua:4: it broke"),
+        "{}",
+        stderr(&output)
+    );
+    assert!(
+        !stderr(&output).contains("not reachable"),
+        "a worker that answered with an error is reachable: {}",
+        stderr(&output)
+    );
+
+    let output = run(home.path(), &["nowhere"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr(&output).contains("no action named 'nowhere'"),
+        "{}",
+        stderr(&output)
+    );
+
+    let listed = paneflow(home.path(), &["actions"]);
+    assert!(listed.status.success());
+    assert!(
+        stdout(&listed).contains("dev_layout"),
+        "{}",
+        stdout(&listed)
+    );
+    assert!(
+        stdout(&listed).contains("init.lua:2"),
+        "{}",
+        stdout(&listed)
+    );
+
+    let reloaded = paneflow(home.path(), &["config", "reload"]);
+    assert!(reloaded.status.success(), "{}", stderr(&reloaded));
+    assert!(
+        stdout(&reloaded).contains("2 actions"),
+        "{}",
+        stdout(&reloaded)
+    );
+    worker.stop();
+}
+
+#[test]
+fn action_runs_a_configuration_file_in_the_cli_process_without_the_worker() {
+    let home = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("init.lua");
+    std::fs::write(&config, format!("WHERE = 'cli'\n{DEV_LAYOUT}")).unwrap();
+    let output = run(
+        home.path(),
+        &[
+            config.to_str().unwrap(),
+            "--action",
+            "dev_layout",
+            "file=app.log",
+        ],
+    );
+    assert!(output.status.success(), "{}", stderr(&output));
+    let value: Value = serde_json::from_str(&stdout(&output)).unwrap();
+    assert_eq!(
+        value,
+        json!({"file": "app.log", "origin": "cli", "where": "cli"})
+    );
+    assert!(!paneflow_home::serve_dir_in(home.path()).exists());
+
+    let output = run(
+        home.path(),
+        &[
+            config.to_str().unwrap(),
+            "--action",
+            "dev_layout",
+            "bogus=1",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr(&output).contains("no argument named \"bogus\"; the action takes file"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn config_check_prints_problems_with_their_line_and_exits_1_on_an_error() {
+    let home = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("init.lua");
+    std::fs::write(
+        &config,
+        "paneflow.action{ name = 'ok', title = 'Ok', run = function() end }\npaneflow.action{ name = 'Bad', title = 'x', run = function() end }",
+    )
+    .unwrap();
+    let output = paneflow(home.path(), &["config", "check", config.to_str().unwrap()]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stdout(&output).contains("init.lua:2: error:"),
+        "{}",
+        stdout(&output)
+    );
+    std::fs::write(
+        &config,
+        "paneflow.action{ name = 'ok', title = 'Ok', run = function() end }",
+    )
+    .unwrap();
+    let output = paneflow(home.path(), &["config", "check", config.to_str().unwrap()]);
+    assert_eq!(output.status.code(), Some(0), "{}", stdout(&output));
+    assert!(!paneflow_home::serve_dir_in(home.path()).exists());
 }
 
 #[test]

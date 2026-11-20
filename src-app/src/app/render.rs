@@ -608,6 +608,7 @@ impl Render for PaneFlowApp {
             .on_action(cx.listener(Self::handle_toggle_diff_dock))
             .on_action(cx.listener(Self::handle_toggle_diff_dock_maximize))
             .on_action(cx.listener(Self::handle_open_command_palette))
+            .on_action(cx.listener(Self::handle_run_lua_action))
             .on_action(cx.listener(Self::handle_clone_repository))
             .on_action(cx.listener(Self::handle_diff_new_file_tab))
             .on_action(cx.listener(Self::handle_open_file_finder))

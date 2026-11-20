@@ -365,9 +365,64 @@ function paneflow.exec.start(argv, opts) end
 ---@param level "debug"|"info"|"warn"|"error"|any
 ---@param message any?
 function paneflow.log(level, message) end
+
+---@class paneflow.action.ctx: paneflow.ctx
+---@field origin "key"|"palette"|"cli"|"api"|"script"|"agent"|"timer"|"event"|string What started the run
+---@field client_id string? The client that asked for the run
+
+---@class paneflow.action.spec
+---@field name string Lowercase letters, digits and underscores
+---@field title string Shown in the command palette
+---@field description string?
+---@field category string? Palette group, Actions by default
+---@field keywords string[]? Extra words the palette filter matches
+---@field args table<string, string|table>? Argument types such as "string" or "number?", or JSON Schema tables
+---@field agents boolean? Whether agents may run the action, false by default
+---@field run fun(ctx: paneflow.action.ctx, args: table): any
+
+---Declare an action while init.lua loads; call paneflow.action.invoke or paneflow.invoke to run one.
+---@class paneflow.action
+---@overload fun(spec: paneflow.action.spec): boolean?
+paneflow.action = {}
+
+---Run an action with arguments inside an action or a script; nil and a message when it fails.
+---@param name string
+---@param args table?
+---@return any value
+---@return string? message
+function paneflow.invoke(name, args) end
+
+---Bind a key to an action name while init.lua loads; Settings shortcuts win over it.
+---@param key string A key in the syntax of paneflow.json shortcuts, such as "ctrl-alt-d"
+---@param action string A Lua action or a built-in action name
+---@param args table? Arguments for a Lua action
+---@return boolean?
+function paneflow.bind(key, action, args) end
+
+---Remove this file's bindings of a key and drop the window's default for it.
+---@param key string
+---@return boolean
+function paneflow.unbind(key) end
+
+---@class paneflow.binding
+---@field key string
+---@field action string
+---@field args table?
+---@field source string
+
+---@return paneflow.binding[]
+function paneflow.bindings() end
+
+---@class paneflow.client
+paneflow.client = {}
+
+---Queue a built-in window action; inside an action it runs once run returns without error.
+---@param name string A name from paneflow.client.list_actions
+---@return boolean
+function paneflow.client.queue(name) end
 "#;
 
-const RUNTIME_NAMESPACES: &[&str] = &["json", "layout", "exec", "args", "ctx"];
+const RUNTIME_NAMESPACES: &[&str] = &["json", "layout", "exec", "args", "ctx", "action", "client"];
 
 pub fn lua_stubs(descriptions: &[Value]) -> String {
     let mut out = String::new();

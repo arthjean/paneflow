@@ -2530,6 +2530,127 @@
     {
       "examples": [
         {
+          "params": {},
+          "result": {
+            "actions": [
+              {
+                "description": "Zoom the focused pane",
+                "group": "Panes & splits",
+                "name": "toggle_zoom"
+              }
+            ]
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "none",
+      "gate_note": null,
+      "in_capabilities": false,
+      "name": "client.list_actions",
+      "owner": "window",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "NoParams",
+        "type": "object"
+      },
+      "reply": "inline",
+      "result": {
+        "$defs": {
+          "BuiltinAction": {
+            "properties": {
+              "description": {
+                "type": "string"
+              },
+              "group": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "description",
+              "group"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "actions": {
+            "items": {
+              "$ref": "#/$defs/BuiltinAction"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "actions"
+        ],
+        "title": "BuiltinActions",
+        "type": "object"
+      },
+      "stream": false,
+      "summary": "List the window's built-in actions: the names key bindings and client.dispatch_action accept."
+    },
+    {
+      "examples": [
+        {
+          "params": {
+            "name": "toggle_zoom"
+          },
+          "result": {
+            "dispatched": true,
+            "name": "toggle_zoom"
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "none",
+      "gate_note": null,
+      "in_capabilities": false,
+      "name": "client.dispatch_action",
+      "owner": "window",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "description": "A name from client.list_actions, such as toggle_zoom",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "DispatchParams",
+        "type": "object"
+      },
+      "reply": "async",
+      "result": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "dispatched": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "dispatched",
+          "name"
+        ],
+        "title": "Dispatched",
+        "type": "object"
+      },
+      "stream": false,
+      "summary": "Dispatch a built-in action in the window as the command palette does, and reply once it is dispatched."
+    },
+    {
+      "examples": [
+        {
           "params": {
             "method": "system.ping"
           },
@@ -3846,6 +3967,669 @@
       },
       "stream": false,
       "summary": "Append layout events to the worker's log, in order. Any event outside the layout family refuses the whole batch with -32602."
+    },
+    {
+      "examples": [
+        {
+          "params": {},
+          "result": {
+            "actions": 2,
+            "bindings": 1,
+            "found": true,
+            "handler_errors": 0,
+            "handlers": 1,
+            "loaded_at_ms": 1763600000000,
+            "ok": false,
+            "path": "/home/me/.paneflow/init.lua",
+            "problems": [
+              {
+                "file": "init.lua",
+                "line": 7,
+                "message": "unexpected symbol near 'end'",
+                "severity": "error"
+              }
+            ],
+            "timer_errors": 0,
+            "timers": 0
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "none",
+      "gate_note": null,
+      "in_capabilities": false,
+      "name": "config.status",
+      "owner": "worker",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "NoParams",
+        "type": "object"
+      },
+      "reply": "ready",
+      "result": {
+        "$defs": {
+          "ConfigProblem": {
+            "properties": {
+              "file": {
+                "description": "The file the problem is in, such as init.lua or lua/dev.lua",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "line": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "severity": {
+                "$ref": "#/$defs/Severity"
+              }
+            },
+            "required": [
+              "severity",
+              "message"
+            ],
+            "type": "object"
+          },
+          "Severity": {
+            "enum": [
+              "error",
+              "warning"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "actions": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "bindings": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "found": {
+            "description": "Whether the file existed at the last load",
+            "type": "boolean"
+          },
+          "handler_errors": {
+            "description": "Errors raised by event handlers of the active configuration",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "handlers": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "loaded_at_ms": {
+            "description": "Milliseconds since the Unix epoch when the active configuration loaded",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "ok": {
+            "description": "False when the last load failed and the previous configuration stayed active",
+            "type": "boolean"
+          },
+          "path": {
+            "description": "Absolute path of the init.lua the worker reads",
+            "type": "string"
+          },
+          "problems": {
+            "items": {
+              "$ref": "#/$defs/ConfigProblem"
+            },
+            "type": "array"
+          },
+          "timer_errors": {
+            "description": "Errors raised by timers of the active configuration",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "timers": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path",
+          "found",
+          "ok",
+          "actions",
+          "bindings",
+          "handlers",
+          "timers",
+          "handler_errors",
+          "timer_errors",
+          "problems"
+        ],
+        "title": "ConfigStatus",
+        "type": "object"
+      },
+      "stream": false,
+      "summary": "Read the state of init.lua: its path, whether it was found, when it loaded, what it declared and its load problems."
+    },
+    {
+      "examples": [
+        {
+          "params": {},
+          "result": {
+            "actions": 0,
+            "bindings": 0,
+            "found": false,
+            "handler_errors": 0,
+            "handlers": 0,
+            "ok": true,
+            "path": "/home/me/.paneflow/init.lua",
+            "problems": [],
+            "timer_errors": 0,
+            "timers": 0
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "none",
+      "gate_note": null,
+      "in_capabilities": false,
+      "name": "config.reload",
+      "owner": "worker",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "NoParams",
+        "type": "object"
+      },
+      "reply": "ready",
+      "result": {
+        "$defs": {
+          "ConfigProblem": {
+            "properties": {
+              "file": {
+                "description": "The file the problem is in, such as init.lua or lua/dev.lua",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "line": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "severity": {
+                "$ref": "#/$defs/Severity"
+              }
+            },
+            "required": [
+              "severity",
+              "message"
+            ],
+            "type": "object"
+          },
+          "Severity": {
+            "enum": [
+              "error",
+              "warning"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "actions": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "bindings": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "found": {
+            "description": "Whether the file existed at the last load",
+            "type": "boolean"
+          },
+          "handler_errors": {
+            "description": "Errors raised by event handlers of the active configuration",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "handlers": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "loaded_at_ms": {
+            "description": "Milliseconds since the Unix epoch when the active configuration loaded",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "ok": {
+            "description": "False when the last load failed and the previous configuration stayed active",
+            "type": "boolean"
+          },
+          "path": {
+            "description": "Absolute path of the init.lua the worker reads",
+            "type": "string"
+          },
+          "problems": {
+            "items": {
+              "$ref": "#/$defs/ConfigProblem"
+            },
+            "type": "array"
+          },
+          "timer_errors": {
+            "description": "Errors raised by timers of the active configuration",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "timers": {
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path",
+          "found",
+          "ok",
+          "actions",
+          "bindings",
+          "handlers",
+          "timers",
+          "handler_errors",
+          "timer_errors",
+          "problems"
+        ],
+        "title": "ConfigStatus",
+        "type": "object"
+      },
+      "stream": false,
+      "summary": "Load init.lua again now and return the status; a failed load keeps the previous configuration active."
+    },
+    {
+      "examples": [
+        {
+          "params": {},
+          "result": {
+            "actions": [
+              {
+                "agents": false,
+                "args": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "file": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "file"
+                  ],
+                  "type": "object"
+                },
+                "category": "Actions",
+                "keywords": [
+                  "split"
+                ],
+                "name": "dev_layout",
+                "source": "init.lua:3",
+                "title": "Dev layout"
+              }
+            ]
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "none",
+      "gate_note": null,
+      "in_capabilities": false,
+      "name": "action.list",
+      "owner": "worker",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "NoParams",
+        "type": "object"
+      },
+      "reply": "ready",
+      "result": {
+        "$defs": {
+          "ActionSummary": {
+            "properties": {
+              "agents": {
+                "description": "Whether agents may run the action",
+                "type": "boolean"
+              },
+              "args": {
+                "description": "JSON Schema of the arguments, an object with one property per argument"
+              },
+              "category": {
+                "type": "string"
+              },
+              "description": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "keywords": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "name": {
+                "type": "string"
+              },
+              "source": {
+                "description": "Where the action is declared, such as init.lua:12",
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "title",
+              "category",
+              "keywords",
+              "args",
+              "agents",
+              "source"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "actions": {
+            "items": {
+              "$ref": "#/$defs/ActionSummary"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "actions"
+        ],
+        "title": "ActionList",
+        "type": "object"
+      },
+      "stream": false,
+      "summary": "List the actions init.lua declared, with their titles, argument schemas and sources."
+    },
+    {
+      "examples": [
+        {
+          "params": {
+            "args": {
+              "file": "app.log"
+            },
+            "ctx": {
+              "origin": "cli"
+            },
+            "name": "dev_layout"
+          },
+          "result": {
+            "result": {
+              "surface_id": 12
+            }
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "none",
+      "gate_note": null,
+      "in_capabilities": false,
+      "name": "action.invoke",
+      "owner": "worker",
+      "params": {
+        "$defs": {
+          "InvokeContext": {
+            "additionalProperties": false,
+            "properties": {
+              "client_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "origin": {
+                "description": "What started the run: key, palette, cli, api, script, agent, timer or event; api by default",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "pane_id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "surface_id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "tab_id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "workspace_id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "args": {
+            "additionalProperties": true,
+            "description": "The action's arguments, checked against its declared schema",
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "ctx": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/InvokeContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "InvokeParams",
+        "type": "object"
+      },
+      "reply": "ready",
+      "result": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "result": {
+            "description": "What run returned; absent when it returned nothing, nil or true"
+          }
+        },
+        "title": "Invoked",
+        "type": "object"
+      },
+      "stream": false,
+      "summary": "Run an action of init.lua with arguments and return what it returned. Arguments are checked against its schema first; a run is stopped after 30 seconds."
+    },
+    {
+      "examples": [
+        {
+          "params": {},
+          "result": {
+            "bindings": [
+              {
+                "action": "dev_layout",
+                "args": {
+                  "file": "app.log"
+                },
+                "key": "ctrl-alt-d",
+                "source": "init.lua:9",
+                "target": "lua"
+              }
+            ],
+            "unbound": [
+              {
+                "key": "ctrl-shift-w",
+                "source": "init.lua:10"
+              }
+            ]
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "none",
+      "gate_note": null,
+      "in_capabilities": false,
+      "name": "keymap.list",
+      "owner": "worker",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "NoParams",
+        "type": "object"
+      },
+      "reply": "ready",
+      "result": {
+        "$defs": {
+          "BindingTarget": {
+            "enum": [
+              "lua",
+              "builtin"
+            ],
+            "type": "string"
+          },
+          "KeyBindingRow": {
+            "properties": {
+              "action": {
+                "type": "string"
+              },
+              "args": {
+                "additionalProperties": true,
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "key": {
+                "description": "The key as written, in the syntax of paneflow.json shortcuts",
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              },
+              "target": {
+                "$ref": "#/$defs/BindingTarget",
+                "description": "lua for an action of init.lua, builtin for a name the window resolves"
+              }
+            },
+            "required": [
+              "key",
+              "action",
+              "source",
+              "target"
+            ],
+            "type": "object"
+          },
+          "UnboundKey": {
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "key",
+              "source"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "bindings": {
+            "items": {
+              "$ref": "#/$defs/KeyBindingRow"
+            },
+            "type": "array"
+          },
+          "unbound": {
+            "description": "Keys init.lua unbound, for the window to drop their defaults",
+            "items": {
+              "$ref": "#/$defs/UnboundKey"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "bindings",
+          "unbound"
+        ],
+        "title": "Keymap",
+        "type": "object"
+      },
+      "stream": false,
+      "summary": "List the key bindings init.lua declared and the keys it unbound, for the window to apply."
     }
   ]
 }

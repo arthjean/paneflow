@@ -245,6 +245,29 @@ impl Registry {
         }
     }
 
+    pub(crate) fn call(
+        &self,
+        worker: &Arc<Worker>,
+        method: &str,
+        params: &Value,
+    ) -> Result<Value, ServeError> {
+        let entry = self
+            .get(method)
+            .ok_or_else(|| ServeError::method_not_found(method))?;
+        entry.validate(params)?;
+        match &entry.serve {
+            Serve::Ready(handler) => handler(worker, params),
+            Serve::Closing(handler, after) => {
+                let answer = handler(worker, params);
+                after(worker);
+                answer
+            }
+            Serve::Stream(_) => Err(ServeError::invalid_params(format!(
+                "{method} is a stream and answers no single call"
+            ))),
+        }
+    }
+
     pub(crate) fn serve(
         &self,
         wire: &mut Wire,

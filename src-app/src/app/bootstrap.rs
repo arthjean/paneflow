@@ -454,6 +454,7 @@ impl PaneFlowApp {
             worktree_remove_dialog: None,
             worktree_remove_focus: cx.focus_handle(),
             host_agents: Default::default(),
+            lua_config: Default::default(),
             usage: crate::app::usage::UsagePanel::new(cx),
             write_approvals: Default::default(),
             about_dialog: None,
@@ -478,6 +479,7 @@ impl PaneFlowApp {
             command_palette_scroll: gpui::UniformListScrollHandle::new(),
             command_palette_scope: None,
             command_palette_section: None,
+            command_palette_lua_category: None,
             command_palette_context: Default::default(),
             command_palette_restore_focus: None,
             pane_palette: None,
@@ -572,6 +574,7 @@ impl PaneFlowApp {
             app.refresh_owned_sessions(cx);
             app.refresh_space_integrations_at_launch(cx);
             app.start_host_agent_stream();
+            app.start_lua_config_stream();
             app.start_layout_event_stream();
             app.refresh_usage_inventory(false, cx);
             app.start_usage_auto_refresh(cx);
@@ -686,6 +689,7 @@ impl PaneFlowApp {
                     let result = cx.update(|cx| {
                         this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
                             app.process_host_agent_frames(cx);
+                            app.process_lua_config_frames(cx);
                             app.process_write_approval_frames(cx);
                             app.process_config_changes(cx);
                             app.process_update_check(cx);

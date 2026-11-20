@@ -10,14 +10,42 @@ use crate::runtime::{Shared, context_table, shared};
 
 pub const MAX_TIMERS: usize = 1024;
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Timers {
     active: Cell<usize>,
+    states: std::cell::RefCell<Vec<std::rc::Weak<TimerState>>>,
 }
 
 impl Timers {
     pub fn active(&self) -> usize {
         self.active.get()
+    }
+
+    fn set_active(&self, shared: &Shared, active: usize) {
+        self.active.set(active);
+        shared
+            .stats
+            .timers
+            .store(active, std::sync::atomic::Ordering::Release);
+    }
+
+    pub(crate) fn cancel_all(&self, shared: &Shared) {
+        let states: Vec<Rc<TimerState>> = self
+            .states
+            .borrow_mut()
+            .drain(..)
+            .filter_map(|state| state.upgrade())
+            .collect();
+        for state in states {
+            let was_active = state.active.get();
+            state.release(shared);
+            if was_active
+                && !state.running.get()
+                && let Some(task) = state.task.get()
+            {
+                shared.executor.cancel(task);
+            }
+        }
     }
 }
 
@@ -56,8 +84,7 @@ impl TimerState {
         if self.counted.replace(false) {
             shared
                 .timers
-                .active
-                .set(shared.timers.active.get().saturating_sub(1));
+                .set_active(shared, shared.timers.active.get().saturating_sub(1));
         }
     }
 }
@@ -100,13 +127,20 @@ fn schedule(
         shared.halt_with(Halt::Fatal(message.clone()));
         return Err(crate::error::halt(Halt::Fatal(message)));
     }
-    shared.timers.active.set(shared.timers.active.get() + 1);
+    shared
+        .timers
+        .set_active(&shared, shared.timers.active.get() + 1);
     let state = Rc::new(TimerState {
         active: Cell::new(true),
         running: Cell::new(false),
         counted: Cell::new(true),
         task: Cell::new(None),
     });
+    {
+        let mut states = shared.timers.states.borrow_mut();
+        states.retain(|held| held.strong_count() > 0);
+        states.push(Rc::downgrade(&state));
+    }
     let task_state = state.clone();
     let executor = shared.executor.clone();
     let start = executor.now();

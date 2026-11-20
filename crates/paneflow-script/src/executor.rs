@@ -18,6 +18,7 @@ type LocalFuture = Pin<Box<dyn Future<Output = ()>>>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskKind {
     TopLevel,
+    Action,
     Timer,
     Handler,
     Callback,

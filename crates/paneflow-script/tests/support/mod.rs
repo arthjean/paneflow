@@ -22,6 +22,7 @@ pub struct FakeBackend {
     pub sessions: HashMap<String, SessionIds>,
     pub follow_refused: Option<CallError>,
     pub extra_methods: Vec<Value>,
+    pub window: bool,
 }
 
 impl FakeBackend {
@@ -35,6 +36,7 @@ impl FakeBackend {
             sessions: HashMap::new(),
             follow_refused: None,
             extra_methods: Vec::new(),
+            window: true,
         }
     }
 
@@ -113,6 +115,10 @@ impl Backend for FakeBackend {
 
     fn resolve_session(&self, session: &str) -> Option<SessionIds> {
         self.sessions.get(session).cloned()
+    }
+
+    fn window_attached(&self) -> bool {
+        self.window
     }
 }
 

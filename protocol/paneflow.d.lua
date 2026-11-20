@@ -172,6 +172,88 @@ function paneflow.exec.start(argv, opts) end
 ---@param message any?
 function paneflow.log(level, message) end
 
+---@class paneflow.action.ctx: paneflow.ctx
+---@field origin "key"|"palette"|"cli"|"api"|"script"|"agent"|"timer"|"event"|string What started the run
+---@field client_id string? The client that asked for the run
+
+---@class paneflow.action.spec
+---@field name string Lowercase letters, digits and underscores
+---@field title string Shown in the command palette
+---@field description string?
+---@field category string? Palette group, Actions by default
+---@field keywords string[]? Extra words the palette filter matches
+---@field args table<string, string|table>? Argument types such as "string" or "number?", or JSON Schema tables
+---@field agents boolean? Whether agents may run the action, false by default
+---@field run fun(ctx: paneflow.action.ctx, args: table): any
+
+---Declare an action while init.lua loads; call paneflow.action.invoke or paneflow.invoke to run one.
+---@class paneflow.action
+---@overload fun(spec: paneflow.action.spec): boolean?
+paneflow.action = {}
+
+---Run an action with arguments inside an action or a script; nil and a message when it fails.
+---@param name string
+---@param args table?
+---@return any value
+---@return string? message
+function paneflow.invoke(name, args) end
+
+---Bind a key to an action name while init.lua loads; Settings shortcuts win over it.
+---@param key string A key in the syntax of paneflow.json shortcuts, such as "ctrl-alt-d"
+---@param action string A Lua action or a built-in action name
+---@param args table? Arguments for a Lua action
+---@return boolean?
+function paneflow.bind(key, action, args) end
+
+---Remove this file's bindings of a key and drop the window's default for it.
+---@param key string
+---@return boolean
+function paneflow.unbind(key) end
+
+---@class paneflow.binding
+---@field key string
+---@field action string
+---@field args table?
+---@field source string
+
+---@return paneflow.binding[]
+function paneflow.bindings() end
+
+---@class paneflow.client
+paneflow.client = {}
+
+---Queue a built-in window action; inside an action it runs once run returns without error.
+---@param name string A name from paneflow.client.list_actions
+---@return boolean
+function paneflow.client.queue(name) end
+
+---@class paneflow.action.invoke.params
+---@field args? table The action's arguments, checked against its declared schema
+---@field ctx? table
+---@field name string
+
+---@class paneflow.action.invoke.result
+---@field result? any
+
+---Run an action of init.lua with arguments and return what it returned. Arguments are checked against its schema first; a run is stopped after 30 seconds.
+---@param params paneflow.action.invoke.params
+---@return paneflow.action.invoke.result? result
+---@return string? message
+---@return integer? code
+paneflow.action.invoke = function(params) end
+
+---@class paneflow.action.list.params
+
+---@class paneflow.action.list.result
+---@field actions table[]
+
+---List the actions init.lua declared, with their titles, argument schemas and sources.
+---@param params paneflow.action.list.params?
+---@return paneflow.action.list.result? result
+---@return string? message
+---@return integer? code
+paneflow.action.list = function(params) end
+
 ---@class paneflow.agent
 paneflow.agent = {}
 
@@ -236,6 +318,79 @@ paneflow.agent.follow = function(params) end
 ---@return integer? code
 paneflow.agent.snapshot = function(params) end
 
+---@class paneflow.client.dispatch_action.params
+---@field name string A name from client.list_actions, such as toggle_zoom
+
+---@class paneflow.client.dispatch_action.result
+---@field dispatched boolean
+---@field name string
+
+---Dispatch a built-in action in the window as the command palette does, and reply once it is dispatched.
+---@param params paneflow.client.dispatch_action.params
+---@return paneflow.client.dispatch_action.result? result
+---@return string? message
+---@return integer? code
+paneflow.client.dispatch_action = function(params) end
+
+---@class paneflow.client.list_actions.params
+
+---@class paneflow.client.list_actions.result
+---@field actions table[]
+
+---List the window's built-in actions: the names key bindings and client.dispatch_action accept.
+---@param params paneflow.client.list_actions.params?
+---@return paneflow.client.list_actions.result? result
+---@return string? message
+---@return integer? code
+paneflow.client.list_actions = function(params) end
+
+---@class paneflow.config
+paneflow.config = {}
+
+---@class paneflow.config.reload.params
+
+---@class paneflow.config.reload.result
+---@field actions integer
+---@field bindings integer
+---@field found boolean
+---@field handler_errors integer
+---@field handlers integer
+---@field loaded_at_ms? integer
+---@field ok boolean
+---@field path string
+---@field problems table[]
+---@field timer_errors integer
+---@field timers integer
+
+---Load init.lua again now and return the status; a failed load keeps the previous configuration active.
+---@param params paneflow.config.reload.params?
+---@return paneflow.config.reload.result? result
+---@return string? message
+---@return integer? code
+paneflow.config.reload = function(params) end
+
+---@class paneflow.config.status.params
+
+---@class paneflow.config.status.result
+---@field actions integer
+---@field bindings integer
+---@field found boolean
+---@field handler_errors integer
+---@field handlers integer
+---@field loaded_at_ms? integer
+---@field ok boolean
+---@field path string
+---@field problems table[]
+---@field timer_errors integer
+---@field timers integer
+
+---Read the state of init.lua: its path, whether it was found, when it loaded, what it declared and its load problems.
+---@param params paneflow.config.status.params?
+---@return paneflow.config.status.result? result
+---@return string? message
+---@return integer? code
+paneflow.config.status = function(params) end
+
 ---@class paneflow.events
 paneflow.events = {}
 
@@ -299,6 +454,22 @@ paneflow.fleet = {}
 ---@return string? message
 ---@return integer? code
 paneflow.fleet.list = function(params) end
+
+---@class paneflow.keymap
+paneflow.keymap = {}
+
+---@class paneflow.keymap.list.params
+
+---@class paneflow.keymap.list.result
+---@field bindings table[]
+---@field unbound table[]
+
+---List the key bindings init.lua declared and the keys it unbound, for the window to apply.
+---@param params paneflow.keymap.list.params?
+---@return paneflow.keymap.list.result? result
+---@return string? message
+---@return integer? code
+paneflow.keymap.list = function(params) end
 
 ---@class paneflow.pane
 paneflow.pane = {}

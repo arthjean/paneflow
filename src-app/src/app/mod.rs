@@ -32,6 +32,7 @@ pub mod ipc_handler;
 pub(crate) mod layout_bridge;
 #[cfg(test)]
 pub(crate) mod layout_pins;
+pub(crate) mod lua_config;
 #[cfg(target_os = "macos")]
 pub mod macos_menu;
 pub(crate) mod menu_icons;

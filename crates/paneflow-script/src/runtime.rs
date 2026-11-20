@@ -12,6 +12,8 @@ use crate::clock::{Clock, SystemClock, Wake};
 use crate::error::{self, Halt};
 use crate::executor::{Executor, RunEnd, TaskKind};
 
+pub use crate::config::LoadReport;
+
 pub const HOOK_INSTRUCTIONS: u32 = 1000;
 
 pub const EXIT_INTERRUPTED: i32 = 130;
@@ -75,6 +77,9 @@ pub trait Backend: Send + Sync {
     fn call(&self, method: &str, params: Value) -> Result<Value, CallError>;
     fn follow(&self) -> Result<Box<dyn EventFeed>, CallError>;
     fn resolve_session(&self, session: &str) -> Option<SessionIds>;
+    fn window_attached(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,6 +134,8 @@ pub struct Options {
     pub run_for: Option<Duration>,
     pub memory_limit: Option<usize>,
     pub deadline: Option<Duration>,
+    pub config_root: Option<PathBuf>,
+    pub serving: bool,
 }
 
 impl Options {
@@ -145,6 +152,8 @@ impl Options {
             run_for: None,
             memory_limit: None,
             deadline: None,
+            config_root: None,
+            serving: false,
         }
     }
 }
@@ -197,6 +206,13 @@ pub(crate) struct Shared {
     pub timers: crate::timers::Timers,
     pub events: crate::events::Events,
     pub processes: crate::exec::Processes,
+    pub config: crate::config::Config,
+    pub tasks:
+        RefCell<std::collections::HashMap<crate::executor::TaskId, crate::config::TaskScope>>,
+    pub stats: Arc<crate::config::Stats>,
+    pub serving: bool,
+    pub required: RefCell<Vec<PathBuf>>,
+    pub mailbox: crate::serve::Mailbox,
 }
 
 impl Shared {
@@ -218,6 +234,15 @@ impl Shared {
             return;
         }
         let message = error::describe(error);
+        match self.executor.current().map(|(_, kind)| kind) {
+            Some(TaskKind::Timer) => {
+                self.stats.timer_errors.fetch_add(1, Ordering::AcqRel);
+            }
+            Some(TaskKind::Handler) => {
+                self.stats.handler_errors.fetch_add(1, Ordering::AcqRel);
+            }
+            _ => {}
+        }
         self.sink.report(&format!("Error in {what}: {message}"));
         if self.fail_fast {
             self.halt_with(Halt::Fatal(message));
@@ -242,13 +267,13 @@ pub(crate) fn context_table(lua: &Lua, ids: &PaneContext, origin: &str) -> mlua:
 }
 
 pub struct Runtime {
-    lua: Lua,
-    shared: Rc<Shared>,
+    pub(crate) lua: Lua,
+    pub(crate) shared: Rc<Shared>,
     run_for: Option<Duration>,
 }
 
 pub struct Chunk {
-    function: Function,
+    pub(crate) function: Function,
 }
 
 fn install_hook(lua: &Lua, shared: &Rc<Shared>) -> mlua::Result<()> {
@@ -270,6 +295,9 @@ fn install_hook(lua: &Lua, shared: &Rc<Shared>) -> mlua::Result<()> {
         {
             shared.halt_with(Halt::Expired);
             return Err(error::halt(Halt::Expired));
+        }
+        if crate::config::current_deadline(&shared).is_some_and(|at| shared.executor.now() >= at) {
+            return Err(crate::config::deadline_error(_lua));
         }
         if let Some(limit) = shared.deadline {
             let ran = shared
@@ -293,7 +321,7 @@ impl Runtime {
     pub fn new(backend: Arc<dyn Backend>, options: Options) -> Result<Self, String> {
         let lua = crate::stdlib::new_state().map_err(|error| error::describe(&error))?;
         let wake = Arc::new(Wake::default());
-        let executor = Executor::new(options.clock.clone(), wake);
+        let executor = Executor::new(options.clock.clone(), wake.clone());
         let shared = Rc::new(Shared {
             executor,
             backend,
@@ -310,6 +338,12 @@ impl Runtime {
             timers: crate::timers::Timers::default(),
             events: crate::events::Events::new(options.all_workspaces),
             processes: crate::exec::Processes::default(),
+            config: crate::config::Config::default(),
+            tasks: RefCell::new(std::collections::HashMap::new()),
+            stats: Arc::new(crate::config::Stats::default()),
+            serving: options.serving,
+            required: RefCell::new(Vec::new()),
+            mailbox: crate::serve::new_mailbox(wake),
         });
         lua.set_app_data(shared.clone());
         let setup = || -> mlua::Result<()> {
@@ -338,6 +372,10 @@ impl Runtime {
             crate::events::install(&lua, &paneflow, &guard)?;
             crate::exec::install(&lua, &paneflow, &guard)?;
             crate::api::install_call(&lua, &paneflow, &guard)?;
+            crate::config::install(&lua, &paneflow, &guard)?;
+            if let Some(root) = options.config_root.as_deref() {
+                crate::stdlib::install_config_searcher(&lua, root)?;
+            }
             lua.set_named_registry_value(crate::guard::REGISTRY_KEY, guard)?;
             crate::guard::plain_tree(&lua, &paneflow)?;
             lua.globals().set("paneflow", paneflow)?;
@@ -484,7 +522,11 @@ impl Runtime {
         }
     }
 
-    fn shutdown(&self) {
+    pub fn stats(&self) -> Arc<crate::config::Stats> {
+        self.shared.stats.clone()
+    }
+
+    pub(crate) fn shutdown(&self) {
         self.shared.events.stop_feed();
         self.shared.processes.stop_all();
         self.shared.executor.cancel_all();

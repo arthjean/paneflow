@@ -65,6 +65,12 @@ pub(super) struct DoArgs {
         help = "Stop Lua code that runs this long without waiting; no deadline when absent"
     )]
     deadline: Option<f64>,
+    #[arg(
+        long,
+        value_name = "NAME",
+        help = "Load the script as a configuration such as init.lua and run this action from it, in this process; the worker's loaded configuration is untouched"
+    )]
+    action: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -397,6 +403,13 @@ impl Backend for CliBackend {
             })
     }
 
+    fn window_attached(&self) -> bool {
+        matches!(
+            self.endpoints.control,
+            Some(paneflow_ipc_client::host_control::ControlTarget::Controller(_))
+        )
+    }
+
     fn resolve_session(&self, session: &str) -> Option<SessionIds> {
         let cached = self
             .sessions
@@ -440,7 +453,7 @@ fn read_script(script: &Script) -> Result<(Vec<u8>, String, Option<PathBuf>), Cl
             Ok((source, "=stdin".to_string(), std::env::current_dir().ok()))
         }
         Script::Action(name) => Err(CliError::runtime(format!(
-            "no action named '{name}'; give a script path ending in .lua, -e '<chunk>' or - for stdin"
+            "'{name}' is an action name, which the worker runs; give a script path ending in .lua, -e '<chunk>' or - for stdin"
         ))),
     }
 }
@@ -494,7 +507,131 @@ fn report_error(message: &str) -> i32 {
     EXIT_RUNTIME
 }
 
+fn invoke_context() -> paneflow_api::methods::config::InvokeContext {
+    paneflow_api::methods::config::InvokeContext {
+        origin: Some("cli".to_string()),
+        surface_id: env_id("PANEFLOW_SURFACE_ID"),
+        workspace_id: env_id("PANEFLOW_WORKSPACE_ID"),
+        ..Default::default()
+    }
+}
+
+fn print_result(value: Option<&Value>, indent: bool) {
+    if let Some(value) = value {
+        let rendered = if indent {
+            serde_json::to_string_pretty(value)
+        } else {
+            serde_json::to_string(value)
+        };
+        println!("{}", rendered.unwrap_or_default());
+    }
+}
+
+pub(super) fn invoke_on_worker(
+    name: &str,
+    args: Value,
+    context: paneflow_api::methods::config::InvokeContext,
+) -> Result<Option<Value>, CliError> {
+    let catalog = paneflow_api::catalog().map_err(|error| CliError::runtime(error.to_string()))?;
+    let endpoints = Endpoints::from_environment();
+    let endpoint = router::route(&catalog, &endpoints, "action.invoke")?;
+    let params = json!({
+        "name": name,
+        "args": args,
+        "ctx": serde_json::to_value(context).unwrap_or_else(|_| json!({})),
+    });
+    let reply = router::send(&catalog, &endpoint, "action.invoke", params)?;
+    Ok(reply
+        .get("result")
+        .filter(|value| !value.is_null())
+        .cloned())
+}
+
+fn run_worker_action(name: &str, pairs: &[String], args: &DoArgs) -> i32 {
+    let values = match script_args(pairs, args.args.as_deref()) {
+        Ok(values) => values,
+        Err(error) => return report_error(&error.message),
+    };
+    match invoke_on_worker(name, values, invoke_context()) {
+        Ok(value) => {
+            print_result(value.as_ref(), args.json);
+            super::EXIT_OK
+        }
+        Err(error) => report_error(&error.message),
+    }
+}
+
+fn run_local_action(action: &str, path: &std::path::Path, pairs: &[String], args: &DoArgs) -> i32 {
+    let values = match script_args(pairs, args.args.as_deref()) {
+        Ok(values) => values,
+        Err(error) => return report_error(&error.message),
+    };
+    let source = match std::fs::read(path) {
+        Ok(source) => source,
+        Err(error) => return report_error(&format!("{}: {error}", path.display())),
+    };
+    let root = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    let mut options = match options(args, Some(root.clone()), json!({})) {
+        Ok(options) => options,
+        Err(error) => return report_error(&error.message),
+    };
+    options.config_root = Some(root.clone());
+    options.lua_dir = Some(root.join(paneflow_home::LUA_DIR_NAME));
+    let catalog = match paneflow_api::catalog() {
+        Ok(catalog) => catalog,
+        Err(error) => return report_error(&error.to_string()),
+    };
+    let backend = Arc::new(CliBackend::new(catalog, Endpoints::from_environment()));
+    let runtime = match Runtime::new(backend, options) {
+        Ok(runtime) => runtime,
+        Err(message) => return report_error(&message),
+    };
+    let name = path.file_name().map_or_else(
+        || path.display().to_string(),
+        |name| name.to_string_lossy().to_string(),
+    );
+    let chunk = match runtime.compile(&source, &format!("@{name}")) {
+        Ok(chunk) => chunk,
+        Err(message) => return report_error(&message),
+    };
+    let interrupter = runtime.interrupter();
+    let _ = ctrlc::set_handler(move || interrupter.interrupt());
+    if let Err(message) = runtime.attach() {
+        return report_error(&message);
+    }
+    let report = runtime.load(chunk);
+    for problem in &report.problems {
+        eprintln!("{}", super::config_cmd::problem_line(problem));
+    }
+    if !report.ok {
+        return EXIT_RUNTIME;
+    }
+    let outcome = runtime.run_action(action.to_string(), values, invoke_context());
+    print_outcome(&outcome, args.json);
+    outcome.status()
+}
+
 pub(super) fn run(args: DoArgs) -> i32 {
+    match (
+        classify(args.chunk.as_deref(), &args.items),
+        args.action.as_deref(),
+    ) {
+        (Ok((Script::Action(name), pairs)), None) => {
+            return run_worker_action(&name, &pairs, &args);
+        }
+        (Ok((Script::File(path), pairs)), Some(action)) => {
+            return run_local_action(action, &path, &pairs, &args);
+        }
+        (Ok(_), Some(_)) => {
+            return report_error(
+                "--action needs a configuration file such as ~/.paneflow/init.lua",
+            );
+        }
+        _ => {}
+    }
     let prepared = classify(args.chunk.as_deref(), &args.items).and_then(|(script, pairs)| {
         let values = script_args(&pairs, args.args.as_deref())?;
         let (source, name, dir) = read_script(&script)?;
@@ -593,7 +730,7 @@ mod tests {
         assert!(classify(None, &[]).is_err());
         let refused = read_script(&Script::Action("deploy".into())).unwrap_err();
         assert!(
-            refused.message.starts_with("no action named 'deploy'"),
+            refused.message.starts_with("'deploy' is an action name"),
             "{}",
             refused.message
         );
@@ -682,6 +819,7 @@ mod tests {
             fail_fast: false,
             memory_limit: None,
             deadline: None,
+            action: None,
         };
         let options = options(&args, None, json!({})).unwrap();
         assert_eq!(options.memory_limit, None);

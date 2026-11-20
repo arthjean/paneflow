@@ -256,6 +256,16 @@ pub fn lua_dir() -> Option<PathBuf> {
     paneflow_home().map(|home| lua_dir_in(&home))
 }
 
+pub const INIT_LUA_FILE_NAME: &str = "init.lua";
+
+pub fn init_lua_path_in(home: &Path) -> PathBuf {
+    home.join(INIT_LUA_FILE_NAME)
+}
+
+pub fn init_lua_path() -> Option<PathBuf> {
+    paneflow_home().map(|home| init_lua_path_in(&home))
+}
+
 const SERVE_ENDPOINT_PREFIX: &str = "paneflow-serve-";
 
 #[cfg(windows)]
@@ -454,6 +464,9 @@ mod tests {
             home.join("cache").join("path-index.bin")
         );
         assert_eq!(worktrees_dir().expect("worktrees"), home.join("worktrees"));
+        assert_eq!(init_lua_path().expect("init.lua"), home.join("init.lua"));
+        assert_eq!(init_lua_path_in(&home), home.join("init.lua"));
+        assert_eq!(lua_dir().expect("lua"), home.join("lua"));
         assert_eq!(host_dir_in(&home), home.join("host"));
         assert_eq!(
             host_sessions_dir_in(&home),

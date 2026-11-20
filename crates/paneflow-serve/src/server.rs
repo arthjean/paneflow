@@ -45,6 +45,7 @@ pub struct Worker {
     pub usage: Mutex<Usage>,
     pub probe_slots: ProbeSlots,
     pub events: EventLog,
+    pub config: Arc<crate::config_runtime::ConfigRuntime>,
 }
 
 impl Worker {
@@ -696,7 +697,7 @@ fn reply(wire: &mut Wire, id: &Value, answer: Result<Value, ServeError>) -> Flow
 }
 
 pub(crate) fn register_methods(builder: RegistryBuilder) -> RegistryBuilder {
-    use paneflow_api::methods::{events, system, worker};
+    use paneflow_api::methods::{config, events, system, worker};
 
     builder
         .ready::<worker::Hello>(|worker, _| Ok(worker.identity_value()))
@@ -723,7 +724,22 @@ pub(crate) fn register_methods(builder: RegistryBuilder) -> RegistryBuilder {
         .ready::<worker::UsageImport>(|worker, call| Ok(worker.import_usage(call.raw)))
         .stream::<events::Follow>(stream_events)
         .ready::<events::Publish>(|worker, call| worker.publish_events(call.params))
+        .ready::<config::Status>(|worker, _| to_value(worker.config.status()))
+        .ready::<config::Reload>(|worker, _| to_value(worker.config.reload(worker)))
+        .ready::<config::ListActions>(|worker, _| to_value(worker.config.actions()))
+        .ready::<config::InvokeAction>(|worker, call| {
+            worker.config.invoke(call.params).and_then(to_value)
+        })
+        .ready::<config::ListKeymap>(|worker, _| to_value(worker.config.keymap()))
         .inline::<system::Describe>(|_, call| registry()?.describe(call.params.method.as_deref()))
+}
+
+fn to_value(value: impl serde::Serialize) -> Result<Value, ServeError> {
+    serde_json::to_value(value).map_err(|error| ServeError {
+        code: crate::protocol::ERR_INTERNAL,
+        message: format!("the reply cannot be encoded: {error}"),
+        data: None,
+    })
 }
 
 fn stream_follow(wire: &mut Wire, worker: &Worker, shutdown: &AtomicBool, id: &Value) -> Flow {

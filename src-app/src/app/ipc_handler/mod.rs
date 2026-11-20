@@ -188,7 +188,7 @@ fn identity() -> serde_json::Value {
 }
 
 fn register_methods(builder: RegistryBuilder) -> RegistryBuilder {
-    use paneflow_api::methods::{events, surface, system, tmux, workspace};
+    use paneflow_api::methods::{config, events, surface, system, tmux, workspace};
 
     builder
         .inline::<system::Ping>(|_| serde_json::json!({"pong": true}))
@@ -224,7 +224,47 @@ fn register_methods(builder: RegistryBuilder) -> RegistryBuilder {
         .asynchronous::<tmux::Compat>(|app, call, cx| {
             app.tmux_compat_reply(call.raw, call.caller_pid, cx)
         })
+        .inline::<config::ListBuiltinActions>(
+            |_| serde_json::json!({"actions": crate::keybindings::builtin_actions()}),
+        )
+        .asynchronous::<config::DispatchAction>(|app, call, cx| {
+            app.client_dispatch_action_reply(call.params.name, cx)
+        })
         .inline::<system::Describe>(|call| registry().describe(call.params.method.as_deref()))
+}
+
+impl PaneFlowApp {
+    fn client_dispatch_action_reply(&mut self, name: String, cx: &mut Context<Self>) -> IpcReply {
+        if !crate::keybindings::is_builtin_action(&name) {
+            return IpcReply::Ready(
+                JsonRpcError::invalid_params(format!(
+                    "no built-in action named '{name}'; client.list_actions lists them"
+                ))
+                .into_value(),
+            );
+        }
+        IpcReply::Async(cx.spawn(async move |_, cx: &mut gpui::AsyncApp| {
+            let dispatched = cx.update(|cx| {
+                let mut dispatched = false;
+                for handle in cx.windows() {
+                    let Some(main) = handle.downcast::<PaneFlowApp>() else {
+                        continue;
+                    };
+                    let Some(action) = crate::keybindings::action_for_name(&name) else {
+                        continue;
+                    };
+                    dispatched |= main
+                        .update(cx, |_, window, cx| window.dispatch_action(action, cx))
+                        .is_ok();
+                    if dispatched {
+                        break;
+                    }
+                }
+                dispatched
+            });
+            serde_json::json!({"dispatched": dispatched, "name": name})
+        }))
+    }
 }
 
 #[cfg(test)]

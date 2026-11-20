@@ -52,6 +52,12 @@ fn the_stubs_declare_every_method_and_every_runtime_function() {
         "paneflow.layout = {}",
         "paneflow.args = {}",
         "paneflow.ctx = {",
+        "paneflow.action = {}",
+        "function paneflow.invoke(",
+        "function paneflow.bind(",
+        "function paneflow.unbind(",
+        "function paneflow.bindings(",
+        "function paneflow.client.queue(",
     ] {
         assert!(stubs.contains(runtime), "{runtime}");
     }

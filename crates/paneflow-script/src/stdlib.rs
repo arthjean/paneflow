@@ -57,3 +57,53 @@ pub fn restrict(lua: &Lua, script_dir: Option<&Path>, lua_dir: Option<&Path>) ->
     package.set("cpath", "")?;
     Ok(())
 }
+
+const CONFIG_SEARCHER: &str = r#"
+local root, record = ...
+local searchpath, open, load, insert = package.searchpath, io.open, load, table.insert
+local separator = package.config:sub(1, 1)
+local prefix = root .. separator
+
+local function chunk_name(path)
+  if path:sub(1, #prefix) == prefix then
+    return "@" .. path:sub(#prefix + 1)
+  end
+  return "@" .. path
+end
+
+local function search(name)
+  local path, tried = searchpath(name, package.path)
+  if not path then
+    return "\n\t" .. tried
+  end
+  local file, message = open(path, "rb")
+  if not file then
+    error(message, 2)
+  end
+  local source = file:read("a")
+  file:close()
+  record(path)
+  local loaded, problem = load(source, chunk_name(path), "t")
+  if not loaded then
+    error(problem, 0)
+  end
+  return loaded, path
+end
+
+insert(package.searchers, 2, search)
+"#;
+
+pub fn install_config_searcher(lua: &Lua, root: &Path) -> mlua::Result<()> {
+    let record = lua.create_function(|lua, path: String| {
+        let shared = crate::runtime::shared(lua)?;
+        let path = PathBuf::from(path);
+        let mut required = shared.required.borrow_mut();
+        if !required.contains(&path) {
+            required.push(path);
+        }
+        Ok(())
+    })?;
+    lua.load(CONFIG_SEARCHER)
+        .set_name(format!("={}", crate::error::INTERNAL_CHUNK))
+        .call::<()>((root.to_string_lossy().to_string(), record))
+}

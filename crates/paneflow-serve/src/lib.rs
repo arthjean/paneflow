@@ -10,6 +10,7 @@
 
 pub mod activity;
 pub mod bootstrap;
+pub mod config_runtime;
 pub mod controller;
 pub mod core_link;
 pub mod event_log;
@@ -17,6 +18,7 @@ pub mod integrations;
 pub mod notifications;
 pub mod protocol;
 pub mod registry;
+pub mod script_backend;
 pub mod server;
 pub mod state;
 pub mod usage;

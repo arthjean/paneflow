@@ -683,6 +683,13 @@ pub(super) fn context_for_action(name: &str) -> Option<&'static str> {
         .filter(|ctx| !ctx.is_empty())
 }
 
+pub(super) fn builtin_actions() -> impl Iterator<Item = (&'static str, &'static str, &'static str)>
+{
+    ACTIONS
+        .iter()
+        .map(|meta| (meta.name, meta.description, meta.group.label()))
+}
+
 pub(super) fn action_description(name: &str) -> &'static str {
     find(name).map(|meta| meta.description).unwrap_or("Unknown")
 }

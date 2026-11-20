@@ -78,6 +78,7 @@ impl RunningWorker {
 
     pub fn stop(mut self) {
         self.worker.request_shutdown();
+        self.worker.config.stop(crate::bootstrap::DRAIN_WAIT);
         if let Some(waker) = self.pump_waker.take() {
             waker.wake();
         }
@@ -141,6 +142,7 @@ fn open_with_build_id(home: &Path, build_id: String) -> Result<RunningWorker, Wo
         usage: Mutex::new(crate::usage::Usage::open(home, now_ms())),
         probe_slots: crate::usage::probe::ProbeSlots::default(),
         events: crate::event_log::EventLog::new(epoch),
+        config: Arc::new(crate::config_runtime::ConfigRuntime::new(home)),
     });
     let server = ServerHandle::spawn(Arc::clone(&worker), endpoint.clone()).map_err(|source| {
         WorkerError::Endpoint {
@@ -157,6 +159,8 @@ fn open_with_build_id(home: &Path, build_id: String) -> Result<RunningWorker, Wo
         _owner: owner,
     };
     running.spawn_core_pump();
+    let config = Arc::clone(&running.worker.config);
+    config.start_watching(&running.worker);
     Ok(running)
 }
 

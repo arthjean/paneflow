@@ -262,6 +262,15 @@ impl Events {
         self.stop.store(true, Ordering::Release);
     }
 
+    pub(crate) fn clear_handlers(&self, shared: &Shared) {
+        self.handlers.borrow_mut().clear();
+        shared
+            .stats
+            .handlers
+            .store(0, std::sync::atomic::Ordering::Release);
+        self.poke_pump();
+    }
+
     fn idle(&self) -> bool {
         self.handlers.borrow().is_empty() && self.waiters.borrow().is_empty()
     }
@@ -543,6 +552,10 @@ fn on(lua: &Lua, (event, function): (String, Function)) -> mlua::Result<bool> {
         .handlers
         .borrow_mut()
         .push(Rc::new(Handler { pattern, function }));
+    shared.stats.handlers.store(
+        shared.events.handler_count(),
+        std::sync::atomic::Ordering::Release,
+    );
     ensure_pump(lua, &shared);
     Ok(true)
 }

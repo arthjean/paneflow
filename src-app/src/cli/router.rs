@@ -88,16 +88,31 @@ fn owner_unreachable(descriptor: &Descriptor, reason: impl std::fmt::Display) ->
     ))
 }
 
-fn worker_request(endpoint: &Path, method: &str, params: Value) -> Result<Value, String> {
-    let mut control = HostControl::open(endpoint, CLIENT_NAME, REQUEST_DEADLINE).map_err(
-        |error| match error {
-            paneflow_ipc_client::host_control::ControlConnectError::Transport(error) => {
-                format!("{} ({error})", endpoint.display())
-            }
-            paneflow_ipc_client::host_control::ControlConnectError::Handshake(message) => message,
-        },
-    )?;
-    control.request(method, params)
+fn worker_request(
+    descriptor: &Descriptor,
+    endpoint: &Path,
+    method: &str,
+    params: Value,
+) -> Result<Value, CliError> {
+    let mut control =
+        HostControl::open(endpoint, CLIENT_NAME, REQUEST_DEADLINE).map_err(|error| {
+            let reason = match error {
+                paneflow_ipc_client::host_control::ControlConnectError::Transport(error) => {
+                    format!("{} ({error})", endpoint.display())
+                }
+                paneflow_ipc_client::host_control::ControlConnectError::Handshake(message) => {
+                    message
+                }
+            };
+            owner_unreachable(descriptor, reason)
+        })?;
+    control
+        .request_with_deadline(
+            method,
+            params,
+            paneflow_api::methods::config::reply_deadline(method, REQUEST_DEADLINE),
+        )
+        .map_err(CliError::runtime)
 }
 
 pub(super) fn send(
@@ -117,8 +132,7 @@ pub(super) fn send(
             })?;
             transport.call(method, params).map_err(CliError::runtime)
         }
-        Endpoint::Worker(path) => worker_request(path, method, params)
-            .map_err(|reason| owner_unreachable(descriptor, reason)),
+        Endpoint::Worker(path) => worker_request(descriptor, path, method, params),
     }
 }
 
