@@ -604,12 +604,12 @@ A user runs a Lua script against Paneflow with `paneflow do`. The script can cal
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given the new crate `crates/paneflow-script` depending on `mlua = "=0.12.2"` with features `lua54`, `vendored`, `async` and `serialize` (and without `send`), when the workspace builds, then it compiles on Linux x86_64 locally
+- [x] Given the new crate `crates/paneflow-script` depending on `mlua = "=0.12.2"` with features `lua54`, `vendored`, `async` and `serialize` (and without `send`), when the workspace builds, then it compiles on Linux x86_64 locally
 - [ ] Given the branch pushed for this story, when `run_tests` completes, then the Linux aarch64, macOS and `Windows x86_64 libghostty check` legs compile and lint the workspace with the new crate
-- [ ] Given `deny.toml`, when the story ends, then no license outside MIT was added to it for mlua or its dependencies, and no advisory is ignored for them
-- [ ] Given the seven probe cases of R13, when the suite runs, then each is a test: direct call, nested call, call under `pcall`, call inside `__index`, two concurrent calls with a computation, a call inside a `table.sort` comparator (asserts an error), a call inside a coroutine the script created (asserts today's behavior, to be replaced by US-033)
-- [ ] Given a release build before and after the dependency, when their sizes and the clean build time are measured, then both deltas are recorded in the story report, and no helper binary links `mlua`
-- [ ] Given a target that fails to compile, when the story ends, then it is BLOCKED with the compiler output, and no later story of this epic starts
+- [x] Given `deny.toml`, when the story ends, then no license outside MIT was added to it for mlua or its dependencies, and no advisory is ignored for them
+- [x] Given the seven probe cases of R13, when the suite runs, then each is a test: direct call, nested call, call under `pcall`, call inside `__index`, two concurrent calls with a computation, a call inside a `table.sort` comparator (asserts an error), a call inside a coroutine the script created (asserts today's behavior, to be replaced by US-033)
+- [x] Given a release build before and after the dependency, when their sizes and the clean build time are measured, then both deltas are recorded in the story report, and no helper binary links `mlua`
+- [x] Given a target that fails to compile, when the story ends, then it is BLOCKED with the compiler output, and no later story of this epic starts
 
 #### US-027: The script runtime core
 **Description:** As a script author, I want a predictable Lua environment so that scripts written against the documentation run.
@@ -619,13 +619,13 @@ A user runs a Lua script against Paneflow with `paneflow do`. The script can cal
 **Dependencies:** Blocked by US-026
 
 **Acceptance Criteria:**
-- [ ] Given a new state, when it is created, then the standard libraries `base`, `table`, `string`, `utf8`, `math`, `coroutine`, `io`, `os` and `package` are loaded, the `debug` library is absent, and C modules cannot be loaded
-- [ ] Given `io.popen` or `os.execute`, when a script calls it, then it raises an error that names `paneflow.exec`
-- [ ] Given `require("name")`, when it runs, then it searches the script's directory and `<home>/lua/`, where the home is resolved by `paneflow-home`
-- [ ] Given `paneflow.json.encode` and `paneflow.json.decode`, when they convert, then a table whose keys are 1 to n becomes an array, any other table including an empty one becomes an object, JSON `null` becomes `nil`, integers stay integers, and a function or a self-containing table makes `encode` return `nil` and a message
-- [ ] Given `paneflow.log([level,] message)`, when it is called, then the level is one of `debug`, `info`, `warn`, `error`, defaults to `info`, and an unknown level raises an error
-- [ ] Given a Lua error, when it reaches the runtime, then the reported message carries the file name and line
-- [ ] The crate depends on neither `gpui` nor `src-app`, and its tests need no running Paneflow
+- [x] Given a new state, when it is created, then the standard libraries `base`, `table`, `string`, `utf8`, `math`, `coroutine`, `io`, `os` and `package` are loaded, the `debug` library is absent, and C modules cannot be loaded
+- [x] Given `io.popen` or `os.execute`, when a script calls it, then it raises an error that names `paneflow.exec`
+- [x] Given `require("name")`, when it runs, then it searches the script's directory and `<home>/lua/`, where the home is resolved by `paneflow-home`
+- [x] Given `paneflow.json.encode` and `paneflow.json.decode`, when they convert, then a table whose keys are 1 to n becomes an array, any other table including an empty one becomes an object, JSON `null` becomes `nil`, integers stay integers, and a function or a self-containing table makes `encode` return `nil` and a message
+- [x] Given `paneflow.log([level,] message)`, when it is called, then the level is one of `debug`, `info`, `warn`, `error`, defaults to `info`, and an unknown level raises an error
+- [x] Given a Lua error, when it reaches the runtime, then the reported message carries the file name and line
+- [x] The crate depends on neither `gpui` nor `src-app`, and its tests need no running Paneflow
 
 #### US-028: Bind the API into Lua
 **Description:** As a script author, I want `paneflow.surface.read{...}` and every other method available as a function so that I never build JSON by hand.
@@ -635,14 +635,14 @@ A user runs a Lua script against Paneflow with `paneflow do`. The script can cal
 **Dependencies:** Blocked by US-027, US-006
 
 **Acceptance Criteria:**
-- [ ] Given a connection, when the runtime starts, then it builds `paneflow.<namespace>.<method>` for every method returned by `system.describe` on the reachable endpoints, so a method added to the registry needs no change in the script crate
-- [ ] Given `paneflow.call(method, args)`, when it is called, then it calls any method by full name
-- [ ] Given a successful call, when it returns, then the function returns the result as a table; given a failed call, then it returns `nil`, the message and the numeric code, and raises no error
-- [ ] Given a method whose schema has an optional `surface_id` or `workspace_id`, when the script omits it and runs inside a pane, then the value from `PANEFLOW_SURFACE_ID` or the pane's workspace is filled in, and `paneflow.ctx` exposes `surface_id`, `pane_id`, `tab_id`, `workspace_id` and `origin`
-- [ ] Given an argument table with a key the schema does not declare, when the call is made, then it returns `nil` and a message naming the key and listing the declared ones, without sending the request
-- [ ] Given an API call in progress, when a timer of the same script comes due, then the timer runs before the call returns (the call suspends the coroutine, it does not block the thread)
-- [ ] Given `paneflow.layout.pane{...}`, `paneflow.layout.horizontal(ratio, a, b)` and `paneflow.layout.vertical(ratio, a, b)`, when they are called, then they return a table that `workspace.create` accepts as `layout`, and they call nothing
-- [ ] Given the method list unavailable at start (no instance), when a script calls any `paneflow.<namespace>` function, then it returns `nil` and the "no instance" message
+- [x] Given a connection, when the runtime starts, then it builds `paneflow.<namespace>.<method>` for every method returned by `system.describe` on the reachable endpoints, so a method added to the registry needs no change in the script crate
+- [x] Given `paneflow.call(method, args)`, when it is called, then it calls any method by full name
+- [x] Given a successful call, when it returns, then the function returns the result as a table; given a failed call, then it returns `nil`, the message and the numeric code, and raises no error
+- [x] Given a method whose schema has an optional `surface_id` or `workspace_id`, when the script omits it and runs inside a pane, then the value from `PANEFLOW_SURFACE_ID` or the pane's workspace is filled in, and `paneflow.ctx` exposes `surface_id`, `pane_id`, `tab_id`, `workspace_id` and `origin`
+- [x] Given an argument table with a key the schema does not declare, when the call is made, then it returns `nil` and a message naming the key and listing the declared ones, without sending the request
+- [x] Given an API call in progress, when a timer of the same script comes due, then the timer runs before the call returns (the call suspends the coroutine, it does not block the thread)
+- [x] Given `paneflow.layout.pane{...}`, `paneflow.layout.horizontal(ratio, a, b)` and `paneflow.layout.vertical(ratio, a, b)`, when they are called, then they return a table that `workspace.create` accepts as `layout`, and they call nothing
+- [x] Given the method list unavailable at start (no instance), when a script calls any `paneflow.<namespace>` function, then it returns `nil` and the "no instance" message
 
 #### US-029: `paneflow do`
 **Description:** As a user, I want to run a Lua file, an inline chunk or stdin against Paneflow so that automation is one command.
@@ -654,13 +654,13 @@ A user runs a Lua script against Paneflow with `paneflow do`. The script can cal
 **Rex reference:** page "Lua Scripts", sections "Running a Script", "Arguments", "Results and Errors".
 
 **Acceptance Criteria:**
-- [ ] Given `paneflow do ./script.lua`, `paneflow do -e '<chunk>'` and `paneflow do -`, when each runs, then the chunk executes in the CLI process
-- [ ] Given an argument that ends in `.lua` or contains a path separator, when `paneflow do` parses it, then it is a file; anything else is an action name (served from EP-005, and until then refused with "no action named")
-- [ ] Given `key=value` pairs after the script, when it runs, then `paneflow.args` holds them typed by spelling (`n=2` a number, `on=true` a boolean, `name=x` a string), and `--args '{...}'` or `--args @file.json` replaces them with raw JSON
-- [ ] Given a script that returns a value, when it ends, then the value is printed as one line of JSON, `--json` indents it, and a script that returns nothing prints nothing
-- [ ] Given a script that raises an error, when it ends, then `Error: <message>` is printed to stderr and the exit status is 1
-- [ ] Given `paneflow.stop(3)`, when it is called, then the script ends at once and the exit status is 3
-- [ ] Given a file that does not exist or does not parse, when `paneflow do` runs, then it prints the path or the syntax error with its line and exits 1 without contacting Paneflow
+- [x] Given `paneflow do ./script.lua`, `paneflow do -e '<chunk>'` and `paneflow do -`, when each runs, then the chunk executes in the CLI process
+- [x] Given an argument that ends in `.lua` or contains a path separator, when `paneflow do` parses it, then it is a file; anything else is an action name (served from EP-005, and until then refused with "no action named")
+- [x] Given `key=value` pairs after the script, when it runs, then `paneflow.args` holds them typed by spelling (`n=2` a number, `on=true` a boolean, `name=x` a string), and `--args '{...}'` or `--args @file.json` replaces them with raw JSON
+- [x] Given a script that returns a value, when it ends, then the value is printed as one line of JSON, `--json` indents it, and a script that returns nothing prints nothing
+- [x] Given a script that raises an error, when it ends, then `Error: <message>` is printed to stderr and the exit status is 1
+- [x] Given `paneflow.stop(3)`, when it is called, then the script ends at once and the exit status is 3
+- [x] Given a file that does not exist or does not parse, when `paneflow do` runs, then it prints the path or the syntax error with its line and exits 1 without contacting Paneflow
 - [ ] Given this example, when it runs inside a pane of a debug build, then a second pane opens beside the first and the script prints its id: `local s = assert(paneflow.surface.split{ direction = "right" }) return { surface_id = s.surface_id }`
 
 #### US-030: Sleep and timers
@@ -673,14 +673,14 @@ A user runs a Lua script against Paneflow with `paneflow do`. The script can cal
 **Rex reference:** page "Lua Scripts", section "Timers".
 
 **Acceptance Criteria:**
-- [ ] Given `paneflow.sleep(seconds)`, when it is called with a fractional value, then the script resumes after it and other timers of the script run meanwhile
-- [ ] Given `paneflow.after(seconds, fn)` and `paneflow.every(seconds, fn)`, when they are called, then each returns a timer with `t:cancel()` and `t:active()`, and `fn` receives a `ctx` whose `origin` is `timer`
-- [ ] Given a script with an active timer, when its top level ends, then `paneflow do` keeps running, prints one status line naming the count of timers, and exits when none is active
-- [ ] Given a tick that comes due while the script is running other Lua, when the script becomes free, then `fn` runs once, and missed ticks are dropped
-- [ ] Given an error inside a timer function, when it is raised, then it is printed and the timer keeps running
-- [ ] Given `paneflow.every(0, fn)`, when it is called, then it raises an error
-- [ ] Given a script that holds 1,024 active timers, when it creates one more, then the script stops with status 1, even inside `pcall`
-- [ ] The tests drive a fake clock and assert no wall-clock duration
+- [x] Given `paneflow.sleep(seconds)`, when it is called with a fractional value, then the script resumes after it and other timers of the script run meanwhile
+- [x] Given `paneflow.after(seconds, fn)` and `paneflow.every(seconds, fn)`, when they are called, then each returns a timer with `t:cancel()` and `t:active()`, and `fn` receives a `ctx` whose `origin` is `timer`
+- [x] Given a script with an active timer, when its top level ends, then `paneflow do` keeps running, prints one status line naming the count of timers, and exits when none is active
+- [x] Given a tick that comes due while the script is running other Lua, when the script becomes free, then `fn` runs once, and missed ticks are dropped
+- [x] Given an error inside a timer function, when it is raised, then it is printed and the timer keeps running
+- [x] Given `paneflow.every(0, fn)`, when it is called, then it raises an error
+- [x] Given a script that holds 1,024 active timers, when it creates one more, then the script stops with status 1, even inside `pcall`
+- [x] The tests drive a fake clock and assert no wall-clock duration
 
 #### US-031: React to events: `paneflow.on` and `paneflow.wait`
 **Description:** As a script author, I want to wait for an event or handle every occurrence so that I stop polling.
@@ -692,13 +692,13 @@ A user runs a Lua script against Paneflow with `paneflow do`. The script can cal
 **Rex reference:** page "Lua Events"; `rex.wait` (page "Lua Scripts", "Sleeping and Waiting").
 
 **Acceptance Criteria:**
-- [ ] Given `paneflow.on(event, fn)` at the top level, when a matching event arrives, then `fn(ctx, ev)` is called with the event's `data` fields in `ev` and its ids in `ctx`, and handlers run one at a time in `seq` order
-- [ ] Given `paneflow.on` called from inside a handler or a timer, when it runs, then it raises an error
-- [ ] Given `paneflow.wait(event, filter, timeout)`, when a matching event arrives, then it returns `ev` and `ctx`; when `timeout` seconds pass first, then it returns `nil` and `"timeout"`; `filter` is a table of fields to equal or a function `filter(ev, ctx)`
-- [ ] Given an event name that is a prefix form (`terminal.*`), when it is registered, then it matches every type under that prefix
-- [ ] Given a script run inside a pane, when it follows events, then it hears its own workspace only, and `--all` hears every workspace
-- [ ] Given `--for 10m`, when the time runs out, then the script exits 0; given `--fail-fast`, when a handler raises, then the script exits 1; without it the error is printed and the script continues
-- [ ] Given the worker restarting, when the stream ends, then the runtime reconnects with `since`, and on an `evicted` reply it calls handlers registered for `events.resync` and continues from the current `seq`
+- [x] Given `paneflow.on(event, fn)` at the top level, when a matching event arrives, then `fn(ctx, ev)` is called with the event's `data` fields in `ev` and its ids in `ctx`, and handlers run one at a time in `seq` order
+- [x] Given `paneflow.on` called from inside a handler or a timer, when it runs, then it raises an error
+- [x] Given `paneflow.wait(event, filter, timeout)`, when a matching event arrives, then it returns `ev` and `ctx`; when `timeout` seconds pass first, then it returns `nil` and `"timeout"`; `filter` is a table of fields to equal or a function `filter(ev, ctx)`
+- [x] Given an event name that is a prefix form (`terminal.*`), when it is registered, then it matches every type under that prefix
+- [x] Given a script run inside a pane, when it follows events, then it hears its own workspace only, and `--all` hears every workspace
+- [x] Given `--for 10m`, when the time runs out, then the script exits 0; given `--fail-fast`, when a handler raises, then the script exits 1; without it the error is printed and the script continues
+- [x] Given the worker restarting, when the stream ends, then the runtime reconnects with `since`, and on an `evicted` reply it calls handlers registered for `events.resync` and continues from the current `seq`
 - [ ] Given this example, when it runs with `PANEFLOW_IPC_ORCHESTRATION=1` in a debug build, then it prints a non-zero `exit_code`: the script splits with `command = "false"`, calls `paneflow.wait("terminal.exited", { surface_id = id }, 600)` and returns `{ exit_code = ev.exit_code }`
 
 #### US-032: Run commands: `paneflow.exec`
@@ -711,14 +711,14 @@ A user runs a Lua script against Paneflow with `paneflow do`. The script can cal
 **Rex reference:** `rex.exec` and `rex.exec.start` (page "Rex Lua API").
 
 **Acceptance Criteria:**
-- [ ] Given `paneflow.exec(argv, opts)`, when the program exits, then it returns a table with `code`, `signal`, `stdout`, `stderr`, `timed_out` and `ok`; a non-zero exit is a result, not an error
-- [ ] Given a program that does not exist, when `paneflow.exec` runs, then it returns `nil` and a message
-- [ ] Given `opts`, when it is passed, then `cwd`, `env` (with `false` removing a variable), `clear_env`, `stdin`, `timeout`, `stdout = false`, `stderr = false` and `text` are honored, and an unknown option logs one warning
-- [ ] Given `argv`, when it is run, then no shell interprets it on any platform, and a program name without a separator is resolved through `PATH` with `PATHEXT` on Windows
-- [ ] Given `timeout`, when it expires, then the process tree is terminated (a termination signal then a kill on Unix, a job-object or tree kill on Windows) and `timed_out` is true
-- [ ] Given `paneflow.exec.start(argv, opts)`, when it is called, then it returns a handle with `h:wait([seconds])`, `h:write(data)`, `h:close_stdin()`, `h:kill([signal])`, `h:running()` and `h.pid`, and function-valued `stdout` or `stderr` options receive output as it arrives
-- [ ] Given a command started by a handler, a timer or the top level, when that scope ends, then the command is stopped, unless it was started with `detach = true`
-- [ ] Given a command waiting for output, when a timer of the same script comes due, then the timer runs
+- [x] Given `paneflow.exec(argv, opts)`, when the program exits, then it returns a table with `code`, `signal`, `stdout`, `stderr`, `timed_out` and `ok`; a non-zero exit is a result, not an error
+- [x] Given a program that does not exist, when `paneflow.exec` runs, then it returns `nil` and a message
+- [x] Given `opts`, when it is passed, then `cwd`, `env` (with `false` removing a variable), `clear_env`, `stdin`, `timeout`, `stdout = false`, `stderr = false` and `text` are honored, and an unknown option logs one warning
+- [x] Given `argv`, when it is run, then no shell interprets it on any platform, and a program name without a separator is resolved through `PATH` with `PATHEXT` on Windows
+- [x] Given `timeout`, when it expires, then the process tree is terminated (a termination signal then a kill on Unix, a job-object or tree kill on Windows) and `timed_out` is true
+- [x] Given `paneflow.exec.start(argv, opts)`, when it is called, then it returns a handle with `h:wait([seconds])`, `h:write(data)`, `h:close_stdin()`, `h:kill([signal])`, `h:running()` and `h.pid`, and function-valued `stdout` or `stderr` options receive output as it arrives
+- [x] Given a command started by a handler, a timer or the top level, when that scope ends, then the command is stopped, unless it was started with `detach = true`
+- [x] Given a command waiting for output, when a timer of the same script comes due, then the timer runs
 
 #### US-033: Limits and guard rails
 **Description:** As a user, I want a runaway or misused script to stop with a clear message so that it cannot hang my shell or return garbage.
@@ -728,12 +728,12 @@ A user runs a Lua script against Paneflow with `paneflow do`. The script can cal
 **Dependencies:** Blocked by US-030
 
 **Acceptance Criteria:**
-- [ ] Given a script in a loop that never yields, when the user presses Ctrl-C (or the process receives a console interrupt on Windows), then an instruction-count hook stops it and `paneflow do` exits with the interrupted status
-- [ ] Given a runtime created with a deadline, when Lua code runs past it without yielding, then the hook raises a `timeout` error in that coroutine and other coroutines of the state keep running
-- [ ] Given a runtime created with a memory limit, when an allocation exceeds it, then the running chunk fails with a memory error and the runtime stays usable
-- [ ] Given an async function (an API call, `sleep`, `exec`, a prompt) called from a coroutine the script created with `coroutine.create` or `coroutine.wrap`, when it runs, then it raises an error naming the limitation, and never returns an internal value
-- [ ] Given an async function called from a `table.sort` comparator or another C-boundary callback, when it runs, then the error message names the limitation and suggests moving the call out of the callback
-- [ ] Given `paneflow do` with no limit flags, when a script runs, then no memory limit and no deadline apply (the process belongs to the user)
+- [x] Given a script in a loop that never yields, when the user presses Ctrl-C (or the process receives a console interrupt on Windows), then an instruction-count hook stops it and `paneflow do` exits with the interrupted status
+- [x] Given a runtime created with a deadline, when Lua code runs past it without yielding, then the hook raises a `timeout` error in that coroutine and other coroutines of the state keep running
+- [x] Given a runtime created with a memory limit, when an allocation exceeds it, then the running chunk fails with a memory error and the runtime stays usable
+- [x] Given an async function (an API call, `sleep`, `exec`, a prompt) called from a coroutine the script created with `coroutine.create` or `coroutine.wrap`, when it runs, then it raises an error naming the limitation, and never returns an internal value
+- [x] Given an async function called from a `table.sort` comparator or another C-boundary callback, when it runs, then the error message names the limitation and suggests moving the call out of the callback
+- [x] Given `paneflow do` with no limit flags, when a script runs, then no memory limit and no deadline apply (the process belongs to the user)
 
 #### US-034: Editor stubs and a generated reference
 **Description:** As a script author, I want completion and types in my editor so that I do not guess parameter names.
@@ -743,12 +743,12 @@ A user runs a Lua script against Paneflow with `paneflow do`. The script can cal
 **Dependencies:** Blocked by US-028
 
 **Acceptance Criteria:**
-- [ ] Given `paneflow api stubs`, when it runs, then it prints a Lua language server definition file (`---@meta`) with one typed function per registry method and the hand-declared runtime functions (`call`, `on`, `wait`, `sleep`, `stop`, `after`, `every`, `exec`, `json`, `log`, `layout`, `args`, `ctx`)
-- [ ] Given `paneflow api docs`, when it runs, then it prints a Markdown reference with one section per method (parameters, result, example), generated from the registry
-- [ ] Given a registry change, when the suite runs, then a drift test fails until `protocol/paneflow.d.lua` is regenerated
-- [ ] Given a method with an optional parameter, when the stub is read, then the parameter is marked optional
-- [ ] Given a method or parameter name that is a Lua keyword (such as `end`) or is not a valid identifier, when the stub is generated, then it is emitted in bracket form and the file still loads in the Lua language server
-- [ ] Given no running instance, when either verb runs, then it still prints the output from the registry linked into the binary
+- [x] Given `paneflow api stubs`, when it runs, then it prints a Lua language server definition file (`---@meta`) with one typed function per registry method and the hand-declared runtime functions (`call`, `on`, `wait`, `sleep`, `stop`, `after`, `every`, `exec`, `json`, `log`, `layout`, `args`, `ctx`)
+- [x] Given `paneflow api docs`, when it runs, then it prints a Markdown reference with one section per method (parameters, result, example), generated from the registry
+- [x] Given a registry change, when the suite runs, then a drift test fails until `protocol/paneflow.d.lua` is regenerated
+- [x] Given a method with an optional parameter, when the stub is read, then the parameter is marked optional
+- [x] Given a method or parameter name that is a Lua keyword (such as `end`) or is not a valid identifier, when the stub is generated, then it is emitted in bracket form and the file still loads in the Lua language server
+- [x] Given no running instance, when either verb runs, then it still prints the output from the registry linked into the binary
 
 ---
 

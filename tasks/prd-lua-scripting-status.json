@@ -33,7 +33,7 @@
     {
       "id": "EP-004",
       "title": "Lua scripts from the CLI",
-      "status": "TODO",
+      "status": "BLOCKED",
       "priority": "P0",
       "stories_total": 9,
       "stories_done": 0
@@ -420,10 +420,10 @@
       "id": "US-026",
       "title": "Validate the engine on every target",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "BLOCKED",
       "priority": "P0",
       "blocked_by": [],
-      "started_at": null,
+      "started_at": "2026-11-20",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -431,12 +431,12 @@
       "id": "US-027",
       "title": "The script runtime core",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "blocked_by": [
         "US-026"
       ],
-      "started_at": null,
+      "started_at": "2026-11-20",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -444,13 +444,13 @@
       "id": "US-028",
       "title": "Bind the API into Lua",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "blocked_by": [
         "US-027",
         "US-006"
       ],
-      "started_at": null,
+      "started_at": "2026-11-20",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -458,12 +458,12 @@
       "id": "US-029",
       "title": "`paneflow do`",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "blocked_by": [
         "US-028"
       ],
-      "started_at": null,
+      "started_at": "2026-11-20",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -471,12 +471,12 @@
       "id": "US-030",
       "title": "Sleep and timers",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "blocked_by": [
         "US-029"
       ],
-      "started_at": null,
+      "started_at": "2026-11-20",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -484,14 +484,14 @@
       "id": "US-031",
       "title": "React to events: `paneflow.on` and `paneflow.wait`",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "blocked_by": [
         "US-030",
         "US-023",
         "US-024"
       ],
-      "started_at": null,
+      "started_at": "2026-11-20",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -499,12 +499,12 @@
       "id": "US-032",
       "title": "Run commands: `paneflow.exec`",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "blocked_by": [
         "US-029"
       ],
-      "started_at": null,
+      "started_at": "2026-11-20",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -512,12 +512,12 @@
       "id": "US-033",
       "title": "Limits and guard rails",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "blocked_by": [
         "US-030"
       ],
-      "started_at": null,
+      "started_at": "2026-11-20",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -525,12 +525,12 @@
       "id": "US-034",
       "title": "Editor stubs and a generated reference",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "blocked_by": [
         "US-028"
       ],
-      "started_at": null,
+      "started_at": "2026-11-20",
       "completed_at": null,
       "reviewed_at": null
     },
