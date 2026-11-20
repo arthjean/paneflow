@@ -61,7 +61,7 @@ fn code(icon: AppIcon) -> u8 {
     }
 }
 
-#[cfg(any(target_os = "windows", target_os = "linux"))]
+#[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 fn applied() -> AppIcon {
     let applied = APPLIED.load(Ordering::Relaxed);
     AppIcon::ALL
@@ -189,7 +189,11 @@ pub(crate) fn apply(icon: AppIcon, cx: &mut gpui::App) {
     if changed || first {
         linux::sync_desktop_entry();
     }
-    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    #[cfg(target_os = "macos")]
+    if changed || first {
+        macos::sync_dock_tile();
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     let _ = first;
     if !changed {
         return;
@@ -375,9 +379,32 @@ mod windows {
 #[cfg(target_os = "macos")]
 #[allow(unexpected_cfgs)]
 mod macos {
+    use std::sync::Mutex;
+
     use objc::runtime::Object;
     use objc::{class, msg_send, sel, sel_impl};
     use paneflow_config::schema::AppIcon;
+
+    static DOCK_TILE_SYNC: Mutex<()> = Mutex::new(());
+
+    fn publish_the_applied_icon() {
+        let Ok(_exclusive) = DOCK_TILE_SYNC.lock() else {
+            return;
+        };
+        paneflow_dock_tile::publish(super::asset_slug(super::applied()));
+    }
+
+    pub(super) fn sync_dock_tile() {
+        if cfg!(debug_assertions) {
+            return;
+        }
+        let spawned = std::thread::Builder::new()
+            .name("paneflow-app-icon".into())
+            .spawn(publish_the_applied_icon);
+        if let Err(err) = spawned {
+            log::warn!("Could not start the app icon Dock tile sync: {err}");
+        }
+    }
 
     pub(super) fn apply(icon: AppIcon) {
         let file = super::asset_slug(icon)

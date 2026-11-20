@@ -5,6 +5,7 @@ members = [
     "crates/paneflow-ai-hook",
     "crates/paneflow-colrv1",
     "crates/paneflow-config",
+    "crates/paneflow-dock-tile",
     "crates/paneflow-ipc-client",
     "crates/paneflow-ghostty-smoke",
     "crates/paneflow-home",

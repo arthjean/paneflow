@@ -1,0 +1,46 @@
+[package]
+name = "paneflow-dock-tile"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "The macOS Dock tile plug-in that keeps the chosen app icon while Paneflow is closed"
+publish = false
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[features]
+bundle = []
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc.workspace = true
+objc2 = { version = "0.6.4", default-features = false, features = ["std"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "objc2-core-foundation",
+    "NSBundle",
+    "NSDate",
+    "NSDictionary",
+    "NSDistributedNotificationCenter",
+    "NSGeometry",
+    "NSNotification",
+    "NSObject",
+    "NSRunLoop",
+    "NSString",
+    "NSThread",
+    "NSUserDefaults",
+] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "NSApplication",
+    "NSCell",
+    "NSControl",
+    "NSDockTile",
+    "NSImage",
+    "NSImageView",
+    "NSResponder",
+    "NSView",
+] }
+
+[lints]
+workspace = true

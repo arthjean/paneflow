@@ -115,10 +115,20 @@ for sub in "${NESTED_PATTERNS[@]}"; do
             --force \
             --options runtime \
             --timestamp \
+            --sign "$IDENTITY" \
+            "$nested"
+    done < <(find -d "$dir" -name '*.docktileplugin' -print0)
+
+    while IFS= read -r -d '' nested; do
+        "$RETRY" codesign \
+            --force \
+            --options runtime \
+            --timestamp \
             --entitlements "$ENTITLEMENTS" \
             --sign "$IDENTITY" \
             "$nested"
     done < <(find -d "$dir" \
+                ! -path '*.docktileplugin/*' \
                 \( \
                     \( -name '*.framework' -o -name '*.xpc' \) \
                     -o \
