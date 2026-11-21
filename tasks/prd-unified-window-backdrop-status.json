@@ -33,7 +33,7 @@
     {
       "id": "EP-004",
       "title": "macOS uses the untinted system blur",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "stories_total": 2,
       "stories_done": 0
@@ -49,6 +49,14 @@
     {
       "id": "EP-006",
       "title": "Windows validation on real hardware",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 3,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-007",
+      "title": "macOS validation on real hardware",
       "status": "TODO",
       "priority": "P0",
       "stories_total": 3,
@@ -162,27 +170,27 @@
       "id": "US-009",
       "title": "Replace the Sidebar material with GPUI's `Blurred`",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "blocked_by": [
         "US-005"
       ],
-      "started_at": null,
+      "started_at": "2026-11-21",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-11-21"
     },
     {
       "id": "US-010",
-      "title": "Fullscreen, Reduce transparency and corners on macOS",
+      "title": "The fullscreen rule on macOS",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "blocked_by": [
         "US-009"
       ],
-      "started_at": null,
+      "started_at": "2026-11-21",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-11-21"
     },
     {
       "id": "US-011",
@@ -263,6 +271,49 @@
       "blocked_by": [
         "US-014",
         "US-015"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-017",
+      "title": "Blended on macOS",
+      "epic": "EP-007",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-010",
+        "US-012"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-018",
+      "title": "Accessibility, upgrade paths and the fallback on macOS",
+      "epic": "EP-007",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-006",
+        "US-010",
+        "US-012"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-019",
+      "title": "Fix what the macOS hardware pass finds",
+      "epic": "EP-007",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-017",
+        "US-018"
       ],
       "started_at": null,
       "completed_at": null,

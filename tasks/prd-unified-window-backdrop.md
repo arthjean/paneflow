@@ -6,6 +6,7 @@
 | Version | Date | Author | Summary |
 |---------|------|--------|---------|
 | 1.0 | 2026-11-20 | Arthur Jean | Initial PRD, from the 2026-11-20 comparison of Paneflow's backdrop code with Zeron's (zgx), a reading of the pinned GPUI sources, and a live blur test on GNOME 51.1. One `background_style` key replaces seven, one veil function owns every translucent fill, and the veil thickens where the system cannot blur. 6 epics, 16 stories. Reviewed against the PRD rubric the same day; the failures it reported are fixed in this version. |
+| 1.1 | 2026-11-21 | Arthur Jean | Every macOS real-hardware check and visual pass moves to a final epic, EP-007, run on an Apple Silicon bare-metal Mac mini rented from Scaleway. US-010 keeps only the fullscreen rule and becomes code-only; A3 and A4 are validated in EP-007. 7 epics, 19 stories. |
 
 ## Problem Statement
 
@@ -31,7 +32,7 @@ Four decisions shape it, each argued in [Technical Decisions](#technical-decisio
 3. **Driven degradation.** With `BlurSupport::None` the shell veil keeps 25 % of its see-through (the `LEAST` value of Zeron's `glass_tint.luau`) and the terminal card paints the opaque theme background, so the desktop reads as color and not as shapes.
 4. **Each platform uses the mechanism already proven there.** Linux keeps the vendored GPUI Wayland protocols and asks for blur whenever Blended is on. macOS switches to GPUI's `WindowBackgroundAppearance::Blurred`, an untinted `NSVisualEffectView`. Windows keeps the Acrylic system backdrop that Blended uses today, not GPUI's accent blur.
 
-The construction order is: configuration and Settings, the veil module, Linux, macOS, Windows code and cleanup, then one Windows hardware epic.
+The construction order is: configuration and Settings, the veil module, Linux, macOS, Windows code and cleanup, then one Windows hardware epic and one macOS hardware epic.
 
 ## Goals
 
@@ -129,13 +130,13 @@ Web research was not run: every design question was answered by source code (Pan
 |---|------------|------|------------|
 | A1 | Keeping 25 % of the see-through reads as color, not shapes, on Paneflow's dark and light themes. | Medium: a wrong value is a one-constant change. | US-006. Dark theme observed 2026-11-20 by Arthur on GNOME 51.1 Wayland (debug build, `veil` tagged home, `PANEFLOW_DEV_BLUR_SUPPORT=none`): the shell read as a faint tint with no shapes, the terminal card as opaque. Light theme observed the same day with the same override: the sidebar and the panes read as near-opaque color, with no shapes. That run kept the compositor blur on behind the window; the light veil (0.95) lets through less than the dark one (0.93), which showed no shapes over a sharp desktop. The `Full` column (real blur) was approved the same day for the sidebar and the panes. **Confirmed**, 0.25 kept |
 | A2 | Treating an offered Wayland blur as `Full` is right even on a compositor configured for a weak blur (Hyprland with a small radius). | Low: the result is today's veil. | None, accepted; see Non-Goals |
-| A3 | GPUI's `BlurredView` follows the window's rounded corners and leaves the shadow intact under Paneflow's client-side chrome on macOS. | High: not verifiable on Linux, and no Mac is confirmed available. | US-010, which stays `BLOCKED` until a Mac confirms it; Open Question 2 |
-| A4 | With Reduce transparency on, macOS renders the `NSVisualEffectView` solid, so no desktop content shows through the veil, with no code of ours. | Medium | US-010 |
+| A3 | GPUI's `BlurredView` follows the window's rounded corners and leaves the shadow intact under Paneflow's client-side chrome on macOS. | High: not verifiable on Linux. | US-017, on an Apple Silicon bare-metal Mac (EP-007) |
+| A4 | With Reduce transparency on, macOS renders the `NSVisualEffectView` solid, so no desktop content shows through the veil, with no code of ours. | Medium | US-018, on an Apple Silicon bare-metal Mac (EP-007) |
 | A5 | With Transparency effects off, or the window inactive, the Acrylic system backdrop is solid, so no desktop content shows through the veil and the window is not black. | Medium | US-014 |
 | A6 | The Wayland probe, one registry round trip, usually answers before the first frame is presented; when it does not, the first frames use the thick veil and the veil thins once. | Low | US-007 logs the probe's duration. Measured 2026-11-20 on GNOME Shell 51.1 Wayland (debug build, `ep003-blur` tagged home): 2.5 ms and 4.1 ms at startup, 0.36 ms on a hot reload from Themed to Blended |
 | A7 | KDE's `org_kde_kwin_blur_manager` path in the vendored backend blurs as the `ext-background-effect-v1` path does. Only GNOME 51 was tested live (R6). | Low: the path is upstream GPUI code, unchanged here, and a failure leaves today's sharp veil. | None on Arthur's machine; accepted, Open Question 5 |
 
-Constraints: no blocking work on the GPUI main thread (`AGENTS.md`, "The render thread never blocks"); no source comments; `cfg(windows)` code is linted only by the Windows CI leg and any item added to a file with a `mod tests` goes before it; Windows behavior is verified on real hardware after a push, in the last epic.
+Constraints: no blocking work on the GPUI main thread (`AGENTS.md`, "The render thread never blocks"); no source comments; `cfg(windows)` code is linted only by the Windows CI leg and any item added to a file with a `mod tests` goes before it; Windows behavior is verified on real hardware after a push, in EP-006, and macOS behavior on an Apple Silicon bare-metal Mac, in EP-007.
 
 ## Non-Goals
 
@@ -309,9 +310,9 @@ Blended asks the compositor for blur by itself, and the probe's answer drives th
 
 ### EP-004: macOS uses the untinted system blur
 
-macOS Blended becomes the same veil over a blur as the other platforms. The `cfg(target_os = "macos")` code of this epic cannot run on the Linux development host: it is reviewed by inspection and compiled by the macOS CI legs, and only US-010 puts it on a Mac.
+macOS Blended becomes the same veil over a blur as the other platforms. The `cfg(target_os = "macos")` code of this epic cannot run on the Linux development host: it is reviewed by inspection and compiled by the macOS CI legs. Every check on a real Mac, visual passes included, belongs to EP-007.
 
-**Definition of Done:** `src-app/src/window_chrome/macos_backdrop.rs` no longer exists, the macOS CI legs (`macOS aarch64 smoke build` and `macOS aarch64 render smoke (visual)`) pass, and assumptions A3 and A4 are recorded as observed on a Mac.
+**Definition of Done:** `src-app/src/window_chrome/macos_backdrop.rs` no longer exists, the macOS CI legs (`macOS aarch64 smoke build` and `macOS aarch64 render smoke (visual)`) pass, and the fullscreen rule is covered by a platform-neutral unit test.
 
 #### US-009: Replace the Sidebar material with GPUI's `Blurred`
 **Description:** As a macOS user, I want Blended to blur the desktop behind the whole window so that Paneflow looks the same as on the other platforms.
@@ -320,27 +321,24 @@ macOS Blended becomes the same veil over a blur as the other platforms. The `cfg
 **Dependencies:** Blocked by US-005
 
 **Acceptance Criteria:**
-- [ ] Given Blended on macOS and a window that is not fullscreen, when the window renders, then its background appearance is `Blurred` and `BlurSupport` is `Full`
-- [ ] Given Themed on macOS, when the window renders, then its background appearance is the one used today for a config with no material key
-- [ ] Given the user switches between Themed and Blended, when the config hot-reloads, then the appearance changes without a restart
-- [ ] `src-app/src/window_chrome/macos_backdrop.rs` is deleted and no caller of `apply_subtle_sidebar_material`, `sync_subtle_sidebar_material` or `SidebarMaterial` remains
-- [ ] Given a detached pane window on macOS, when it opens under Blended, then it uses the same appearance and veil as the main window
-- [ ] `cocoa` and `objc` remain in `src-app/Cargo.toml` only because `src-app/src/app_icon.rs` uses them
-- [ ] Given Blended on macOS and a hot-reload to an invalid `background_style` value, when the window repaints, then its appearance is the Themed one and no blur view remains
+- [x] Given Blended on macOS and a window that is not fullscreen, when the window renders, then its background appearance is `Blurred` and `BlurSupport` is `Full` (reviewed by inspection on Linux, `cfg(target_os = "macos")` code compiled only by the macOS CI legs; neutral logic tested on every host in `window_chrome::system_blur::tests`)
+- [x] Given Themed on macOS, when the window renders, then its background appearance is the one used today for a config with no material key (`Transparent`, as `window_backdrop` absent resolved to before)
+- [x] Given the user switches between Themed and Blended, when the config hot-reloads, then the appearance changes without a restart
+- [x] `src-app/src/window_chrome/macos_backdrop.rs` is deleted and no caller of `apply_subtle_sidebar_material`, `sync_subtle_sidebar_material` or `SidebarMaterial` remains
+- [x] Given a detached pane window on macOS, when it opens under Blended, then it uses the same appearance and veil as the main window
+- [x] `cocoa` and `objc` remain in `src-app/Cargo.toml` only because `src-app/src/app_icon.rs` uses them (technical correction, 2026-11-21: `app_icon.rs` uses only `objc`, so `cocoa` and the macOS `raw-window-handle` entry left with `macos_backdrop.rs`; `objc` remains for `app_icon.rs` alone)
+- [x] Given Blended on macOS and a hot-reload to an invalid `background_style` value, when the window repaints, then its appearance is the Themed one and no blur view remains
 
-#### US-010: Fullscreen, Reduce transparency and corners on macOS
-**Description:** As a macOS user, I want Blended to stay correct in fullscreen and with accessibility settings so that it never shows a broken window.
+#### US-010: The fullscreen rule on macOS
+**Description:** As a macOS user, I want Blended to drop its blur in fullscreen so that the window never shows a dead, flat tint on its own Space.
 
 **Priority:** P1
 **Dependencies:** Blocked by US-009
 
 **Acceptance Criteria:**
-- [ ] Given Blended and a fullscreen window, when it renders, then the effective style is Themed and the appearance is not `Blurred`
-- [ ] Given the window leaves fullscreen, when the next frame renders, then the appearance is `Blurred` again
-- [ ] A unit test covers the fullscreen rule on every host through a platform-neutral function
-- [ ] Assumption A3 is recorded in this PRD as observed on a Mac, with the macOS version: the blur follows the window's rounded corners and the window shadow is intact
-- [ ] Assumption A4 is recorded in this PRD as observed on a Mac with Reduce transparency on: no desktop content shows through the window
-- [ ] Given no Mac is available, or A3 or A4 is observed false, when the story is evaluated, then it is marked `BLOCKED` with the reason, not `IN_REVIEW`
+- [x] Given Blended and a fullscreen window, when it renders, then the effective style is Themed and the appearance is not `Blurred`
+- [x] Given the window leaves fullscreen, when the next frame renders, then the appearance is `Blurred` again
+- [x] A unit test covers the fullscreen rule on every host through a platform-neutral function (`a_fullscreen_window_drops_the_blur_and_gets_it_back_on_leaving`, on a GPUI test window, and `a_platform_that_drops_alpha_in_fullscreen_keeps_it_windowed`)
 
 ---
 
@@ -445,6 +443,56 @@ Every Windows check that needs a real machine, and the fixes they bring, on Arth
 - [ ] Given a defect whose fix does not fit this story's session, when it is found, then it is tracked in a GitHub issue referenced here instead of fixed in this story
 - [ ] Assumption A5 is recorded in this PRD as confirmed or as the defect that replaced it
 
+---
+
+### EP-007: macOS validation on real hardware
+
+Every macOS check that needs a real Mac, visual passes included, and the fixes they bring, in one session on an Apple Silicon bare-metal Mac mini rented from Scaleway. A GitHub-hosted macOS runner is a virtual machine and does not satisfy these criteria.
+
+**Definition of Done:** each criterion below is recorded as observed on a real Apple Silicon Mac with its macOS version and chip, and every defect found is fixed and observed fixed, or tracked in a GitHub issue referenced here.
+
+#### US-017: Blended on macOS
+**Description:** As a macOS user, I want Blended verified on a real Mac so that the release does not ship a broken corner, shadow or blur nobody saw.
+
+**Priority:** P0
+**Dependencies:** Blocked by US-010, US-012
+
+**Acceptance Criteria:**
+- [ ] Given Blended in a dark and in a light theme, when the window sits over other windows, then what is behind the whole window, sidebar, title bar and terminal card included, is blurred under the veil
+- [ ] Assumption A3 is recorded in this PRD as observed, with the macOS version: the blur follows the window's rounded corners and the window shadow is intact
+- [ ] Given Themed, when the window renders, then it looks as it did on the previous release with no material key, checked against a screenshot of that release kept as local evidence
+- [ ] Given a detached pane window, when it opens under Blended, then it matches the main window
+- [ ] Given the style is switched in Settings, when the choice is saved, then the main and detached windows repaint without a restart
+- [ ] Given Blended, when the window enters fullscreen, then no blur shows and the fills are the Themed ones; when it leaves fullscreen, then the blur returns
+- [ ] Given Blended and a hand edit of `background_style` to an invalid value, when the config hot-reloads, then the window turns Themed and no blur remains
+- [ ] Given the window loses focus, when it renders inactive, then it is neither black nor broken, and what it shows is recorded here
+
+#### US-018: Accessibility, upgrade paths and the fallback on macOS
+**Description:** As a macOS user upgrading, I want my config and my accessibility settings to give a correct window so that the update is invisible.
+
+**Priority:** P0
+**Dependencies:** Blocked by US-006, US-010, US-012
+
+**Acceptance Criteria:**
+- [ ] Assumption A4 is recorded in this PRD as observed with Reduce transparency on: no desktop content shows through the window under Blended
+- [ ] Given Reduce transparency is turned on while Paneflow runs, when the window repaints, then no desktop content shows through and the window is not black
+- [ ] Given a config saved by the previous release with `"macos_chrome_material": true`, when the new build starts, then the window opens Blended and the file is not rewritten until a style is chosen
+- [ ] Given a config with none of the eight keys, when the new build starts, then the window opens Themed
+- [ ] Given a debug build started with `PANEFLOW_DEV_BLUR_SUPPORT=none`, when Blended renders, then the shell uses the thick veil and the terminal card is opaque
+
+#### US-019: Fix what the macOS hardware pass finds
+**Description:** As the maintainer, I want every macOS defect from US-017 and US-018 closed or tracked so that the epic ends with a known state.
+
+**Priority:** P0
+**Dependencies:** Blocked by US-017, US-018
+
+**Acceptance Criteria:**
+- [ ] Each failed criterion of US-017 and US-018 has a fix commit observed working on the Mac, or a GitHub issue referenced in this PRD
+- [ ] The `macOS aarch64 smoke build` and `macOS aarch64 render smoke (visual)` jobs are green on the commit that closes the epic
+- [ ] Given no criterion failed, when the epic closes, then this story records that fact and changes no code
+- [ ] Given a defect whose fix does not fit the rented session, when it is found, then it is tracked in a GitHub issue referenced here instead of fixed in this story
+- [ ] Assumptions A3 and A4 are recorded in this PRD as confirmed or as the defect that replaced them
+
 ## Edge Cases & Error States
 
 | Scenario | Expected behavior |
@@ -462,7 +510,7 @@ Every Windows check that needs a real machine, and the fixes they bring, on Arth
 
 | Risk | Probability | Impact | Mitigation |
 |------|-------------|--------|------------|
-| macOS Blended cannot be checked on hardware before release | Medium | A broken corner, shadow or blur ships | US-010 stays `BLOCKED` until a Mac confirms A3 and A4; US-012 depends only on US-009, so the rest proceeds, and releasing macOS Blended unverified is Open Question 2 |
+| macOS Blended cannot be checked on hardware before release | Medium | A broken corner, shadow or blur ships | EP-007 checks A3, A4 and every visual criterion on an Apple Silicon bare-metal Mac before release; US-012 depends only on US-009, so the code epics proceed without a Mac |
 | Existing Mica users dislike the forced move to Blended | Medium | Complaints after upgrade | Changelog entry in US-013 says what changed; D2 is reversible by adding a third value |
 | The thick veil looks too opaque or too thin | Medium | Cosmetic | One constant, checked visually in US-006, inside EP-002 and before the cleanup of US-012 |
 | A `cfg(windows)` lint fails on the Windows leg only | Medium | One red CI run | Items before `mod tests`, inspection, and the Windows leg as the gate of US-011 and US-016 |
@@ -471,7 +519,7 @@ Every Windows check that needs a real machine, and the fixes they bring, on Arth
 ## Open Questions
 
 1. **Dropping Mica (D2).** It removes a shipped Windows option. Keeping it means a third `background_style` value on Windows only and one extra column in D6.
-2. **macOS hardware.** No Mac is confirmed available for US-010. Without one, US-010 and EP-004 stay `BLOCKED`, and Arthur decides whether a release may carry macOS Blended on CI evidence and inspection only.
+2. **macOS hardware.** Resolved 2026-11-21: Arthur runs EP-007 on an Apple Silicon bare-metal Mac mini rented from Scaleway (Apple's license sets a 24-hour minimum lease, so the whole epic fits one session). A GitHub `macos-15` runner is a virtual machine with a paravirtualized GPU and does not count as a real Mac for these criteria.
 3. **The default.** The PRD keeps Themed as the default. Making Blended the default would change every window that has no key.
 4. **Public docs.** `docs/user/configuration/schema.md`, `settings.md` and `troubleshooting.md` describe the seven keys and `PANEFLOW_WINDOW_BACKDROP`; they are regenerated from the site repository (R13), which needs its own change after this ships, including the `background_style` row added here by US-002.
 5. **KDE.** Assumption A7 has no validation on Arthur's machine. A KDE user's report, or a KDE session in a virtual machine, would close it.
