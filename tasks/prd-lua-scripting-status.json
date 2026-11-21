@@ -57,17 +57,17 @@
     {
       "id": "EP-007",
       "title": "The layout authority moves to the worker",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
-      "stories_total": 8,
-      "stories_done": 0
+      "stories_total": 6,
+      "stories_done": 6
     },
     {
       "id": "EP-008",
       "title": "Layout with no window",
       "status": "TODO",
       "priority": "P1",
-      "stories_total": 6,
+      "stories_total": 8,
       "stories_done": 0
     },
     {
@@ -743,108 +743,80 @@
       "id": "US-050",
       "title": "Measure before moving",
       "epic": "EP-007",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-020"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-21",
+      "completed_at": "2026-11-21",
+      "reviewed_at": "2026-11-21"
     },
     {
       "id": "US-051",
       "title": "The worker hosts the model and writes the session file",
       "epic": "EP-007",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-050",
         "US-021"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-21",
+      "completed_at": "2026-11-21",
+      "reviewed_at": "2026-11-21"
     },
     {
       "id": "US-052",
       "title": "Id leases",
       "epic": "EP-007",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-051"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-21",
+      "completed_at": "2026-11-21",
+      "reviewed_at": "2026-11-21"
     },
     {
       "id": "US-053",
       "title": "The window becomes a layout client",
       "epic": "EP-007",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-052"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-21",
+      "completed_at": "2026-11-21",
+      "reviewed_at": "2026-11-21"
     },
     {
       "id": "US-054",
       "title": "Keep working while the worker is away",
       "epic": "EP-007",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-053"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-21",
+      "completed_at": "2026-11-21",
+      "reviewed_at": "2026-11-21"
     },
     {
       "id": "US-055",
       "title": "Window-only state leaves the session file",
       "epic": "EP-007",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-053"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
-    },
-    {
-      "id": "US-056",
-      "title": "Effects and structural methods move to the worker",
-      "epic": "EP-007",
-      "status": "TODO",
-      "priority": "P0",
-      "blocked_by": [
-        "US-053"
-      ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
-    },
-    {
-      "id": "US-057",
-      "title": "Events, actions and documents follow the new owner",
-      "epic": "EP-007",
-      "status": "TODO",
-      "priority": "P0",
-      "blocked_by": [
-        "US-056",
-        "US-037",
-        "US-024"
-      ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-21",
+      "completed_at": "2026-11-21",
+      "reviewed_at": "2026-11-21"
     },
     {
       "id": "US-058",
@@ -853,7 +825,8 @@
       "status": "TODO",
       "priority": "P1",
       "blocked_by": [
-        "US-057"
+        "US-053",
+        "US-055"
       ],
       "started_at": null,
       "completed_at": null,
@@ -886,13 +859,41 @@
       "reviewed_at": null
     },
     {
+      "id": "US-056",
+      "title": "Effects and structural methods move to the worker",
+      "epic": "EP-008",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-060"
+      ],
+      "started_at": "2026-11-21",
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-057",
+      "title": "Events, actions and documents follow the new owner",
+      "epic": "EP-008",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-056",
+        "US-037",
+        "US-024"
+      ],
+      "started_at": "2026-11-21",
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
       "id": "US-061",
       "title": "Layout methods answer with no window",
       "epic": "EP-008",
       "status": "TODO",
       "priority": "P1",
       "blocked_by": [
-        "US-060"
+        "US-056"
       ],
       "started_at": null,
       "completed_at": null,
@@ -1058,6 +1059,7 @@
       "status": "TODO",
       "priority": "P0",
       "blocked_by": [
+        "US-055",
         "US-057"
       ],
       "started_at": null,

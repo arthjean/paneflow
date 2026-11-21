@@ -7,6 +7,7 @@
 |---------|------|--------|---------|
 | 1.0 | 2026-11-19 | Arthur Jean | Initial PRD, from the exploration of 2026-11-19 (Rex documentation, eleven code maps of Paneflow, an mlua probe) and a second research pass the same day (routing, layout mutations, worker and approval broker, palette and events, mlua and schemars, agent client timeouts). One typed registry, a plain-data layout model, a gap-free event log, Lua scripts and `init.lua`, prompts, the layout authority in the worker, headless layout, agent prompts and actions, Windows validation. 10 epics, 75 stories. |
 | 1.1 | 2026-11-21 | Arthur Jean | EP-006 review: US-047 gains a criterion for the gesture grant, which lets an action started from a key or the palette type into the window with the write gate closed, while every other caller stays gated. |
+| 1.2 | 2026-11-21 | Arthur Jean | EP-007 implementation and review: US-056 and US-057 move from EP-007 to EP-008 and become P1, so that the structural methods are written once on top of `paneflow-launch`; EP-007 keeps US-050 to US-055. US-056 gains two criteria (the worktree through the git CLI boundary, the keyboard focus on an attached window). |
 
 ## Problem Statement
 
@@ -1052,7 +1053,7 @@ An action or a script stops, asks the user for a line of text or a choice, and c
 
 ### EP-007: The layout authority moves to the worker
 
-The layout model moves from the window to the worker. The window sends ops and draws the view it receives. The worker writes `session.json`. A layout method still needs an attached window to create a terminal; that last tie is cut in EP-008.
+The layout model moves from the window to the worker. The window sends ops and draws the view it receives. The worker writes `session.json`. The structural layout methods stay owned by the window: they move to the worker in EP-008 (US-056, US-057), once the worker starts terminals itself (US-060), so that the worker never has to ask the window for the inputs of a launch.
 
 **Definition of Done:** the window writes `session.json` only on the fallback path of US-054 (guard test), a protocol client that applies an op while a window is attached sees the window draw it, the window keeps accepting every layout gesture while the worker is replaced and converges afterwards, and Arthur's visual pass over the US-020 checklist reports no difference.
 
@@ -1068,11 +1069,11 @@ The layout model moves from the window to the worker. The window sends ops and d
 **Paneflow sites:** `scripts/perf-gates.sh`; `crates/paneflow-host/tests/persistent_baseline/gates.rs`; `crates/paneflow-serve/src/bootstrap.rs:240-330`.
 
 **Acceptance Criteria:**
-- [ ] Given a measurement that sends 1,000 no-op requests to a worker over its local endpoint, when it runs on the perf-gate runner class, then the median and the 95th percentile are written to a results file under `bench/results/`
-- [ ] Given a worker replacement triggered as an update does, when it is measured 20 times, then the time during which the endpoint does not answer is recorded with its median and maximum
-- [ ] Given the two measurements, when the story report is read, then it states them beside assumption A3 and says whether any op's acknowledgement could exceed one 60 Hz frame
-- [ ] Given a failed or noisy run (two runs differing by more than 10 %), when it is detected, then the run is discarded and repeated, and the report says so
-- [ ] No budget is added to `gates.rs` by this story; a budget is proposed in the report for Arthur to accept
+- [x] Given a measurement that sends 1,000 no-op requests to a worker over its local endpoint, when it runs on the perf-gate runner class, then the median and the 95th percentile are written to a results file under `bench/results/`
+- [x] Given a worker replacement triggered as an update does, when it is measured 20 times, then the time during which the endpoint does not answer is recorded with its median and maximum
+- [x] Given the two measurements, when the story report is read, then it states them beside assumption A3 and says whether any op's acknowledgement could exceed one 60 Hz frame
+- [x] Given a failed or noisy run (two runs differing by more than 10 %), when it is detected, then the run is discarded and repeated, and the report says so
+- [x] No budget is added to `gates.rs` by this story; a budget is proposed in the report for Arthur to accept
 
 #### US-051: The worker hosts the model and writes the session file
 **Description:** As the maintainer, I want the worker to own the layout document and persist it so that it outlives the window.
@@ -1084,16 +1085,16 @@ The layout model moves from the window to the worker. The window sends ops and d
 **Paneflow sites:** `src-app/src/app/session.rs:22-28,1196-1216`; `crates/paneflow-home/src/lib.rs:84`; `crates/paneflow-serve/src/worker.rs:103-180`.
 
 **Acceptance Criteria:**
-- [ ] Given a worker start, when `session.json` exists, then the worker loads it into a `paneflow_layout::Model` and serves `layout.view`, which returns the view and its `revision`
-- [ ] Given `layout.attach`, when a client calls it, then it returns the view, the `revision` and the worker's `epoch`, and the client is recorded as attached until its connection closes
-- [ ] Given `layout.apply { op }`, when the op succeeds, then the reply carries the new `revision` and the events, and the op's failure reasons are returned as typed errors
-- [ ] Given no `layout.attach` and no accepted op since the worker started, when time passes, then the worker never writes `session.json`
-- [ ] Given a window listening on the home's IPC endpoint that has not called `layout.attach` (a window of an earlier build during an update), when `layout.apply` is called, then it is refused with `window_owns_layout`, and the worker reloads `session.json` before its next accepted op
-- [ ] Given a change, when 150 ms pass with no further change, then the worker writes `session.json` through a staged write and rename (debounce and write as in `src-app/src/app/session.rs:22,1196-1216`), and a clean shutdown flushes a pending write before the endpoint closes
-- [ ] Given a write that fails (read-only file, full disk), when it fails, then the model stays authoritative in memory, the failure is logged once per cause and reported by `worker.status`
-- [ ] Given a missing or unreadable `session.json`, when the worker starts, then it starts with an empty model and renames an unreadable file aside rather than overwriting it
-- [ ] Given a worker killed without a shutdown, when another process tests `serve/owner.lock`, then the lock is seen as free (validates A9; if it is not, the story records the finding and the ownership rule of US-054 uses the worker endpoint's liveness instead)
-- [ ] Until US-053 lands, no window calls `layout.attach`, so the window stays the only writer of `session.json` and its behavior is unchanged
+- [x] Given a worker start, when `session.json` exists, then the worker loads it into a `paneflow_layout::Model` and serves `layout.view`, which returns the view and its `revision`
+- [x] Given `layout.attach`, when a client calls it, then it returns the view, the `revision` and the worker's `epoch`, and the client is recorded as attached until its connection closes
+- [x] Given `layout.apply { op }`, when the op succeeds, then the reply carries the new `revision` and the events, and the op's failure reasons are returned as typed errors
+- [x] Given no `layout.attach` and no accepted op since the worker started, when time passes, then the worker never writes `session.json`
+- [x] Given a window listening on the home's IPC endpoint that has not called `layout.attach` (a window of an earlier build during an update), when `layout.apply` is called, then it is refused with `window_owns_layout`, and the worker reloads `session.json` before its next accepted op
+- [x] Given a change, when 150 ms pass with no further change, then the worker writes `session.json` through a staged write and rename (debounce and write as in `src-app/src/app/session.rs:22,1196-1216`), and a clean shutdown flushes a pending write before the endpoint closes
+- [x] Given a write that fails (read-only file, full disk), when it fails, then the model stays authoritative in memory, the failure is logged once per cause and reported by `worker.status`
+- [x] Given a missing or unreadable `session.json`, when the worker starts, then it starts with an empty model and renames an unreadable file aside rather than overwriting it
+- [x] Given a worker killed without a shutdown, when another process tests `serve/owner.lock`, then the lock is seen as free (validates A9; if it is not, the story records the finding and the ownership rule of US-054 uses the worker endpoint's liveness instead)
+- [x] Until US-053 lands, no window calls `layout.attach`, so the window stays the only writer of `session.json` and its behavior is unchanged
 
 #### US-052: Id leases
 **Description:** As the maintainer, I want a client to allocate ids from a block the worker granted so that creating a pane never waits for a reply.
@@ -1103,11 +1104,11 @@ The layout model moves from the window to the worker. The window sends ops and d
 **Dependencies:** Blocked by US-051
 
 **Acceptance Criteria:**
-- [ ] Given `layout.lease_ids`, when it is called, then it returns a contiguous block of 1,024 ids and the worker's counter moves past the block before the reply is sent
-- [ ] Given the counter, when it moves, then the new value is persisted with the next session write, and a worker that starts from a file never grants an id at or below a value it once granted
-- [ ] Given an op that creates an element with a client-chosen id, when the id lies inside a block leased to that client and is unused, then the op is accepted; otherwise it fails with `invalid`
-- [ ] Given a client that has used half of its block, when it asks again, then it receives a second block and may use both
-- [ ] Given a worker crash between a lease and the next session write, when it restarts, then its counter is advanced by one full block beyond the persisted value before any id is granted
+- [x] Given `layout.lease_ids`, when it is called, then it returns a contiguous block of 1,024 ids and the worker's counter moves past the block before the reply is sent
+- [x] Given the counter, when it moves, then the new value is persisted with the next session write, and a worker that starts from a file never grants an id at or below a value it once granted
+- [x] Given an op that creates an element with a client-chosen id, when the id lies inside a block leased to that client and is unused, then the op is accepted; otherwise it fails with `invalid`
+- [x] Given a client that has used half of its block, when it asks again, then it receives a second block and may use both
+- [x] Given a worker crash between a lease and the next session write, when it restarts, then its counter is advanced by one full block beyond the persisted value before any id is granted
 
 #### US-053: The window becomes a layout client
 **Description:** As a user, I want every gesture of the US-020 checklist to give the same result while the layout now lives in the background process.
@@ -1119,16 +1120,16 @@ The layout model moves from the window to the worker. The window sends ops and d
 **Paneflow sites:** `src-app/src/app/host_agents.rs:535-562` (the follow pattern); `src-app/src/app/session.rs:662-665`; `src-app/src/app/render.rs:384-386`.
 
 **Acceptance Criteria:**
-- [ ] Given a window start, when the worker answers, then the window calls `layout.attach`, takes an id block, projects the view, and reattaches each terminal by its session id as restore does today
-- [ ] Given a user gesture, when `apply_layout_op` runs, then the op is applied to the window's own copy of the model at once, the projection runs in the same frame as today, and the op is sent to the worker from a background thread
-- [ ] Given the worker's acknowledgement, when its `revision` equals the window's, then nothing is redrawn; when it differs, then the window fetches the view and reprojects
-- [ ] Given a `layout.changed` event with a revision the window did not produce, when it arrives, then the window fetches the view and reprojects, reusing every pane whose id persists
-- [ ] Given an op the worker refuses after the window applied it, when the refusal arrives, then the window adopts the worker's view and shows the toast that op shows today when refused
-- [ ] Given a divider drag, when it is in progress, then no op is sent, and one set-ratio op is sent when it ends
-- [ ] Given a new surface created by the window, when its terminal session is created, then the window sends a bind-session op, and until EP-008 the window is the only process that creates sessions
-- [ ] Given `src-app/src`, when a guard test searches it, then the window has no write of `session.json` for structural state while it is attached to a worker
-- [ ] Given the worker unreachable at window start, when the window opens, then it loads `session.json` itself as today and works as the layout authority (the handover back is US-054)
-- [ ] The render thread performs no socket call
+- [x] Given a window start, when the worker answers, then the window calls `layout.attach`, takes an id block, projects the view, and reattaches each terminal by its session id as restore does today
+- [x] Given a user gesture, when `apply_layout_op` runs, then the op is applied to the window's own copy of the model at once, the projection runs in the same frame as today, and the op is sent to the worker from a background thread
+- [x] Given the worker's acknowledgement, when its `revision` equals the window's, then nothing is redrawn; when it differs, then the window fetches the view and reprojects
+- [x] Given a `layout.changed` event with a revision the window did not produce, when it arrives, then the window fetches the view and reprojects, reusing every pane whose id persists
+- [x] Given an op the worker refuses after the window applied it, when the refusal arrives, then the window adopts the worker's view and shows the toast that op shows today when refused
+- [x] Given a divider drag, when it is in progress, then no op is sent, and one set-ratio op is sent when it ends
+- [x] Given a new surface created by the window, when its terminal session is created, then the window sends a bind-session op, and until EP-008 the window is the only process that creates sessions
+- [x] Given `src-app/src`, when a guard test searches it, then the window has no write of `session.json` for structural state while it is attached to a worker
+- [x] Given the worker unreachable at window start, when the window opens, then it loads `session.json` itself as today and works as the layout authority (the handover back is US-054)
+- [x] The render thread performs no socket call
 
 #### US-054: Keep working while the worker is away
 **Description:** As a user, I want every layout gesture to keep working during an update or a worker failure so that the background process is never something I notice.
@@ -1140,13 +1141,13 @@ The layout model moves from the window to the worker. The window sends ops and d
 **Paneflow sites:** `crates/paneflow-serve/src/bootstrap.rs:16-17,240-330`; `src-app/src/worker_bootstrap.rs:42-83`; `crates/paneflow-serve/src/worker.rs:103-111`.
 
 **Acceptance Criteria:**
-- [ ] Given the worker unreachable, when the user splits, closes, moves or resizes, then each op is applied to the window's model with leased ids and drawn as usual
-- [ ] Given the worker reachable again, when the window reconnects, then it sends `layout.adopt` with its model and the last revision the worker acknowledged, and the worker accepts it when its own revision is not greater than that revision
-- [ ] Given the worker's revision greater than the window's acknowledged revision, when `layout.adopt` is sent, then it is refused, the window adopts the worker's view, and one toast says the layout was refreshed
-- [ ] Given the worker unreachable and `serve/owner.lock` not held, when the model changes, then the window writes `session.json` on the 150 ms debounce with the model's revision, and stops doing so as soon as a worker holds the lock
-- [ ] Given a window that quits while the worker is unreachable, when it exits, then its last model is on disk
-- [ ] Given an id block exhausted while the worker is unreachable, when a creating op is requested, then it fails with the toast used for a refused split
-- [ ] Given a test that replaces the worker while ops are applied, when it ends, then the worker's view equals the window's model, asserted on the exported `SessionState`
+- [x] Given the worker unreachable, when the user splits, closes, moves or resizes, then each op is applied to the window's model with leased ids and drawn as usual
+- [x] Given the worker reachable again, when the window reconnects, then it sends `layout.adopt` with its model and the last revision the worker acknowledged, and the worker accepts it when its own revision is not greater than that revision
+- [x] Given the worker's revision greater than the window's acknowledged revision, when `layout.adopt` is sent, then it is refused, the window adopts the worker's view, and one toast says the layout was refreshed
+- [x] Given the worker unreachable and `serve/owner.lock` not held, when the model changes, then the window writes `session.json` on the 150 ms debounce with the model's revision, and stops doing so as soon as a worker holds the lock
+- [x] Given a window that quits while the worker is unreachable, when it exits, then its last model is on disk
+- [x] Given an id block exhausted while the worker is unreachable, when a creating op is requested, then it fails with the toast used for a refused split
+- [x] Given a test that replaces the worker while ops are applied, when it ends, then the worker's view equals the window's model, asserted on the exported `SessionState`
 
 #### US-055: Window-only state leaves the session file
 **Description:** As the maintainer, I want state that belongs to one window stored by the window so that the worker's file has one writer.
@@ -1158,52 +1159,19 @@ The layout model moves from the window to the worker. The window sends ops and d
 **Paneflow sites:** `crates/paneflow-config/src/schema/session.rs:63-79,200-222`; `src-app/src/window_state.rs:28-43`; `src-app/src/main.rs:152-154`.
 
 **Acceptance Criteria:**
-- [ ] Given the dock state and the detached pane placements (window and bounds, keyed by pane id), when they change, then the window writes them to `window-state.json`, and the worker never writes them
-- [ ] Given a `session.json` written by the previous release that holds dock and detached fields, when the new window starts, then it reads them once, moves them to `window-state.json`, and the next session write omits them
-- [ ] Given the previous release opening files written by this build, when it starts, then the layout restores and the dock opens in its default state, and the changelog entry of this story says so
-- [ ] Given a pane id in `window-state.json` that no longer exists in the view, when the window starts, then the entry is dropped silently
-- [ ] Given a test that lists every field of `SessionState`, when it runs, then each field is assigned to the worker's file or to `window-state.json` as FR-12 says, and a field added later without an assignment fails the test
-
-#### US-056: Effects and structural methods move to the worker
-**Description:** As a script author, I want layout methods answered by the process that owns the layout so that a change made from the CLI and one made from the keyboard follow the same path.
-
-**Priority:** P0
-**Size:** L (5 pts)
-**Dependencies:** Blocked by US-053
-
-**Paneflow sites:** `src-app/src/app/hosted_sessions.rs:222-262`; `src-app/src/app/workspace_ops/tab.rs:551-565`; `src-app/src/app/ipc_handler/split.rs`, `workspace_methods.rs`, `surface_methods.rs:1034-1087`.
-
-**Acceptance Criteria:**
-- [ ] Given hold, stop and rehome effects, when an op requests them, then the worker performs them through the host's existing `session.stop` and `session.workspace` methods, and the 5 s hold of undo close is timed by the worker
-- [ ] Given `surface.split`, `surface.focus`, `surface.rename`, `workspace.create`, `workspace.up`, `workspace.select`, `workspace.close` and `workspace.restore_layout`, when the registry is listed, then their owner is `worker`, and their parameters and results are unchanged
-- [ ] Given a raw JSON-RPC client that sends one of these methods to the window's socket, when the window receives it, then the window answers with the same shape as before by submitting ops, and the US-001 cases pass unchanged
-- [ ] Given one of these methods sent to the worker while a window is attached, when it creates a pane, then the attached window creates the terminal session and binds it, and the reply waits for the binding as the `Async` reply does today
-- [ ] Given one of these methods that must create a terminal while no window is attached, when it is sent to the worker, then it is refused with the existing "no Paneflow window is attached" error
-- [ ] Given the read methods that need terminal content (`surface.read`, `surface.search`), when the registry is listed, then their owner is unchanged
-- [ ] The host crate is not modified
-
-#### US-057: Events, actions and documents follow the new owner
-**Description:** As the maintainer, I want the temporary plumbing removed and the architecture document rewritten so that the code has one story.
-
-**Priority:** P0
-**Size:** M (3 pts)
-**Dependencies:** Blocked by US-056, US-037, US-024
-
-**Acceptance Criteria:**
-- [ ] Given a model op applied in the worker, when it returns events, then the worker appends them to the log itself, and `events.publish` and the window-side queue of US-024 are deleted
-- [ ] Given an action in `init.lua` that calls a structural method, when it runs, then the call is served inside the worker with no socket round trip
-- [ ] Given `ARCHITECTURE.md`, when it is read, then the worker section, the session persistence section and the thread model describe the worker as the layout authority, the id leases, the adopt rule and the fallback write, and no sentence describes the window as the owner of the layout
-- [ ] Given `CHANGELOG.md`, when it is read, then it has an entry for the file split of US-055 and for ids that are now stable
-- [ ] Given the legacy `events.subscribe` on the window's socket, when it is used, then its frames and types are unchanged
-- [ ] Given a worker and a window of different builds during an update, when the window attaches, then the capability set decides whether the window uses the layout methods, and a window that finds them missing falls back to the local authority of US-054
+- [x] Given the dock state and the detached pane placements (window and bounds, keyed by pane id), when they change, then the window writes them to `window-state.json`, and the worker never writes them
+- [x] Given a `session.json` written by the previous release that holds dock and detached fields, when the new window starts, then it reads them once, moves them to `window-state.json`, and the next session write omits them
+- [x] Given the previous release opening files written by this build, when it starts, then the layout restores and the dock opens in its default state, and the changelog entry of this story says so
+- [x] Given a pane id in `window-state.json` that no longer exists in the view, when the window starts, then the entry is dropped silently
+- [x] Given a test that lists every field of `SessionState`, when it runs, then each field is assigned to the worker's file or to `window-state.json` as FR-12 says, and a field added later without an assignment fails the test
 
 ---
 
 ### EP-008: Layout with no window
 
-The worker creates terminal sessions itself. The CLI, `init.lua` and scripts can build and change a layout while no window is open, and a window opened afterwards draws what it finds. This epic is P1: the PRD ships without it.
+The worker creates terminal sessions itself, then serves the structural layout methods (US-056, moved here from EP-007 on 2026-11-21 so that they are written once, on top of `paneflow-launch`, instead of as a relay to the window). The CLI, `init.lua` and scripts can build and change a layout while no window is open, and a window opened afterwards draws what it finds. This epic is P1: the PRD ships without it.
 
-**Definition of Done:** with no window running, `paneflow up` followed by `paneflow split` and `paneflow ls` succeed against a debug home and their terminals run; opening the window then shows that layout with live terminals; the quit dialog's two choices behave as before.
+**Definition of Done:** with no window running, `paneflow up` followed by `paneflow split` and `paneflow ls` succeed against a debug home and their terminals run; an `init.lua` action that calls `surface.split` is served inside the worker; opening the window then shows that layout with live terminals; the quit dialog's two choices behave as before.
 
 **Rex reference:** the server creates blocks (`session.new_split`, `session.new_window`, page "Rex Lua API").
 
@@ -1212,7 +1180,7 @@ The worker creates terminal sessions itself. The CLI, `init.lua` and scripts can
 
 **Priority:** P1
 **Size:** M (3 pts)
-**Dependencies:** Blocked by US-057
+**Dependencies:** Blocked by US-053, US-055
 
 **Paneflow sites:** `src-app/src/terminal/pty_session/spawn_env.rs`; `src-app/src/terminal/host_link.rs`; `src-app/src/agent_launcher.rs`; `src-app/src/app/ipc_handler/split.rs:37-46`; `crates/paneflow-host/src/env.rs:31-43`.
 
@@ -1252,6 +1220,40 @@ The worker creates terminal sessions itself. The CLI, `init.lua` and scripts can
 - [ ] Given the host unreachable, when a creating op arrives, then it is refused with the host's connection error and the model is unchanged
 - [ ] Given a pane created headless, when its environment is read inside the terminal, then `PANEFLOW_SURFACE_ID` equals its surface id
 - [ ] The host crate is not modified
+
+#### US-056: Effects and structural methods move to the worker
+**Description:** As a script author, I want layout methods answered by the process that owns the layout so that a change made from the CLI and one made from the keyboard follow the same path.
+
+**Priority:** P1
+**Size:** L (5 pts)
+**Dependencies:** Blocked by US-060
+
+**Paneflow sites:** `src-app/src/app/hosted_sessions.rs:222-262`; `src-app/src/app/workspace_ops/tab.rs:551-565`; `src-app/src/app/ipc_handler/split.rs`, `workspace_methods.rs`, `surface_methods.rs:1034-1087`; `src-app/src/git_command.rs`.
+
+**Acceptance Criteria:**
+- [x] Given hold, stop and rehome effects, when an op requests them, then the worker performs them through the host's existing `session.stop` and `session.workspace` methods, and the 5 s hold of undo close is timed by the worker
+- [ ] Given `surface.split`, `surface.focus`, `surface.rename`, `workspace.create`, `workspace.up`, `workspace.select`, `workspace.close` and `workspace.restore_layout`, when the registry is listed, then their owner is `worker`, and their parameters and results are unchanged
+- [ ] Given a raw JSON-RPC client that sends one of these methods to the window's socket, when the window receives it, then the window answers with the same shape as before by submitting ops, and the US-001 cases pass unchanged
+- [ ] Given one of these methods sent to the worker, when it creates a pane, then the worker translates it into layout ops, starts the terminal through `paneflow-launch` as US-060 does, and the reply waits for the binding as the `Async` reply does today; an attached window only attaches to the new session
+- [ ] Given `workspace.up` with a managed worktree, when the worker serves it, then the worktree is created through the git CLI boundary of `src-app/src/git_command.rs`, moved unchanged into a GPU-free crate that both processes link, and no second git implementation exists; `AGENTS.md` names the new location
+- [ ] Given `surface.focus` or `workspace.select` sent to the worker while a window is attached, when the window receives the new view, then it gives the keyboard focus to the pane the model focuses, as the window method does today
+- [x] Given the read methods that need terminal content (`surface.read`, `surface.search`), when the registry is listed, then their owner is unchanged
+- [x] The host crate is not modified
+
+#### US-057: Events, actions and documents follow the new owner
+**Description:** As the maintainer, I want the temporary plumbing removed and the architecture document rewritten so that the code has one story.
+
+**Priority:** P1
+**Size:** M (3 pts)
+**Dependencies:** Blocked by US-056, US-037, US-024
+
+**Acceptance Criteria:**
+- [x] Given a model op applied in the worker, when it returns events, then the worker appends them to the log itself, and `events.publish` and the window-side queue of US-024 are deleted
+- [ ] Given an action in `init.lua` that calls a structural method, when it runs, then the call is served inside the worker with no socket round trip
+- [x] Given `ARCHITECTURE.md`, when it is read, then the worker section, the session persistence section and the thread model describe the worker as the layout authority, the id leases, the adopt rule and the fallback write, and no sentence describes the window as the owner of the layout
+- [x] Given `CHANGELOG.md`, when it is read, then it has an entry for the file split of US-055 and for ids that are now stable
+- [x] Given the legacy `events.subscribe` on the window's socket, when it is used, then its frames and types are unchanged
+- [x] Given a worker and a window of different builds during an update, when the window attaches, then the capability set decides whether the window uses the layout methods, and a window that finds them missing falls back to the local authority of US-054
 
 #### US-061: Layout methods answer with no window
 **Description:** As a user, I want `paneflow up`, `new`, `split`, `select` and `focus` to work before I open the app so that I can prepare a workspace from a script.
@@ -1475,7 +1477,7 @@ Everything the earlier epics wrote for Windows by inspection is run on Arthur's 
 
 **Priority:** P0
 **Size:** M (3 pts)
-**Dependencies:** Blocked by US-057
+**Dependencies:** Blocked by US-055, and by US-057 for its EP-008 checks
 
 **Acceptance Criteria:**
 - [ ] Given the US-020 checklist, when it is run on Windows, then every gesture gives its expected result
@@ -1678,7 +1680,7 @@ A pointer drag (pane, surface or agent session drop, divider drag) and a detache
 - `vendor/**`: vendored crates keep their upstream text.
 - `crates/paneflow-shim/**`: size-capped helper with no part in this work.
 - `src-app/src/terminal/pty_session/session_backend.rs` and `src-app/src/terminal/types.rs`: the engine boundary and its neutral types.
-- `src-app/src/git_command.rs`: the single git boundary.
+- `src-app/src/git_command.rs`: the single git boundary. Exception: US-056 may move it unchanged into a GPU-free crate both the window and the worker link, so the worker can create a managed worktree; it stays the git CLI and the only git implementation.
 - `docs/user/**`: generated mirror of the site's documentation.
 - `rust-toolchain.toml`: the toolchain stays at 1.98.0.
 - `.config/nextest.toml` quarantine list: no test of this work is quarantined.
