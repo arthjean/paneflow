@@ -139,12 +139,19 @@ fn pin_init_lua_actions_join_the_palette_and_run_from_it(cx: &mut TestAppContext
     assert_eq!(entries(&app, cx), built_in_split);
     close_palette(&app, cx);
 
-    std::fs::write(paneflow_home::init_lua_path_in(&home), INIT_LUA).expect("init.lua");
-    call(&home, "config.reload", json!({}));
+    worker.stop();
     pump_until(
         &app,
         cx,
-        "the reloaded actions reaching the window",
+        "the window noticing the worker leaving",
+        |app, _| !app.lua_config_reachable(),
+    );
+    std::fs::write(paneflow_home::init_lua_path_in(&home), INIT_LUA).expect("init.lua");
+    let worker = paneflow_serve::open(&home).expect("a worker that finds init.lua");
+    pump_until(
+        &app,
+        cx,
+        "the actions of init.lua reaching the window",
         |app, _| !app.lua_config.actions.is_empty(),
     );
 
@@ -200,6 +207,7 @@ fn pin_init_lua_actions_join_the_palette_and_run_from_it(cx: &mut TestAppContext
             .any(|message| message.starts_with("Needs a file: missing argument \"file\""))
     });
 
+    cx.update(|window, cx| app.update(cx, |app, cx| app.focus_active_pane(window, cx)));
     cx.simulate_keystrokes("ctrl-alt-shift-k");
     wait_for("the key run of record", cx, || seen(&home)["calls"] == 2);
     let recorded = seen(&home);
