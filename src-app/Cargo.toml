@@ -295,11 +295,9 @@ core-text = "21"
 # resolver dedupes and the `TCFType` trait stays coherent across both crates).
 # Powers the panic-free Core Text family-name reader in `fonts.rs`.
 core-foundation = "0.10"
-# Native AppKit material behind the unified sidebar + title bar. GPUI exposes
-# its renderer NSView through raw-window-handle; Cocoa/objc let PaneFlow add a
-# semantic NSVisualEffectView without carrying macOS APIs into other targets.
-raw-window-handle = "0.6"
-cocoa = "0.26"
+# objc sets the Dock icon at runtime in `app_icon.rs`. The Blended backdrop
+# uses GPUI's own `WindowBackgroundAppearance::Blurred`, so no AppKit view of
+# Paneflow's own sits behind the window.
 objc = "0.2"
 # Issue #37: macOS is the one target where GPUI's `Window::gpu_specs()` returns
 # `None`, so the Help > Copy System Info report reads the adapter from Metal

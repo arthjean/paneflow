@@ -431,6 +431,8 @@ impl PaneFlowApp {
             windows_backdrop_light: None,
             #[cfg(target_os = "windows")]
             windows_backdrop_acrylic: None,
+            #[cfg(target_os = "macos")]
+            macos_appearance: Default::default(),
             jump_cursor: None,
             closed_panes: Vec::new(),
             owned_sessions: Default::default(),

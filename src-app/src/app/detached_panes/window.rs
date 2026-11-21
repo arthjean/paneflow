@@ -28,7 +28,7 @@ pub(crate) struct DetachedPaneWindow {
     #[cfg(target_os = "windows")]
     system_backdrop: bool,
     #[cfg(target_os = "macos")]
-    material: Option<crate::window_chrome::macos_backdrop::SidebarMaterial>,
+    macos_appearance: crate::window_chrome::system_blur::AppliedAppearance,
 }
 
 impl PaneFlowApp {
@@ -104,18 +104,6 @@ impl PaneFlowApp {
                         crate::window_chrome::window_backdrop(&config, window).is_blended(),
                     );
                 }
-                #[cfg(target_os = "macos")]
-                let material = if crate::app::constants::macos_sidebar_material_enabled(
-                    config.window_backdrop.as_deref(),
-                ) {
-                    crate::window_chrome::macos_backdrop::SidebarMaterial::install(
-                        window,
-                        crate::theme::active_theme().background.l > 0.5,
-                        config.macos_chrome_material_enabled(),
-                    )
-                } else {
-                    None
-                };
                 #[cfg(target_os = "linux")]
                 crate::window_chrome::linux_backdrop::sync_window_backdrop(
                     window,
@@ -180,7 +168,7 @@ impl PaneFlowApp {
                             config.window_backdrop.as_deref(),
                         ),
                         #[cfg(target_os = "macos")]
-                        material,
+                        macos_appearance: Default::default(),
                     }
                 });
                 let close_owner = owner.clone();
@@ -316,9 +304,7 @@ impl Render for DetachedPaneWindow {
             self.backdrop_acrylic = Some(backdrop.is_blended());
         }
         #[cfg(target_os = "macos")]
-        if let Some(material) = &mut self.material {
-            material.sync(theme.background.l > 0.5, backdrop.is_blended());
-        }
+        self.macos_appearance.sync(window, backdrop);
         let shell_color = if window.is_window_active() {
             theme.title_bar_background
         } else {

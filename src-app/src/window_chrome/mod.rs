@@ -3,8 +3,8 @@ pub mod backdrop;
 pub mod csd;
 #[cfg(target_os = "linux")]
 pub mod linux_backdrop;
-#[cfg(target_os = "macos")]
-pub mod macos_backdrop;
+#[cfg(any(target_os = "macos", test))]
+pub(crate) mod system_blur;
 pub(crate) mod title_band;
 pub mod title_bar;
 pub(crate) mod veil;
@@ -12,6 +12,7 @@ pub(crate) mod veil;
 use gpui::{IntoElement, PathBuilder, Styled, canvas, point};
 
 const DEV_BLUR_SUPPORT_ENV: &str = "PANEFLOW_DEV_BLUR_SUPPORT";
+const FULLSCREEN_DROPS_SURFACE_ALPHA: bool = cfg!(target_os = "macos");
 
 pub(crate) fn window_backdrop(
     config: &paneflow_config::schema::PaneFlowConfig,
@@ -24,15 +25,28 @@ pub(crate) fn style_backdrop(
     style: paneflow_config::schema::BackgroundStyle,
     window: &gpui::Window,
 ) -> veil::Backdrop {
-    veil::Backdrop::new(style, surface_has_alpha(window), blur_support(window))
+    backdrop_for(style, window, FULLSCREEN_DROPS_SURFACE_ALPHA)
 }
 
-fn surface_has_alpha(window: &gpui::Window) -> bool {
-    !fullscreen_drops_surface_alpha(window.is_fullscreen()) && system_backdrop_available()
+fn backdrop_for(
+    style: paneflow_config::schema::BackgroundStyle,
+    window: &gpui::Window,
+    fullscreen_drops_alpha: bool,
+) -> veil::Backdrop {
+    let surface_has_alpha = surface_alpha_for(
+        fullscreen_drops_alpha,
+        window.is_fullscreen(),
+        system_backdrop_available(),
+    );
+    veil::Backdrop::new(style, surface_has_alpha, blur_support(window))
 }
 
-fn fullscreen_drops_surface_alpha(is_fullscreen: bool) -> bool {
-    cfg!(target_os = "macos") && is_fullscreen
+fn surface_alpha_for(
+    fullscreen_drops_alpha: bool,
+    is_fullscreen: bool,
+    system_backdrop_available: bool,
+) -> bool {
+    !(fullscreen_drops_alpha && is_fullscreen) && system_backdrop_available
 }
 
 #[cfg(target_os = "windows")]
@@ -163,15 +177,27 @@ pub(crate) fn panel_corner_mask(corner: PanelCorner, background: gpui::Hsla) -> 
 
 #[cfg(test)]
 mod backdrop_source_tests {
-    use super::{dev_blur_support_for, fullscreen_drops_surface_alpha, veil::BlurSupport};
+    use super::{dev_blur_support_for, surface_alpha_for, veil::BlurSupport};
 
     #[test]
-    fn fullscreen_drops_the_surface_alpha_on_macos_only() {
-        assert!(!fullscreen_drops_surface_alpha(false));
-        assert_eq!(
-            fullscreen_drops_surface_alpha(true),
-            cfg!(target_os = "macos")
-        );
+    fn a_platform_that_drops_alpha_in_fullscreen_keeps_it_windowed() {
+        assert!(surface_alpha_for(true, false, true));
+        assert!(!surface_alpha_for(true, true, true));
+        assert!(surface_alpha_for(false, true, true));
+        assert!(surface_alpha_for(false, false, true));
+    }
+
+    #[test]
+    fn a_window_without_a_system_backdrop_has_no_surface_alpha() {
+        for fullscreen_drops_alpha in [true, false] {
+            for is_fullscreen in [true, false] {
+                assert!(!surface_alpha_for(
+                    fullscreen_drops_alpha,
+                    is_fullscreen,
+                    false
+                ));
+            }
+        }
     }
 
     #[test]

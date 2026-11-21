@@ -458,16 +458,6 @@ pub(crate) fn run() {
                             crate::window_chrome::window_backdrop(&config, window).is_blended(),
                         );
                     }
-                    #[cfg(target_os = "macos")]
-                    if crate::app::constants::macos_sidebar_material_enabled(
-                        config.window_backdrop.as_deref(),
-                    ) {
-                        crate::window_chrome::macos_backdrop::apply_subtle_sidebar_material(
-                            window,
-                            crate::theme::active_theme().background.l > 0.5,
-                            config.macos_chrome_material_enabled(),
-                        );
-                    }
                     #[cfg(target_os = "linux")]
                     crate::window_chrome::linux_backdrop::sync_window_backdrop(
                         window,
@@ -498,8 +488,9 @@ pub(crate) fn run() {
                     #[cfg(target_os = "macos")]
                     eprintln!(
                         "Error: Paneflow could not create its GPU-backed window on macOS.\n\n\
-                         Update macOS and restart Paneflow. If this started after enabling a native backdrop, launch once with:\n\
-                         \x20 PANEFLOW_WINDOW_BACKDROP=off\n\n\
+                         Update macOS and restart Paneflow. If this started after choosing the Blended background style, set\n\
+                         \x20 \"background_style\": \"themed\"\n\
+                         in paneflow.json and restart.\n\n\
                          Underlying error: {e}"
                     );
                     std::process::exit(1);

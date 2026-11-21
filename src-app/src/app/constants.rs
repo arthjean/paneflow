@@ -29,7 +29,7 @@ pub(crate) fn rail_row_radius() -> Pixels {
     )
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "windows")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum WindowBackdropPreference {
     Auto,
@@ -39,7 +39,7 @@ pub(crate) enum WindowBackdropPreference {
     Opaque,
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "windows")]
 pub(crate) fn window_backdrop_preference(config_value: Option<&str>) -> WindowBackdropPreference {
     if let Ok(value) = std::env::var("PANEFLOW_WINDOW_BACKDROP") {
         return parse_window_backdrop_preference(&value);
@@ -48,9 +48,8 @@ pub(crate) fn window_backdrop_preference(config_value: Option<&str>) -> WindowBa
     config_window_backdrop_preference(config_value)
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "windows")]
 fn config_window_backdrop_preference(config_value: Option<&str>) -> WindowBackdropPreference {
-    #[cfg(target_os = "windows")]
     if let Some(value) = config_value.map(str::trim)
         && (value.eq_ignore_ascii_case("blurred") || value.eq_ignore_ascii_case("acrylic"))
     {
@@ -62,7 +61,7 @@ fn config_window_backdrop_preference(config_value: Option<&str>) -> WindowBackdr
         .unwrap_or(WindowBackdropPreference::Auto)
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "windows")]
 fn parse_window_backdrop_preference(value: &str) -> WindowBackdropPreference {
     match value.trim().to_ascii_lowercase() {
         value if value.is_empty() || value == "auto" => WindowBackdropPreference::Auto,
@@ -77,7 +76,7 @@ fn parse_window_backdrop_preference(value: &str) -> WindowBackdropPreference {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "windows")]
 pub(crate) fn window_background_appearance(
     config_value: Option<&str>,
 ) -> WindowBackgroundAppearance {
@@ -85,33 +84,21 @@ pub(crate) fn window_background_appearance(
     window_background_appearance_for_preference(preference)
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "windows")]
 fn window_background_appearance_for_preference(
     preference: WindowBackdropPreference,
 ) -> WindowBackgroundAppearance {
-    #[cfg(target_os = "windows")]
-    {
-        match preference {
-            WindowBackdropPreference::Auto | WindowBackdropPreference::Mica => {
-                if windows_supports_system_backdrop() {
-                    WindowBackgroundAppearance::MicaBackdrop
-                } else {
-                    WindowBackgroundAppearance::Opaque
-                }
+    match preference {
+        WindowBackdropPreference::Auto | WindowBackdropPreference::Mica => {
+            if windows_supports_system_backdrop() {
+                WindowBackgroundAppearance::MicaBackdrop
+            } else {
+                WindowBackgroundAppearance::Opaque
             }
-            WindowBackdropPreference::Blurred => WindowBackgroundAppearance::Blurred,
-            WindowBackdropPreference::Transparent => WindowBackgroundAppearance::Transparent,
-            WindowBackdropPreference::Opaque => WindowBackgroundAppearance::Opaque,
         }
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        match preference {
-            WindowBackdropPreference::Opaque => WindowBackgroundAppearance::Opaque,
-            WindowBackdropPreference::Blurred => WindowBackgroundAppearance::Blurred,
-            _ => WindowBackgroundAppearance::Transparent,
-        }
+        WindowBackdropPreference::Blurred => WindowBackgroundAppearance::Blurred,
+        WindowBackdropPreference::Transparent => WindowBackgroundAppearance::Transparent,
+        WindowBackdropPreference::Opaque => WindowBackgroundAppearance::Opaque,
     }
 }
 
@@ -130,7 +117,7 @@ pub(crate) fn initial_window_background(
     WindowBackgroundAppearance::Opaque
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "windows")]
 pub(crate) fn initial_window_background(
     config: &paneflow_config::schema::PaneFlowConfig,
 ) -> WindowBackgroundAppearance {
@@ -138,11 +125,14 @@ pub(crate) fn initial_window_background(
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn macos_sidebar_material_enabled(config_value: Option<&str>) -> bool {
-    !matches!(
-        window_backdrop_preference(config_value),
-        WindowBackdropPreference::Opaque | WindowBackdropPreference::Transparent
-    )
+pub(crate) fn initial_window_background(
+    config: &paneflow_config::schema::PaneFlowConfig,
+) -> WindowBackgroundAppearance {
+    crate::window_chrome::system_blur::appearance(crate::window_chrome::veil::Backdrop::new(
+        config.resolved_background_style(),
+        true,
+        crate::window_chrome::veil::BlurSupport::Full,
+    ))
 }
 
 #[cfg(target_os = "windows")]

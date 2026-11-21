@@ -187,10 +187,7 @@ impl Render for PaneFlowApp {
             }
         }
         #[cfg(target_os = "macos")]
-        crate::window_chrome::macos_backdrop::sync_subtle_sidebar_material(
-            theme.background.l > 0.5,
-            backdrop.is_blended(),
-        );
+        self.macos_appearance.sync(window, backdrop);
         let title_bar_h =
             (1.75 * window.rem_size()).max(crate::app::constants::TITLE_BAR_MIN_HEIGHT);
         let content_frame = crate::window_chrome::csd::client_content_frame(

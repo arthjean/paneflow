@@ -336,6 +336,8 @@ struct PaneFlowApp {
     windows_backdrop_light: Option<bool>,
     #[cfg(target_os = "windows")]
     windows_backdrop_acrylic: Option<bool>,
+    #[cfg(target_os = "macos")]
+    macos_appearance: window_chrome::system_blur::AppliedAppearance,
     jump_cursor: Option<u64>,
     closed_panes: Vec<crate::app::workspace_ops::ClosedRecord>,
     owned_sessions: crate::app::hosted_sessions::OwnedSessions,
