@@ -492,8 +492,6 @@ impl Element for AnimatedHover {
     }
 }
 
-pub(crate) const FOCUS_BLUE: u32 = 0x007aff;
-
 pub(crate) const LABEL_XS: Pixels = px(10.);
 pub(crate) const LABEL_SM: Pixels = px(11.);
 pub(crate) const BODY: Pixels = px(12.);
@@ -525,22 +523,6 @@ pub(crate) fn squircle_skin(
         );
     }
     element
-}
-
-pub(crate) fn animated_squircle_skin(
-    element: Stateful<Div>,
-    group: impl Into<SharedString>,
-    radius: Pixels,
-    resting: Hsla,
-    hovered: Hsla,
-) -> AnimatedHover {
-    let progress = std::rc::Rc::new(std::cell::Cell::new(0.));
-    let fill = squircle::squircle_fill_blend(radius, resting, hovered, progress.clone());
-    element
-        .relative()
-        .group(group.into())
-        .child(fill)
-        .animated_hover(move |_, delta| progress.set(delta))
 }
 
 const COMET_TURN: Duration = Duration::from_millis(700);
@@ -1252,42 +1234,8 @@ mod tests {
                     crate::theme::ui_colors(),
                 ))
             }),
-            ("raised_icon_button", |label| {
-                labeled_control(&c::raised_icon_button(
-                    "i",
-                    label,
-                    "icons/plus.svg",
-                    gpui::black(),
-                    gpui::white(),
-                    true,
-                ))
-            }),
-            ("soft_icon_button", |label| {
-                labeled_control(&c::soft_icon_button(
-                    "v",
-                    label,
-                    "icons/check.svg",
-                    crate::theme::ui_colors(),
-                ))
-            }),
-            ("ghost_icon_button", |label| {
-                labeled_control(&c::ghost_icon_button(
-                    "g",
-                    label,
-                    "icons/plus.svg",
-                    crate::theme::ui_colors(),
-                ))
-            }),
             ("raised_button", |label| {
                 labeled_control(&c::raised_button("p", label, gpui::black(), gpui::white()))
-            }),
-            ("soft_button", |label| {
-                labeled_control(&c::soft_button(
-                    "t",
-                    label,
-                    crate::theme::ui_colors(),
-                    |_, _, _| {},
-                ))
             }),
             ("secondary_button", |label| {
                 labeled_control(&c::secondary_button(

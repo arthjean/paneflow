@@ -13,30 +13,18 @@ use std::collections::BTreeMap;
 use crate::PaneFlowApp;
 use crate::app::spaces::SPACE_LIMIT_REASON;
 use crate::settings::components::{
-    CARD_BUTTON_FILL_HOVER, CARD_BUTTON_FILL_REST, CARD_PADDING_X, CARD_PADDING_Y,
-    GHOST_HOVER_ALPHA, KeyboardStopExt, SETTINGS_ROW_PADDING_Y, card_button, destructive_color,
-    ghost_icon_button, ghost_tint_skin, hairline, input_frame, inverse_fill, primary_button,
-    raised_button, raised_icon_button, row_text, section_header_with_action, select_menu_surface,
-    setting_card, settings_breadcrumb, soft_button, with_alpha,
+    KeyboardStopExt, input_frame, select_menu_surface, settings_breadcrumb, with_alpha,
 };
+use crate::settings::kit::{self, Ink, Size, Text, Tone};
 use crate::settings::search::Block;
 use crate::settings::tabs::agents::{
     EnvRowInputs, collect_env, input_box, new_env_row, validate_env_values,
 };
 use crate::settings::tabs::space_accounts::{is_account_key, other_variable_count, same_key};
 use crate::ui_primitives::{
-    AccessibleControlExt, BODY, BODY_EMPHASIS, LABEL_SM, ROW_RADIUS, TITLE, TooltipDelayExt,
-    lerp_color, squircle_skin, text_tooltip,
+    AccessibleControlExt, TITLE, TooltipDelayExt, lerp_color, text_tooltip,
 };
 
-const INTRO_MAX_WIDTH: f32 = 520.;
-const SECTION_GAP: f32 = 24.;
-const SECTION_ACTION_HEIGHT: f32 = 26.;
-const LIST_INSET: f32 = 6.;
-const ROW_PADDING_X: f32 = 10.;
-const ROW_PADDING_Y: f32 = 9.;
-const ROW_GAP: f32 = 12.;
-const ROW_MARK: f32 = 24.;
 const IDENTITY_PADDING: f32 = 16.;
 const IDENTITY_GAP: f32 = 18.;
 const IDENTITY_MARK: f32 = 56.;
@@ -51,20 +39,26 @@ const NAME_FIELD_HEIGHT: f32 = 32.;
 const PICKER_TARGET: f32 = 24.;
 const PICKER_SWATCH: f32 = 16.;
 const ENV_NAME_WIDTH: f32 = 180.;
-const ENV_REMOVE_SIZE: f32 = 26.;
 const WELCOME_MARK: f32 = 36.;
-const WELCOME_MARK_RING: f32 = 3.;
-const WELCOME_MARK_OVERLAP: f32 = 12.;
+const WELCOME_MARK_GAP: f32 = 8.;
+const PRESET_HEIGHT: f32 = 32.;
+const PRESET_RADIUS: f32 = 8.;
+const ENV_ROW_PADDING_Y: f32 = 10.;
 const WELCOME_TEXT_WIDTH: f32 = 380.;
 const PRESET_MARK: f32 = 14.;
 const PRESET_PADDING_X: f32 = 12.;
 const SECRET_MASK: &str = "••••••••";
+const ADD_ICON: &str = "icons/settings/add-01.svg";
+const EDIT_ICON: &str = "icons/settings/pencil-edit-02.svg";
+const DELETE_ICON: &str = "icons/settings/delete-02.svg";
+const ALERT_ICON: &str = "icons/settings/alert-02.svg";
+const CANCEL_ICON: &str = "icons/settings/cancel-circle.svg";
 const SPACES_INTRO: &str =
     "Group workspaces by context, each with its own agent accounts and terminal environment.";
 const WELCOME_TITLE: &str = "Keep your contexts apart";
 const WELCOME_BODY: &str = "A space groups workspaces, such as work or personal projects, and can \
      sign their agents into a separate account.";
-const ENV_EMPTY_HINT: &str = "Every terminal of this space gets them, for example \
+const ENV_HINT: &str = "Variables every terminal in this space gets, for example \
      AWS_PROFILE for a separate cloud profile.";
 const ENV_EDITOR_INTRO: &str = "Every terminal in this space gets these variables. ~ stands for \
      your home folder, and $NAME reuses a variable from Paneflow's environment.";
@@ -706,38 +700,32 @@ impl PaneFlowApp {
 
     pub(crate) fn render_spaces_content(&self, cx: &mut Context<Self>) -> AnyElement {
         let ui = crate::theme::ui_colors();
+        let ink = Ink::of(ui);
         if let Some(space) = self
             .space_detail
             .as_ref()
             .and_then(|id| self.cached_config.space(id))
         {
-            return self.render_space_detail(space, ui, cx);
+            return self.render_space_detail(space, ui, ink, cx);
         }
         let spaces = &self.cached_config.spaces;
         if spaces.is_empty() {
             return Block::new("Spaces")
-                .child(render_spaces_welcome(ui, cx))
+                .child(render_spaces_welcome(ink, ui, cx))
                 .finish();
         }
-        let mut list = setting_card(ui)
-            .p(px(LIST_INSET))
-            .gap(px(2.))
-            .child(self.render_default_space_row(ui));
+        let mut list = kit::group(ink).child(self.render_default_space_row(ink, ui));
         for space in spaces {
-            list = list.child(self.render_space_row(space, ui, cx));
+            list = list
+                .child(kit::rule(ink))
+                .child(self.render_space_row(space, ink, ui, cx));
         }
-        Block::new("Spaces")
-            .child(
-                div()
-                    .pb(px(16.))
-                    .px(px(2.))
-                    .max_w(px(INTRO_MAX_WIDTH))
-                    .text_size(BODY)
-                    .text_color(ui.muted)
-                    .child(SPACES_INTRO),
-            )
-            .child(list)
-            .finish()
+        list = list.child(kit::rule(ink)).child(render_new_space_row(
+            spaces.len() >= MAX_SPACES,
+            ink,
+            cx,
+        ));
+        Block::new("Spaces").child(list).finish()
     }
 
     pub(crate) fn render_spaces_heading(
@@ -753,44 +741,14 @@ impl PaneFlowApp {
         {
             return render_space_breadcrumb(space.name.clone(), ui, cx);
         }
-        let spaces = self.cached_config.spaces.len();
-        if spaces == 0 {
-            return title.pb(px(20.)).into_any_element();
-        }
-        let at_limit = spaces >= MAX_SPACES;
-        let (fill, ink) = inverse_fill(ui);
-        let new_space = raised_icon_button(
-            "space-new",
-            "New space",
-            "icons/settings/add-01.svg",
-            fill,
-            ink,
-            !at_limit,
-        )
-        .when(!at_limit, |button| {
-            button.on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                if let Some(id) = this.add_space(cx) {
-                    this.edit_space_name(id, window, cx);
-                }
-            }))
-        });
         div()
             .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(12.))
-            .pb(px(6.))
+            .flex_col()
+            .gap(px(4.))
+            .px(px(kit::TEXT_INSET))
+            .pb(px(kit::SECTION_GAP))
             .child(title)
-            .child(div().flex_1())
-            .when(at_limit, |row| {
-                row.child(
-                    div()
-                        .text_size(LABEL_SM)
-                        .text_color(ui.muted)
-                        .child(SPACE_LIMIT_REASON),
-                )
-            })
-            .child(new_space)
+            .child(kit::page_description(Ink::of(ui), SPACES_INTRO))
             .into_any_element()
     }
 
@@ -850,142 +808,101 @@ impl PaneFlowApp {
         }
     }
 
-    fn render_default_space_row(&self, ui: crate::theme::UiColors) -> AnyElement {
+    fn render_default_space_row(&self, ink: Ink, ui: crate::theme::UiColors) -> AnyElement {
         let count = self.space_workspace_count(None);
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(ROW_GAP))
-            .px(px(ROW_PADDING_X))
-            .py(px(ROW_PADDING_Y))
-            .child(space_summary(
-                crate::app::sidebar::default_space_mark(ROW_MARK, ui),
-                DEFAULT_SPACE_NAME.into(),
+        kit::row(
+            ink,
+            Some(crate::app::sidebar::default_space_mark(kit::LEAD, ui)),
+            Text::new(DEFAULT_SPACE_NAME).line(kit::line(
+                ink,
                 workspace_count_label(count, "Workspaces without a space"),
-                ui,
-            ))
-            .into_any_element()
+            )),
+            None,
+        )
+        .into_any_element()
     }
 
     fn render_space_row(
         &self,
         space: &SpaceConfig,
+        ink: Ink,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let count = self.space_workspace_count(Some(&space.id));
-        let key = space.id.to_string();
         let id = space.id.clone();
-        squircle_skin(
-            div()
-                .id(SharedString::from(format!("space-row-{key}")))
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(ROW_GAP))
-                .px(px(ROW_PADDING_X))
-                .py(px(ROW_PADDING_Y))
-                .cursor(CursorStyle::PointingHand),
-            format!("space-row-{key}"),
-            ROW_RADIUS,
-            None,
-            Some(with_alpha(ui.text, 0.05)),
+        let text = Text::new(space.name.clone())
+            .line(kit::line(
+                ink,
+                space_meta_label(
+                    count,
+                    &self.space_account_labels(space),
+                    other_variable_count(&space.env),
+                ),
+            ))
+            .maybe_line(self.render_space_status(space, ink));
+        kit::link_row(
+            SharedString::from(format!("space-row-{}", space.id)),
+            ink,
+            Some(crate::app::sidebar::space_mark(
+                space.color,
+                space.avatar.as_deref(),
+                kit::LEAD,
+                ui,
+            )),
+            text,
+            kit::Place::Middle,
         )
-        .role(gpui::accesskit::Role::Button)
         .aria_label(format!("Open space {}", space.name))
-        .keyboard_stop(ROW_RADIUS)
         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
             this.open_space_detail(&id, window, cx);
         }))
-        .child(space_summary(
-            crate::app::sidebar::space_mark(space.color, space.avatar.as_deref(), ROW_MARK, ui),
-            space.name.clone().into(),
-            space_meta_label(
-                count,
-                &self.space_account_labels(space),
-                other_variable_count(&space.env),
-            ),
-            ui,
-        ))
-        .children(self.render_space_status(space, ui))
-        .child(
-            svg()
-                .size(px(12.))
-                .flex_none()
-                .path("icons/settings/arrow-right-01.svg")
-                .text_color(ui.muted),
-        )
         .into_any_element()
     }
 
-    fn render_space_status(
-        &self,
-        space: &SpaceConfig,
-        ui: crate::theme::UiColors,
-    ) -> Option<AnyElement> {
+    fn render_space_status(&self, space: &SpaceConfig, ink: Ink) -> Option<AnyElement> {
         let failed = self
             .space_integrations
             .errors
             .keys()
             .any(|(id, _)| id == &space.id);
-        let (icon, icon_color, label, label_color) = if failed {
-            (
-                "icons/settings/cancel-circle.svg",
-                ui.vc_deleted,
+        if failed {
+            return Some(status_line(
+                CANCEL_ICON,
+                ink.danger,
                 "Hooks not added".to_string(),
-                ui.vc_deleted,
-            )
-        } else {
-            let warnings =
-                space_env_warnings(&space.env, crate::space_env::inherited_from_paneflow).len();
-            if warnings == 0 {
-                return None;
-            }
-            (
-                "icons/settings/alert-02.svg",
-                ui.vc_modified,
+                ink.danger,
+            ));
+        }
+        let warnings =
+            space_env_warnings(&space.env, crate::space_env::inherited_from_paneflow).len();
+        (warnings > 0).then(|| {
+            status_line(
+                ALERT_ICON,
+                ink.warning,
                 warning_count_label(warnings),
-                ui.muted,
+                ink.tertiary,
             )
-        };
-        Some(
-            div()
-                .flex_none()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(5.))
-                .text_size(LABEL_SM)
-                .text_color(label_color)
-                .child(
-                    svg()
-                        .size(px(12.))
-                        .flex_none()
-                        .path(icon)
-                        .text_color(icon_color),
-                )
-                .child(label)
-                .into_any_element(),
-        )
+        })
     }
 
     fn render_space_detail(
         &self,
         space: &SpaceConfig,
         ui: crate::theme::UiColors,
+        ink: Ink,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let count = self.space_workspace_count(Some(&space.id));
         let mut block = Block::new("Spaces")
-            .gap(SECTION_GAP)
-            .child(self.render_space_identity(space, ui, cx));
+            .gap(kit::SECTION_GAP)
+            .child(self.render_space_identity(space, ui, ink, cx));
         if let Some(accounts) = self.render_space_accounts(space, ui, cx) {
             block = block.child(accounts);
         }
         block
-            .child(self.render_space_env_section(space, ui, cx))
-            .child(self.render_space_delete(space, count, ui, cx))
+            .child(self.render_space_env_section(space, ui, ink, cx))
+            .child(self.render_space_delete(space, count, ink, cx))
             .finish()
     }
 
@@ -993,6 +910,7 @@ impl PaneFlowApp {
         &self,
         space: &SpaceConfig,
         ui: crate::theme::UiColors,
+        ink: Ink,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let error = self
@@ -1003,17 +921,17 @@ impl PaneFlowApp {
             .map(|(_, error)| error.clone());
         let remove_image = space.avatar.is_some().then(|| {
             let id = space.id.clone();
-            ghost_icon_button(
+            kit::icon_button(
                 SharedString::from(format!("space-avatar-remove-{}", space.id)),
                 "Remove image",
-                "icons/settings/delete-02.svg",
-                ui,
+                DELETE_ICON,
+                ink,
             )
             .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 this.set_space_avatar(&id, None, cx);
             }))
         });
-        setting_card(ui)
+        kit::group(ink)
             .child(
                 div()
                     .flex()
@@ -1037,7 +955,7 @@ impl PaneFlowApp {
                                     .items_center()
                                     .justify_between()
                                     .gap(px(12.))
-                                    .child(self.render_space_colors(space, ui, cx))
+                                    .child(self.render_space_colors(space, ink, ui, cx))
                                     .children(remove_image),
                             ),
                     ),
@@ -1046,8 +964,8 @@ impl PaneFlowApp {
                 card.child(
                     div()
                         .px(px(IDENTITY_PADDING))
-                        .pb(px(14.))
-                        .child(render_hint(error, HintTone::Error, ui)),
+                        .pb(px(IDENTITY_PADDING))
+                        .child(hint_line(ink, error, HintTone::Error)),
                 )
             })
             .into_any_element()
@@ -1215,7 +1133,7 @@ impl PaneFlowApp {
             .gap(px(4.))
             .child(field)
             .when_some(editing.and_then(|editor| editor.error), |column, error| {
-                column.child(render_hint(error, HintTone::Error, ui))
+                column.child(hint_line(Ink::of(ui), error, HintTone::Error))
             })
             .into_any_element()
     }
@@ -1223,6 +1141,7 @@ impl PaneFlowApp {
     fn render_space_colors(
         &self,
         space: &SpaceConfig,
+        ink: Ink,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -1251,10 +1170,10 @@ impl PaneFlowApp {
                     .rounded_full()
                     .cursor(CursorStyle::PointingHand)
                     .when(selected, |target| {
-                        target.border_1().border_color(with_alpha(ui.text, 0.6))
+                        target.border_1().border_color(ink.secondary)
                     })
                     .when(!selected, |target| {
-                        target.hover(|style| style.bg(with_alpha(ui.text, GHOST_HOVER_ALPHA)))
+                        target.hover(move |style| style.bg(ink.hover))
                     })
                     .role(gpui::accesskit::Role::RadioButton)
                     .aria_label(label)
@@ -1283,6 +1202,7 @@ impl PaneFlowApp {
         &self,
         space: &SpaceConfig,
         ui: crate::theme::UiColors,
+        ink: Ink,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let editor = self
@@ -1295,92 +1215,88 @@ impl PaneFlowApp {
             .filter(|(key, _)| !is_account_key(key))
             .map(|(key, value)| (key.clone(), value.clone()))
             .collect();
-        let action = if editor.is_none() && !variables.is_empty() {
-            let id = space.id.clone();
-            soft_button(
-                SharedString::from(format!("space-env-edit-{}", space.id)),
-                "Edit",
-                ui,
-                cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    this.open_space_env_editor(&id, window, cx);
-                }),
-            )
-            .into_any_element()
-        } else {
-            div().h(px(SECTION_ACTION_HEIGHT)).into_any_element()
-        };
         let body = match editor {
-            Some(editor) => div()
-                .p(px(CARD_PADDING_X))
-                .child(self.render_space_env_editor(editor, ui, cx))
-                .into_any_element(),
-            None if variables.is_empty() => {
-                let id = space.id.clone();
+            Some(editor) => kit::group(ink).child(
                 div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(16.))
-                    .px(px(CARD_PADDING_X))
-                    .py(px(SETTINGS_ROW_PADDING_Y))
-                    .child(row_text("No variables", ENV_EMPTY_HINT, ui))
-                    .child(
-                        ghost_icon_button(
-                            SharedString::from(format!("space-env-add-{}", space.id)),
-                            "Add variable",
-                            "icons/settings/add-01.svg",
-                            ui,
-                        )
-                        .on_click(cx.listener(
-                            move |this, _: &ClickEvent, window, cx| {
-                                this.open_space_env_editor(&id, window, cx);
-                            },
-                        )),
+                    .p(px(IDENTITY_PADDING))
+                    .child(self.render_space_env_editor(editor, ui, ink, cx)),
+            ),
+            None => {
+                let id = space.id.clone();
+                let (label, icon) = if variables.is_empty() {
+                    ("Add variable", ADD_ICON)
+                } else {
+                    ("Edit variables", EDIT_ICON)
+                };
+                let mut card = kit::group(ink);
+                if !variables.is_empty() {
+                    card = card
+                        .child(render_env_list(&variables, ink))
+                        .child(kit::rule(ink));
+                }
+                card.child(
+                    kit::link_row(
+                        SharedString::from(format!("space-env-edit-{}", space.id)),
+                        ink,
+                        Some(kit::disc(ink, icon)),
+                        Text::new(label),
+                        if variables.is_empty() {
+                            kit::Place::Only
+                        } else {
+                            kit::Place::Last
+                        },
                     )
-                    .into_any_element()
+                    .on_click(cx.listener(
+                        move |this, _: &ClickEvent, window, cx| {
+                            this.open_space_env_editor(&id, window, cx);
+                        },
+                    )),
+                )
             }
-            None => render_env_list(&variables, ui),
         };
         let warnings = if editor.is_none() {
             space_env_warnings(&space.env, crate::space_env::inherited_from_paneflow)
         } else {
             Vec::new()
         };
-        div()
-            .flex()
-            .flex_col()
-            .child(section_header_with_action(ui, "Environment", action))
-            .child(setting_card(ui).child(body))
-            .when(!warnings.is_empty(), |section| {
-                section.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(6.))
-                        .pt(px(10.))
-                        .px(px(2.))
-                        .children(
-                            warnings.into_iter().map(|warning| {
-                                self.render_space_warning(&space.id, warning, ui, cx)
-                            }),
-                        ),
-                )
-            })
-            .into_any_element()
+        kit::section(
+            ink,
+            "Environment",
+            editor.is_none().then_some(ENV_HINT),
+            body,
+        )
+        .when(!warnings.is_empty(), |section| {
+            section.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .pt(px(4.))
+                    .px(px(kit::TEXT_INSET))
+                    .children(
+                        warnings
+                            .into_iter()
+                            .map(|warning| self.render_space_warning(&space.id, warning, ink, cx)),
+                    ),
+            )
+        })
+        .into_any_element()
     }
 
     fn render_space_env_editor(
         &self,
         editor: &SpaceEnvEditor,
         ui: crate::theme::UiColors,
+        ink: Ink,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let home = dirs::home_dir();
         let column_label = |label: &'static str| {
             div()
-                .text_size(LABEL_SM)
+                .text_size(px(kit::SIZE_SM))
+                .line_height(px(kit::LINE_SM))
                 .font_weight(gpui::FontWeight::MEDIUM)
-                .text_color(ui.muted)
+                .text_color(ink.secondary)
                 .child(label)
         };
         let mut rows = div()
@@ -1388,18 +1304,13 @@ impl PaneFlowApp {
             .flex_col()
             .gap(px(6.))
             .w_full()
-            .child(
-                div()
-                    .text_size(LABEL_SM)
-                    .text_color(ui.muted)
-                    .child(ENV_EDITOR_INTRO),
-            )
+            .child(kit::line(ink, ENV_EDITOR_INTRO))
             .child(
                 div()
                     .flex()
                     .flex_row()
                     .gap(px(6.))
-                    .pt(px(4.))
+                    .pt(px(6.))
                     .child(
                         div()
                             .w(px(ENV_NAME_WIDTH))
@@ -1419,7 +1330,7 @@ impl PaneFlowApp {
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(3.))
+                    .gap(px(4.))
                     .w_full()
                     .child(
                         div()
@@ -1438,38 +1349,15 @@ impl PaneFlowApp {
                                 true,
                                 ui,
                             )))
-                            .when(removable, |d| {
-                                let group = format!("space-env-remove-{row_idx}-squircle");
-                                d.child(
-                                    ghost_tint_skin(
-                                        div()
-                                            .id(SharedString::from(format!(
-                                                "space-env-remove-{row_idx}"
-                                            )))
-                                            .flex_none()
-                                            .size(px(ENV_REMOVE_SIZE))
-                                            .flex()
-                                            .items_center()
-                                            .justify_center(),
-                                        group.clone(),
-                                        px(7.),
-                                        destructive_color(),
-                                    )
-                                    .child(
-                                        svg()
-                                            .size(px(13.))
-                                            .flex_none()
-                                            .path("icons/settings/delete-02.svg")
-                                            .text_color(with_alpha(ui.text, 0.8))
-                                            .group_hover(group, |style| {
-                                                style.text_color(destructive_color())
-                                            }),
-                                    )
-                                    .accessible_control(
-                                        gpui::accesskit::Role::Button,
+                            .when(removable, |line| {
+                                line.child(
+                                    kit::icon_button(
+                                        SharedString::from(format!("space-env-remove-{row_idx}")),
                                         "Remove variable",
+                                        DELETE_ICON,
+                                        ink,
                                     )
-                                    .keyboard_stop(px(7.))
+                                    .keyboard_stop(px(8.))
                                     .on_click(cx.listener(
                                         move |this, _: &ClickEvent, _w, cx| {
                                             if let Some(editor) = this.space_env_editor.as_mut()
@@ -1483,11 +1371,11 @@ impl PaneFlowApp {
                                 )
                             }),
                     )
-                    .when_some(hint, |d, (text, tone)| {
-                        d.child(
+                    .when_some(hint, |line, (text, tone)| {
+                        line.child(
                             div()
                                 .pl(px(ENV_NAME_WIDTH + 6.))
-                                .child(render_hint(text, tone, ui)),
+                                .child(hint_line(ink, text, tone)),
                         )
                     }),
             );
@@ -1498,13 +1386,14 @@ impl PaneFlowApp {
             .items_center()
             .justify_between()
             .gap(px(12.))
-            .pt(px(4.))
+            .pt(px(6.))
             .child(
-                ghost_icon_button(
+                kit::button(
                     "space-env-add",
                     "Add variable",
-                    "icons/settings/add-01.svg",
-                    ui,
+                    Tone::Ghost,
+                    Size::Small,
+                    ink,
                 )
                 .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
                     let row = space_env_row("", "", cx);
@@ -1518,22 +1407,28 @@ impl PaneFlowApp {
                 div()
                     .flex()
                     .flex_row()
-                    .gap(px(6.))
+                    .gap(px(8.))
                     .child(
-                        card_button("space-env-cancel", "Cancel", ui).on_click(cx.listener(
+                        kit::button(
+                            "space-env-cancel",
+                            "Cancel",
+                            Tone::Secondary,
+                            Size::Small,
+                            ink,
+                        )
+                        .on_click(cx.listener(
                             |this, _: &ClickEvent, _w, cx| {
                                 this.space_env_editor = None;
                                 cx.notify();
                             },
                         )),
                     )
-                    .child(primary_button(
-                        "space-env-save",
-                        "Save",
-                        cx.listener(|this, _: &ClickEvent, _w, cx| {
-                            this.save_space_env(cx);
-                        }),
-                    )),
+                    .child(
+                        kit::button("space-env-save", "Save", Tone::Primary, Size::Small, ink)
+                            .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+                                this.save_space_env(cx);
+                            })),
+                    ),
             );
         div()
             .flex()
@@ -1541,7 +1436,7 @@ impl PaneFlowApp {
             .gap(px(6.))
             .child(rows)
             .when_some(editor.error.clone(), |column, error| {
-                column.child(render_hint(error, HintTone::Error, ui))
+                column.child(hint_line(ink, error, HintTone::Error))
             })
             .child(footer)
             .into_any_element()
@@ -1551,10 +1446,10 @@ impl PaneFlowApp {
         &self,
         space: &SpaceId,
         warning: SpaceWarning,
-        ui: crate::theme::UiColors,
+        ink: Ink,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let hint = render_hint(warning.text, HintTone::Warning, ui);
+        let hint = hint_line(ink, warning.text, HintTone::Warning);
         let Some(key) = warning.turn_off else {
             return hint;
         };
@@ -1566,10 +1461,12 @@ impl PaneFlowApp {
             .gap(px(12.))
             .child(div().flex_1().min_w_0().child(hint))
             .child(
-                card_button(
+                kit::button(
                     SharedString::from(format!("space-turn-off-{space}-{key}")),
                     format!("Turn off {key} here"),
-                    ui,
+                    Tone::Secondary,
+                    Size::Small,
+                    ink,
                 )
                 .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                     this.turn_off_inherited(&id, key, cx);
@@ -1596,82 +1493,77 @@ impl PaneFlowApp {
         &self,
         space: &SpaceConfig,
         count: usize,
-        ui: crate::theme::UiColors,
+        ink: Ink,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let armed = self.space_delete_armed.as_ref() == Some(&space.id);
         let consequence = format!("{}.", space_delete_message(count));
-        let title = if armed {
-            format!("Delete {}?", space.name)
-        } else {
-            "Delete space".to_string()
-        };
         let id = space.id.clone();
-        let actions = if armed {
-            div()
-                .flex_none()
-                .flex()
-                .flex_row()
-                .gap(px(6.))
-                .child(
-                    card_button("space-delete-cancel", "Cancel", ui).on_click(cx.listener(
-                        |this, _: &ClickEvent, _w, cx| {
-                            this.space_delete_armed = None;
-                            cx.notify();
-                        },
-                    )),
-                )
-                .child(
-                    raised_button(
-                        "space-delete-confirm",
-                        "Delete space",
-                        destructive_color(),
-                        gpui::white(),
-                    )
-                    .on_click(cx.listener(
-                        move |this, _: &ClickEvent, _w, cx| {
-                            this.delete_space(&id, cx);
-                        },
-                    )),
-                )
-                .into_any_element()
-        } else {
-            ghost_tint_skin(
-                div()
-                    .id(SharedString::from(format!("space-delete-{}", space.id)))
-                    .flex_none()
-                    .px(px(10.))
-                    .py(px(4.))
-                    .text_size(BODY)
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(ui.vc_deleted),
-                format!("space-delete-{}-squircle", space.id),
-                ROW_RADIUS,
-                ui.vc_deleted,
-            )
-            .accessible_control(gpui::accesskit::Role::Button, "Delete space")
-            .keyboard_stop(ROW_RADIUS)
-            .child("Delete")
-            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-                this.space_delete_armed = Some(id.clone());
-                this.space_name_editor = None;
-                this.space_env_editor = None;
-                cx.notify();
-            }))
-            .into_any_element()
-        };
-        setting_card(ui)
-            .child(
+        let (text, control) = if armed {
+            (
+                Text::new(format!("Delete {}?", space.name)).danger(ink),
                 div()
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap(px(16.))
-                    .px(px(CARD_PADDING_X))
-                    .py(px(SETTINGS_ROW_PADDING_Y))
-                    .child(row_text(title, consequence, ui))
-                    .child(actions),
+                    .gap(px(8.))
+                    .child(
+                        kit::button(
+                            "space-delete-cancel",
+                            "Cancel",
+                            Tone::Secondary,
+                            Size::Small,
+                            ink,
+                        )
+                        .on_click(cx.listener(
+                            |this, _: &ClickEvent, _w, cx| {
+                                this.space_delete_armed = None;
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(
+                        kit::button(
+                            "space-delete-confirm",
+                            "Delete space",
+                            Tone::Danger,
+                            Size::Small,
+                            ink,
+                        )
+                        .on_click(cx.listener(
+                            move |this, _: &ClickEvent, _w, cx| {
+                                this.delete_space(&id, cx);
+                            },
+                        )),
+                    )
+                    .into_any_element(),
             )
+        } else {
+            (
+                Text::new("Delete space"),
+                kit::button(
+                    SharedString::from(format!("space-delete-{}", space.id)),
+                    "Delete",
+                    Tone::Danger,
+                    Size::Small,
+                    ink,
+                )
+                .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                    this.space_delete_armed = Some(id.clone());
+                    this.space_name_editor = None;
+                    this.space_env_editor = None;
+                    cx.notify();
+                }))
+                .into_any_element(),
+            )
+        };
+        kit::group(ink)
+            .child(kit::row(
+                ink,
+                None,
+                text.line(kit::line(ink, consequence)),
+                Some(control),
+            ))
             .into_any_element()
     }
 }
@@ -1681,46 +1573,66 @@ fn render_space_breadcrumb(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
-    settings_breadcrumb(
-        "spaces-breadcrumb",
-        "Spaces",
-        "Back to all spaces",
-        name,
-        ui,
-        cx.listener(|this, _: &ClickEvent, window, cx| {
-            this.close_space_detail(window, cx);
-        }),
+    div()
+        .flex()
+        .px(px(kit::TEXT_INSET))
+        .pb(px(kit::SECTION_GAP))
+        .child(settings_breadcrumb(
+            "spaces-breadcrumb",
+            "Spaces",
+            "Back to all spaces",
+            name,
+            ui,
+            cx.listener(|this, _: &ClickEvent, window, cx| {
+                this.close_space_detail(window, cx);
+            }),
+        ))
+        .into_any_element()
+}
+
+fn render_new_space_row(at_limit: bool, ink: Ink, cx: &mut Context<PaneFlowApp>) -> AnyElement {
+    if at_limit {
+        return kit::row(
+            ink,
+            Some(kit::disc(ink, ADD_ICON)),
+            Text::new("Space limit reached").line(kit::line(ink, SPACE_LIMIT_REASON)),
+            None,
+        )
+        .into_any_element();
+    }
+    kit::link_row(
+        "space-new",
+        ink,
+        Some(kit::disc(ink, ADD_ICON)),
+        Text::new("New space"),
+        kit::Place::Last,
     )
-    .pb(px(20.))
+    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+        if let Some(id) = this.add_space(cx) {
+            this.edit_space_name(id, window, cx);
+        }
+    }))
     .into_any_element()
 }
 
-fn render_spaces_welcome(ui: crate::theme::UiColors, cx: &mut Context<PaneFlowApp>) -> AnyElement {
-    let ring = |mark: AnyElement| {
-        div()
-            .flex_none()
-            .ml(px(-WELCOME_MARK_OVERLAP))
-            .p(px(WELCOME_MARK_RING))
-            .rounded_full()
-            .bg(select_menu_surface(ui))
-            .child(mark)
-    };
-    let mut cluster = div()
+fn render_spaces_welcome(
+    ink: Ink,
+    ui: crate::theme::UiColors,
+    cx: &mut Context<PaneFlowApp>,
+) -> AnyElement {
+    let mut marks = div()
         .flex()
         .flex_row()
         .items_center()
-        .pl(px(WELCOME_MARK_OVERLAP))
-        .child(ring(crate::app::sidebar::default_space_mark(
-            WELCOME_MARK,
-            ui,
-        )));
+        .gap(px(WELCOME_MARK_GAP))
+        .child(crate::app::sidebar::default_space_mark(WELCOME_MARK, ui));
     for (_, color) in SPACE_PRESETS {
-        cluster = cluster.child(ring(crate::app::sidebar::space_mark(
+        marks = marks.child(crate::app::sidebar::space_mark(
             Some(color),
             None,
             WELCOME_MARK,
             ui,
-        )));
+        ));
     }
     let mut presets = div()
         .flex()
@@ -1734,7 +1646,7 @@ fn render_spaces_welcome(ui: crate::theme::UiColors, cx: &mut Context<PaneFlowAp
                 SharedString::from(format!("space-preset-{}", name.to_lowercase())),
                 name,
                 crate::app::sidebar::space_mark(Some(color), None, PRESET_MARK, ui),
-                ui,
+                ink,
             )
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.create_preset_space(name, color, window, cx);
@@ -1748,10 +1660,10 @@ fn render_spaces_welcome(ui: crate::theme::UiColors, cx: &mut Context<PaneFlowAp
             svg()
                 .size(px(PRESET_MARK))
                 .flex_none()
-                .path("icons/settings/add-01.svg")
-                .text_color(ui.text)
+                .path(ADD_ICON)
+                .text_color(ink.primary)
                 .into_any_element(),
-            ui,
+            ink,
         )
         .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
             if let Some(id) = this.add_space(cx) {
@@ -1759,34 +1671,24 @@ fn render_spaces_welcome(ui: crate::theme::UiColors, cx: &mut Context<PaneFlowAp
             }
         })),
     );
-    setting_card(ui)
+    kit::group(ink)
         .child(
             div()
                 .flex()
                 .flex_col()
                 .items_center()
                 .px(px(32.))
-                .pt(px(36.))
-                .pb(px(32.))
-                .child(cluster)
+                .pt(px(32.))
+                .pb(px(28.))
+                .child(marks)
+                .child(kit::headline(ink, WELCOME_TITLE).pt(px(16.)))
                 .child(
-                    div()
-                        .pt(px(18.))
-                        .text_size(TITLE)
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(ui.text)
-                        .child(WELCOME_TITLE),
-                )
-                .child(
-                    div()
+                    kit::page_description(ink, WELCOME_BODY)
                         .pt(px(6.))
                         .max_w(px(WELCOME_TEXT_WIDTH))
-                        .text_center()
-                        .text_size(BODY)
-                        .text_color(ui.muted)
-                        .child(WELCOME_BODY),
+                        .text_center(),
                 )
-                .child(div().pt(px(22.)).child(presets)),
+                .child(div().pt(px(20.)).child(presets)),
         )
         .into_any_element()
 }
@@ -1795,50 +1697,48 @@ fn preset_chip(
     id: impl Into<SharedString>,
     label: &'static str,
     mark: AnyElement,
-    ui: crate::theme::UiColors,
+    ink: Ink,
 ) -> gpui::Stateful<gpui::Div> {
     let id: SharedString = id.into();
-    squircle_skin(
-        div()
-            .id(id.clone())
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(8.))
-            .pl(px(PRESET_PADDING_X - 2.))
-            .pr(px(PRESET_PADDING_X))
-            .py(px(6.))
-            .cursor(CursorStyle::PointingHand),
-        format!("{id}-squircle"),
-        ROW_RADIUS,
-        Some(with_alpha(ui.text, CARD_BUTTON_FILL_REST)),
-        Some(with_alpha(ui.text, CARD_BUTTON_FILL_HOVER)),
-    )
-    .accessible_control(
-        gpui::accesskit::Role::Button,
-        if label == "Custom" {
-            "New space".to_string()
-        } else {
-            format!("Create a {label} space")
-        },
-    )
-    .keyboard_stop(ROW_RADIUS)
-    .child(mark)
-    .child(
-        div()
-            .text_size(BODY)
-            .font_weight(gpui::FontWeight::MEDIUM)
-            .text_color(ui.text)
-            .child(label),
-    )
+    div()
+        .id(id)
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(8.))
+        .h(px(PRESET_HEIGHT))
+        .pl(px(PRESET_PADDING_X - 2.))
+        .pr(px(PRESET_PADDING_X))
+        .rounded(px(PRESET_RADIUS))
+        .bg(ink.well)
+        .cursor(CursorStyle::PointingHand)
+        .hover(move |style| style.bg(ink.well_hover))
+        .active(move |style| style.bg(ink.well_pressed))
+        .accessible_control(
+            gpui::accesskit::Role::Button,
+            if label == "Custom" {
+                "New space".to_string()
+            } else {
+                format!("Create a {label} space")
+            },
+        )
+        .keyboard_stop(px(PRESET_RADIUS))
+        .child(mark)
+        .child(
+            div()
+                .text_size(px(kit::SIZE_MD))
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .text_color(ink.primary)
+                .child(label),
+        )
 }
 
-fn render_env_list(env: &BTreeMap<String, String>, ui: crate::theme::UiColors) -> AnyElement {
-    let mono: SharedString = crate::terminal::element::resolve_font_family(None).into();
-    let mut list = div().flex().flex_col().py(px(CARD_PADDING_Y));
-    for (index, (key, value)) in env.iter().enumerate() {
+fn render_env_list(variables: &BTreeMap<String, String>, ink: Ink) -> AnyElement {
+    let mono = kit::mono_family();
+    let mut list = div().flex().flex_col();
+    for (index, (key, value)) in variables.iter().enumerate() {
         if index > 0 {
-            list = list.child(div().px(px(CARD_PADDING_X)).child(hairline(ui)));
+            list = list.child(kit::rule(ink));
         }
         let shown = if value.is_empty() {
             empty_value_label(key).to_string()
@@ -1853,16 +1753,17 @@ fn render_env_list(env: &BTreeMap<String, String>, ui: crate::theme::UiColors) -
                 .flex_row()
                 .items_center()
                 .gap(px(16.))
-                .px(px(CARD_PADDING_X))
-                .py(px(8.))
+                .px(px(kit::ROW_INSET))
+                .py(px(ENV_ROW_PADDING_Y))
                 .font_family(mono.clone())
-                .text_size(LABEL_SM)
+                .text_size(px(kit::SIZE_SM))
+                .line_height(px(kit::LINE_SM))
                 .child(
                     div()
                         .w(px(ENV_NAME_WIDTH))
                         .flex_none()
                         .truncate()
-                        .text_color(ui.text)
+                        .text_color(ink.primary)
                         .child(key.clone()),
                 )
                 .child(
@@ -1870,7 +1771,7 @@ fn render_env_list(env: &BTreeMap<String, String>, ui: crate::theme::UiColors) -
                         .flex_1()
                         .min_w_0()
                         .truncate()
-                        .text_color(ui.muted)
+                        .text_color(ink.tertiary)
                         .child(shown),
                 ),
         );
@@ -1878,78 +1779,40 @@ fn render_env_list(env: &BTreeMap<String, String>, ui: crate::theme::UiColors) -
     list.into_any_element()
 }
 
-fn space_summary(
-    mark: AnyElement,
-    name: SharedString,
-    meta: impl Into<SharedString>,
-    ui: crate::theme::UiColors,
-) -> gpui::Div {
-    div()
-        .flex_1()
-        .min_w_0()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(ROW_GAP))
-        .child(mark)
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .flex()
-                .flex_col()
-                .gap(px(1.))
-                .child(
-                    div()
-                        .truncate()
-                        .text_size(BODY_EMPHASIS)
-                        .font_weight(gpui::FontWeight::MEDIUM)
-                        .text_color(ui.text)
-                        .child(name),
-                )
-                .child(
-                    div()
-                        .truncate()
-                        .text_size(LABEL_SM)
-                        .text_color(ui.muted)
-                        .child(meta.into()),
-                ),
-        )
-}
-
-fn discard_avatar_in_background(file_name: String, cx: &mut Context<PaneFlowApp>) {
-    cx.background_spawn(async move { crate::space_avatar::discard_avatar(&file_name) })
-        .detach();
-}
-
-pub(crate) fn render_hint(
+fn status_line(
+    icon: &'static str,
+    icon_color: gpui::Hsla,
     text: impl Into<SharedString>,
-    tone: HintTone,
-    ui: crate::theme::UiColors,
+    text_color: gpui::Hsla,
 ) -> AnyElement {
     div()
         .flex()
         .flex_row()
         .items_start()
         .gap(px(6.))
-        .text_size(LABEL_SM)
-        .text_color(match tone {
-            HintTone::Error => ui.vc_deleted,
-            HintTone::Warning => ui.text,
-            HintTone::Preview => ui.muted,
-        })
-        .when(tone == HintTone::Warning, |hint| {
-            hint.child(
-                svg()
-                    .mt(px(1.))
-                    .size(px(12.))
-                    .flex_none()
-                    .path("icons/settings/alert-02.svg")
-                    .text_color(ui.vc_modified),
-            )
-        })
-        .child(div().flex_1().min_w_0().child(text.into()))
+        .child(
+            svg()
+                .mt(px(2.))
+                .size(px(12.))
+                .flex_none()
+                .path(icon)
+                .text_color(icon_color),
+        )
+        .child(kit::line_in(text_color, text).flex_1())
         .into_any_element()
+}
+
+pub(crate) fn hint_line(ink: Ink, text: impl Into<SharedString>, tone: HintTone) -> AnyElement {
+    match tone {
+        HintTone::Error => kit::line_in(ink.danger, text).into_any_element(),
+        HintTone::Warning => status_line(ALERT_ICON, ink.warning, text, ink.secondary),
+        HintTone::Preview => kit::line(ink, text).into_any_element(),
+    }
+}
+
+fn discard_avatar_in_background(file_name: String, cx: &mut Context<PaneFlowApp>) {
+    cx.background_spawn(async move { crate::space_avatar::discard_avatar(&file_name) })
+        .detach();
 }
 
 fn workspace_count_label(count: usize, empty: &'static str) -> String {
@@ -2221,14 +2084,6 @@ mod tests {
         assert_eq!(
             space_meta_label(2, &["pro@example.com".to_string()], 1),
             "2 workspaces · pro@example.com · 1 variable"
-        );
-    }
-
-    #[test]
-    fn the_space_rows_sit_concentric_in_the_settings_card() {
-        assert_eq!(
-            crate::app::constants::SETTINGS_CARD_RADIUS,
-            ROW_RADIUS + px(LIST_INSET)
         );
     }
 }

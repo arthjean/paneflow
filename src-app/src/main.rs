@@ -265,6 +265,7 @@ struct PaneFlowApp {
     integration_errors: std::collections::HashMap<String, String>,
     agent_settings_dialog: Option<crate::agent_launcher::TerminalAgent>,
     agent_profile_menu: Option<crate::settings::tabs::agents::AgentProfileMenu>,
+    worktree_snapshot_delete_armed: Option<String>,
     agent_account_adding: Option<crate::agent_launcher::TerminalAgent>,
     agent_sign_in: Option<crate::settings::tabs::agents::AgentSignIn>,
     space_account_menu: Option<(

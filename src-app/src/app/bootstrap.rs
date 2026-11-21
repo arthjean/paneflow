@@ -363,6 +363,7 @@ impl PaneFlowApp {
             integration_errors: std::collections::HashMap::new(),
             agent_settings_dialog: None,
             agent_profile_menu: None,
+            worktree_snapshot_delete_armed: None,
             agent_account_adding: None,
             agent_sign_in: None,
             space_account_menu: None,

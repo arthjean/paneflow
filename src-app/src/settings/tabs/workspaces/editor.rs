@@ -8,17 +8,23 @@ use super::canvas::{
 use super::*;
 use crate::WorkspaceTemplateDropdown;
 use crate::settings::components::{
-    CARD_PADDING_X, SETTINGS_ROW_PADDING_Y, card_button, deferred_select_menu, destructive_color,
-    ghost_skin, ghost_tint_skin, hairline, input_frame, raised_button, row_text, select_chevron,
-    select_menu, select_option, select_trigger, settings_label, soft_icon_button, text_field,
+    deferred_select_menu, input_frame, select_chevron, select_menu, select_option, select_trigger,
+    text_field, with_alpha,
 };
-use crate::ui_primitives::{TooltipDelayExt, squircle::squircle_border, text_tooltip};
+use crate::ui_primitives::{
+    BODY, LABEL_SM, TITLE, TooltipDelayExt, squircle::squircle_border, squircle_skin, text_tooltip,
+};
 
-const SECTION_GAP: f32 = 24.;
 const IDENTITY_PADDING: f32 = 16.;
 const NAME_FIELD_WIDTH: f32 = 320.;
 const NAME_FIELD_HEIGHT: f32 = 32.;
-const CANVAS_INSET: f32 = 6.;
+const CANVAS_INSET: f32 = 4.;
+const TILE_RADIUS: f32 = kit::CARD_RADIUS - kit::CARD_BORDER - CANVAS_INSET;
+const FIELD_WIDTH: f32 = 240.;
+const PICKER_HEIGHT: f32 = 28.;
+const PICKER_PADDING_X: f32 = 10.;
+const PICKER_RADIUS: f32 = 6.;
+const FOLDER_ICON: &str = "icons/settings/folder-open.svg";
 const CANVAS_HEIGHT: f32 = 196.;
 const CANVAS_HEIGHT_TALL: f32 = 264.;
 const CANVAS_TALL_FROM: usize = 5;
@@ -30,15 +36,11 @@ const TILE_SELECTED_RING: f32 = 1.5;
 const PILL_HEIGHT: f32 = 28.;
 const PRESET_GLYPH_WIDTH: f32 = 18.;
 const PRESET_GLYPH_HEIGHT: f32 = 12.;
-const FIELD_MIN_WIDTH: f32 = 180.;
-const FIELD_MAX_WIDTH: f32 = 320.;
 const AGENT_OPTION_LOGO: f32 = 16.;
 const DETAIL_BOTTOM_SPACE: f32 = 136.;
-const SELECTED_FILL: f32 = 0.10;
 const TILE_SELECTED_FILL: f32 = 0.08;
 const TILE_FILL: f32 = 0.045;
 const TILE_HOVER: f32 = 0.075;
-const PILL_HOVER: f32 = 0.06;
 const TILE_ROW_MIN: f32 = 52.;
 const TILE_COLUMN_MIN: f32 = 84.;
 const SELECTED_RING_ALPHA: f32 = 0.4;
@@ -48,6 +50,7 @@ impl PaneFlowApp {
         &self,
         idx: usize,
         ui: crate::theme::UiColors,
+        ink: Ink,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Some(command) = self.cached_config.commands.get(idx) else {
@@ -62,18 +65,22 @@ impl PaneFlowApp {
             .workspace_template_selected_pane
             .min(panes.len().saturating_sub(1));
 
-        let mut block = Block::new(BLOCK).gap(SECTION_GAP);
+        let mut block = Block::new(BLOCK).gap(kit::SECTION_GAP);
         if let Some(message) = self.template_notice(TemplateNoticeAt::Launch) {
-            block = block.child(render_hint(message, HintTone::Error, ui));
+            block = block.child(div().px(px(kit::TEXT_INSET)).child(hint_line(
+                ink,
+                message,
+                HintTone::Error,
+            )));
         }
         block = block
-            .child(self.render_template_identity(workspace, ui, cx))
-            .child(self.render_template_layout(workspace, &panes, selected_pane, ui, cx));
+            .child(self.render_template_identity(workspace, ui, ink, cx))
+            .child(self.render_template_layout(workspace, &panes, selected_pane, ui, ink, cx));
         if let Some(pane) = panes.get(selected_pane) {
-            block = block.child(self.render_template_pane(pane, selected_pane, ui, cx));
+            block = block.child(self.render_template_pane(pane, selected_pane, ui, ink, cx));
         }
         block
-            .child(self.render_template_manage(idx, title, ui, cx))
+            .child(self.render_template_manage(idx, title, ink, cx))
             .child(div().h(px(DETAIL_BOTTOM_SPACE)).flex_none())
             .finish()
     }
@@ -82,6 +89,7 @@ impl PaneFlowApp {
         &self,
         workspace: &WorkspaceDefinition,
         ui: crate::theme::UiColors,
+        ink: Ink,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let name_field = input_frame(
@@ -112,44 +120,42 @@ impl PaneFlowApp {
         let (project_label, project_color) = match project {
             Some(cwd) => (
                 crate::settings::tabs::worktrees::display_path(std::path::Path::new(cwd)),
-                ui.text,
+                ink.primary,
             ),
-            None => ("Choose a project folder".to_string(), ui.muted),
+            None => ("Choose a project folder".to_string(), ink.tertiary),
         };
-        let picker = ghost_skin(
-            div()
-                .id("workspace-template-project")
-                .flex_none()
-                .max_w_full()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(8.))
-                .px(px(10.))
-                .py(px(5.)),
-            "workspace-template-project-squircle",
-            ROW_RADIUS,
-            ui,
-        )
-        .accessible_control(gpui::accesskit::Role::Button, "Choose the project folder")
-        .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
-            this.pick_workspace_template_project_path(cx);
-        }))
-        .child(glyph(
-            "icons/settings/folder-open.svg",
-            14.,
-            with_alpha(ui.text, 0.8),
-        ))
-        .child(
-            div()
-                .min_w_0()
-                .truncate()
-                .text_size(BODY)
-                .text_color(project_color)
-                .child(project_label),
-        );
+        let picker = div()
+            .id("workspace-template-project")
+            .flex_none()
+            .max_w_full()
+            .h(px(PICKER_HEIGHT))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(8.))
+            .px(px(PICKER_PADDING_X))
+            .rounded(px(PICKER_RADIUS))
+            .cursor(CursorStyle::PointingHand)
+            .hover(move |style| style.bg(ink.well))
+            .active(move |style| style.bg(ink.well_hover))
+            .accessible_control(gpui::accesskit::Role::Button, "Choose the project folder")
+            .keyboard_stop(px(PICKER_RADIUS))
+            .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                this.pick_workspace_template_project_path(cx);
+            }))
+            .child(glyph(FOLDER_ICON, 14., ink.secondary))
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .font_family(kit::mono_family())
+                    .text_size(px(kit::SIZE_SM))
+                    .line_height(px(kit::LINE_SM))
+                    .text_color(project_color)
+                    .child(project_label),
+            );
 
-        setting_card(ui)
+        kit::group(ink)
             .child(
                 div()
                     .flex()
@@ -165,8 +171,8 @@ impl PaneFlowApp {
                     card.child(
                         div()
                             .px(px(IDENTITY_PADDING))
-                            .pb(px(14.))
-                            .child(render_hint(message, HintTone::Error, ui)),
+                            .pb(px(IDENTITY_PADDING))
+                            .child(hint_line(ink, message, HintTone::Error)),
                     )
                 },
             )
@@ -179,32 +185,21 @@ impl PaneFlowApp {
         panes: &[SurfaceDefinition],
         selected_pane: usize,
         ui: crate::theme::UiColors,
+        ink: Ink,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let preset = workspace_layout_preset(workspace);
-        let add = soft_icon_button(
-            "workspace-pane-add",
-            "Add pane",
-            "icons/settings/add-01.svg",
-            ui,
-        )
-        .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
-            this.add_workspace_template_pane(cx);
-        }));
-        let header = div()
+        let add = kit::icon_button("workspace-pane-add", "Add pane", ADD_ICON, ink)
+            .keyboard_stop(px(8.))
+            .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                this.add_workspace_template_pane(cx);
+            }));
+        let actions = div()
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(10.))
-            .pb(px(8.))
-            .child(
-                div()
-                    .flex_1()
-                    .text_size(LABEL_SM)
-                    .text_color(ui.muted)
-                    .child("Layout"),
-            )
-            .child(self.render_preset_control(preset, panes.len(), ui, cx))
+            .gap(px(8.))
+            .child(self.render_preset_control(preset, panes.len(), ink, cx))
             .child(add);
 
         let node = template_layout(workspace);
@@ -215,10 +210,10 @@ impl PaneFlowApp {
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(ROW_RADIUS)
+                .rounded(px(TILE_RADIUS))
                 .bg(with_alpha(ui.text, TILE_FILL))
-                .text_size(BODY)
-                .text_color(ui.muted)
+                .text_size(px(kit::SIZE_MD))
+                .text_color(ink.tertiary)
                 .child("Add a pane to start the layout.")
                 .into_any_element()
         } else {
@@ -235,16 +230,16 @@ impl PaneFlowApp {
             }
         };
 
-        div()
-            .flex()
-            .flex_col()
-            .child(header)
-            .child(
-                setting_card(ui)
-                    .p(px(CANVAS_INSET))
-                    .child(div().h(px(height)).flex().child(canvas)),
-            )
-            .into_any_element()
+        kit::section_with(
+            ink,
+            "Layout",
+            None,
+            actions,
+            kit::group(ink)
+                .p(px(CANVAS_INSET))
+                .child(div().h(px(height)).flex().child(canvas)),
+        )
+        .into_any_element()
     }
 
     fn render_canvas_node(
@@ -367,7 +362,7 @@ impl PaneFlowApp {
         squircle_skin(
             frame,
             format!("workspace-pane-tile-{pane_idx}"),
-            ROW_RADIUS,
+            px(TILE_RADIUS),
             Some(with_alpha(ui.text, rest)),
             hover,
         )
@@ -386,7 +381,7 @@ impl PaneFlowApp {
         }))
         .when(selected, |tile| {
             tile.child(squircle_border(
-                ROW_RADIUS,
+                px(TILE_RADIUS),
                 px(TILE_SELECTED_RING),
                 with_alpha(ui.text, SELECTED_RING_ALPHA),
             ))
@@ -404,7 +399,7 @@ impl PaneFlowApp {
         &self,
         current: &str,
         panes: usize,
-        ui: crate::theme::UiColors,
+        ink: Ink,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let mut group = div()
@@ -417,12 +412,8 @@ impl PaneFlowApp {
         for (i, (value, label)) in LAYOUT_PRESETS.iter().enumerate() {
             let selected = *value == current;
             let next = (*value).to_string();
-            let ink = if selected {
-                with_alpha(ui.text, 0.85)
-            } else {
-                with_alpha(ui.text, 0.45)
-            };
-            let hover = with_alpha(ui.text, if selected { SELECTED_FILL } else { PILL_HOVER });
+            let glyph_ink = if selected { ink.primary } else { ink.tertiary };
+            let hover = if selected { ink.well_hover } else { ink.hover };
             group = group.child(
                 div()
                     .id(("workspace-layout-preset", i))
@@ -432,7 +423,7 @@ impl PaneFlowApp {
                     .items_center()
                     .justify_center()
                     .rounded_full()
-                    .when(selected, |pill| pill.bg(with_alpha(ui.text, SELECTED_FILL)))
+                    .when(selected, |pill| pill.bg(ink.well))
                     .hover(move |style| style.bg(hover))
                     .cursor_pointer()
                     .role(gpui::accesskit::Role::RadioButton)
@@ -451,7 +442,7 @@ impl PaneFlowApp {
                         panes.clamp(3, 4),
                         PRESET_GLYPH_WIDTH,
                         PRESET_GLYPH_HEIGHT,
-                        ink,
+                        glyph_ink,
                     )),
             );
         }
@@ -463,71 +454,47 @@ impl PaneFlowApp {
         pane: &SurfaceDefinition,
         pane_idx: usize,
         ui: crate::theme::UiColors,
+        ink: Ink,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let kind = pane_kind(pane);
-        let remove = ghost_tint_skin(
-            div()
-                .id("workspace-pane-remove")
-                .flex_none()
-                .px(px(10.))
-                .py(px(4.))
-                .text_size(BODY)
-                .font_weight(gpui::FontWeight::MEDIUM)
-                .text_color(ui.vc_deleted),
-            "workspace-pane-remove-squircle",
-            ROW_RADIUS,
-            ui.vc_deleted,
+        let remove = kit::button(
+            "workspace-pane-remove",
+            "Remove pane",
+            Tone::Danger,
+            Size::Small,
+            ink,
         )
-        .accessible_control(gpui::accesskit::Role::Button, "Remove pane")
-        .child("Remove pane")
         .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
             this.remove_workspace_template_pane_at(pane_idx, cx);
         }));
-        let header = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(10.))
-            .pb(px(8.))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_size(LABEL_SM)
-                    .text_color(ui.muted)
-                    .child(format!("Pane · {}", surface_title(pane, pane_idx))),
-            )
-            .child(remove);
 
-        let mut card = setting_card(ui).child(template_row(
+        let mut rows: Vec<AnyElement> = vec![template_row(
+            ink,
             "Runs",
             "What opens in this pane.",
-            self.render_kind_control(kind, ui, cx),
-            ui,
-        ));
+            self.render_kind_control(kind, ink, cx),
+        )];
         match kind {
             PaneKind::Agent => {
-                card = card
-                    .child(hairline(ui))
-                    .child(template_row(
-                        "Agent",
-                        "Starts in this pane when the template launches.",
-                        self.render_agent_select(pane, ui, cx),
-                        ui,
-                    ))
-                    .child(hairline(ui))
-                    .child(self.template_text_row(
-                        "Prompt",
-                        "Typed into the agent. You press Enter to send it.",
-                        self.workspace_pane_prompt_input.clone(),
-                        ui,
-                        cx,
-                    ));
+                rows.push(template_row(
+                    ink,
+                    "Agent",
+                    "Starts in this pane when the template launches.",
+                    self.render_agent_select(pane, ui, cx),
+                ));
+                rows.push(self.template_text_row(
+                    ink,
+                    "Prompt",
+                    "Typed into the agent. You press Enter to send it.",
+                    self.workspace_pane_prompt_input.clone(),
+                    ui,
+                    cx,
+                ));
             }
             PaneKind::Command => {
-                card = card.child(hairline(ui)).child(self.template_text_row(
+                rows.push(self.template_text_row(
+                    ink,
                     "Command",
                     "Runs as soon as the pane opens.",
                     self.workspace_pane_command_input.clone(),
@@ -537,46 +504,47 @@ impl PaneFlowApp {
             }
             PaneKind::Empty => {}
         }
-        card = card
-            .child(hairline(ui))
-            .child(self.template_text_row(
-                "Name",
-                "Shown on the pane tab.",
-                self.workspace_pane_name_input.clone(),
-                ui,
-                cx,
-            ))
-            .child(hairline(ui))
-            .child(self.template_text_row(
-                "Folder",
-                "Leave empty to open the project folder.",
-                self.workspace_pane_cwd_input.clone(),
-                ui,
-                cx,
-            ));
+        rows.push(self.template_text_row(
+            ink,
+            "Name",
+            "Shown on the pane tab.",
+            self.workspace_pane_name_input.clone(),
+            ui,
+            cx,
+        ));
+        rows.push(self.template_text_row(
+            ink,
+            "Folder",
+            "Leave empty to open the project folder.",
+            self.workspace_pane_cwd_input.clone(),
+            ui,
+            cx,
+        ));
 
-        div()
-            .flex()
-            .flex_col()
-            .child(header)
-            .child(card)
-            .when_some(
-                self.template_notice(TemplateNoticeAt::Pane),
-                |column, message| {
-                    column.child(div().pt(px(8.)).px(px(2.)).child(render_hint(
-                        message,
-                        HintTone::Error,
-                        ui,
-                    )))
-                },
-            )
-            .into_any_element()
+        kit::section_with(
+            ink,
+            format!("Pane · {}", surface_title(pane, pane_idx)),
+            None,
+            remove,
+            kit::separated(ink, rows),
+        )
+        .when_some(
+            self.template_notice(TemplateNoticeAt::Pane),
+            |section, message| {
+                section.child(div().px(px(kit::TEXT_INSET)).child(hint_line(
+                    ink,
+                    message,
+                    HintTone::Error,
+                )))
+            },
+        )
+        .into_any_element()
     }
 
     fn render_kind_control(
         &self,
         current: PaneKind,
-        ui: crate::theme::UiColors,
+        ink: Ink,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let mut group = div()
@@ -592,8 +560,8 @@ impl PaneFlowApp {
             (PaneKind::Empty, "Shell", SHELL_GLYPH),
         ] {
             let selected = kind == current;
-            let ink = if selected { ui.text } else { ui.muted };
-            let hover = with_alpha(ui.text, if selected { SELECTED_FILL } else { PILL_HOVER });
+            let label_ink = if selected { ink.primary } else { ink.secondary };
+            let hover = if selected { ink.well_hover } else { ink.hover };
             group = group.child(
                 div()
                     .id(SharedString::from(format!("workspace-pane-kind-{label}")))
@@ -605,12 +573,12 @@ impl PaneFlowApp {
                     .items_center()
                     .gap(px(6.))
                     .rounded_full()
-                    .when(selected, |pill| pill.bg(with_alpha(ui.text, SELECTED_FILL)))
+                    .when(selected, |pill| pill.bg(ink.well))
                     .hover(move |style| style.bg(hover))
                     .cursor_pointer()
-                    .text_size(BODY)
+                    .text_size(px(kit::SIZE_SM))
                     .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(ink)
+                    .text_color(label_ink)
                     .role(gpui::accesskit::Role::RadioButton)
                     .aria_label(label)
                     .aria_toggled(if selected {
@@ -621,7 +589,7 @@ impl PaneFlowApp {
                     .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                         this.set_workspace_template_pane_kind(kind, cx);
                     }))
-                    .child(glyph(icon, 13., ink))
+                    .child(glyph(icon, 13., label_ink))
                     .child(label),
             );
         }
@@ -701,112 +669,123 @@ impl PaneFlowApp {
         &self,
         idx: usize,
         title: String,
-        ui: crate::theme::UiColors,
+        ink: Ink,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let armed = self.workspace_template_delete_armed;
-        let duplicate = card_button("workspace-template-duplicate", "Duplicate", ui).on_click(
-            cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                this.duplicate_workspace_template(idx, cx);
-            }),
-        );
-        let delete_actions = if armed {
-            div()
-                .flex_none()
-                .flex()
-                .flex_row()
-                .gap(px(6.))
-                .child(
-                    card_button("workspace-template-delete-cancel", "Cancel", ui).on_click(
-                        cx.listener(|this, _: &ClickEvent, _w, cx| {
-                            this.workspace_template_delete_armed = false;
-                            cx.notify();
-                        }),
-                    ),
-                )
-                .child(
-                    raised_button(
-                        "workspace-template-delete-confirm",
-                        "Delete template",
-                        destructive_color(),
-                        gpui::white(),
-                    )
-                    .on_click(cx.listener(
-                        move |this, _: &ClickEvent, window, cx| {
-                            this.delete_workspace_template(idx, window, cx);
-                        },
-                    )),
-                )
-                .into_any_element()
-        } else {
-            ghost_tint_skin(
+        let duplicate = kit::button(
+            "workspace-template-duplicate",
+            "Duplicate",
+            Tone::Secondary,
+            Size::Small,
+            ink,
+        )
+        .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+            this.duplicate_workspace_template(idx, cx);
+        }));
+        let (delete_text, delete_control) = if armed {
+            (
+                Text::new(format!("Delete {title}?")).danger(ink),
                 div()
-                    .id("workspace-template-delete")
-                    .flex_none()
-                    .px(px(10.))
-                    .py(px(4.))
-                    .text_size(BODY)
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(ui.vc_deleted),
-                "workspace-template-delete-squircle",
-                ROW_RADIUS,
-                ui.vc_deleted,
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(
+                        kit::button(
+                            "workspace-template-delete-cancel",
+                            "Cancel",
+                            Tone::Secondary,
+                            Size::Small,
+                            ink,
+                        )
+                        .on_click(cx.listener(
+                            |this, _: &ClickEvent, _w, cx| {
+                                this.workspace_template_delete_armed = false;
+                                cx.notify();
+                            },
+                        )),
+                    )
+                    .child(
+                        kit::button(
+                            "workspace-template-delete-confirm",
+                            "Delete template",
+                            Tone::Danger,
+                            Size::Small,
+                            ink,
+                        )
+                        .on_click(cx.listener(
+                            move |this, _: &ClickEvent, window, cx| {
+                                this.delete_workspace_template(idx, window, cx);
+                            },
+                        )),
+                    )
+                    .into_any_element(),
             )
-            .accessible_control(gpui::accesskit::Role::Button, "Delete template")
-            .child("Delete")
-            .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
-                this.workspace_template_delete_armed = true;
-                cx.notify();
-            }))
-            .into_any_element()
-        };
-        let delete_title = if armed {
-            format!("Delete {title}?")
         } else {
-            "Delete template".to_string()
+            (
+                Text::new("Delete template"),
+                kit::button(
+                    "workspace-template-delete",
+                    "Delete",
+                    Tone::Danger,
+                    Size::Small,
+                    ink,
+                )
+                .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+                    this.workspace_template_delete_armed = true;
+                    cx.notify();
+                }))
+                .into_any_element(),
+            )
         };
-        setting_card(ui)
-            .child(manage_row(
-                row_text("Duplicate template", "Start a variation from this one.", ui),
-                duplicate,
-            ))
-            .child(hairline(ui))
-            .child(manage_row(
-                row_text(
-                    delete_title,
-                    "Workspaces it already opened stay as they are.",
-                    ui,
-                ),
-                delete_actions,
-            ))
-            .into_any_element()
+        kit::separated(
+            ink,
+            [
+                kit::row(
+                    ink,
+                    None,
+                    Text::new("Duplicate template")
+                        .line(kit::line(ink, "Start a variation from this one.")),
+                    Some(duplicate.into_any_element()),
+                )
+                .into_any_element(),
+                kit::row(
+                    ink,
+                    None,
+                    delete_text.line(kit::line(
+                        ink,
+                        "Workspaces it already opened stay as they are.",
+                    )),
+                    Some(delete_control),
+                )
+                .into_any_element(),
+            ],
+        )
+        .into_any_element()
     }
 
     fn template_text_row(
         &self,
+        ink: Ink,
         title: &'static str,
         description: &'static str,
         input: gpui::Entity<crate::widgets::text_input::TextInput>,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        div()
-            .flex()
-            .flex_row()
-            .flex_wrap()
-            .items_center()
-            .gap(px(16.))
-            .px(px(CARD_PADDING_X))
-            .py(px(SETTINGS_ROW_PADDING_Y))
-            .child(settings_label(ui, title, description))
-            .child(
+        kit::row(
+            ink,
+            None,
+            Text::new(title).line(kit::line(ink, description)),
+            Some(
                 self.commit_on_leave(text_field(input, ui), cx)
-                    .flex_1()
-                    .min_w(px(FIELD_MIN_WIDTH))
-                    .max_w(px(FIELD_MAX_WIDTH))
-                    .flex(),
-            )
-            .into_any_element()
+                    .w(px(FIELD_WIDTH))
+                    .flex()
+                    .into_any_element(),
+            ),
+        )
+        .into_any_element()
     }
 
     fn commit_on_leave(&self, field: impl IntoElement, cx: &mut Context<Self>) -> gpui::Div {
@@ -1207,21 +1186,18 @@ impl PaneFlowApp {
 }
 
 fn template_row(
+    ink: Ink,
     title: &'static str,
     description: &'static str,
     control: impl IntoElement,
-    ui: crate::theme::UiColors,
-) -> gpui::Div {
-    div()
-        .flex()
-        .flex_row()
-        .flex_wrap()
-        .items_center()
-        .gap(px(16.))
-        .px(px(CARD_PADDING_X))
-        .py(px(SETTINGS_ROW_PADDING_Y))
-        .child(settings_label(ui, title, description))
-        .child(div().flex_shrink_0().child(control))
+) -> AnyElement {
+    kit::wide_row(
+        ink,
+        None,
+        Text::new(title).line(kit::line(ink, description)),
+        Some(control.into_any_element()),
+    )
+    .into_any_element()
 }
 
 struct CanvasCursor<'a> {
@@ -1263,18 +1239,6 @@ fn canvas_height(layout: Option<&LayoutNode>, panes: usize) -> f32 {
     base.max(depth * TILE_ROW_MIN + (depth - 1.) * TILE_GAP)
 }
 
-fn manage_row(text: gpui::Div, action: impl IntoElement) -> gpui::Div {
-    div()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(16.))
-        .px(px(CARD_PADDING_X))
-        .py(px(SETTINGS_ROW_PADDING_Y))
-        .child(text)
-        .child(action)
-}
-
 fn pane_detail(pane: &SurfaceDefinition) -> String {
     match pane_kind(pane) {
         PaneKind::Agent => pane_agent(pane)
@@ -1301,14 +1265,6 @@ fn set_input(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_pane_tiles_sit_concentric_in_the_canvas_card() {
-        assert_eq!(
-            crate::app::constants::SETTINGS_CARD_RADIUS,
-            ROW_RADIUS + px(CANVAS_INSET)
-        );
-    }
 
     #[test]
     fn a_pane_tile_names_what_runs_in_it() {

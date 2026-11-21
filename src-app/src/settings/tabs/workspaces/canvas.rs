@@ -13,11 +13,10 @@ pub(super) const AGENT_GLYPH: &str = "icons/settings/ai-magic.svg";
 pub(super) const COMMAND_GLYPH: &str = "icons/settings/command-line.svg";
 pub(super) const SHELL_GLYPH: &str = "icons/settings/terminal.svg";
 
-const MARK_WIDTH: f32 = 40.;
-const MARK_HEIGHT: f32 = 28.;
+const MARK_WIDTH: f32 = crate::settings::kit::LEAD;
+const MARK_HEIGHT: f32 = 24.;
 const MARK_INSET: f32 = 3.;
-const MARK_RADIUS: f32 = 7.;
-const MARK_CELL_RADIUS: f32 = 2.;
+const MARK_CELL_RADIUS: f32 = 3.;
 const MARK_GAP: f32 = 2.;
 const GLYPH_GAP: f32 = 1.5;
 const PREVIEW_WIDTH: f32 = 184.;
@@ -92,7 +91,7 @@ pub(super) fn preset_glyph(
 
 pub(super) fn layout_mark(
     workspace: &WorkspaceDefinition,
-    ui: crate::theme::UiColors,
+    ink: crate::settings::kit::Ink,
 ) -> AnyElement {
     let panes = template_surfaces(workspace).len();
     let node = if panes == 0 {
@@ -106,14 +105,14 @@ pub(super) fn layout_mark(
         .h(px(MARK_HEIGHT))
         .p(px(MARK_INSET))
         .flex()
-        .rounded(px(MARK_RADIUS))
-        .bg(with_alpha(ui.text, 0.06))
+        .rounded(px(MARK_CELL_RADIUS + MARK_INSET))
+        .bg(ink.well)
         .when_some(node, |mark, node| {
             mark.child(miniature(
                 &node,
                 MARK_GAP,
                 MARK_CELL_RADIUS,
-                with_alpha(ui.text, 0.24),
+                with_alpha(ink.primary, 0.24),
             ))
         })
         .into_any_element()

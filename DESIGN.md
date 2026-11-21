@@ -236,7 +236,7 @@ inside `theme/builtin.rs`.
 | --- | --- | --- | --- |
 | `base` | Panel background, the work surface; the Settings page paints `settings_page_color` instead, which is `base` in dark and `card` blended 5% toward `text` in light, so cards keep their step above the page; while the terminal material is on it takes the pane card color, and where that is transparent (Mica on a light theme) a 0.5 `background` veil, so the page always separates from the sidebar | `#181818` | `#ffffff` |
 | `surface` | Cards inside a panel, menu surfaces in dark | `#212121` | `#f7f7f7` |
-| `card` | Modal cards, one step above `base`; a `setting_card` paints the `menu_panel` surface (`select_menu_surface`) with its 0.6 border instead, so it stays readable over a material; `subtle` controls and `menu_panel` surfaces on it must stay one step above it | `#232323` | `#ffffff` |
+| `card` | Modal cards, one step above `base`; a Settings card (`kit::group`) paints white at 0.031 in dark and 0.4 in light inside a `text` edge at 0.04 (0.09 in light) instead, so it stays readable over a material; `subtle` controls and `menu_panel` surfaces on it must stay one step above it | `#232323` | `#ffffff` |
 | `overlay` | Shell chrome in dark, popups in light | `#141414` | `#ffffff` |
 | `border` | Hairlines, card outlines, pane card border | `#252525` | `#e6e6e6` |
 | `subtle` | Pills, search fields, toasts, resting control fill | `#2a2a2a` | `#eeeeee` |
@@ -301,9 +301,9 @@ theme load until it clears APCA Lc 45 against the selection background.
 | Menu surface | `surface` lifted by 0.035 lightness | `overlay` | `select_menu_surface` |
 | Menu border | `text` at 0.12 | same | `menu_surface`, on the surface shape of 4.9 |
 | Control hover | `subtle` moved 6 percent toward `text` | same | `select_trigger`, `secondary_button` |
-| Ghost hover | the ink at 0.10: `text`, or `vc_deleted` on a destructive ghost; never `subtle`, which several themes paint at the card's own value | same | `ghost_skin`, `ghost_tint_skin` |
-| Card and soft button | `text` at 0.06, 0.12 on hover, plus a `text` layer at 0.06 while pressed; never `subtle`, which several light themes paint at the page's own value | same | `card_button`, `soft_skin` |
-| Hairline | `border` at 0.5 | same | `hairline` |
+| Settings row and button tints | hover `text` at 0.05, pressed 0.09, well 0.08; never `subtle`, which several themes paint at the card's own value | hover 0.04, pressed 0.07, well 0.05 | `kit::Ink` |
+| Settings text inks | secondary `text` at 0.6, tertiary 0.42 | 0.64, 0.45 | `kit::Ink` |
+| Hairline | `text` at 0.04 | `text` at 0.09 | `kit::rule` |
 | Unfocused pane dim | terminal background at `1 - unfocused_pane_opacity` | same | `unfocused_pane_opacity`, default 1.0, so off unless set |
 | Attention border | `vc_conflict` at 0.7 | same | `pane.rs` |
 | Icon button hover | the caller's hover color from 0 to 1 | same | `icon_button_sm`, `icon_button_md` |
@@ -371,7 +371,7 @@ activity registers use their own ramp, never the level colors: level 0 is
 
 Squircle means `squircle_fill` and `squircle_border` from
 `src-app/src/ui_primitives/squircle.rs`, applied through `squircle_skin`,
-`setting_card`, `menu_surface`, or `tooltip_shell`. Plain `rounded()` is for
+`menu_surface`, or `tooltip_shell`. Plain `rounded()` is for
 small circular controls and the explicitly round surfaces in the table.
 
 A squircle is built where it paints. Each fill, border, band and stroke is
@@ -410,7 +410,7 @@ call site never branches on the style to pick a radius.
 | Sidebar action button | 22, gap 1; folder glyph 15 in a 20 px slot |
 | Sidebar footer | padding 0 top and 9.5 bottom; filter and gear 36 tall, gap 6, margin 8 shared with workspace rows; filter glyph 20, Settings glyph 18; filter text 15 with line height 20 and horizontal padding 10; banners margin 6 with 2 below, update banner 30 tall with padding 8 leading and 3 trailing |
 | Sessions row | minimum height 32, terminal glyph on the tab title column; 5 rows per agent group before Show all |
-| Settings row | padding 12 by 10, gap 16; section header bottom padding 8 |
+| Settings row | padding 16 by 12, gap 16, a 32 px lead 12 before the text, control at most 240 wide (`kit::wide_row` uncaps it); section head 8 above its card, sections 32 apart, page text inset 17 |
 | Select trigger | padding 10 by 6, width 190 to 260 |
 | Menu | list padding 4, no item gap, item height 28, a 9 px divider slot, width fitted to the widest row between 160 and 320 (selects 200 to 280), max height 400 |
 | Toggle | track 36 by 22, knob 18 |
@@ -586,7 +586,7 @@ cards. `interface_style::Shape` names the three shapes (`Rounded`, `Surface`,
 `Classic`), and `surface_shape` maps Rounded to Surface and leaves Classic
 unchanged. The builders of those surfaces in `settings/components.rs`
 (`menu_surface_filled`, `floating_menu_panel`, `select_menu`, `select_option`,
-`menu_row`, `menu_divider`, `setting_card`, `card_tint`) and the
+`menu_row`, `menu_divider`, `card_tint`) and the
 usage bubble run inside `with_surface_shape`, and a squircle primitive keeps
 the shape it was built under until it paints. `pick(rounded, classic)` chooses
 a value by style; `pick_surface(rounded, surface, classic)` is for a value
@@ -614,7 +614,7 @@ The surface contract:
 | --- | --- | --- |
 | Menus, context menus, select popups | The menu contract of 5.6, identical in every interface style | `ui_primitives/action_menu.rs`, `settings/components.rs` |
 | Usage bubble | Radius 14, padding 6, a `text` edge at 0.12 and the surface shadow | `settings/components.rs` |
-| Settings card | Radius 12 and no border: `setting_card`, the Keyboard Shortcuts sections included, paints only its fill, and the card reads through its surface step above the page | `settings/components.rs` |
+| Settings card | Radius 12 with a 1 px edge in every interface style: `kit::group`, the Keyboard Shortcuts sections included; a hoverable row that touches the card rounds the corners it touches (`kit::Place`), because GPUI clips to a rectangle | `settings/kit.rs` |
 
 Classic takes its geometry from the Claude Code side of the Claude desktop
 app, measured on 2026-11-13 at 100% scale from its accessibility tree and from
@@ -1492,10 +1492,16 @@ slot of the rail, its top on `sidebar_glyph_top` (the whole pixel that puts its
 center between the cap-height and x-height axes of the 14 px label), then the
 8 px title gap, so a glyph stands as far from the leading edge of the row tint
 as from its top and bottom (`settings_nav_icon`). Pages are a centered
-column with a 26 px heading, eyebrow labels at 11 px muted, and cards
-(squircle 20 on the `card` role). Rows are `toggle_row` or a
-`setting_text` plus control: title 12 Medium, description 11 muted, control
-right-aligned. Toggles are 36 by 22 with an 18 px white knob. Selects open a
+column built from one kit, `src-app/src/settings/kit.rs`, which every page
+uses: the 26 px heading over one 13 px page description in the secondary ink,
+both inset 17 px so they line up with the text of the rows, then sections 32 px
+apart, each a section head (12 px Medium, an optional hint in the tertiary ink)
+8 px above a card of radius 12. A row (`kit::row`) holds an optional 32 px lead
+(`disc`, `avatar`, `mark_tile`), a title at 13 Medium over lines at 12 in the
+secondary ink, and its control at the trailing edge; rows are split by
+`kit::rule`. Switches are 40 by 24 with an 18 px knob inset 3, in the system
+blue when on. Buttons are `kit::button_with` in the Primary, Secondary, Ghost
+and Danger tones, and icon-only actions are `kit::icon_button`. Selects open a
 `select_menu` under the trigger. Destructive actions use the fixed red
 button. The Appearance page leads with three theme tiles (System, Light,
 Dark, 134 tall, radius 10, 2 px border) holding a mockup painted from the
@@ -1561,8 +1567,8 @@ that names the page itself (`keyboard`, `shortcuts`, `hotkey`) hands none.
 Each section is its group's name at 11 px in
 `muted` on a 16 px line, then, for a context-bound group, the context as a
 sentence on a second line at 0.7 of that ink (`While a pane has focus.`), then
-8 px, then one `setting_card` whose 44 px rows are separated by the 1 px
-`hairline` from edge to edge; sections are 24 px apart and they never fold.
+8 px, then one `kit::group` card whose 44 px rows are separated by
+`kit::rule` from edge to edge; sections are 24 px apart and they never fold.
 A row is the action at 12 px Medium in `text`, truncated with its full text in
 a tooltip and never narrower than 96 px, and its control 16 px after it: a
 24 px recorder button filled with `text` at 0.06 and 0.12 on hover, the
@@ -1760,17 +1766,18 @@ without mipmaps and a large plate shrunk to 16 px aliases into hard stripes.
 While a plate loads, the mark shows its ink mixed 45 percent into its ground.
 
 The Usage page (`src-app/src/app/usage/page.rs`), under Integrations between
-Agents and Plugins with the 15 px `chart-bar-line` glyph, has the 26 px heading, a
-12 px muted intro, `Updated {relative time}`, and a soft `Refresh` button that
-reprobes the accounts and reloads the ledger. Under the `Plan limits` eyebrow,
-a two-column grid of tiles (squircle 20 on `card`, one column under 560 px of
+Agents and Plugins with the 15 px `chart-bar-line` glyph, has the kit heading
+with `Updated {relative time}` at 12 px in the tertiary ink and a `Refresh`
+icon button at its trailing edge, which reprobes the accounts and reloads the
+ledger, over the page description. Under the `Plan limits` eyebrow,
+a two-column grid of tiles (kit cards, one column under 560 px of
 page width) shows each account: the 76 px concentric rings, the agent name in
 13 px Medium, the account label, a legend of swatch, window, percentage, and
 reset, and the pace line. A tile without data shows the state text of the
 bubble instead of a gauge. When accounts of both agents exist, or the only
 agent with an account is hidden from the sidebar, a `Sidebar` eyebrow follows
-with one settings card: a `toggle_row_with` row per agent
-(18 px logo, `{Agent} in the sidebar`, one muted line, the standard switch)
+with one kit card: a row per agent
+(the agent's 32 px mark tile, `{Agent} in the sidebar`, one line, the kit switch)
 that writes `usage.sidebar_agents`. The tiles and the registers always show
 every account, whatever the switches say. Tab reaches the switches after
 `Refresh`, Enter or Space flips the focused one, and focus draws a 1.5 px
@@ -1780,7 +1787,7 @@ trailing edge holds a `Turns` | `Tokens` | `Active time` segmented control of
 full-radius pills (Turns by default, not persisted), one card stacks a register
 per account with activity in the last 53 weeks: Claude Code first, then Codex,
 then the rest alphabetically. Each register has a header row (14 px logo,
-agent name at 12.5 px Medium, account label at 11 px muted, total on the
+agent name at 13 px Medium, account label at 11 px muted, total on the
 trailing edge) above a 53 by 7 grid of the 8 px cells of 4.4, Monday first,
 months above at 10.5 px muted and Mon, Wed, Fri on the left. One scale serves
 every register: levels 1 to 4 are the quartiles of the nonzero values of the
@@ -1790,13 +1797,20 @@ registers names the hovered or focused day for each agent, beside `One scale
 for all agents`. Each register is a keyboard grid: Tab enters on today, the
 arrows move by day or week, Home and End reach the ends of the row, and each
 cell is named `{Tuesday, August 18, 2026}: {41 turns}` or `no activity`.
-Below the card, one 11.5 px muted row reads `Claude Code keeps transcripts
+Below the card, one 12 px row in the tertiary ink, inset 17, reads `Claude Code keeps transcripts
 for 30 days by default.`, then the import state (`Importing past activity…
 {n} files` while the worker reads, `Imported the last {n} days` after an
-import cut short by its limits) and an `Import past activity` ghost button
-with the 13 px download glyph, hidden while an import runs. With no account,
-a single card says so and links to Settings › Agents; with no activity
-anywhere, the register card is one muted line.
+import cut short by its limits) and an `Import past activity` icon button
+with the download glyph, hidden while an import runs. With no account,
+a single card says so over a link row to Settings › Agents; with no activity
+anywhere, the register card is one row behind the chart disc.
+
+The General page holds `Defaults` (the editor, shell and on-quit selects as
+kit rows) and `Notifications` (the native notifications switch). The Plugins
+page holds the `MCP bridge` row, whose button reads `Install MCP bridge`,
+`Repair`, or `Reinstall` (Secondary once every agent has it) and spins while it
+runs, a failure row in `vc_deleted` under it, then an `Agents` card with one
+row per detected agent and its state at the trailing edge.
 
 ### 5.6 Menus, selects, tooltips
 
@@ -2140,10 +2154,11 @@ Shared primitives to reach for first, in `src-app/src/ui_primitives.rs`:
 `AnimatedHoverExt`, `squircle_skin`, `icon_button_sm`, `icon_button_md`,
 `toolbar_pill`, `filter_pill`, `filter_field`, `highlight_matches`,
 `section_eyebrow`, `panel_empty_state`, `text_tooltip`, `delayed_tooltip`.
-In `src-app/src/settings/search.rs`: `SettingCopy`, `SearchCard`, `Block`. In `src-app/src/settings/components.rs`:
-`setting_card`, `toggle_row`, `setting_text`, `select_trigger`,
-`select_menu`, `select_item`, `menu_surface`, `secondary_button`,
-`destructive_button`, `hairline`. Add a primitive only when two surfaces
+In `src-app/src/settings/search.rs`: `SettingCopy`, `SearchCard`, `Block`. In `src-app/src/settings/kit.rs`, for every Settings page:
+`Ink`, `section`, `group`, `row`, `link_row` with `Place`, `rule`, `switch`,
+`button_with`, `icon_button`, `search_group`. In
+`src-app/src/settings/components.rs`: `select_trigger`, `select_menu`,
+`select_item`, `menu_surface`. Add a primitive only when two surfaces
 already need the same behavior.
 
 ## 10. Known Gaps

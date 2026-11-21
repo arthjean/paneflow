@@ -176,11 +176,16 @@ the two you did.
 - **One tooltip per element, or GPUI panics.** `accessible_control`
   (`src-app/src/ui_primitives.rs`) already sets a `delayed_tooltip` from the
   accessible label, and every shared settings control calls it
-  (`toggle_switch`, `soft_button`, `card_button`, `raised_button`,
-  `raised_icon_button`, `ghost_icon_button`, ...). Never chain another
+  (`kit::switch`, `kit::button_with`, `kit::icon_button`, `toggle_switch`,
+  `raised_button`, ...). Never chain another
   `delayed_tooltip` or `tooltip` on one of them: the page panics with
   "calling tooltip more than once on the same element" the first time it
   draws. Pass the wording you want as the label instead.
+- **A rounded card does not clip its rows to its corners.** GPUI's
+  `overflow_hidden` clips to a rectangle, so the hover fill of a row that
+  touches a card's edge bleeds past the rounded corners. Build hoverable
+  settings rows with `kit::link_row` and pass `kit::Place::at(index, count)`
+  (`src-app/src/settings/kit.rs`) so the row rounds the corners it touches.
 - The project is GPL-3.0-or-later. Keep packaging metadata in sync with the root
   `LICENSE` and `Cargo.toml`.
 

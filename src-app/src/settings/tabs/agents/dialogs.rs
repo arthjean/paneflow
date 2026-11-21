@@ -5,7 +5,6 @@ use gpui::{
 };
 use paneflow_mcp_install::IntegrationState;
 
-use super::kit::{self, Ink, Size, Text, Tone};
 use super::{AgentAccountNamer, AgentProfileEditor, input_box_sized};
 use crate::PaneFlowApp;
 use crate::agent_launcher::TerminalAgent;
@@ -14,6 +13,7 @@ use crate::settings::components::{
     ModalKey, deferred_select_menu_at, modal_key, select_chevron, select_menu, select_option,
     select_trigger,
 };
+use crate::settings::kit::{self, Ink, Size, Text, Tone};
 use crate::ui_primitives::AccessibleControlExt;
 
 const FIELD_HEIGHT: f32 = 32.;

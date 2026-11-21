@@ -1,6 +1,5 @@
 mod accounts;
 mod dialogs;
-mod kit;
 mod sign_in;
 
 pub(crate) use sign_in::{AgentSignIn, NewAccount};
@@ -25,7 +24,7 @@ use crate::settings::search::{self, Block, SearchCard};
 use crate::ui_primitives::{TooltipDelayExt, text_tooltip};
 use crate::widgets::text_input::TextInput;
 
-use kit::{Ink, MeterTone, Size, Text, Tone};
+use crate::settings::kit::{self, Ink, MeterTone, Size, Text, Tone};
 
 const INPUT_HEIGHT: f32 = 28.;
 const MENU_WIDTH: f32 = 232.;
@@ -120,7 +119,7 @@ impl PaneFlowApp {
             }
             page = page.child(
                 Block::new("Agents")
-                    .top_gap(section_gap(&mut first))
+                    .top_gap(kit::section_gap(&mut first))
                     .region("agents-list", &keywords, cards)
                     .finish(),
             );
@@ -128,7 +127,7 @@ impl PaneFlowApp {
         if !missing.is_empty() {
             page = page.child(
                 Block::new("More agents")
-                    .top_gap(section_gap(&mut first))
+                    .top_gap(kit::section_gap(&mut first))
                     .child(kit::section(
                         ink,
                         "More agents",
@@ -141,12 +140,12 @@ impl PaneFlowApp {
         if let Some(orphans) = self.render_other_profiles_section(ink, cx) {
             page = page.child(
                 Block::new("Other launch presets")
-                    .top_gap(section_gap(&mut first))
+                    .top_gap(kit::section_gap(&mut first))
                     .child(orphans)
                     .finish(),
             );
         }
-        page.child(self.render_agent_permissions_section(section_gap(&mut first), ink, cx))
+        page.child(self.render_agent_permissions_section(kit::section_gap(&mut first), ink, cx))
             .child(div().h(px(PAGE_BOTTOM_SPACE)).flex_none())
             .into_any_element()
     }
@@ -250,7 +249,7 @@ impl PaneFlowApp {
                     ink,
                     Some(kit::disc(ink, ADD_ICON)),
                     Text::new("Add account"),
-                    true,
+                    kit::Place::Last,
                 )
                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.open_agent_account_namer(agent, None, window, cx);
@@ -747,7 +746,6 @@ impl PaneFlowApp {
         ink: Ink,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let ui = crate::theme::ui_colors();
         let bypass = self
             .cached_config
             .claude_code_bypass_permissions
@@ -755,7 +753,7 @@ impl PaneFlowApp {
         let unrestricted = self.cached_config.ai_unrestricted_enabled();
         let fence = self.cached_config.ai_injection_fence_enabled();
 
-        let mut card = SearchCard::new(ui)
+        let mut card = SearchCard::new()
             .row(
                 &search::CLAUDE_FULL_ACCESS,
                 self.permission_row(
@@ -811,7 +809,7 @@ impl PaneFlowApp {
                 ink,
                 "Permissions",
                 None,
-                search_group(ink, rows),
+                kit::search_group(ink, rows),
             ))
             .finish()
     }
@@ -1103,14 +1101,6 @@ fn is_account_profile(entry: &AgentProfileConfig, agent: Option<UsageAgent>) -> 
     })
 }
 
-fn section_gap(first: &mut bool) -> f32 {
-    if std::mem::take(first) {
-        0.
-    } else {
-        kit::SECTION_GAP
-    }
-}
-
 fn install_row(agent: TerminalAgent, ink: Ink) -> AnyElement {
     kit::row(
         ink,
@@ -1126,27 +1116,6 @@ fn install_row(agent: TerminalAgent, ink: Ink) -> AnyElement {
         None,
     )
     .into_any_element()
-}
-
-fn search_group(ink: Ink, rows: Vec<(f32, AnyElement)>) -> Div {
-    let mut card = kit::group(ink);
-    let mut previous: Option<f32> = None;
-    for (amount, row) in rows {
-        if let Some(above) = previous {
-            let visible = above.min(amount);
-            card = card.child(
-                div()
-                    .w_full()
-                    .h(px(visible))
-                    .overflow_hidden()
-                    .opacity(visible)
-                    .child(kit::rule(ink)),
-            );
-        }
-        card = card.child(row);
-        previous = Some(amount);
-    }
-    card
 }
 
 fn version_label(version: &str) -> String {
@@ -1286,7 +1255,7 @@ mod tests {
                     ink,
                     Some(kit::disc(ink, ADD_ICON)),
                     Text::new("Add profile"),
-                    true,
+                    kit::Place::Last,
                 ));
             let account = AgentAccountRow {
                 key: "/home/a/.claude".to_string(),

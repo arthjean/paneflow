@@ -4,7 +4,9 @@ use gpui::{
 };
 
 use crate::agent_launcher::TerminalAgent;
-use crate::settings::components::{render_logo, select_menu_surface, switch_blue, with_alpha};
+use crate::settings::components::{
+    keyboard_focus_inset, render_logo, select_menu_surface, switch_blue, with_alpha,
+};
 use crate::ui_primitives::{AccessibleControlExt, AnimatedHoverExt, highlight_matches, lerp_color};
 
 pub(crate) const TEXT_INSET: f32 = 17.;
@@ -22,9 +24,10 @@ pub(crate) const COLUMN_INSET: f32 = ROW_PADDING_X + LEAD + LEAD_GAP;
 const HAIR: f32 = 2.;
 const MIN_TEXT: f32 = 180.;
 const CONTROL_MAX: f32 = 240.;
-const CARD_RADIUS: f32 = 12.;
+pub(crate) const CARD_RADIUS: f32 = 12.;
+pub(crate) const CARD_BORDER: f32 = 1.;
 const CHEVRON: f32 = 14.;
-const SECTION_HEAD_GAP: f32 = 8.;
+pub(crate) const SECTION_HEAD_GAP: f32 = 8.;
 const DISC_GLYPH: f32 = 16.;
 const MARK_RADIUS_SHARE: f32 = 0.25;
 const MARK_GLYPH_SHARE: f32 = 0.56;
@@ -42,6 +45,11 @@ const DIALOG_GAP: f32 = 20.;
 const DIALOG_HEAD_GAP: f32 = 6.;
 const FIELD_GAP: f32 = 6.;
 const DISABLED_OPACITY: f32 = 0.4;
+const STEP_BUTTON: f32 = 24.;
+const STEP_BUTTON_RADIUS: f32 = 4.;
+const STEP_GLYPH: f32 = 14.;
+const STEPPER_INSET: f32 = 2.;
+const STEPPER_VALUE: f32 = 36.;
 const BADGE_HEIGHT: f32 = 16.;
 const BADGE_PADDING_X: f32 = 4.;
 const BADGE_RADIUS: f32 = 4.;
@@ -200,7 +208,7 @@ pub(crate) fn separated(ink: Ink, rows: impl IntoIterator<Item = AnyElement>) ->
 
 pub(crate) fn section(
     ink: Ink,
-    title: &'static str,
+    title: impl Into<SharedString>,
     hint: Option<&'static str>,
     body: impl IntoElement,
 ) -> Div {
@@ -213,7 +221,51 @@ pub(crate) fn section(
         .child(body)
 }
 
-pub(crate) fn section_head(ink: Ink, title: &'static str, hint: Option<&'static str>) -> Div {
+pub(crate) fn section_with(
+    ink: Ink,
+    title: impl Into<SharedString>,
+    hint: Option<&'static str>,
+    action: impl IntoElement,
+    body: impl IntoElement,
+) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .w_full()
+        .gap(px(SECTION_HEAD_GAP))
+        .child(section_head_with(ink, title, hint, action))
+        .child(body)
+}
+
+pub(crate) fn section_head_with(
+    ink: Ink,
+    title: impl Into<SharedString>,
+    hint: Option<&'static str>,
+    action: impl IntoElement,
+) -> Div {
+    div()
+        .flex()
+        .flex_row()
+        .items_end()
+        .gap(px(12.))
+        .child(section_head(ink, title, hint).flex_1().min_w_0())
+        .child(
+            div()
+                .flex_none()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(8.))
+                .child(action),
+        )
+}
+
+pub(crate) fn section_head(
+    ink: Ink,
+    title: impl Into<SharedString>,
+    hint: Option<&'static str>,
+) -> Div {
+    let title: SharedString = title.into();
     div()
         .flex()
         .flex_col()
@@ -236,6 +288,15 @@ pub(crate) fn section_head(ink: Ink, title: &'static str, hint: Option<&'static 
                     .child(hint),
             )
         })
+}
+
+pub(crate) fn headline(ink: Ink, text: impl Into<SharedString>) -> Div {
+    div()
+        .text_size(px(SIZE_LG))
+        .line_height(px(LINE_LG))
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .text_color(ink.primary)
+        .child(text.into())
 }
 
 pub(crate) fn page_description(ink: Ink, text: &'static str) -> Div {
@@ -445,13 +506,32 @@ pub(crate) fn row(
     text: Text,
     control: Option<AnyElement>,
 ) -> Div {
+    row_capped(ink, lead, text, control, Some(CONTROL_MAX))
+}
+
+pub(crate) fn wide_row(
+    ink: Ink,
+    lead: Option<AnyElement>,
+    text: Text,
+    control: Option<AnyElement>,
+) -> Div {
+    row_capped(ink, lead, text, control, None)
+}
+
+fn row_capped(
+    ink: Ink,
+    lead: Option<AnyElement>,
+    text: Text,
+    control: Option<AnyElement>,
+    cap: Option<f32>,
+) -> Div {
     row_frame()
         .child(lead_and_text(lead, text.render(ink), true))
         .when_some(control, |row, control| {
             row.child(
                 div()
                     .flex_none()
-                    .max_w(px(CONTROL_MAX))
+                    .when_some(cap, |slot, cap| slot.max_w(px(cap)))
                     .flex()
                     .flex_row()
                     .items_center()
@@ -461,19 +541,51 @@ pub(crate) fn row(
         })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Place {
+    Only,
+    First,
+    Middle,
+    Last,
+}
+
+impl Place {
+    pub(crate) fn at(index: usize, count: usize) -> Self {
+        match (index == 0, index + 1 >= count) {
+            (true, true) => Self::Only,
+            (true, false) => Self::First,
+            (false, true) => Self::Last,
+            (false, false) => Self::Middle,
+        }
+    }
+
+    fn rounds_top(self) -> bool {
+        matches!(self, Self::Only | Self::First)
+    }
+
+    fn rounds_bottom(self) -> bool {
+        matches!(self, Self::Only | Self::Last)
+    }
+}
+
 pub(crate) fn link_row(
     id: impl Into<ElementId>,
     ink: Ink,
     lead: Option<AnyElement>,
     text: Text,
-    last: bool,
+    place: Place,
 ) -> Stateful<Div> {
     let label = text.label.clone();
+    let inner = px(CARD_RADIUS - CARD_BORDER);
+    let ring = keyboard_focus_inset(ink.accent);
     row_frame()
         .flex_nowrap()
         .id(id.into())
         .cursor(gpui::CursorStyle::PointingHand)
-        .when(last, |row| row.rounded_b(px(CARD_RADIUS - 1.)))
+        .when(place.rounds_top(), |row| row.rounded_t(inner))
+        .when(place.rounds_bottom(), |row| row.rounded_b(inner))
+        .tab_index(0)
+        .focus_visible(move |style| style.shadow(ring.clone()))
         .hover(move |style| style.bg(ink.hover))
         .active(move |style| style.bg(ink.pressed))
         .role(gpui::accesskit::Role::Button)
@@ -832,14 +944,7 @@ pub(crate) fn dialog(
                 .flex()
                 .flex_col()
                 .gap(px(DIALOG_HEAD_GAP))
-                .child(
-                    div()
-                        .text_size(px(SIZE_LG))
-                        .line_height(px(LINE_LG))
-                        .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(ink.primary)
-                        .child(title),
-                )
+                .child(headline(ink, title))
                 .child(
                     div()
                         .text_size(px(SIZE_MD))
@@ -886,9 +991,146 @@ pub(crate) fn field(
         .children(hint)
 }
 
+pub(crate) fn search_group(ink: Ink, rows: Vec<(f32, AnyElement)>) -> Div {
+    let mut card = group(ink);
+    let mut previous: Option<f32> = None;
+    for (amount, row) in rows {
+        if let Some(above) = previous {
+            let visible = above.min(amount);
+            card = card.child(
+                div()
+                    .w_full()
+                    .h(px(visible))
+                    .overflow_hidden()
+                    .opacity(visible)
+                    .child(rule(ink)),
+            );
+        }
+        card = card.child(row);
+        previous = Some(amount);
+    }
+    card
+}
+
+pub(crate) fn section_gap(first: &mut bool) -> f32 {
+    if std::mem::take(first) {
+        0.
+    } else {
+        SECTION_GAP
+    }
+}
+
+pub(crate) fn step_button(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    icon: &'static str,
+    enabled: bool,
+    ink: Ink,
+) -> Stateful<Div> {
+    div()
+        .id(id.into())
+        .flex_none()
+        .size(px(STEP_BUTTON))
+        .rounded(px(STEP_BUTTON_RADIUS))
+        .flex()
+        .items_center()
+        .justify_center()
+        .accessible_control(gpui::accesskit::Role::Button, label)
+        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .when(!enabled, |button| button.opacity(DISABLED_OPACITY))
+        .when(enabled, move |button| {
+            button
+                .cursor(gpui::CursorStyle::PointingHand)
+                .hover(move |style| style.bg(ink.well_hover))
+                .active(move |style| style.bg(ink.well_pressed))
+        })
+        .child(
+            svg()
+                .size(px(STEP_GLYPH))
+                .path(icon)
+                .text_color(ink.primary),
+        )
+}
+
+pub(crate) fn stepper(
+    ink: Ink,
+    value: impl Into<SharedString>,
+    decrease: Stateful<Div>,
+    increase: Stateful<Div>,
+) -> Div {
+    div()
+        .flex_none()
+        .flex()
+        .flex_row()
+        .items_center()
+        .p(px(STEPPER_INSET))
+        .rounded(px(STEP_BUTTON_RADIUS + STEPPER_INSET))
+        .bg(ink.well)
+        .child(decrease)
+        .child(
+            div()
+                .flex_none()
+                .w(px(STEPPER_VALUE))
+                .text_center()
+                .text_size(px(SIZE_SM))
+                .line_height(px(LINE_SM))
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .text_color(ink.primary)
+                .child(value.into()),
+        )
+        .child(increase)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct RowHarness;
+
+    impl gpui::Render for RowHarness {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            let ink = Ink::of(crate::theme::ui_colors());
+            div().w(px(600.)).child(row(
+                ink,
+                None,
+                Text::new("Native OS notifications")
+                    .line(line(ink, "Alert you when an agent needs attention.")),
+                Some(
+                    div()
+                        .debug_selector(|| "row-control".into())
+                        .flex_none()
+                        .w(px(40.))
+                        .h(px(24.))
+                        .into_any_element(),
+                ),
+            ))
+        }
+    }
+
+    #[gpui::test]
+    fn a_settings_row_insets_its_control_by_the_row_padding(cx: &mut gpui::TestAppContext) {
+        let (_view, cx) = cx.add_window_view(|_, _| RowHarness);
+        cx.simulate_resize(gpui::size(px(800.), px(200.)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let control = cx.debug_bounds("row-control").expect("control painted");
+        assert_eq!(control.right(), px(600. - ROW_PADDING_X));
+    }
+
+    #[test]
+    fn a_row_rounds_the_card_corners_it_touches() {
+        assert_eq!(Place::at(0, 1), Place::Only);
+        assert_eq!(Place::at(0, 3), Place::First);
+        assert_eq!(Place::at(1, 3), Place::Middle);
+        assert_eq!(Place::at(2, 3), Place::Last);
+        assert!(Place::First.rounds_top() && !Place::First.rounds_bottom());
+        assert!(Place::Last.rounds_bottom() && !Place::Last.rounds_top());
+        assert!(Place::Only.rounds_top() && Place::Only.rounds_bottom());
+        assert!(!Place::Middle.rounds_top() && !Place::Middle.rounds_bottom());
+    }
 
     #[test]
     fn an_avatar_keeps_its_colors_for_a_name_and_changes_them_across_names() {

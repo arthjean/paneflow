@@ -12,8 +12,8 @@ use crate::ui_primitives::interface_style::{
     with_surface_shape,
 };
 use crate::ui_primitives::{
-    AccessibleControlExt, AnimatedHover, AnimatedHoverExt, ROW_RADIUS, animated_squircle_skin,
-    ease_out_cubic, highlight_matches, lerp_color, reduce_motion, squircle,
+    AccessibleControlExt, AnimatedHover, AnimatedHoverExt, ROW_RADIUS, ease_out_cubic,
+    highlight_matches, lerp_color, reduce_motion, squircle,
     squircle::{squircle_border, squircle_fill, squircle_fill_blend},
     squircle_skin,
 };
@@ -51,78 +51,6 @@ pub(crate) fn keycap(label: impl Into<SharedString>, fill: Hsla, edge: Hsla, ink
         .child(label.into())
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct AccentButtonColors {
-    pub(crate) rest: Hsla,
-    pub(crate) ink: Hsla,
-}
-
-pub(crate) fn wcag_contrast(foreground: Hsla, background: Hsla) -> f32 {
-    fn luminance(color: Hsla) -> f32 {
-        let rgba = gpui::Rgba::from(color);
-        let channel = |value: f32| {
-            if value <= 0.04045 {
-                value / 12.92
-            } else {
-                ((value + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        0.2126 * channel(rgba.r) + 0.7152 * channel(rgba.g) + 0.0722 * channel(rgba.b)
-    }
-    let (a, b) = (luminance(foreground), luminance(background));
-    (a.max(b) + 0.05) / (a.min(b) + 0.05)
-}
-
-pub(crate) fn readable_ink(background: Hsla) -> Hsla {
-    let white = gpui::white();
-    let black = gpui::black();
-    if wcag_contrast(white, background) >= wcag_contrast(black, background) {
-        white
-    } else {
-        black
-    }
-}
-
-pub(crate) fn accent_button_colors(accent: Hsla) -> AccentButtonColors {
-    let rest = Hsla { a: 1.0, ..accent };
-    let ink = readable_ink(rest);
-    AccentButtonColors { rest, ink }
-}
-
-pub fn section_header(ui: crate::theme::UiColors, label: &'static str) -> impl IntoElement {
-    let query = crate::settings::search::active_query();
-    div().pb(px(8.)).child(
-        div()
-            .text_size(crate::ui_primitives::LABEL_SM)
-            .font_weight(gpui::FontWeight::NORMAL)
-            .text_color(ui.muted)
-            .child(highlight_matches(label.to_string(), &query)),
-    )
-}
-
-pub fn section_header_with_action(
-    ui: crate::theme::UiColors,
-    label: &'static str,
-    action: impl IntoElement,
-) -> impl IntoElement {
-    let query = crate::settings::search::active_query();
-    div()
-        .flex()
-        .flex_row()
-        .items_center()
-        .justify_between()
-        .gap(px(12.))
-        .pb(px(8.))
-        .child(
-            div()
-                .text_size(crate::ui_primitives::LABEL_SM)
-                .font_weight(gpui::FontWeight::NORMAL)
-                .text_color(ui.muted)
-                .child(highlight_matches(label.to_string(), &query)),
-        )
-        .child(action)
-}
-
 pub fn settings_page_color(
     ui: crate::theme::UiColors,
     backdrop: crate::window_chrome::veil::Backdrop,
@@ -141,36 +69,6 @@ pub fn card_color() -> Hsla {
     crate::theme::ui_colors().card
 }
 
-pub fn setting_card(ui: crate::theme::UiColors) -> Div {
-    with_surface_shape(|| {
-        div()
-            .relative()
-            .flex()
-            .flex_col()
-            .child(squircle::squircle_fill(
-                crate::app::constants::SETTINGS_CARD_RADIUS,
-                select_menu_surface(ui),
-            ))
-    })
-}
-
-pub fn hairline(ui: crate::theme::UiColors) -> impl IntoElement {
-    div().h(px(1.)).w_full().bg(with_alpha(ui.border, 0.5))
-}
-
-pub const CARD_PADDING_X: f32 = 12.;
-pub const SETTINGS_ROW_PADDING_Y: f32 = 10.;
-pub const CARD_PADDING_Y: f32 = 6.;
-pub const ROW_HAIRLINE_INSET: f32 = CARD_PADDING_X + 18. + 12.;
-
-pub fn hairline_inset(ui: crate::theme::UiColors) -> impl IntoElement {
-    div()
-        .h(px(1.))
-        .w_full()
-        .pl(px(ROW_HAIRLINE_INSET))
-        .child(div().h_full().w_full().bg(with_alpha(ui.border, 0.5)))
-}
-
 const TOGGLE_FOCUS_RADIUS: Pixels = px(11.);
 const FOCUS_HALO_ALPHA: f32 = 0.24;
 const FOCUS_HALO_SPREAD: Pixels = px(4.);
@@ -185,7 +83,7 @@ fn keyboard_focus_halo(accent: Hsla) -> Vec<gpui::BoxShadow> {
     ]
 }
 
-fn keyboard_focus_inset(accent: Hsla) -> Vec<gpui::BoxShadow> {
+pub(crate) fn keyboard_focus_inset(accent: Hsla) -> Vec<gpui::BoxShadow> {
     vec![
         gpui::BoxShadow::new(px(0.), px(0.), accent)
             .spread_radius(FOCUS_INSET_WIDTH)
@@ -228,25 +126,6 @@ pub fn toggle_switch(
             gpui::accesskit::Toggled::False
         })
         .child(toggle_pill((id, "pill").into(), on, ui))
-}
-
-pub fn toggle_row_with(
-    title: &'static str,
-    description: &'static str,
-    icon: Option<AnyElement>,
-    ui: crate::theme::UiColors,
-    control: impl IntoElement,
-) -> impl IntoElement {
-    div()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(16.))
-        .px(px(CARD_PADDING_X))
-        .py(px(SETTINGS_ROW_PADDING_Y))
-        .when_some(icon, |d, icon| d.child(icon))
-        .child(setting_text(ui, title, description))
-        .child(control)
 }
 
 const TOGGLE_TRACK_WIDTH: f32 = 36.;
@@ -488,14 +367,6 @@ pub fn secondary_button(
     .on_click(on_click)
 }
 
-pub fn primary_button(
-    id: impl Into<SharedString>,
-    label: &'static str,
-    on_click: impl Fn(&ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
-) -> AnimatedHover {
-    raised_button(id, label, switch_blue(), gpui::white()).on_click(on_click)
-}
-
 pub fn raised_button(
     id: impl Into<SharedString>,
     label: &'static str,
@@ -613,179 +484,7 @@ fn pressed_layer(group: &SharedString, layer: impl IntoElement) -> Stateful<Div>
         .child(layer)
 }
 
-pub fn soft_button(
-    id: impl Into<SharedString>,
-    label: &'static str,
-    ui: crate::theme::UiColors,
-    on_click: impl Fn(&ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
-) -> AnimatedHover {
-    let id: SharedString = id.into();
-    soft_skin(
-        div()
-            .id(id.clone())
-            .px(px(10.))
-            .py(px(4.))
-            .text_size(px(12.))
-            .font_weight(gpui::FontWeight::MEDIUM)
-            .text_color(ui.text),
-        format!("{id}-squircle"),
-        ROW_RADIUS,
-        ui,
-    )
-    .accessible_control(gpui::accesskit::Role::Button, label)
-    .keyboard_stop(ROW_RADIUS)
-    .child(label)
-    .on_click(on_click)
-}
-
 pub(crate) const CONTROL_HOVER_TOWARD_TEXT: f32 = 0.06;
-const SOFT_PRESSED_LAYER: f32 = 0.06;
-
-pub(crate) fn soft_skin(
-    element: Stateful<Div>,
-    group: impl Into<SharedString>,
-    radius: Pixels,
-    ui: crate::theme::UiColors,
-) -> AnimatedHover {
-    let group: SharedString = group.into();
-    animated_squircle_skin(
-        element.cursor(CursorStyle::PointingHand),
-        group.clone(),
-        radius,
-        with_alpha(ui.text, CARD_BUTTON_FILL_REST),
-        with_alpha(ui.text, CARD_BUTTON_FILL_HOVER),
-    )
-    .child(pressed_layer(
-        &group,
-        squircle_fill(radius, with_alpha(ui.text, SOFT_PRESSED_LAYER)),
-    ))
-}
-
-pub(crate) fn raised_icon_button(
-    id: impl Into<ElementId>,
-    label: impl Into<SharedString>,
-    icon: &'static str,
-    fill: Hsla,
-    ink: Hsla,
-    enabled: bool,
-) -> AnimatedHover {
-    let id: ElementId = id.into();
-    let label: SharedString = label.into();
-    raised_skin(
-        icon_button_frame(id.clone(), ink),
-        format!("{id}-squircle"),
-        SETTINGS_CONTROL_CORNER_RADIUS,
-        fill,
-        enabled,
-    )
-    .accessible_control(gpui::accesskit::Role::Button, label.clone())
-    .opaque_keyboard_stop(ROW_RADIUS)
-    .child(svg().size(px(13.)).flex_none().path(icon).text_color(ink))
-    .child(label)
-}
-
-pub(crate) fn soft_icon_button(
-    id: impl Into<ElementId>,
-    label: impl Into<SharedString>,
-    icon: &'static str,
-    ui: crate::theme::UiColors,
-) -> AnimatedHover {
-    let id: ElementId = id.into();
-    let label: SharedString = label.into();
-    soft_skin(
-        icon_button_frame(id.clone(), ui.text),
-        format!("{id}-squircle"),
-        SETTINGS_CONTROL_CORNER_RADIUS,
-        ui,
-    )
-    .accessible_control(gpui::accesskit::Role::Button, label.clone())
-    .keyboard_stop(ROW_RADIUS)
-    .child(
-        svg()
-            .size(px(13.))
-            .flex_none()
-            .path(icon)
-            .text_color(ui.text),
-    )
-    .child(label)
-}
-
-fn icon_button_frame(id: ElementId, ink: Hsla) -> Stateful<Div> {
-    div()
-        .id(id)
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(6.))
-        .px(px(10.))
-        .py(px(5.))
-        .text_size(px(12.))
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(ink)
-}
-
-pub(crate) const GHOST_HOVER_ALPHA: f32 = 0.1;
-
-pub(crate) fn ghost_skin(
-    element: Stateful<Div>,
-    group: impl Into<SharedString>,
-    radius: Pixels,
-    ui: crate::theme::UiColors,
-) -> AnimatedHover {
-    ghost_tint_skin(element, group, radius, ui.text)
-}
-
-pub(crate) fn ghost_tint_skin(
-    element: Stateful<Div>,
-    group: impl Into<SharedString>,
-    radius: Pixels,
-    ink: Hsla,
-) -> AnimatedHover {
-    animated_squircle_skin(
-        element.cursor(CursorStyle::PointingHand),
-        group,
-        radius,
-        with_alpha(ink, 0.),
-        with_alpha(ink, GHOST_HOVER_ALPHA),
-    )
-}
-
-pub(crate) fn ghost_icon_button(
-    id: impl Into<ElementId>,
-    label: impl Into<SharedString>,
-    icon: &'static str,
-    ui: crate::theme::UiColors,
-) -> AnimatedHover {
-    let id: ElementId = id.into();
-    let label: SharedString = label.into();
-    ghost_skin(
-        div()
-            .id(id.clone())
-            .flex_none()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(6.))
-            .px(px(10.))
-            .py(px(4.))
-            .text_size(px(12.))
-            .font_weight(FontWeight::MEDIUM)
-            .text_color(ui.text),
-        format!("{id}-squircle"),
-        ROW_RADIUS,
-        ui,
-    )
-    .accessible_control(gpui::accesskit::Role::Button, label.clone())
-    .keyboard_stop(ROW_RADIUS)
-    .child(
-        svg()
-            .size(px(13.))
-            .flex_none()
-            .path(icon)
-            .text_color(with_alpha(ui.text, 0.8)),
-    )
-    .child(label)
-}
 
 pub fn destructive_color() -> Hsla {
     Hsla::from(gpui::rgb(0xff453a))
@@ -1689,39 +1388,11 @@ impl gpui::Element for AttachedBelowTrigger {
     }
 }
 
-pub(crate) fn settings_label(
-    ui: crate::theme::UiColors,
-    title: &'static str,
-    description: &'static str,
-) -> impl IntoElement {
-    div()
-        .flex_1()
-        .min_w_0()
-        .flex()
-        .flex_col()
-        .gap(px(2.))
-        .child(
-            div()
-                .text_size(crate::ui_primitives::BODY_EMPHASIS)
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(ui.text)
-                .child(title),
-        )
-        .child(
-            div()
-                .text_size(px(12.))
-                .text_color(ui.muted)
-                .child(description),
-        )
-}
-
 pub(crate) fn switch_blue() -> Hsla {
     Hsla::from(rgb(0x339cff))
 }
 
 pub(crate) const PAGE_TITLE_SIZE: f32 = 26.;
-pub(crate) const CARD_BUTTON_FILL_REST: f32 = 0.06;
-pub(crate) const CARD_BUTTON_FILL_HOVER: f32 = 0.12;
 
 pub(crate) fn settings_breadcrumb(
     id: &'static str,
@@ -1772,105 +1443,9 @@ pub(crate) fn settings_breadcrumb(
         )
 }
 
-pub(crate) fn card_button(
-    id: impl Into<SharedString>,
-    label: impl Into<SharedString>,
-    ui: crate::theme::UiColors,
-) -> Stateful<Div> {
-    let id: SharedString = id.into();
-    let label: SharedString = label.into();
-    squircle_skin(
-        div()
-            .id(id.clone())
-            .flex_none()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(6.))
-            .px(px(10.))
-            .py(px(4.))
-            .cursor(CursorStyle::PointingHand)
-            .text_size(px(12.))
-            .font_weight(FontWeight::MEDIUM)
-            .text_color(ui.text),
-        format!("{id}-squircle"),
-        ROW_RADIUS,
-        Some(with_alpha(ui.text, CARD_BUTTON_FILL_REST)),
-        Some(with_alpha(ui.text, CARD_BUTTON_FILL_HOVER)),
-    )
-    .accessible_control(gpui::accesskit::Role::Button, label.clone())
-    .keyboard_stop(ROW_RADIUS)
-    .child(label)
-}
-
-pub(crate) fn row_text(
-    title: impl Into<SharedString>,
-    description: impl Into<SharedString>,
-    ui: crate::theme::UiColors,
-) -> Div {
-    div()
-        .flex_1()
-        .min_w_0()
-        .flex()
-        .flex_col()
-        .gap(px(2.))
-        .child(
-            div()
-                .truncate()
-                .text_size(px(12.))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(ui.text)
-                .child(title.into()),
-        )
-        .child(
-            div()
-                .text_size(crate::ui_primitives::LABEL_SM)
-                .text_color(ui.muted)
-                .child(description.into()),
-        )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn shipped_themes() -> Vec<(&'static str, crate::theme::UiColors)> {
-        crate::theme::THEMES
-            .iter()
-            .map(|(name, build)| (*name, crate::theme::ui_colors_with(&build())))
-            .collect()
-    }
-
-    #[test]
-    fn the_accent_button_label_reads_on_every_shipped_theme() {
-        let themes = shipped_themes();
-        assert_eq!(themes.len(), 10);
-        for (name, ui) in themes {
-            let colors = accent_button_colors(ui.accent);
-            let rest = wcag_contrast(colors.ink, colors.rest);
-            assert!(rest >= 4.5, "{name}: {rest:.2}:1 at rest");
-        }
-    }
-
-    #[test]
-    fn white_on_the_raw_accent_fails_the_contrast_floor_on_most_themes() {
-        let failing = shipped_themes()
-            .into_iter()
-            .filter(|(_, ui)| wcag_contrast(gpui::white(), ui.accent) < 4.5)
-            .count();
-        assert!(
-            failing > 0,
-            "the regression this guards against disappeared"
-        );
-    }
-
-    #[test]
-    fn wcag_contrast_matches_reference_values() {
-        let black_on_white = wcag_contrast(gpui::black(), gpui::white());
-        assert!((black_on_white - 21.0).abs() < 0.01, "{black_on_white}");
-        let same = wcag_contrast(gpui::white(), gpui::white());
-        assert!((same - 1.0).abs() < 0.001, "{same}");
-    }
 
     #[test]
     fn menu_rows_nest_concentrically_inside_their_menu_surface() {
@@ -2062,42 +1637,6 @@ mod tests {
         assert!(
             peaks[first..=last].iter().any(|alpha| *alpha < 24),
             "the two chevrons are kept apart by a clear row, row peaks {peaks:?}"
-        );
-    }
-
-    struct ToggleRowHarness;
-
-    impl gpui::Render for ToggleRowHarness {
-        fn render(
-            &mut self,
-            _window: &mut gpui::Window,
-            _cx: &mut gpui::Context<Self>,
-        ) -> impl IntoElement {
-            let ui = crate::theme::ui_colors();
-            div().w(px(600.)).child(toggle_row_with(
-                "Native OS notifications",
-                "Alert you when an agent needs attention.",
-                None,
-                ui,
-                div()
-                    .debug_selector(|| "row-control".into())
-                    .flex_none()
-                    .w(px(36.))
-                    .h(px(22.)),
-            ))
-        }
-    }
-
-    #[gpui::test]
-    fn a_toggle_row_insets_its_control_like_every_settings_row(cx: &mut gpui::TestAppContext) {
-        let (_view, cx) = cx.add_window_view(|_, _| ToggleRowHarness);
-        cx.simulate_resize(gpui::size(px(800.), px(200.)));
-        cx.update(|window, cx| window.draw(cx).clear(cx));
-        let control = cx.debug_bounds("row-control").expect("control painted");
-        assert_eq!(
-            control.right(),
-            px(600. - 12.),
-            "a settings row is padded 12 by 10 (DESIGN.md 4.5)"
         );
     }
 

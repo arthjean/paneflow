@@ -6,8 +6,6 @@ use std::time::Instant;
 use gpui::{AnyElement, Div, IntoElement, ParentElement, Styled, div, prelude::*, px};
 
 use crate::SettingsSection;
-use crate::settings::components::{hairline, setting_card};
-use crate::theme::UiColors;
 
 pub(crate) const TRANSITION_SECONDS: f32 = 0.18;
 
@@ -223,8 +221,15 @@ const USAGE_COPIES: &[&SettingCopy] = &[
 const AGENTS_COPIES: &[&SettingCopy] = &[&CLAUDE_FULL_ACCESS, &AI_FREE_ACCESS, &INJECTION_FENCE];
 
 const GENERAL_HEADERS: &[&str] = &["Defaults", "Notifications"];
-const APPEARANCE_HEADERS: &[&str] = &["Theme", "Preferences", "System", "Light", "Dark"];
-const TERMINAL_HEADERS: &[&str] = &["Cursor", "Display"];
+const APPEARANCE_HEADERS: &[&str] = &[
+    "Theme",
+    "Interface",
+    "Preferences",
+    "System",
+    "Light",
+    "Dark",
+];
+const TERMINAL_HEADERS: &[&str] = &["Font", "Cursor", "Rendering"];
 const AGENTS_HEADERS: &[&str] = &[
     "Agents",
     "Launch presets",
@@ -425,19 +430,15 @@ fn collapse(key: &str, amount: f32, content: AnyElement) -> AnyElement {
         .into_any_element()
 }
 
+#[derive(Default)]
 pub(crate) struct SearchCard {
-    ui: UiColors,
     rows: Vec<(f32, AnyElement)>,
     any_match: bool,
 }
 
 impl SearchCard {
-    pub(crate) fn new(ui: UiColors) -> Self {
-        Self {
-            ui,
-            rows: Vec::new(),
-            any_match: false,
-        }
+    pub(crate) fn new() -> Self {
+        Self::default()
     }
 
     pub(crate) fn row(mut self, copy: &SettingCopy, element: impl IntoElement) -> Self {
@@ -458,27 +459,6 @@ impl SearchCard {
 
     pub(crate) fn into_rows(self) -> (bool, Vec<(f32, AnyElement)>) {
         (self.any_match, self.rows)
-    }
-
-    fn finish(self) -> Div {
-        let mut card = setting_card(self.ui).py(px(crate::settings::components::CARD_PADDING_Y));
-        let mut previous: Option<f32> = None;
-        for (amount, element) in self.rows {
-            if let Some(above) = previous {
-                let visible = above.min(amount);
-                card = card.child(
-                    div()
-                        .w_full()
-                        .h(px(visible))
-                        .overflow_hidden()
-                        .opacity(visible)
-                        .child(hairline(self.ui)),
-                );
-            }
-            card = card.child(element);
-            previous = Some(amount);
-        }
-        card
     }
 }
 
@@ -530,12 +510,6 @@ impl Block {
 
     pub(crate) fn found(mut self, matched: bool) -> Self {
         self.matched |= matched;
-        self
-    }
-
-    pub(crate) fn card(mut self, card: SearchCard) -> Self {
-        self.matched |= card.any_match;
-        self.inner = self.inner.child(card.finish());
         self
     }
 

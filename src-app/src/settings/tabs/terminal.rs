@@ -1,20 +1,46 @@
 use gpui::{
-    ClickEvent, Context, CursorStyle, Hsla, InteractiveElement, IntoElement, ParentElement, Rgba,
-    SharedString, Styled, div, prelude::*, px,
+    AnyElement, ClickEvent, Context, CursorStyle, Hsla, InteractiveElement, IntoElement,
+    ParentElement, Rgba, SharedString, StatefulInteractiveElement, Styled, div, prelude::*, px,
+    svg,
 };
 use serde_json::{Value, json};
 
 use paneflow_config::schema::{CursorShapeConfig, MinimumContrast, TerminalConfig};
 
 use crate::settings::components::{
-    SETTINGS_CONTROL_CORNER_RADIUS, deferred_select_menu, hairline, section_header, select_chevron,
-    select_menu, select_option, select_trigger, setting_text, soft_skin, toggle_switch,
+    deferred_select_menu, select_chevron, select_menu, select_option, select_trigger,
 };
+use crate::settings::kit::{self, Ink, Text};
 use crate::settings::search::{self, Block, SearchCard};
-use crate::ui_primitives::squircle::squircle_fill;
-use crate::ui_primitives::{AccessibleControlExt, AnimatedHoverExt};
+use crate::ui_primitives::AccessibleControlExt;
 
 use crate::{PaneFlowApp, TerminalDropdown};
+
+const TERMINAL_INTRO: &str = "How text and the cursor look in every terminal pane.";
+const ADD_ICON: &str = "icons/settings/add-01.svg";
+const REMOVE_ICON: &str = "icons/settings/remove-01.svg";
+const TICK_ICON: &str = "icons/settings/tick-02.svg";
+const CHEVRON_DOWN: &str = "icons/settings/arrow-down-01.svg";
+const CHEVRON_UP: &str = "icons/settings/arrow-up-01.svg";
+const CHEVRON: f32 = 14.;
+const SWATCH: f32 = 32.;
+const SWATCH_RING: f32 = 2.;
+const SWATCH_RING_GAP: f32 = 2.;
+const SWATCH_RADIUS: f32 = 6.;
+const SWATCH_GAP: f32 = 4.;
+const SWATCH_PREVIEW: f32 = 14.;
+const SCHEME_HEIGHT: f32 = 28.;
+const SCHEME_PADDING_X: f32 = 10.;
+const SCHEME_RADIUS: f32 = 6.;
+
+const CURSOR_SHAPES: [(&str, CursorShapeConfig); 6] = [
+    ("Vintage (_▂)", CursorShapeConfig::Vintage),
+    ("Bar (|)", CursorShapeConfig::Beam),
+    ("Underline (_)", CursorShapeConfig::Underline),
+    ("Double underline (‿)", CursorShapeConfig::DoubleUnderline),
+    ("Filled box (█)", CursorShapeConfig::Block),
+    ("Empty box (□)", CursorShapeConfig::Hollow),
+];
 
 const FONT_WEIGHT_OPTIONS: [(&str, &str); 11] = [
     ("Thin", "thin"),
@@ -120,13 +146,6 @@ fn hsla_from_u32(hex: u32) -> Hsla {
     Hsla::from(gpui::rgb(hex))
 }
 
-fn lighter_control_hover(base: Hsla) -> Hsla {
-    Hsla {
-        l: (base.l + 0.045).min(1.0),
-        ..base
-    }
-}
-
 fn hex_string_from_hsla(color: Hsla) -> String {
     let rgba = Rgba::from(color);
     let channel = |value: f32| -> u8 { (value.clamp(0.0, 1.0) * 255.0).round() as u8 };
@@ -139,9 +158,25 @@ fn hex_string_from_hsla(color: Hsla) -> String {
 }
 
 impl PaneFlowApp {
+    pub(crate) fn render_terminal_heading(&self, title: gpui::Div) -> AnyElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .px(px(kit::TEXT_INSET))
+            .pb(px(kit::SECTION_GAP))
+            .child(title)
+            .child(kit::page_description(
+                Ink::of(crate::theme::ui_colors()),
+                TERMINAL_INTRO,
+            ))
+            .into_any_element()
+    }
+
     pub(crate) fn render_terminal_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let config = &self.cached_config;
         let ui = crate::theme::ui_colors();
+        let ink = Ink::of(ui);
         let terminal = config.terminal.clone().unwrap_or_default();
 
         let shape = terminal.cursor_shape.unwrap_or_default();
@@ -170,67 +205,111 @@ impl PaneFlowApp {
             .unwrap_or(crate::terminal::element::DEFAULT_CELL_WIDTH)
             as f64;
 
-        let shape_label = match shape {
-            CursorShapeConfig::Vintage => "Vintage (_▂)",
-            CursorShapeConfig::Block => "Filled box (█)",
-            CursorShapeConfig::Beam => "Bar (|)",
-            CursorShapeConfig::Underline => "Underline (_)",
-            CursorShapeConfig::DoubleUnderline => "Double underline (‿)",
-            CursorShapeConfig::Hollow => "Empty box (□)",
-        };
+        let shape_label = CURSOR_SHAPES
+            .iter()
+            .find_map(|(label, value)| (*value == shape).then_some(*label))
+            .unwrap_or("Filled box (█)");
+        let shape_opts: Vec<(String, Value, bool)> = CURSOR_SHAPES
+            .iter()
+            .map(|(label, value)| {
+                (
+                    (*label).to_string(),
+                    serde_json::to_value(value).unwrap_or(Value::Null),
+                    *value == shape,
+                )
+            })
+            .collect();
         let font_weight_label = FONT_WEIGHT_OPTIONS
             .iter()
             .find_map(|(label, key)| (*key == font_weight_key).then_some(*label))
             .unwrap_or("Normal");
-
-        let shape_opts: Vec<(String, Value, bool)> = vec![
-            (
-                "Vintage (_▂)".into(),
-                json!("vintage"),
-                shape == CursorShapeConfig::Vintage,
-            ),
-            (
-                "Bar (|)".into(),
-                json!("beam"),
-                shape == CursorShapeConfig::Beam,
-            ),
-            (
-                "Underline (_)".into(),
-                json!("underline"),
-                shape == CursorShapeConfig::Underline,
-            ),
-            (
-                "Double underline (‿)".into(),
-                json!("double_underline"),
-                shape == CursorShapeConfig::DoubleUnderline,
-            ),
-            (
-                "Filled box (█)".into(),
-                json!("block"),
-                shape == CursorShapeConfig::Block,
-            ),
-            (
-                "Empty box (□)".into(),
-                json!("hollow"),
-                shape == CursorShapeConfig::Hollow,
-            ),
-        ];
         let font_weight_opts: Vec<(String, Value, bool)> = FONT_WEIGHT_OPTIONS
             .iter()
             .map(|(label, key)| ((*label).to_string(), json!(*key), *key == font_weight_key))
             .collect();
 
-        let cursor_card = SearchCard::new(ui)
+        let font_card = SearchCard::new()
+            .row(
+                &search::FONT_FAMILY,
+                self.terminal_font_family_row(current_font, ink, ui, cx),
+            )
+            .row(
+                &search::FONT_SIZE,
+                self.terminal_number_row(
+                    "term-font-size",
+                    &search::FONT_SIZE,
+                    NumberStep {
+                        value: font_size,
+                        min: 8.0,
+                        max: 32.0,
+                        step: 1.0,
+                        decimals: 0,
+                    },
+                    "font_size",
+                    ink,
+                    cx,
+                ),
+            )
+            .row(
+                &search::FONT_WEIGHT,
+                self.terminal_enum_row(
+                    TerminalDropdown::FontWeight,
+                    &search::FONT_WEIGHT,
+                    font_weight_label.to_string(),
+                    font_weight_opts,
+                    "font_weight",
+                    false,
+                    ink,
+                    ui,
+                    cx,
+                ),
+            )
+            .row(
+                &search::LINE_HEIGHT,
+                self.terminal_number_row(
+                    "term-line-height",
+                    &search::LINE_HEIGHT,
+                    NumberStep {
+                        value: line_height,
+                        min: 1.0,
+                        max: 2.5,
+                        step: 0.1,
+                        decimals: 1,
+                    },
+                    "line_height",
+                    ink,
+                    cx,
+                ),
+            )
+            .row(
+                &search::CELL_WIDTH,
+                self.terminal_number_row(
+                    "term-cell-width",
+                    &search::CELL_WIDTH,
+                    NumberStep {
+                        value: cell_width,
+                        min: 0.3,
+                        max: 2.0,
+                        step: 0.1,
+                        decimals: 1,
+                    },
+                    "cell_width",
+                    ink,
+                    cx,
+                ),
+            );
+
+        let cursor_card = SearchCard::new()
             .row(
                 &search::CURSOR_SHAPE,
                 self.terminal_enum_row(
                     TerminalDropdown::CursorShape,
-                    search::CURSOR_SHAPE.title,
-                    search::CURSOR_SHAPE.description,
+                    &search::CURSOR_SHAPE,
                     shape_label.to_string(),
                     shape_opts,
                     "cursor_shape",
                     true,
+                    ink,
                     ui,
                     cx,
                 ),
@@ -241,88 +320,20 @@ impl PaneFlowApp {
                     cursor_color_hex,
                     cursor_uses_theme,
                     theme_cursor_hex,
-                    ui,
+                    ink,
                     cx,
                 ),
             );
 
-        let display_card = SearchCard::new(ui)
-            .row(
-                &search::FONT_FAMILY,
-                self.terminal_font_family_row(current_font, ui, cx),
-            )
-            .row(
-                &search::FONT_SIZE,
-                self.settings_stepper_row(
-                    "term-font-size",
-                    search::FONT_SIZE.title,
-                    search::FONT_SIZE.description,
-                    font_size,
-                    8.0,
-                    32.0,
-                    1.0,
-                    0,
-                    "font_size",
-                    ui,
-                    cx,
-                ),
-            )
-            .row(
-                &search::LINE_HEIGHT,
-                self.settings_stepper_row(
-                    "term-line-height",
-                    search::LINE_HEIGHT.title,
-                    search::LINE_HEIGHT.description,
-                    line_height,
-                    1.0,
-                    2.5,
-                    0.1,
-                    1,
-                    "line_height",
-                    ui,
-                    cx,
-                ),
-            )
-            .row(
-                &search::CELL_WIDTH,
-                self.settings_stepper_row(
-                    "term-cell-width",
-                    search::CELL_WIDTH.title,
-                    search::CELL_WIDTH.description,
-                    cell_width,
-                    0.3,
-                    2.0,
-                    0.1,
-                    1,
-                    "cell_width",
-                    ui,
-                    cx,
-                ),
-            )
-            .row(
-                &search::FONT_WEIGHT,
-                self.terminal_enum_row(
-                    TerminalDropdown::FontWeight,
-                    search::FONT_WEIGHT.title,
-                    search::FONT_WEIGHT.description,
-                    font_weight_label.to_string(),
-                    font_weight_opts,
-                    "font_weight",
-                    false,
-                    ui,
-                    cx,
-                ),
-            )
+        let rendering_card = SearchCard::new()
             .row(
                 &search::INTEGRATED_GLYPHS,
                 self.terminal_toggle_row(
                     "term-integrated-glyphs",
-                    search::INTEGRATED_GLYPHS.title,
-                    search::INTEGRATED_GLYPHS.description,
+                    &search::INTEGRATED_GLYPHS,
                     integrated_glyphs,
                     "integrated_glyphs",
-                    true,
-                    ui,
+                    ink,
                     cx,
                 ),
             )
@@ -330,12 +341,10 @@ impl PaneFlowApp {
                 &search::COLOR_EMOJI,
                 self.terminal_toggle_row(
                     "term-color-emoji",
-                    search::COLOR_EMOJI.title,
-                    search::COLOR_EMOJI.description,
+                    &search::COLOR_EMOJI,
                     color_emoji,
                     "color_emoji",
-                    true,
-                    ui,
+                    ink,
                     cx,
                 ),
             )
@@ -343,46 +352,49 @@ impl PaneFlowApp {
                 &search::SCROLLBAR,
                 self.terminal_toggle_row(
                     "term-scrollbar",
-                    search::SCROLLBAR.title,
-                    search::SCROLLBAR.description,
+                    &search::SCROLLBAR,
                     scrollbar,
                     "scrollbar",
-                    true,
-                    ui,
+                    ink,
                     cx,
                 ),
             )
             .row(
                 &search::MINIMUM_CONTRAST,
-                self.terminal_minimum_contrast_row(minimum_contrast_step(&terminal), ui, cx),
+                self.terminal_minimum_contrast_row(minimum_contrast_step(&terminal), ink, cx),
             );
 
+        let mut first = true;
         div()
             .flex()
             .flex_col()
-            .child(
-                Block::new("Cursor")
-                    .gap(20.)
-                    .child(section_header(ui, "Cursor"))
-                    .card(cursor_card)
-                    .finish(),
-            )
-            .child(
-                Block::new("Display")
-                    .top_gap(20.)
-                    .gap(20.)
-                    .child(section_header(ui, "Display"))
-                    .card(display_card)
-                    .finish(),
-            )
+            .child(terminal_section(
+                "Font",
+                font_card,
+                kit::section_gap(&mut first),
+                ink,
+            ))
+            .child(terminal_section(
+                "Cursor",
+                cursor_card,
+                kit::section_gap(&mut first),
+                ink,
+            ))
+            .child(terminal_section(
+                "Rendering",
+                rendering_card,
+                kit::section_gap(&mut first),
+                ink,
+            ))
     }
 
     fn terminal_font_family_row(
         &self,
         current_font: String,
+        ink: Ink,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> AnyElement {
         let default_font = crate::terminal::element::resolve_font_family(None);
         let trigger_label = if self.font_dropdown_open {
             if self.font_search.is_empty() {
@@ -394,9 +406,9 @@ impl PaneFlowApp {
             current_font.clone()
         };
         let trigger_label_color = if self.font_dropdown_open && self.font_search.is_empty() {
-            ui.muted
+            ink.tertiary
         } else {
-            ui.text
+            ink.primary
         };
 
         let font_open = self.font_dropdown_open;
@@ -428,7 +440,7 @@ impl PaneFlowApp {
             div()
                 .flex_1()
                 .min_w_0()
-                .text_size(px(12.))
+                .text_size(px(kit::SIZE_SM))
                 .text_color(trigger_label_color)
                 .truncate()
                 .child(trigger_label),
@@ -465,7 +477,7 @@ impl PaneFlowApp {
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .text_color(ui.text)
+                            .text_color(ink.primary)
                             .child(default_label),
                     ),
                     cx.listener(|this, _: &(), _w, cx| {
@@ -487,7 +499,7 @@ impl PaneFlowApp {
                                 .flex_1()
                                 .min_w_0()
                                 .truncate()
-                                .text_color(ui.text)
+                                .text_color(ink.primary)
                                 .child(name.to_string()),
                         ),
                     cx.listener(move |this, _: &(), _w, cx| {
@@ -508,8 +520,8 @@ impl PaneFlowApp {
                     div()
                         .px(px(8.))
                         .py(px(8.))
-                        .text_size(px(12.))
-                        .text_color(ui.muted)
+                        .text_size(px(kit::SIZE_SM))
+                        .text_color(ink.tertiary)
                         .child("No matching fonts"),
                 );
             }
@@ -517,20 +529,13 @@ impl PaneFlowApp {
             trigger = trigger.child(deferred_select_menu(menu));
         }
 
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(16.))
-            .px(px(12.))
-            .py(px(10.))
-            .child(setting_text(
-                ui,
-                search::FONT_FAMILY.title,
-                search::FONT_FAMILY.description,
-            ))
-            .child(div().flex_shrink_0().child(trigger))
-            .into_any_element()
+        kit::row(
+            ink,
+            None,
+            setting_copy(&search::FONT_FAMILY, ink),
+            Some(trigger.into_any_element()),
+        )
+        .into_any_element()
     }
 
     fn terminal_cursor_color_row(
@@ -538,25 +543,52 @@ impl PaneFlowApp {
         current_hex: String,
         uses_theme: bool,
         theme_hex: String,
-        ui: crate::theme::UiColors,
+        ink: Ink,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> AnyElement {
         let is_open = self.terminal_dropdown == Some(TerminalDropdown::CursorColor);
         let current_color = crate::terminal::view::hsla_from_hex_color(&current_hex)
             .unwrap_or_else(|| hsla_from_u32(0x007aff));
         let theme_color = crate::terminal::view::hsla_from_hex_color(&theme_hex)
             .unwrap_or_else(|| hsla_from_u32(0x007aff));
 
-        let top = div()
-            .id("term-cursor-color-row")
-            .accessible_control(gpui::accesskit::Role::ComboBox, search::CURSOR_COLOR.title)
-            .aria_expanded(is_open)
+        let summary = div()
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(16.))
-            .px(px(12.))
-            .py(px(10.))
+            .gap(px(8.))
+            .child(
+                div()
+                    .flex_none()
+                    .size(px(SWATCH_PREVIEW))
+                    .rounded(px(4.))
+                    .bg(current_color),
+            )
+            .child(
+                div()
+                    .font_family(kit::mono_family())
+                    .text_size(px(kit::SIZE_SM))
+                    .line_height(px(kit::LINE_SM))
+                    .text_color(ink.primary)
+                    .child(if uses_theme {
+                        "Color scheme".to_string()
+                    } else {
+                        current_hex.clone()
+                    }),
+            )
+            .child(
+                svg()
+                    .size(px(CHEVRON))
+                    .flex_none()
+                    .path(if is_open { CHEVRON_UP } else { CHEVRON_DOWN })
+                    .text_color(ink.tertiary),
+            );
+
+        let head = div()
+            .id("term-cursor-color-row")
+            .accessible_control(gpui::accesskit::Role::ComboBox, search::CURSOR_COLOR.title)
+            .aria_expanded(is_open)
+            .cursor(CursorStyle::PointingHand)
             .on_press(cx.listener(move |this, _, window, cx| {
                 cx.stop_propagation();
                 this.font_dropdown_open = false;
@@ -569,115 +601,116 @@ impl PaneFlowApp {
                 this.settings_focus.focus(window, cx);
                 cx.notify();
             }))
-            .child(setting_text(
-                ui,
-                search::CURSOR_COLOR.title,
-                search::CURSOR_COLOR.description,
-            ))
-            .child(
+            .child(kit::row(
+                ink,
+                None,
+                setting_copy(&search::CURSOR_COLOR, ink),
+                Some(summary.into_any_element()),
+            ));
+
+        let mut row = div().flex().flex_col().child(head);
+        if !is_open {
+            return row.into_any_element();
+        }
+
+        let mut swatches = div().flex().flex_row().flex_wrap().gap(px(SWATCH_GAP));
+        for (index, &hex) in CURSOR_COLOR_SWATCHES.iter().enumerate() {
+            let hex_string = hex_string_from_u32(hex);
+            let selected = !uses_theme && hex_string == current_hex;
+            let value = hex_string.clone();
+            swatches = swatches.child(
                 div()
-                    .flex_shrink_0()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(8.))
-                    .child(
-                        div()
-                            .w(px(12.))
-                            .h(px(12.))
-                            .rounded(px(3.))
-                            .bg(current_color),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(12.))
-                            .text_color(ui.text)
-                            .child(current_hex.clone()),
-                    )
-                    .child(select_chevron(ui)),
-            );
-
-        let mut row = div().flex().flex_col().child(top);
-
-        if is_open {
-            let mut swatch_grid = div().flex().flex_col().gap(px(4.));
-            for (row_idx, chunk) in CURSOR_COLOR_SWATCHES.chunks(4).enumerate() {
-                let mut swatch_row = div().flex().flex_row().gap(px(4.));
-                for (col_idx, &hex) in chunk.iter().enumerate() {
-                    let hex_string = hex_string_from_u32(hex);
-                    let selected = !uses_theme && hex_string == current_hex;
-                    let resting_opacity = if selected { 1.0 } else { 0.92 };
-                    let value = hex_string.clone();
-                    swatch_row = swatch_row.child(
-                        div()
-                            .id(SharedString::from(format!(
-                                "term-cursor-color-{row_idx}-{col_idx}"
-                            )))
-                            .w(px(32.))
-                            .h(px(32.))
-                            .rounded(px(6.))
-                            .bg(hsla_from_u32(hex))
-                            .opacity(resting_opacity)
-                            .animated_hover(move |style, delta| {
-                                style.opacity(resting_opacity + (1.0 - resting_opacity) * delta);
-                            })
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                                this.persist_setting(
-                                    true,
-                                    "cursor_color",
-                                    Value::String(value.clone()),
-                                    cx,
-                                );
-                            })),
-                    );
-                }
-                swatch_grid = swatch_grid.child(swatch_row);
-            }
-
-            let theme_chip = crate::settings::components::accent_button_colors(ui.accent);
-            let (scheme_bg, scheme_hover_bg, scheme_text) = if uses_theme {
-                (theme_chip.rest, theme_chip.rest, theme_chip.ink)
-            } else {
-                (ui.subtle, lighter_control_hover(ui.subtle), ui.text)
-            };
-            let controls = div().flex().flex_col().gap(px(8.)).child(
-                div()
-                    .id("term-cursor-color-theme")
-                    .accessible_control(gpui::accesskit::Role::Button, "Use color scheme color")
-                    .h(px(32.))
-                    .min_w(px(200.))
-                    .px(px(10.))
-                    .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(8.))
-                    .bg(scheme_bg)
-                    .animated_hover_bg(scheme_bg, scheme_hover_bg)
-                    .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
-                        this.persist_setting(true, "cursor_color", Value::Null, cx);
+                    .id(("term-cursor-color", index))
+                    .flex_none()
+                    .size(px(SWATCH))
+                    .p(px(SWATCH_RING_GAP))
+                    .rounded(px(SWATCH_RADIUS + SWATCH_RING_GAP + SWATCH_RING))
+                    .border_2()
+                    .border_color(if selected {
+                        ink.primary
+                    } else {
+                        gpui::transparent_black()
+                    })
+                    .cursor(CursorStyle::PointingHand)
+                    .when(!selected, |swatch| {
+                        swatch.hover(move |style| style.border_color(ink.tertiary))
+                    })
+                    .accessible_control(gpui::accesskit::Role::RadioButton, hex_string.clone())
+                    .aria_toggled(if selected {
+                        gpui::accesskit::Toggled::True
+                    } else {
+                        gpui::accesskit::Toggled::False
+                    })
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                        this.persist_setting(
+                            true,
+                            "cursor_color",
+                            Value::String(value.clone()),
+                            cx,
+                        );
                     }))
-                    .child(div().w(px(16.)).h(px(16.)).rounded(px(4.)).bg(theme_color))
                     .child(
                         div()
-                            .text_size(px(12.))
-                            .text_color(scheme_text)
-                            .child("Use color scheme color"),
+                            .size_full()
+                            .rounded(px(SWATCH_RADIUS))
+                            .bg(hsla_from_u32(hex)),
                     ),
-            );
-
-            row = row.child(hairline(ui)).child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_start()
-                    .gap(px(16.))
-                    .p(px(12.))
-                    .child(swatch_grid)
-                    .child(controls),
             );
         }
 
+        let scheme = div()
+            .id("term-cursor-color-theme")
+            .flex_none()
+            .h(px(SCHEME_HEIGHT))
+            .pl(px(SCHEME_PADDING_X - 2.))
+            .pr(px(SCHEME_PADDING_X))
+            .rounded(px(SCHEME_RADIUS))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(8.))
+            .bg(ink.well)
+            .cursor(CursorStyle::PointingHand)
+            .hover(move |style| style.bg(ink.well_hover))
+            .active(move |style| style.bg(ink.well_pressed))
+            .accessible_control(gpui::accesskit::Role::Button, "Use color scheme color")
+            .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                this.persist_setting(true, "cursor_color", Value::Null, cx);
+            }))
+            .child(
+                div()
+                    .flex_none()
+                    .size(px(SWATCH_PREVIEW))
+                    .rounded(px(4.))
+                    .bg(theme_color),
+            )
+            .child(
+                div()
+                    .text_size(px(kit::SIZE_SM))
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .text_color(ink.primary)
+                    .child("Use color scheme color"),
+            )
+            .when(uses_theme, |button| {
+                button.child(
+                    svg()
+                        .size(px(CHEVRON))
+                        .flex_none()
+                        .path(TICK_ICON)
+                        .text_color(ink.primary),
+                )
+            });
+
+        row = row.child(kit::rule(ink)).child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(12.))
+                .px(px(kit::ROW_INSET))
+                .py(px(14.))
+                .child(swatches)
+                .child(div().flex().child(scheme)),
+        );
         row.into_any_element()
     }
 
@@ -685,20 +718,20 @@ impl PaneFlowApp {
     fn terminal_enum_row(
         &self,
         which: TerminalDropdown,
-        title: &'static str,
-        description: &'static str,
+        copy: &search::SettingCopy,
         current_label: String,
         options: Vec<(String, Value, bool)>,
         config_key: &'static str,
         nested: bool,
+        ink: Ink,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> AnyElement {
         let is_open = self.terminal_dropdown == Some(which);
 
         let mut trigger = select_trigger(
             SharedString::from(format!("term-dd-{config_key}")),
-            title,
+            copy.title,
             is_open,
             ui,
         )
@@ -714,8 +747,8 @@ impl PaneFlowApp {
             div()
                 .flex_1()
                 .min_w_0()
-                .text_size(px(12.))
-                .text_color(ui.text)
+                .text_size(px(kit::SIZE_SM))
+                .text_color(ink.primary)
                 .truncate()
                 .child(current_label),
         )
@@ -731,7 +764,6 @@ impl PaneFlowApp {
                         }
                     }));
             for (i, (label, value, selected)) in options.into_iter().enumerate() {
-                let value_for_click = value;
                 let item = select_option((config_key, i), selected, ui)
                     .cursor(CursorStyle::Arrow)
                     .child(
@@ -739,208 +771,178 @@ impl PaneFlowApp {
                             .flex_1()
                             .min_w_0()
                             .truncate()
-                            .text_color(ui.text)
+                            .text_color(ink.primary)
                             .child(label),
                     );
                 menu = menu.option(
                     item,
                     cx.listener(move |this, _: &(), _w, cx| {
                         this.terminal_dropdown = None;
-                        this.persist_setting(nested, config_key, value_for_click.clone(), cx);
+                        this.persist_setting(nested, config_key, value.clone(), cx);
                     }),
                 );
             }
             trigger = trigger.child(deferred_select_menu(menu));
         }
 
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(16.))
-            .px(px(12.))
-            .py(px(10.))
-            .child(setting_text(ui, title, description))
-            .child(div().flex_shrink_0().child(trigger))
-            .into_any_element()
+        kit::row(
+            ink,
+            None,
+            setting_copy(copy, ink),
+            Some(trigger.into_any_element()),
+        )
+        .into_any_element()
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn terminal_toggle_row(
         &self,
         id: &'static str,
-        title: &'static str,
-        description: &'static str,
+        copy: &'static search::SettingCopy,
         current: bool,
         config_key: &'static str,
-        nested: bool,
-        ui: crate::theme::UiColors,
+        ink: Ink,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
-        let target_value = !current;
-
-        div()
-            .id(SharedString::from(format!("{id}-row")))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(16.))
-            .px(px(12.))
-            .py(px(10.))
-            .child(setting_text(ui, title, description))
-            .child(
-                toggle_switch(SharedString::from(id), title, current, ui).on_click(cx.listener(
-                    move |this, _: &ClickEvent, _window, cx| {
-                        this.persist_setting(nested, config_key, Value::Bool(target_value), cx);
-                    },
-                )),
-            )
-            .into_any_element()
+    ) -> AnyElement {
+        kit::row(
+            ink,
+            None,
+            setting_copy(copy, ink),
+            Some(
+                kit::switch(id, copy.title, current, ink)
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                        this.persist_setting(true, config_key, Value::Bool(!current), cx);
+                    }))
+                    .into_any_element(),
+            ),
+        )
+        .into_any_element()
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn settings_stepper_row(
+    fn terminal_number_row(
         &self,
         id: &'static str,
-        title: &'static str,
-        description: &'static str,
-        value: f64,
-        min: f64,
-        max: f64,
-        step: f64,
-        decimals: usize,
+        copy: &'static search::SettingCopy,
+        number: NumberStep,
         config_key: &'static str,
-        ui: crate::theme::UiColors,
+        ink: Ink,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> AnyElement {
+        let NumberStep {
+            value,
+            min,
+            max,
+            step,
+            decimals,
+        } = number;
         let factor = 10f64.powi(decimals as i32);
         let round = move |v: f64| (v.clamp(min, max) * factor).round() / factor;
-        let at_min = value <= min + f64::EPSILON;
-        let at_max = value >= max - f64::EPSILON;
-
-        let dec = cx.listener(move |this, _: &ClickEvent, _w, cx| {
-            this.persist_setting(false, config_key, json!(round(value - step)), cx);
-        });
-        let inc = cx.listener(move |this, _: &ClickEvent, _w, cx| {
-            this.persist_setting(false, config_key, json!(round(value + step)), cx);
-        });
-
-        stepper_frame(
-            ui,
-            title,
-            description,
-            format!("{value:.decimals$}"),
-            stepper_button(format!("{id}-dec"), "−", at_min, ui)
-                .when(!at_min, move |b| b.on_click(dec)),
-            stepper_button(format!("{id}-inc"), "+", at_max, ui)
-                .when(!at_max, move |b| b.on_click(inc)),
+        let can_decrease = value > min + f64::EPSILON;
+        let can_increase = value < max - f64::EPSILON;
+        let decrease = kit::step_button(
+            SharedString::from(format!("{id}-dec")),
+            format!("Decrease {}", copy.title.to_lowercase()),
+            REMOVE_ICON,
+            can_decrease,
+            ink,
         )
+        .when(can_decrease, |button| {
+            button.on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                this.persist_setting(false, config_key, json!(round(value - step)), cx);
+            }))
+        });
+        let increase = kit::step_button(
+            SharedString::from(format!("{id}-inc")),
+            format!("Increase {}", copy.title.to_lowercase()),
+            ADD_ICON,
+            can_increase,
+            ink,
+        )
+        .when(can_increase, |button| {
+            button.on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                this.persist_setting(false, config_key, json!(round(value + step)), cx);
+            }))
+        });
+        kit::row(
+            ink,
+            None,
+            setting_copy(copy, ink),
+            Some(
+                kit::stepper(ink, format!("{value:.decimals$}"), decrease, increase)
+                    .into_any_element(),
+            ),
+        )
+        .into_any_element()
     }
 
     fn terminal_minimum_contrast_row(
         &self,
         step: usize,
-        ui: crate::theme::UiColors,
+        ink: Ink,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
-        let id = "term-minimum-contrast";
-        let at_min = step == 0;
-        let at_max = step + 1 >= MINIMUM_CONTRAST_STEPS.len();
+    ) -> AnyElement {
+        let last = MINIMUM_CONTRAST_STEPS.len() - 1;
+        let can_decrease = step > 0;
+        let can_increase = step < last;
         let label = MINIMUM_CONTRAST_STEPS
             .get(step)
             .map_or_else(String::new, |(label, _)| (*label).to_string());
-
         let previous = minimum_contrast_setting(step.saturating_sub(1));
-        let next = minimum_contrast_setting((step + 1).min(MINIMUM_CONTRAST_STEPS.len() - 1));
-        let dec = cx.listener(move |this, _: &ClickEvent, _w, cx| {
-            this.persist_setting(true, "minimum_contrast", previous.clone(), cx);
+        let next = minimum_contrast_setting((step + 1).min(last));
+        let decrease = kit::step_button(
+            "term-minimum-contrast-dec",
+            "Lower the minimum contrast",
+            REMOVE_ICON,
+            can_decrease,
+            ink,
+        )
+        .when(can_decrease, |button| {
+            button.on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                this.persist_setting(true, "minimum_contrast", previous.clone(), cx);
+            }))
         });
-        let inc = cx.listener(move |this, _: &ClickEvent, _w, cx| {
-            this.persist_setting(true, "minimum_contrast", next.clone(), cx);
+        let increase = kit::step_button(
+            "term-minimum-contrast-inc",
+            "Raise the minimum contrast",
+            ADD_ICON,
+            can_increase,
+            ink,
+        )
+        .when(can_increase, |button| {
+            button.on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                this.persist_setting(true, "minimum_contrast", next.clone(), cx);
+            }))
         });
-
-        stepper_frame(
-            ui,
-            search::MINIMUM_CONTRAST.title,
-            search::MINIMUM_CONTRAST.description,
-            label,
-            stepper_button(format!("{id}-dec"), "−", at_min, ui)
-                .when(!at_min, move |b| b.on_click(dec)),
-            stepper_button(format!("{id}-inc"), "+", at_max, ui)
-                .when(!at_max, move |b| b.on_click(inc)),
+        kit::row(
+            ink,
+            None,
+            setting_copy(&search::MINIMUM_CONTRAST, ink),
+            Some(kit::stepper(ink, label, decrease, increase).into_any_element()),
         )
         .into_any_element()
     }
 }
 
-fn stepper_button(
-    id: String,
-    glyph: &'static str,
-    disabled: bool,
-    ui: crate::theme::UiColors,
-) -> crate::ui_primitives::AnimatedHover {
-    let frame = div()
-        .id(SharedString::from(id.clone()))
-        .relative()
-        .flex()
-        .items_center()
-        .justify_center()
-        .w(px(24.))
-        .h(px(24.))
-        .text_size(px(15.))
-        .text_color(ui.text);
-    let button = if disabled {
-        frame
-            .opacity(0.64)
-            .child(squircle_fill(SETTINGS_CONTROL_CORNER_RADIUS, ui.subtle))
-            .animated_hover(|_, _| {})
-    } else {
-        soft_skin(
-            frame,
-            format!("{id}-squircle"),
-            SETTINGS_CONTROL_CORNER_RADIUS,
-            ui,
-        )
-    };
-    button.child(glyph)
+#[derive(Clone, Copy)]
+struct NumberStep {
+    value: f64,
+    min: f64,
+    max: f64,
+    step: f64,
+    decimals: usize,
 }
 
-fn stepper_frame(
-    ui: crate::theme::UiColors,
-    title: &'static str,
-    description: &'static str,
-    label: String,
-    decrement: crate::ui_primitives::AnimatedHover,
-    increment: crate::ui_primitives::AnimatedHover,
-) -> gpui::Div {
-    div()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(16.))
-        .px(px(12.))
-        .py(px(10.))
-        .child(setting_text(ui, title, description))
-        .child(
-            div()
-                .flex_shrink_0()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(6.))
-                .child(decrement)
-                .child(
-                    div()
-                        .w(px(48.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .text_size(px(12.))
-                        .text_color(ui.text)
-                        .child(label),
-                )
-                .child(increment),
-        )
+fn setting_copy(copy: &search::SettingCopy, ink: Ink) -> Text {
+    Text::new(copy.title).line(kit::line(ink, copy.description))
+}
+
+fn terminal_section(title: &'static str, card: SearchCard, top_gap: f32, ink: Ink) -> AnyElement {
+    let (matched, rows) = card.into_rows();
+    Block::new(title)
+        .top_gap(top_gap)
+        .found(matched)
+        .child(kit::section(ink, title, None, kit::search_group(ink, rows)))
+        .finish()
 }
 
 #[cfg(test)]

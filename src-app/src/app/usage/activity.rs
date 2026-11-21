@@ -10,8 +10,6 @@ use super::model::{InventoryEntry, display_dir};
 
 pub(crate) const WEEKS: usize = 53;
 pub(crate) const LEVEL_MIX: [f32; 4] = [0.30, 0.52, 0.76, 1.0];
-pub(crate) const NO_ACTIVITY: &str =
-    "No activity yet. Paneflow counts turns from agents that run in its panes.";
 pub(crate) const NO_TOKEN_DATA: &str = "No token data for this agent.";
 const MONTHS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",

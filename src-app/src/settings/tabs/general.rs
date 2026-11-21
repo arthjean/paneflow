@@ -8,15 +8,18 @@ use serde_json::Value;
 use crate::GeneralDropdown;
 use crate::PaneFlowApp;
 use crate::settings::components::{
-    Logo, deferred_select_menu, render_logo, section_header, select_chevron, select_menu,
-    select_option, select_trigger, setting_text, toggle_row_with,
+    Logo, deferred_select_menu, render_logo, select_chevron, select_menu, select_option,
+    select_trigger,
 };
+use crate::settings::kit::{self, Ink, Text};
 use crate::settings::search::{self, Block, SearchCard};
 use crate::ui_primitives::AccessibleControlExt;
 
 type SelectOption = (String, Option<Logo>, Value, bool);
 
 const OPTION_LOGO_SIZE: f32 = 14.;
+const GENERAL_INTRO: &str =
+    "Your editor and shell, what quitting does, and when Paneflow notifies you.";
 
 #[derive(Debug, PartialEq, Eq)]
 enum OptionLead {
@@ -34,8 +37,24 @@ fn option_lead(icon: Option<Logo>, any_logo: bool) -> OptionLead {
 }
 
 impl PaneFlowApp {
+    pub(crate) fn render_general_heading(&self, title: gpui::Div) -> AnyElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .px(px(kit::TEXT_INSET))
+            .pb(px(kit::SECTION_GAP))
+            .child(title)
+            .child(kit::page_description(
+                Ink::of(crate::theme::ui_colors()),
+                GENERAL_INTRO,
+            ))
+            .into_any_element()
+    }
+
     pub(crate) fn render_general_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = crate::theme::ui_colors();
+        let ink = Ink::of(ui);
         let config = &self.cached_config;
 
         let editor_value = config
@@ -61,12 +80,12 @@ impl PaneFlowApp {
 
         let editor_row = self.general_select_row(
             GeneralDropdown::Editor,
-            search::DEFAULT_EDITOR.title,
-            search::DEFAULT_EDITOR.description,
+            &search::DEFAULT_EDITOR,
             editor_label,
             editor_icon(&editor_value),
             editor_opts,
             "external_editor",
+            ink,
             ui,
             cx,
         );
@@ -116,12 +135,12 @@ impl PaneFlowApp {
 
         let shell_row = self.general_select_row(
             GeneralDropdown::Shell,
-            search::DEFAULT_SHELL.title,
-            search::DEFAULT_SHELL.description,
+            &search::DEFAULT_SHELL,
             shell_label,
             None,
             shell_opts,
             "default_shell",
+            ink,
             ui,
             cx,
         );
@@ -149,38 +168,39 @@ impl PaneFlowApp {
             .unwrap_or_default();
         let quit_row = self.general_select_row(
             GeneralDropdown::OnQuit,
-            search::ON_QUIT.title,
-            search::ON_QUIT.description,
+            &search::ON_QUIT,
             quit_label,
             None,
             quit_opts,
             "on_quit",
+            ink,
             ui,
             cx,
         );
 
+        let (matched, rows) = SearchCard::new()
+            .row(&search::DEFAULT_EDITOR, editor_row)
+            .row(&search::DEFAULT_SHELL, shell_row)
+            .row(&search::ON_QUIT, quit_row)
+            .into_rows();
         let defaults_section = Block::new("Defaults")
-            .child(section_header(ui, "Defaults"))
-            .card(
-                SearchCard::new(ui)
-                    .row(&search::DEFAULT_EDITOR, editor_row)
-                    .row(&search::DEFAULT_SHELL, shell_row)
-                    .row(&search::ON_QUIT, quit_row),
-            )
+            .found(matched)
+            .child(kit::section(
+                ink,
+                "Defaults",
+                None,
+                kit::search_group(ink, rows),
+            ))
             .finish();
 
         div()
             .flex()
             .flex_col()
             .child(defaults_section)
-            .child(self.render_notifications_section(ui, cx))
+            .child(self.render_notifications_section(ink, cx))
     }
 
-    fn render_notifications_section(
-        &self,
-        ui: crate::theme::UiColors,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn render_notifications_section(&self, ink: Ink, cx: &mut Context<Self>) -> AnyElement {
         let enabled = self.cached_config.agent_panel.as_ref().is_some_and(|p| {
             p.resolved_notify_when_agent_waiting() != NotifyWhenAgentWaiting::Never
         });
@@ -189,36 +209,36 @@ impl PaneFlowApp {
         } else {
             Value::String("PrimaryScreen".to_string())
         };
-
-        Block::new("Notifications")
-            .top_gap(24.)
-            .child(section_header(ui, "Notifications"))
-            .card(
-                SearchCard::new(ui).row(
-                    &search::NATIVE_NOTIFICATIONS,
-                    toggle_row_with(
-                        search::NATIVE_NOTIFICATIONS.title,
-                        search::NATIVE_NOTIFICATIONS.description,
-                        None,
-                        ui,
-                        crate::settings::components::toggle_switch(
-                            "row-native-notifications",
-                            search::NATIVE_NOTIFICATIONS.title,
-                            enabled,
-                            ui,
-                        )
-                        .on_click(cx.listener(
-                            move |this, _: &ClickEvent, _window, cx| {
-                                this.persist_agent_panel_setting(
-                                    "notify_when_agent_waiting",
-                                    target.clone(),
-                                    cx,
-                                );
-                            },
-                        )),
-                    ),
+        let switch = kit::switch(
+            "row-native-notifications",
+            search::NATIVE_NOTIFICATIONS.title,
+            enabled,
+            ink,
+        )
+        .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+            this.persist_agent_panel_setting("notify_when_agent_waiting", target.clone(), cx);
+        }));
+        let (matched, rows) = SearchCard::new()
+            .row(
+                &search::NATIVE_NOTIFICATIONS,
+                kit::row(
+                    ink,
+                    None,
+                    setting_copy(&search::NATIVE_NOTIFICATIONS, ink),
+                    Some(switch.into_any_element()),
                 ),
             )
+            .into_rows();
+
+        Block::new("Notifications")
+            .top_gap(kit::SECTION_GAP)
+            .found(matched)
+            .child(kit::section(
+                ink,
+                "Notifications",
+                None,
+                kit::search_group(ink, rows),
+            ))
             .finish()
     }
 
@@ -226,12 +246,12 @@ impl PaneFlowApp {
     fn general_select_row(
         &self,
         which: GeneralDropdown,
-        title: &'static str,
-        description: &'static str,
+        copy: &'static search::SettingCopy,
         current_label: String,
         current_icon: Option<Logo>,
         options: Vec<SelectOption>,
         config_key: &'static str,
+        ink: Ink,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -245,20 +265,20 @@ impl PaneFlowApp {
             .flex_1()
             .min_w_0();
         if let Some(icon) = current_icon {
-            value = value.child(render_logo(icon.0, icon.1, px(14.), ui.text));
+            value = value.child(render_logo(icon.0, icon.1, px(14.), ink.primary));
         }
         value = value.child(
             div()
                 .min_w_0()
-                .text_size(px(12.))
-                .text_color(ui.text)
+                .text_size(px(kit::SIZE_SM))
+                .text_color(ink.primary)
                 .truncate()
                 .child(current_label),
         );
 
         let mut trigger = select_trigger(
             SharedString::from(format!("general-dd-{config_key}")),
-            title,
+            copy.title,
             is_open,
             ui,
         )
@@ -316,17 +336,18 @@ impl PaneFlowApp {
             trigger = trigger.child(deferred_select_menu(menu));
         }
 
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(16.))
-            .px(px(12.))
-            .py(px(10.))
-            .child(setting_text(ui, title, description))
-            .child(div().flex_shrink_0().child(trigger))
-            .into_any_element()
+        kit::row(
+            ink,
+            None,
+            setting_copy(copy, ink),
+            Some(trigger.into_any_element()),
+        )
+        .into_any_element()
     }
+}
+
+fn setting_copy(copy: &search::SettingCopy, ink: Ink) -> Text {
+    Text::new(copy.title).line(kit::line(ink, copy.description))
 }
 
 pub(crate) const EDITOR_PRESETS: &[(&str, &str)] = &[

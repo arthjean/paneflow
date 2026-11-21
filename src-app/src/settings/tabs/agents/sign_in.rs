@@ -13,11 +13,11 @@ use paneflow_config::schema::SpaceId;
 use paneflow_serve::usage::login::{LoginEnd, LoginInput, run_login};
 use paneflow_serve::usage::probe::{ProbeProgram, probe_work_dir, resolve_binary};
 
-use super::kit::{self, Ink, Size, Text, Tone};
 use super::{input_box_sized, usage_agent};
 use crate::PaneFlowApp;
 use crate::agent_launcher::TerminalAgent;
 use crate::settings::components::{ModalKey, modal_key};
+use crate::settings::kit::{self, Ink, Size, Text, Tone};
 
 const CODE_FIELD_HEIGHT: f32 = 28.;
 const NEW_ACCOUNT_TITLE: &str = "New account";

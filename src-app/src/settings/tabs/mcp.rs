@@ -1,20 +1,42 @@
 use gpui::{
-    ClickEvent, Context, FontWeight, InteractiveElement, IntoElement, ParentElement, SharedString,
-    Styled, div, prelude::*, px,
+    AnyElement, ClickEvent, Context, IntoElement, ParentElement, SharedString, Styled, div,
+    prelude::*, px,
 };
 
 use paneflow_mcp_install::{InstallKind, OverallState, StatusKind};
 
 use crate::PaneFlowApp;
-use crate::settings::components::{
-    SETTINGS_CONTROL_CORNER_RADIUS, raised_skin, section_header, setting_text, switch_blue,
-};
+use crate::settings::kit::{self, Ink, Size, Text, Tone};
 use crate::settings::search::{self, Block, SearchCard};
-use crate::ui_primitives::AccessibleControlExt;
+
+const PLUGINS_INTRO: &str = "Connect the coding agents on this computer to Paneflow.";
+const AGENTS_HINT: &str = "Where each detected agent stands with the bridge.";
+
+struct AgentLine {
+    label: SharedString,
+    state: SharedString,
+    is_error: bool,
+}
 
 impl PaneFlowApp {
+    pub(crate) fn render_mcp_heading(&self, title: gpui::Div) -> AnyElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .px(px(kit::TEXT_INSET))
+            .pb(px(kit::SECTION_GAP))
+            .child(title)
+            .child(kit::page_description(
+                Ink::of(crate::theme::ui_colors()),
+                PLUGINS_INTRO,
+            ))
+            .into_any_element()
+    }
+
     pub(crate) fn render_mcp_servers_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = crate::theme::ui_colors();
+        let ink = Ink::of(ui);
 
         let state = self
             .mcp_status
@@ -32,71 +54,92 @@ impl PaneFlowApp {
                 Some(OverallState::NeedsInstall) => ("Install MCP bridge".into(), true),
             }
         };
-
-        let button = raised_skin(
-            div()
-                .id("mcp-install-btn")
-                .flex_shrink_0()
-                .px(px(12.))
-                .py(px(6.))
-                .text_size(px(12.))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(gpui::white()),
-            "mcp-install-btn-squircle",
-            SETTINGS_CONTROL_CORNER_RADIUS,
-            switch_blue(),
-            enabled,
+        let tone = match state {
+            Some(OverallState::AllInstalled) => Tone::Secondary,
+            _ => Tone::Primary,
+        };
+        let button = kit::button_with(
+            "mcp-install-btn",
+            label,
+            tone,
+            Size::Small,
+            self.mcp_busy,
+            enabled || self.mcp_busy,
+            ink,
         )
-        .accessible_control(gpui::accesskit::Role::Button, label.clone())
-        .child(label)
         .when(enabled, |button| {
             button.on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
                 this.start_mcp_install(cx);
             }))
         });
 
-        let header_row = div()
-            .flex()
-            .flex_row()
-            .items_start()
-            .gap(px(16.))
-            .px(px(12.))
-            .py(px(10.))
-            .child(setting_text(
-                ui,
-                search::MCP_BRIDGE.title,
-                search::MCP_BRIDGE.description,
-            ))
-            .child(button);
-
-        let mut card = SearchCard::new(ui).row(&search::MCP_BRIDGE, header_row);
-
-        let recap_lines = self.mcp_recap_lines();
+        let mut card = SearchCard::new().row(
+            &search::MCP_BRIDGE,
+            kit::row(
+                ink,
+                None,
+                Text::new(search::MCP_BRIDGE.title)
+                    .line(kit::line(ink, search::MCP_BRIDGE.description)),
+                Some(button.into_any_element()),
+            ),
+        );
         if let Some(error) = self.mcp_install_error() {
-            card = card.fixed(
-                div()
-                    .px(px(12.))
-                    .py(px(8.))
-                    .text_size(px(12.))
-                    .text_color(danger_color())
-                    .child(error),
-            );
+            card = card.fixed(kit::row(
+                ink,
+                None,
+                Text::new("The bridge could not be installed")
+                    .danger(ink)
+                    .line(kit::line(ink, error)),
+                None,
+            ));
         }
-        for (line, is_error) in recap_lines {
-            card = card.fixed(
-                div()
-                    .px(px(12.))
-                    .py(px(6.))
-                    .text_size(px(12.))
-                    .text_color(if is_error { danger_color() } else { ui.muted })
-                    .child(line),
-            );
-        }
+        let (matched, rows) = card.into_rows();
 
-        Block::new("MCP bridge")
-            .child(section_header(ui, "MCP bridge"))
-            .card(card)
-            .finish()
+        let agents = self.mcp_agent_lines();
+        let agents_section = (!agents.is_empty()).then(|| {
+            kit::section(
+                ink,
+                "Agents",
+                Some(AGENTS_HINT),
+                kit::separated(
+                    ink,
+                    agents.into_iter().map(|line| {
+                        kit::row(
+                            ink,
+                            None,
+                            Text::new(line.label),
+                            Some(
+                                kit::line_in(
+                                    if line.is_error {
+                                        ink.danger
+                                    } else {
+                                        ink.secondary
+                                    },
+                                    line.state,
+                                )
+                                .text_right()
+                                .into_any_element(),
+                            ),
+                        )
+                        .into_any_element()
+                    }),
+                ),
+            )
+        });
+
+        let mut block = Block::new("MCP bridge")
+            .gap(kit::SECTION_GAP)
+            .found(matched)
+            .child(kit::section(
+                ink,
+                "MCP bridge",
+                None,
+                kit::search_group(ink, rows),
+            ));
+        if let Some(agents) = agents_section {
+            block = block.child(agents);
+        }
+        block.finish()
     }
 
     fn mcp_install_error(&self) -> Option<SharedString> {
@@ -106,42 +149,41 @@ impl PaneFlowApp {
         }
     }
 
-    fn mcp_recap_lines(&self) -> Vec<(SharedString, bool)> {
+    fn mcp_agent_lines(&self) -> Vec<AgentLine> {
+        let line = |label: &str, state: String, is_error: bool| AgentLine {
+            label: SharedString::from(label.to_string()),
+            state: SharedString::from(state),
+            is_error,
+        };
         if let Some(Ok(results)) = &self.mcp_install {
             return results
                 .iter()
-                .map(|r| {
-                    let (state, err) = match &r.kind {
-                        InstallKind::Installed => ("installed", false),
-                        InstallKind::Updated => ("updated", false),
-                        InstallKind::AlreadyCurrent => ("already up to date", false),
-                        InstallKind::SkippedAbsent => ("not detected", false),
-                        InstallKind::Error(e) => {
-                            return (format!("{}: error - {e}", r.label).into(), true);
-                        }
-                    };
-                    (format!("{}: {state}", r.label).into(), err)
+                .map(|r| match &r.kind {
+                    InstallKind::Installed => line(&r.label, "Installed".into(), false),
+                    InstallKind::Updated => line(&r.label, "Updated".into(), false),
+                    InstallKind::AlreadyCurrent => line(&r.label, "Up to date".into(), false),
+                    InstallKind::SkippedAbsent => line(&r.label, "Not detected".into(), false),
+                    InstallKind::Error(e) => line(&r.label, format!("Error: {e}"), true),
                 })
                 .collect();
         }
         match &self.mcp_status {
             Some(statuses) => statuses
                 .iter()
-                .map(|r| {
-                    let (state, err) = match &r.kind {
-                        StatusKind::NotDetected => ("not detected", false),
-                        StatusKind::Installed { .. } => ("installed", false),
-                        StatusKind::Stale { .. } => ("stale path - click Repair", false),
-                        StatusKind::NeedsRepair { .. } => ("needs repair - click Repair", false),
-                        StatusKind::DisabledByUser { .. } => {
-                            ("disabled in the agent config", false)
-                        }
-                        StatusKind::NotInstalled => ("not installed", false),
-                        StatusKind::Error(e) => {
-                            return (format!("{}: error - {e}", r.label).into(), true);
-                        }
-                    };
-                    (format!("{}: {state}", r.label).into(), err)
+                .map(|r| match &r.kind {
+                    StatusKind::NotDetected => line(&r.label, "Not detected".into(), false),
+                    StatusKind::Installed { .. } => line(&r.label, "Installed".into(), false),
+                    StatusKind::Stale { .. } => {
+                        line(&r.label, "Stale path, click Repair".into(), false)
+                    }
+                    StatusKind::NeedsRepair { .. } => {
+                        line(&r.label, "Needs repair, click Repair".into(), false)
+                    }
+                    StatusKind::DisabledByUser { .. } => {
+                        line(&r.label, "Disabled in the agent config".into(), false)
+                    }
+                    StatusKind::NotInstalled => line(&r.label, "Not installed".into(), false),
+                    StatusKind::Error(e) => line(&r.label, format!("Error: {e}"), true),
                 })
                 .collect(),
             None => Vec::new(),
@@ -194,8 +236,4 @@ impl PaneFlowApp {
         })
         .detach();
     }
-}
-
-fn danger_color() -> gpui::Hsla {
-    gpui::rgb(0xE0_6C_75).into()
 }

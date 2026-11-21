@@ -2,55 +2,53 @@ mod filter;
 mod motion;
 
 use gpui::{
-    AnyElement, App, ClickEvent, Context, Div, FontWeight, Hsla, InteractiveElement, IntoElement,
-    ListAlignment, ListOffset, ListState, MouseButton, ParentElement, Pixels, SharedString,
-    Stateful, StatefulInteractiveElement, Styled, Window, div, list, prelude::*, px, svg,
+    AnyElement, App, ClickEvent, Context, Div, FontWeight, InteractiveElement, IntoElement,
+    ListAlignment, ListOffset, ListState, MouseButton, ParentElement, Pixels, Stateful,
+    StatefulInteractiveElement, Styled, Window, div, list, prelude::*, px, svg,
 };
 
 use crate::keybindings::{ShortcutEntry, ShortcutGroup};
 use crate::settings::chrome::{SETTINGS_COLUMN_PADDING, settings_column};
-use crate::settings::components::{
-    CARD_BUTTON_FILL_HOVER, CARD_BUTTON_FILL_REST, CARD_PADDING_X, CARD_PADDING_Y,
-    ghost_icon_button, ghost_skin, hairline, setting_card, with_alpha,
-};
+use crate::settings::components::with_alpha;
+use crate::settings::kit::{self, Ink, Size, Tone};
 use crate::settings::search;
-use crate::ui_primitives::squircle::squircle_border;
 use crate::ui_primitives::{
-    AccessibleControlExt, BODY, FOCUS_BLUE, FilterFieldShape, FilterFieldStyle, LABEL_SM,
-    ROW_RADIUS, TooltipDelayExt, filter_field, highlight_ranges, squircle_skin, text_tooltip,
+    AccessibleControlExt, FilterFieldShape, FilterFieldStyle, TooltipDelayExt, filter_field,
+    highlight_ranges, text_tooltip,
 };
 use crate::{PaneFlowApp, config_writer, keybindings};
 
 pub(crate) use filter::{ShortcutFilter, ShortcutSection};
 pub(crate) use motion::ShortcutMotion;
 
-const SECTION_GAP: Pixels = px(24.);
+const SECTION_GAP: Pixels = px(kit::SECTION_GAP);
 const LIST_BOTTOM: Pixels = px(32.);
 const HEADING_GAP: Pixels = px(16.);
 const SEARCH_GAP: Pixels = px(20.);
 const NOTE_GAP: Pixels = px(4.);
-const NOTE_TEXT: Pixels = px(13.);
+const NOTE_TEXT: Pixels = px(kit::SIZE_MD);
 const NOTE_LINE: Pixels = px(20.);
-const SECTION_LINE: Pixels = px(16.);
+const SECTION_TITLE_LINE: Pixels = px(kit::LINE_XS);
+const SECTION_HINT_LINE: Pixels = px(kit::LINE_SM);
+const SECTION_HINT_GAP: Pixels = px(4.);
 const SECTION_TITLE_GAP: Pixels = px(8.);
-const SECTION_HINT_ALPHA: f32 = 0.7;
 const ROW_HEIGHT: Pixels = px(44.);
 const ROW_GAP: Pixels = px(16.);
 const RULE: Pixels = px(1.);
-const CONTROL_HEIGHT: Pixels = px(24.);
+const CONTROL_HEIGHT: Pixels = px(28.);
+const CONTROL_RADIUS: Pixels = px(6.);
 const CONTROL_GAP: Pixels = px(8.);
-const CONTROL_TEXT: Pixels = px(12.);
+const CONTROL_TEXT: Pixels = px(kit::SIZE_SM);
 const RECORDER_MIN_WIDTH: Pixels = px(64.);
 const RECORDER_PADDING_X: Pixels = px(10.);
-const RESET_PADDING_X: Pixels = px(8.);
-const LISTENING_TINT: f32 = 0.12;
+const LISTENING_TINT: f32 = 0.14;
 const HELD_TINT: f32 = 0.14;
 const HELD_EDGE: f32 = 0.5;
+const UNDO_ICON: &str = "icons/settings/undo.svg";
 const LABEL_MIN_WIDTH: Pixels = px(96.);
 const REVEAL_MARGIN: Pixels = px(8.);
 const EMPTY_STATE_TOP: Pixels = px(48.);
-const EMPTY_GLYPH_SIZE: Pixels = px(20.);
-const EMPTY_GLYPH_ALPHA: f32 = 0.6;
+const EMPTY_ICON: &str = "icons/settings/keyboard.svg";
 const KEY_TOGGLE_SIZE: Pixels = px(24.);
 const KEY_TOGGLE_GLYPH: Pixels = px(14.);
 const KEY_TOGGLE_ARMED_ALPHA: f32 = 0.15;
@@ -174,12 +172,12 @@ fn section_hint(group: ShortcutGroup) -> Option<String> {
 }
 
 fn section_header_height(group: ShortcutGroup) -> Pixels {
-    let lines = if group.context_hint().is_some() {
-        2.
+    let hint = if group.context_hint().is_some() {
+        SECTION_HINT_GAP + SECTION_HINT_LINE
     } else {
-        1.
+        px(0.)
     };
-    SECTION_LINE * lines + SECTION_TITLE_GAP
+    SECTION_TITLE_LINE + hint + SECTION_TITLE_GAP
 }
 
 fn section_top_gap(first: bool) -> Pixels {
@@ -189,7 +187,7 @@ fn section_top_gap(first: bool) -> Pixels {
 fn row_top_in_section(group: ShortcutGroup, first: bool, position: usize) -> Pixels {
     section_top_gap(first)
         + section_header_height(group)
-        + px(CARD_PADDING_Y)
+        + px(kit::CARD_BORDER)
         + (ROW_HEIGHT + RULE) * position as f32
 }
 
@@ -540,17 +538,18 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let ui = crate::theme::ui_colors();
+        let ink = Ink::of(ui);
         let note = self.shortcut_page_note();
         let note_color = match note {
             PageNote::Taken { .. } => ui.vc_conflict,
-            _ => ui.muted,
+            _ => ink.secondary,
         };
         let restore = self.any_shortcut_changed().then(|| {
-            ghost_icon_button(
+            kit::icon_button(
                 "restore-shortcut-defaults",
                 "Restore defaults",
-                "icons/settings/undo.svg",
-                ui,
+                UNDO_ICON,
+                ink,
             )
             .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
                 this.persist_shortcut_change(config_writer::reset_shortcuts_checked, cx);
@@ -559,6 +558,7 @@ impl PaneFlowApp {
 
         div()
             .pb(HEADING_GAP)
+            .px(px(kit::TEXT_INSET))
             .flex()
             .flex_row()
             .items_start()
@@ -583,7 +583,7 @@ impl PaneFlowApp {
                             .child(note.text()),
                     ),
             )
-            .children(restore.map(|button| div().flex_none().pt(px(4.)).child(button)))
+            .children(restore.map(|button| div().flex_none().pt(px(6.)).child(button)))
             .into_any_element()
     }
 
@@ -688,12 +688,13 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let ui = crate::theme::ui_colors();
+        let ink = Ink::of(ui);
         self.settle_shortcut_motion(window);
         self.shortcut_scroll.settle(&self.shortcut_list, window);
         let body = if self.shortcut_motion.borrow().sections().is_empty() {
-            self.render_shortcut_empty_state(ui, cx)
+            self.render_shortcut_empty_state(ink, cx)
         } else {
-            self.render_shortcut_list(ui, cx)
+            self.render_shortcut_list(ui, ink, cx)
         };
         let search = self.render_shortcut_search(ui, window, cx);
 
@@ -721,11 +722,7 @@ impl PaneFlowApp {
             .into_any_element()
     }
 
-    fn render_shortcut_empty_state(
-        &self,
-        ui: crate::theme::UiColors,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn render_shortcut_empty_state(&self, ink: Ink, cx: &mut Context<Self>) -> AnyElement {
         let query = self.shortcut_search_text(cx).trim().to_string();
         let (message, detail) = match self.shortcut_filter.sole_chord().and_then(|c| c.raw()) {
             Some(raw) => (
@@ -742,27 +739,22 @@ impl PaneFlowApp {
                 .flex_col()
                 .items_center()
                 .gap(px(10.))
-                .child(
-                    svg()
-                        .size(EMPTY_GLYPH_SIZE)
-                        .flex_none()
-                        .path("icons/settings/keyboard.svg")
-                        .text_color(with_alpha(ui.muted, EMPTY_GLYPH_ALPHA)),
-                )
+                .child(kit::disc(ink, EMPTY_ICON))
                 .child(
                     div()
                         .flex()
                         .flex_col()
                         .items_center()
                         .gap(px(2.))
-                        .text_size(BODY)
-                        .text_color(ui.muted)
-                        .child(message)
-                        .children(detail.map(|detail| {
+                        .child(
                             div()
-                                .text_color(with_alpha(ui.muted, ui.muted.a * SECTION_HINT_ALPHA))
-                                .child(detail)
-                        })),
+                                .text_size(px(kit::SIZE_MD))
+                                .line_height(px(kit::LINE_MD))
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(ink.primary)
+                                .child(message),
+                        )
+                        .children(detail.map(|detail| kit::line(ink, detail))),
                 ),
         )
         .flex_none()
@@ -772,6 +764,7 @@ impl PaneFlowApp {
     fn render_shortcut_list(
         &self,
         ui: crate::theme::UiColors,
+        ink: Ink,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let rows = list(
@@ -794,10 +787,10 @@ impl PaneFlowApp {
                 let rows = section
                     .rows
                     .iter()
-                    .map(|row| (row.amount, this.render_shortcut_row(ui, &row.hit, cx)))
+                    .map(|row| (row.amount, this.render_shortcut_row(ui, ink, &row.hit, cx)))
                     .collect();
                 list_column(shortcut_section(
-                    ui,
+                    ink,
                     section.group,
                     &title,
                     rows,
@@ -833,6 +826,7 @@ impl PaneFlowApp {
     fn render_shortcut_row(
         &self,
         ui: crate::theme::UiColors,
+        ink: Ink,
         hit: &filter::ShortcutHit,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -860,33 +854,20 @@ impl PaneFlowApp {
         };
 
         let reset = entry.customized.then(|| {
-            ghost_skin(
-                div()
-                    .id(("shortcut-reset", idx))
-                    .flex_none()
-                    .h(CONTROL_HEIGHT)
-                    .px(RESET_PADDING_X)
-                    .flex()
-                    .items_center()
-                    .text_size(CONTROL_TEXT)
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(ui.muted),
-                format!("shortcut-reset-{idx}-squircle"),
-                ROW_RADIUS,
-                ui,
+            kit::button(
+                ("shortcut-reset", idx),
+                "Reset",
+                Tone::Ghost,
+                Size::Small,
+                ink,
             )
-            .accessible_control(
-                gpui::accesskit::Role::Button,
-                format!("Reset {} to its default", entry.description),
-            )
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .aria_label(format!("Reset {} to its default", entry.description))
             .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                 this.persist_shortcut_change(
                     move || config_writer::reset_shortcut(action_name),
                     cx,
                 );
             }))
-            .child("Reset")
         });
 
         let recorder_label = if recording {
@@ -894,10 +875,10 @@ impl PaneFlowApp {
         } else {
             format!("Change {}, now {shown}", entry.description)
         };
-        let recorder = recorder(("shortcut-recorder", idx), &face, ui)
+        let recorder = recorder(("shortcut-recorder", idx), &face, ui, ink)
             .accessible_control(gpui::accesskit::Role::Button, recorder_label)
             .when(keyboard_focused, |button| {
-                button.child(crate::app::usage::focus_ring(ROW_RADIUS, ui))
+                button.child(crate::app::usage::focus_ring(CONTROL_RADIUS, ui))
             })
             .when(recording, |button| {
                 button.on_mouse_down_out(cx.listener(move |this, _, _window, cx| {
@@ -927,7 +908,7 @@ impl PaneFlowApp {
             idx,
             entry.description.clone(),
             &hit.label,
-            ui,
+            ink,
             div()
                 .flex_none()
                 .flex()
@@ -954,24 +935,24 @@ fn recorder(
     id: impl Into<gpui::ElementId>,
     face: &RecorderFace,
     ui: crate::theme::UiColors,
+    ink: Ink,
 ) -> Stateful<Div> {
-    let id: gpui::ElementId = id.into();
-    let blue: Hsla = gpui::rgb(FOCUS_BLUE).into();
     let (resting, hovered, edge) = match face {
-        RecorderFace::Keys { .. } => (
-            with_alpha(ui.text, CARD_BUTTON_FILL_REST),
-            Some(with_alpha(ui.text, CARD_BUTTON_FILL_HOVER)),
+        RecorderFace::Keys { .. } => (ink.well, Some(ink.well_hover), None),
+        RecorderFace::Listening => (
+            with_alpha(ink.accent, LISTENING_TINT),
             None,
+            Some(ink.accent),
         ),
-        RecorderFace::Listening => (with_alpha(blue, LISTENING_TINT), None, Some(blue)),
         RecorderFace::Held(_) => (
             with_alpha(ui.vc_conflict, HELD_TINT),
             None,
             Some(with_alpha(ui.vc_conflict, HELD_EDGE)),
         ),
     };
-    let frame = div()
-        .id(id.clone())
+    let button = div()
+        .id(id.into())
+        .relative()
         .flex_none()
         .h(CONTROL_HEIGHT)
         .min_w(RECORDER_MIN_WIDTH)
@@ -981,37 +962,31 @@ fn recorder(
         .items_center()
         .justify_center()
         .gap(px(4.))
+        .rounded(CONTROL_RADIUS)
+        .border_1()
+        .border_color(edge.unwrap_or(gpui::transparent_black()))
+        .bg(resting)
         .cursor_pointer()
+        .when_some(hovered, |button, hovered| {
+            button
+                .hover(move |style| style.bg(hovered))
+                .active(move |style| style.bg(ink.well_pressed))
+        })
         .text_size(CONTROL_TEXT)
         .font_weight(FontWeight::MEDIUM);
-    let button = squircle_skin(
-        frame,
-        SharedString::from(format!("{id}-squircle")),
-        ROW_RADIUS,
-        Some(resting),
-        hovered,
-    )
-    .when_some(edge, |button, edge| {
-        button.child(
-            div()
-                .absolute()
-                .inset_0()
-                .child(squircle_border(ROW_RADIUS, px(1.), edge)),
-        )
-    });
     match face {
         RecorderFace::Keys { chords, .. } if chords.is_empty() => button
-            .text_color(ui.muted)
+            .text_color(ink.tertiary)
             .child(div().relative().child(UNASSIGNED_FACE)),
         RecorderFace::Keys { chords, matched } => {
-            let mut button = button.text_color(ui.text);
+            let mut button = button.text_color(ink.primary);
             for (position, chord) in chords.iter().enumerate() {
                 if position > 0 {
                     button = button.child(
                         div()
                             .relative()
                             .font_weight(FontWeight::NORMAL)
-                            .text_color(ui.muted)
+                            .text_color(ink.tertiary)
                             .child("or"),
                     );
                 }
@@ -1029,7 +1004,7 @@ fn recorder(
             button
         }
         RecorderFace::Listening => button
-            .text_color(ui.text)
+            .text_color(ink.primary)
             .child(div().relative().child(LISTENING_FACE)),
         RecorderFace::Held(keys) => button
             .text_color(ui.vc_conflict)
@@ -1041,12 +1016,12 @@ fn shortcut_row(
     idx: usize,
     label: String,
     highlights: &[std::ops::Range<usize>],
-    ui: crate::theme::UiColors,
+    ink: Ink,
     control: impl IntoElement,
 ) -> Div {
     div()
         .h(ROW_HEIGHT)
-        .px(px(CARD_PADDING_X))
+        .px(px(kit::ROW_INSET))
         .flex()
         .flex_row()
         .items_center()
@@ -1056,9 +1031,10 @@ fn shortcut_row(
                 .id(("shortcut-label", idx))
                 .flex_1()
                 .min_w(LABEL_MIN_WIDTH)
-                .text_size(BODY)
+                .text_size(px(kit::SIZE_MD))
+                .line_height(px(kit::LINE_MD))
                 .font_weight(FontWeight::MEDIUM)
-                .text_color(ui.text)
+                .text_color(ink.primary)
                 .truncate()
                 .delayed_tooltip(text_tooltip(label.clone()))
                 .child(highlight_ranges(label, highlights.to_vec())),
@@ -1096,7 +1072,7 @@ fn folded(element: impl IntoElement, height: Pixels, amount: f32, fade: bool) ->
 }
 
 fn shortcut_section(
-    ui: crate::theme::UiColors,
+    ink: Ink,
     group: ShortcutGroup,
     title: &[std::ops::Range<usize>],
     rows: Vec<(f32, AnyElement)>,
@@ -1106,25 +1082,28 @@ fn shortcut_section(
     let header = div()
         .flex_none()
         .h(section_header_height(group))
+        .px(px(kit::TEXT_INSET))
         .pb(SECTION_TITLE_GAP)
         .flex()
         .flex_col()
+        .gap(SECTION_HINT_GAP)
         .min_w_0()
         .child(
             div()
-                .h(SECTION_LINE)
-                .text_size(LABEL_SM)
-                .line_height(SECTION_LINE)
-                .text_color(ui.muted)
+                .h(SECTION_TITLE_LINE)
+                .text_size(px(kit::SIZE_XS))
+                .line_height(SECTION_TITLE_LINE)
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(ink.tertiary)
                 .truncate()
                 .child(highlight_ranges(group.label().to_string(), title.to_vec())),
         )
         .children(section_hint(group).map(|hint| {
             div()
-                .h(SECTION_LINE)
-                .text_size(LABEL_SM)
-                .line_height(SECTION_LINE)
-                .text_color(with_alpha(ui.muted, ui.muted.a * SECTION_HINT_ALPHA))
+                .h(SECTION_HINT_LINE)
+                .text_size(px(kit::SIZE_SM))
+                .line_height(SECTION_HINT_LINE)
+                .text_color(ink.tertiary)
                 .truncate()
                 .child(hint)
         }));
@@ -1135,19 +1114,17 @@ fn shortcut_section(
         .when(last, |d| d.pb(LIST_BOTTOM))
         .when(amount < 1., |section| section.opacity(amount))
         .child(folded(header, section_header_height(group), amount, false))
-        .child(shortcut_card(ui, rows, amount))
+        .child(shortcut_card(ink, rows, amount))
 }
 
-fn shortcut_card(ui: crate::theme::UiColors, rows: Vec<(f32, AnyElement)>, amount: f32) -> Div {
+fn shortcut_card(ink: Ink, rows: Vec<(f32, AnyElement)>, amount: f32) -> Div {
     let fade_rows = amount >= 1.;
-    let mut card = setting_card(ui)
-        .pt(px(CARD_PADDING_Y) * amount)
-        .pb(px(CARD_PADDING_Y) * amount);
+    let mut card = kit::group(ink);
     let mut above: Option<f32> = None;
     for (row_amount, row) in rows {
         if let Some(above) = above {
             let rule = above.min(row_amount);
-            card = card.child(folded(hairline(ui), RULE, rule, fade_rows));
+            card = card.child(folded(kit::rule(ink), RULE, rule, fade_rows));
         }
         card = card.child(folded(row, ROW_HEIGHT, row_amount, fade_rows));
         above = Some(row_amount);
@@ -1262,6 +1239,7 @@ mod tests {
             _cx: &mut Context<Self>,
         ) -> impl IntoElement {
             let ui = crate::theme::ui_colors();
+            let ink = Ink::of(ui);
             list(self.state.clone(), move |index, _window, _cx| {
                 let group = PROBE_GROUPS[index];
                 let rows = (0..3)
@@ -1270,7 +1248,7 @@ mod tests {
                             index * 10 + row,
                             format!("action {row}"),
                             &[],
-                            ui,
+                            ink,
                             recorder(
                                 ("probe-recorder", index * 10 + row),
                                 &RecorderFace::Keys {
@@ -1278,6 +1256,7 @@ mod tests {
                                     matched: vec![0],
                                 },
                                 ui,
+                                ink,
                             ),
                         )
                         .debug_selector(move || format!("probe-row-{index}-{row}"))
@@ -1287,7 +1266,7 @@ mod tests {
                     .collect();
                 list_column(
                     shortcut_section(
-                        ui,
+                        ink,
                         group,
                         &[],
                         rows,

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use gpui::{
     AnyElement, ClickEvent, Context, CursorStyle, InteractiveElement, IntoElement, KeyDownEvent,
-    ParentElement, SharedString, StatefulInteractiveElement, Styled, div, prelude::*, px, rgb, svg,
+    ParentElement, SharedString, StatefulInteractiveElement, Styled, div, prelude::*, px, svg,
 };
 use paneflow_agent_config::usage::accounts::{UsageAgent, account_dir_key, canonical_account_dir};
 use paneflow_config::schema::{SpaceConfig, SpaceId};
@@ -13,18 +13,17 @@ use crate::PaneFlowApp;
 use crate::agent_launcher::TerminalAgent;
 use crate::app::usage::model::AgentAccountRow;
 use crate::settings::components::{
-    CARD_PADDING_X, CARD_PADDING_Y, ModalKey, card_button, deferred_select_menu, hairline_inset,
-    modal_key, primary_button, render_logo, section_header, select_chevron, select_menu,
-    select_option, select_trigger, setting_card, with_alpha,
+    ModalKey, deferred_select_menu, modal_key, select_chevron, select_menu, select_option,
+    select_trigger, with_alpha,
 };
+use crate::settings::kit::{self, Ink, Size, Text, Tone};
 use crate::settings::tabs::agents::input_box;
-use crate::settings::tabs::spaces::{HintTone, render_hint};
-use crate::ui_primitives::{AccessibleControlExt, BODY, LABEL_SM};
+use crate::settings::tabs::spaces::{HintTone, hint_line};
+use crate::ui_primitives::{AccessibleControlExt, LABEL_SM};
 
-const AGENT_LOGO: f32 = 18.;
-const SELECT_WIDTH: f32 = 220.;
-const ROW_PADDING_Y: f32 = 10.;
-const ROW_GAP: f32 = 12.;
+const SELECT_WIDTH: f32 = 200.;
+const CODE_ROW_PADDING_BOTTOM: f32 = 12.;
+const ACCOUNTS_HINT: &str = "The account each agent signs in with in this space.";
 const ADD_ICON: &str = "icons/settings/add-01.svg";
 
 pub(crate) const ACCOUNT_AGENTS: [(UsageAgent, TerminalAgent); 3] = [
@@ -301,6 +300,7 @@ impl PaneFlowApp {
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
+        let ink = Ink::of(ui);
         let home = dirs::home_dir();
         let shown: Vec<(UsageAgent, TerminalAgent)> = ACCOUNT_AGENTS
             .into_iter()
@@ -312,20 +312,18 @@ impl PaneFlowApp {
         if shown.is_empty() {
             return None;
         }
-        let mut card = setting_card(ui).py(px(CARD_PADDING_Y));
-        for (index, (usage, agent)) in shown.into_iter().enumerate() {
-            if index > 0 {
-                card = card.child(hairline_inset(ui));
-            }
-            card = card.child(self.render_space_account_row(space, usage, agent, ui, cx));
-        }
+        let rows: Vec<AnyElement> = shown
+            .into_iter()
+            .map(|(usage, agent)| self.render_space_account_row(space, usage, agent, ui, ink, cx))
+            .collect();
         Some(
-            div()
-                .flex()
-                .flex_col()
-                .child(section_header(ui, "Accounts"))
-                .child(card)
-                .into_any_element(),
+            kit::section(
+                ink,
+                "Accounts",
+                Some(ACCOUNTS_HINT),
+                kit::separated(ink, rows),
+            )
+            .into_any_element(),
         )
     }
 
@@ -335,6 +333,7 @@ impl PaneFlowApp {
         usage: UsageAgent,
         agent: TerminalAgent,
         ui: crate::theme::UiColors,
+        ink: Ink,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let home = dirs::home_dir();
@@ -355,24 +354,26 @@ impl PaneFlowApp {
         let tag = agent.tag();
         let space_key = space.id.to_string();
         let mut controls = div().flex().flex_row().items_center().gap(px(8.));
-        let mut lines: Vec<AnyElement> = Vec::new();
+        let mut text = Text::new(agent.display_name());
         match progress {
             Some(progress) => {
-                lines.push(render_hint(
+                text = text.line(hint_line(
+                    ink,
                     if progress.linked {
                         "Finish signing in in your browser"
                     } else {
                         "Starting the sign-in…"
                     },
                     HintTone::Preview,
-                    ui,
                 ));
                 if progress.linked {
                     controls = controls.child(
-                        card_button(
-                            format!("space-account-open-{space_key}-{tag}"),
+                        kit::button(
+                            SharedString::from(format!("space-account-open-{space_key}-{tag}")),
                             "Open the page",
-                            ui,
+                            Tone::Secondary,
+                            Size::Small,
+                            ink,
                         )
                         .on_click(cx.listener(
                             |this, _: &ClickEvent, _w, cx| {
@@ -382,10 +383,12 @@ impl PaneFlowApp {
                     );
                 }
                 controls = controls.child(
-                    card_button(
-                        format!("space-account-cancel-{space_key}-{tag}"),
+                    kit::button(
+                        SharedString::from(format!("space-account-cancel-{space_key}-{tag}")),
                         "Cancel",
-                        ui,
+                        Tone::Ghost,
+                        Size::Small,
+                        ink,
                     )
                     .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
                         this.cancel_agent_sign_in(cx);
@@ -393,13 +396,15 @@ impl PaneFlowApp {
                 );
             }
             None => {
-                lines.push(render_hint(state.text.clone(), state.tone, ui));
+                text = text.line(hint_line(ink, state.text.clone(), state.tone));
                 if let Some(dir) = state.sign_in.clone() {
                     controls = controls.child(
-                        card_button(
-                            format!("space-account-sign-in-{space_key}-{tag}"),
+                        kit::button(
+                            SharedString::from(format!("space-account-sign-in-{space_key}-{tag}")),
                             "Sign in",
-                            ui,
+                            Tone::Secondary,
+                            Size::Small,
+                            ink,
                         )
                         .on_click(cx.listener(
                             move |this, _: &ClickEvent, _w, cx| {
@@ -410,8 +415,8 @@ impl PaneFlowApp {
                 }
             }
         }
-        if let Some((line, action)) = self.space_hooks_state(space, agent, ui, cx) {
-            lines.push(line);
+        if let Some((line, action)) = self.space_hooks_state(space, agent, ink, cx) {
+            text = text.line(line);
             if let Some(action) = action {
                 controls = controls.child(action);
             }
@@ -427,45 +432,12 @@ impl PaneFlowApp {
             ui,
             cx,
         ));
-        let row = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(ROW_GAP))
-            .px(px(CARD_PADDING_X))
-            .py(px(ROW_PADDING_Y))
-            .child(
-                div()
-                    .flex_none()
-                    .size(px(AGENT_LOGO))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(render_logo(
-                        agent.icon_path(),
-                        agent.icon_multicolor(),
-                        px(AGENT_LOGO),
-                        agent.accent().map(|c| rgb(c).into()).unwrap_or(ui.text),
-                    )),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(2.))
-                    .child(
-                        div()
-                            .truncate()
-                            .text_size(BODY)
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .text_color(ui.text)
-                            .child(agent.display_name()),
-                    )
-                    .children(lines),
-            )
-            .child(controls);
+        let row = kit::wide_row(
+            ink,
+            Some(kit::mark_tile(agent, kit::LEAD, ink)),
+            text,
+            Some(controls.into_any_element()),
+        );
         let code_open = progress.is_some_and(|progress| progress.code_open);
         if !code_open {
             return row.into_any_element();
@@ -486,9 +458,9 @@ impl PaneFlowApp {
                     .flex_row()
                     .items_center()
                     .gap(px(8.))
-                    .pl(px(CARD_PADDING_X + AGENT_LOGO + ROW_GAP))
-                    .pr(px(CARD_PADDING_X))
-                    .pb(px(ROW_PADDING_Y))
+                    .pl(px(kit::COLUMN_INSET))
+                    .pr(px(kit::ROW_INSET))
+                    .pb(px(CODE_ROW_PADDING_BOTTOM))
                     .child(
                         div()
                             .id(SharedString::from(format!(
@@ -505,13 +477,20 @@ impl PaneFlowApp {
                             .child(input_box(self.agent_sign_in_code_input.clone(), true, ui)),
                     )
                     .when(typed, |line| {
-                        line.child(primary_button(
-                            "space-account-code-send",
-                            "Continue",
-                            cx.listener(|this, _: &ClickEvent, _w, cx| {
-                                this.submit_sign_in_code(cx);
-                            }),
-                        ))
+                        line.child(
+                            kit::button(
+                                "space-account-code-send",
+                                "Continue",
+                                Tone::Primary,
+                                Size::Small,
+                                ink,
+                            )
+                            .on_click(cx.listener(
+                                |this, _: &ClickEvent, _w, cx| {
+                                    this.submit_sign_in_code(cx);
+                                },
+                            )),
+                        )
                     }),
             )
             .into_any_element()
@@ -521,7 +500,7 @@ impl PaneFlowApp {
         &self,
         space: &SpaceConfig,
         agent: TerminalAgent,
-        ui: crate::theme::UiColors,
+        ink: Ink,
         cx: &mut Context<Self>,
     ) -> Option<(AnyElement, Option<AnyElement>)> {
         let slug = agent.runtime().slug;
@@ -534,7 +513,7 @@ impl PaneFlowApp {
         let key = (space.id.clone(), slug.to_string());
         if self.space_integrations.busy.as_ref() == Some(&key) {
             return Some((
-                render_hint("Adding Paneflow's hooks…", HintTone::Preview, ui),
+                hint_line(ink, "Adding Paneflow's hooks…", HintTone::Preview),
                 None,
             ));
         }
@@ -549,14 +528,16 @@ impl PaneFlowApp {
             (None, false) => return None,
         };
         let id = space.id.clone();
-        let action = card_button(
-            format!("space-account-hooks-{}-{slug}", space.id),
+        let action = kit::button(
+            SharedString::from(format!("space-account-hooks-{}-{slug}", space.id)),
             if error.is_some() {
                 "Retry"
             } else {
                 "Add hooks"
             },
-            ui,
+            Tone::Secondary,
+            Size::Small,
+            ink,
         )
         .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
             this.retry_space_integration(&id, slug, cx);
@@ -567,7 +548,7 @@ impl PaneFlowApp {
         } else {
             HintTone::Warning
         };
-        Some((render_hint(text, tone, ui), Some(action)))
+        Some((hint_line(ink, text, tone), Some(action)))
     }
 
     #[allow(clippy::too_many_arguments)]

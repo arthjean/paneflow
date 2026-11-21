@@ -457,6 +457,16 @@ impl PaneFlowApp {
             self.render_workspaces_heading(title_text, cx)
         } else if section == SettingsSection::Shortcuts {
             self.render_shortcuts_heading(title_text, cx)
+        } else if section == SettingsSection::Worktrees {
+            self.render_worktrees_heading(title_text)
+        } else if section == SettingsSection::Terminal {
+            self.render_terminal_heading(title_text)
+        } else if section == SettingsSection::Appearance {
+            self.render_appearance_heading(title_text)
+        } else if section == SettingsSection::General {
+            self.render_general_heading(title_text)
+        } else if section == SettingsSection::McpServers {
+            self.render_mcp_heading(title_text)
         } else {
             title_text.pb(px(20.)).into_any_element()
         };

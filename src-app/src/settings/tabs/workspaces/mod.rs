@@ -3,7 +3,7 @@ mod editor;
 
 use gpui::{
     AnyElement, ClickEvent, Context, CursorStyle, InteractiveElement, IntoElement, ParentElement,
-    SharedString, StatefulInteractiveElement, Styled, Window, div, prelude::*, px, svg,
+    SharedString, StatefulInteractiveElement, Styled, Window, div, prelude::*, px,
 };
 use paneflow_config::schema::{
     CommandDefinition, CommandTarget, SurfaceDefinition, WorkspaceDefinition,
@@ -12,34 +12,28 @@ use paneflow_config::schema::{
 use crate::PaneFlowApp;
 use crate::agent_launcher::TerminalAgent;
 use crate::app::workspace_ops::templates::*;
-use crate::settings::components::{
-    CARD_BUTTON_FILL_HOVER, CARD_BUTTON_FILL_REST, inverse_fill, raised_icon_button, setting_card,
-    settings_breadcrumb, with_alpha,
-};
+use crate::settings::components::{KeyboardStopExt, settings_breadcrumb};
+use crate::settings::kit::{self, Ink, Size, Text, Tone};
 use crate::settings::search::Block;
-use crate::settings::tabs::spaces::{HintTone, render_hint};
-use crate::ui_primitives::{
-    AccessibleControlExt, BODY, BODY_EMPHASIS, LABEL_SM, ROW_RADIUS, TITLE, squircle_skin,
-};
+use crate::settings::tabs::spaces::{HintTone, hint_line};
+use crate::ui_primitives::AccessibleControlExt;
 
 const BLOCK: &str = "Workspace templates";
 const INTRO: &str = "Each template opens a project with its agents, dev servers, and shells \
      already laid out.";
-const INTRO_MAX_WIDTH: f32 = 520.;
 const WELCOME_TITLE: &str = "Open your whole setup in one click";
 const WELCOME_BODY: &str = "Save the panes you start on every project, with their agents and \
      commands, and launch them together next time.";
 const WELCOME_TEXT_WIDTH: f32 = 380.;
 const DEFAULT_SERVER_COMMAND: &str = "bun dev";
-const LIST_INSET: f32 = 6.;
-const ROW_PADDING_X: f32 = 10.;
-const ROW_PADDING_Y: f32 = 9.;
-const ROW_GAP: f32 = 12.;
 const ROW_LOGO: f32 = 14.;
 const ROW_LOGO_LIMIT: usize = 3;
 const CHIP_GLYPH_WIDTH: f32 = 16.;
 const CHIP_GLYPH_HEIGHT: f32 = 12.;
 const CHIP_PADDING_X: f32 = 12.;
+const CHIP_HEIGHT: f32 = 32.;
+const CHIP_RADIUS: f32 = 8.;
+const ADD_ICON: &str = "icons/settings/add-01.svg";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TemplateNoticeAt {
@@ -126,34 +120,49 @@ impl TemplatePreset {
 impl PaneFlowApp {
     pub(crate) fn render_workspaces_content(&self, cx: &mut Context<Self>) -> AnyElement {
         let ui = crate::theme::ui_colors();
+        let ink = Ink::of(ui);
         if self.workspace_template_detail_open
             && let Some(idx) = self.selected_workspace_template_index()
         {
-            return self.render_workspace_template_detail(idx, ui, cx);
+            return self.render_workspace_template_detail(idx, ui, ink, cx);
         }
 
         let templates = self.workspace_template_indices();
         if templates.is_empty() {
             return Block::new(BLOCK)
-                .child(self.render_workspaces_welcome(ui, cx))
+                .child(self.render_workspaces_welcome(ui, ink, cx))
                 .finish();
         }
-        let mut list = setting_card(ui).p(px(LIST_INSET)).gap(px(2.));
-        for idx in templates {
-            list = list.child(self.render_workspace_template_row(idx, ui, cx));
+        let mut list = kit::group(ink);
+        let rows = templates.len() + 1;
+        for (position, idx) in templates.into_iter().enumerate() {
+            list = list
+                .child(self.render_workspace_template_row(
+                    idx,
+                    kit::Place::at(position, rows),
+                    ui,
+                    ink,
+                    cx,
+                ))
+                .child(kit::rule(ink));
         }
-        Block::new(BLOCK)
-            .child(
-                div()
-                    .pb(px(16.))
-                    .px(px(2.))
-                    .max_w(px(INTRO_MAX_WIDTH))
-                    .text_size(BODY)
-                    .text_color(ui.muted)
-                    .child(INTRO),
+        list = list.child(
+            kit::link_row(
+                "workspace-template-create",
+                ink,
+                Some(kit::disc(ink, ADD_ICON)),
+                Text::new("New template"),
+                kit::Place::Last,
             )
-            .child(list)
-            .finish()
+            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                this.create_workspace_template(TemplatePreset::Blank, cx);
+                let input = this.workspace_template_name_input.clone();
+                input.update(cx, |input, cx| input.select_all_text(cx));
+                let focus = input.read(cx).focus_handle.clone();
+                window.focus(&focus, cx);
+            })),
+        );
+        Block::new(BLOCK).child(list).finish()
     }
 
     pub(crate) fn render_workspaces_heading(
@@ -162,7 +171,7 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let ui = crate::theme::ui_colors();
-        let (fill, ink) = inverse_fill(ui);
+        let ink = Ink::of(ui);
         if self.workspace_template_detail_open
             && let Some(idx) = self.selected_workspace_template_index()
         {
@@ -178,13 +187,14 @@ impl PaneFlowApp {
                     ))
                 })
                 .unwrap_or_default();
-            let launch = raised_icon_button(
+            let launch = kit::button_with(
                 "workspace-template-launch",
                 "Launch",
-                "icons/settings/play.svg",
-                fill,
-                ink,
+                Tone::Primary,
+                Size::Medium,
+                false,
                 launchable,
+                ink,
             )
             .when(launchable, |button| {
                 button.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
@@ -196,7 +206,8 @@ impl PaneFlowApp {
                 .flex_row()
                 .items_center()
                 .gap(px(12.))
-                .pb(px(20.))
+                .px(px(kit::TEXT_INSET))
+                .pb(px(kit::SECTION_GAP))
                 .child(settings_breadcrumb(
                     "workspaces-breadcrumb",
                     "Workspaces",
@@ -210,40 +221,23 @@ impl PaneFlowApp {
                 .child(launch)
                 .into_any_element();
         }
-        if self.workspace_template_indices().is_empty() {
-            return title.pb(px(20.)).into_any_element();
-        }
-        let create = raised_icon_button(
-            "workspace-template-create",
-            "New template",
-            "icons/settings/add-01.svg",
-            fill,
-            ink,
-            true,
-        )
-        .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-            this.create_workspace_template(TemplatePreset::Blank, cx);
-            let input = this.workspace_template_name_input.clone();
-            input.update(cx, |input, cx| input.select_all_text(cx));
-            let focus = input.read(cx).focus_handle.clone();
-            window.focus(&focus, cx);
-        }));
         div()
             .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(12.))
-            .pb(px(6.))
+            .flex_col()
+            .gap(px(4.))
+            .px(px(kit::TEXT_INSET))
+            .pb(px(kit::SECTION_GAP))
             .child(title)
-            .child(div().flex_1())
-            .child(create)
+            .child(kit::page_description(ink, INTRO))
             .into_any_element()
     }
 
     fn render_workspace_template_row(
         &self,
         idx: usize,
+        place: kit::Place,
         ui: crate::theme::UiColors,
+        ink: Ink,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Some(command) = self.cached_config.commands.get(idx) else {
@@ -254,76 +248,38 @@ impl PaneFlowApp {
         };
         let title = template_title(command, workspace);
         let meta = template_meta(workspace.cwd.as_deref(), template_surfaces(workspace).len());
-        let mut logos = div()
-            .flex_none()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(4.));
-        for agent in canvas::template_agents(workspace)
-            .into_iter()
-            .take(ROW_LOGO_LIMIT)
-        {
-            logos = logos.child(canvas::agent_logo(agent, ROW_LOGO, ui));
-        }
-        squircle_skin(
-            div()
-                .id(("workspace-template-row", idx))
+        let agents = canvas::template_agents(workspace);
+        let mut text = Text::new(title.clone()).line(kit::line(ink, meta));
+        if !agents.is_empty() {
+            let mut logos = div()
+                .flex_none()
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(ROW_GAP))
-                .px(px(ROW_PADDING_X))
-                .py(px(ROW_PADDING_Y))
-                .cursor(CursorStyle::PointingHand),
-            format!("workspace-template-row-{idx}"),
-            ROW_RADIUS,
-            None,
-            Some(with_alpha(ui.text, 0.05)),
+                .gap(px(4.));
+            for agent in agents.into_iter().take(ROW_LOGO_LIMIT) {
+                logos = logos.child(canvas::agent_logo(agent, ROW_LOGO, ui));
+            }
+            text = text.badge(logos);
+        }
+        kit::link_row(
+            ("workspace-template-row", idx),
+            ink,
+            Some(canvas::layout_mark(workspace, ink)),
+            text,
+            place,
         )
-        .role(gpui::accesskit::Role::Button)
         .aria_label(format!("Open template {title}"))
         .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
             this.open_workspace_template(idx, cx);
         }))
-        .child(canvas::layout_mark(workspace, ui))
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .flex()
-                .flex_col()
-                .gap(px(1.))
-                .child(
-                    div()
-                        .truncate()
-                        .text_size(BODY_EMPHASIS)
-                        .font_weight(gpui::FontWeight::MEDIUM)
-                        .text_color(ui.text)
-                        .child(title),
-                )
-                .child(
-                    div()
-                        .truncate()
-                        .text_size(LABEL_SM)
-                        .text_color(ui.muted)
-                        .child(meta),
-                ),
-        )
-        .child(logos)
-        .child(
-            svg()
-                .size(px(12.))
-                .flex_none()
-                .path("icons/settings/arrow-right-01.svg")
-                .text_color(ui.muted),
-        )
         .into_any_element()
     }
 
     fn render_workspaces_welcome(
         &self,
         ui: crate::theme::UiColors,
+        ink: Ink,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let agents = TerminalAgent::visible(&self.cached_config);
@@ -335,23 +291,23 @@ impl PaneFlowApp {
             .gap(px(8.));
         for preset in TemplatePreset::ALL {
             let mark = if preset == TemplatePreset::Blank {
-                canvas::glyph("icons/settings/add-01.svg", 14., ui.text)
+                canvas::glyph(ADD_ICON, 14., ink.primary)
             } else {
                 canvas::preset_glyph(
                     preset.layout(),
                     preset.panes(&agents).len(),
                     CHIP_GLYPH_WIDTH,
                     CHIP_GLYPH_HEIGHT,
-                    with_alpha(ui.text, 0.7),
+                    ink.secondary,
                 )
             };
-            presets = presets.child(template_chip(preset, mark, ui).on_click(cx.listener(
+            presets = presets.child(template_chip(preset, mark, ink).on_click(cx.listener(
                 move |this, _: &ClickEvent, _window, cx| {
                     this.create_workspace_template(preset, cx);
                 },
             )));
         }
-        setting_card(ui)
+        kit::group(ink)
             .child(
                 div()
                     .flex()
@@ -359,26 +315,16 @@ impl PaneFlowApp {
                     .items_center()
                     .px(px(32.))
                     .pt(px(32.))
-                    .pb(px(32.))
+                    .pb(px(28.))
                     .child(canvas::welcome_preview(agents.first().copied(), ui))
+                    .child(kit::headline(ink, WELCOME_TITLE).pt(px(20.)))
                     .child(
-                        div()
-                            .pt(px(20.))
-                            .text_size(TITLE)
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .text_color(ui.text)
-                            .child(WELCOME_TITLE),
-                    )
-                    .child(
-                        div()
+                        kit::page_description(ink, WELCOME_BODY)
                             .pt(px(6.))
                             .max_w(px(WELCOME_TEXT_WIDTH))
-                            .text_center()
-                            .text_size(BODY)
-                            .text_color(ui.muted)
-                            .child(WELCOME_BODY),
+                            .text_center(),
                     )
-                    .child(div().pt(px(22.)).child(presets)),
+                    .child(div().pt(px(20.)).child(presets)),
             )
             .into_any_element()
     }
@@ -667,40 +613,35 @@ impl PaneFlowApp {
     }
 }
 
-fn template_chip(
-    preset: TemplatePreset,
-    mark: AnyElement,
-    ui: crate::theme::UiColors,
-) -> gpui::Stateful<gpui::Div> {
+fn template_chip(preset: TemplatePreset, mark: AnyElement, ink: Ink) -> gpui::Stateful<gpui::Div> {
     let id = SharedString::from(format!("workspace-template-preset-{}", preset.slug()));
-    squircle_skin(
-        div()
-            .id(id.clone())
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(8.))
-            .pl(px(CHIP_PADDING_X - 2.))
-            .pr(px(CHIP_PADDING_X))
-            .py(px(6.))
-            .cursor(CursorStyle::PointingHand),
-        format!("{id}-squircle"),
-        ROW_RADIUS,
-        Some(with_alpha(ui.text, CARD_BUTTON_FILL_REST)),
-        Some(with_alpha(ui.text, CARD_BUTTON_FILL_HOVER)),
-    )
-    .accessible_control(
-        gpui::accesskit::Role::Button,
-        format!("Create a template: {}", preset.label()),
-    )
-    .child(mark)
-    .child(
-        div()
-            .text_size(BODY)
-            .font_weight(gpui::FontWeight::MEDIUM)
-            .text_color(ui.text)
-            .child(preset.label()),
-    )
+    div()
+        .id(id)
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(8.))
+        .h(px(CHIP_HEIGHT))
+        .pl(px(CHIP_PADDING_X - 2.))
+        .pr(px(CHIP_PADDING_X))
+        .rounded(px(CHIP_RADIUS))
+        .bg(ink.well)
+        .cursor(CursorStyle::PointingHand)
+        .hover(move |style| style.bg(ink.well_hover))
+        .active(move |style| style.bg(ink.well_pressed))
+        .accessible_control(
+            gpui::accesskit::Role::Button,
+            format!("Create a template: {}", preset.label()),
+        )
+        .keyboard_stop(px(CHIP_RADIUS))
+        .child(mark)
+        .child(
+            div()
+                .text_size(px(kit::SIZE_MD))
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .text_color(ink.primary)
+                .child(preset.label()),
+        )
 }
 
 fn template_title(command: &CommandDefinition, workspace: &WorkspaceDefinition) -> String {

@@ -10,9 +10,9 @@ use paneflow_config::schema::WorkspaceIcon;
 use crate::GeneralDropdown;
 use crate::PaneFlowApp;
 use crate::settings::components::{
-    deferred_select_menu, section_header, section_header_with_action, select_chevron, select_menu,
-    select_option, select_trigger, setting_text, soft_button, toggle_switch, with_alpha,
+    deferred_select_menu, select_chevron, select_menu, select_option, select_trigger, with_alpha,
 };
+use crate::settings::kit::{self, Ink, Size, Text, Tone};
 use crate::settings::search::{self, Block, SearchCard};
 use crate::ui_primitives::{AccessibleControlExt, AnimatedHover, AnimatedHoverExt, lerp_color};
 
@@ -20,6 +20,8 @@ const THEME_MODE_TILE_HEIGHT: f32 = 134.;
 const THEME_MODE_TILE_RADIUS: f32 = 10.;
 const THEME_MODE_TILE_BORDER: f32 = 2.;
 const THEME_PREVIEW_CORNER_RADIUS: f32 = 8.;
+const THEME_PREVIEW_GAP: f32 = 12.;
+const APPEARANCE_INTRO: &str = "The theme, interface style, icons and motion of the whole app.";
 
 const APP_ICON_TILE: f32 = 44.;
 const APP_ICON_RING_GAP: f32 = 2.;
@@ -29,10 +31,8 @@ const APP_ICON_TRIGGER_CHEVRON: f32 = 12.;
 const APP_ICON_CELL_WIDTH: f32 = 76.;
 const APP_ICON_CELL_LABEL_GAP: f32 = 6.;
 const APP_ICON_GRID_ROW_GAP: f32 = 14.;
-const APP_ICON_GALLERY_TOP: f32 = 12.;
 const APP_ICON_GALLERY_PADDING: f32 = 12.;
-const APP_ICON_GALLERY_RADIUS: f32 = 14.;
-const APP_ICON_GALLERY_FILL_ALPHA: f32 = 0.035;
+const APP_ICON_GALLERY_RADIUS: f32 = 10.;
 const APP_ICON_GALLERY_DROP: f32 = 6.;
 const APP_ICON_PICKER_SECONDS: f32 = 0.2;
 
@@ -50,21 +50,38 @@ enum MockupHalf {
 }
 
 impl PaneFlowApp {
+    pub(crate) fn render_appearance_heading(&self, title: gpui::Div) -> gpui::AnyElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .px(px(kit::TEXT_INSET))
+            .pb(px(kit::SECTION_GAP))
+            .child(title)
+            .child(kit::page_description(
+                Ink::of(crate::theme::ui_colors()),
+                APPEARANCE_INTRO,
+            ))
+            .into_any_element()
+    }
+
     pub(crate) fn render_appearance_content(
         &self,
         window: &gpui::Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let ui = crate::theme::ui_colors();
-        let reset_btn = soft_button(
+        let ink = Ink::of(ui);
+        let reset = kit::button(
             "reset-theme",
             "Reset to default",
-            ui,
-            cx.listener(|this, _: &ClickEvent, _w, cx| {
-                this.reset_theme_selection(cx);
-            }),
-        );
-        let header = section_header_with_action(ui, "Theme", reset_btn);
+            Tone::Ghost,
+            Size::Small,
+            ink,
+        )
+        .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+            this.reset_theme_selection(cx);
+        }));
         let preset = self.current_theme_preset();
 
         let modes: [(crate::ThemeMode, &str, &str); 3] = [
@@ -74,112 +91,124 @@ impl PaneFlowApp {
         ];
         let mut mode_row = div().flex().flex_row().w_full().gap(px(12.));
         for (mode, label, id) in modes {
-            mode_row = mode_row.child(self.render_theme_mode_tile(mode, label, id, preset, ui, cx));
+            mode_row =
+                mode_row.child(self.render_theme_mode_tile(mode, label, id, preset, ink, cx));
         }
 
-        let preset_row = self.render_theme_preset_select(preset, ui, cx);
-        let preset_card = SearchCard::new(ui)
-            .row(&search::THEME_PRESET, preset_row)
+        let (theme_matched, theme_rows) = SearchCard::new()
+            .row(
+                &search::THEME_PRESET,
+                self.render_theme_preset_select(preset, ink, ui, cx),
+            )
+            .into_rows();
+        let (interface_matched, interface_rows) = SearchCard::new()
             .row(
                 &search::INTERFACE_STYLE,
-                self.render_interface_style_select(ui, cx),
-            )
-            .row(
-                &search::WORKSPACE_ICON,
-                self.render_workspace_icon_select(window.scale_factor(), ui, cx),
+                self.render_interface_style_select(ink, ui, cx),
             )
             .row(
                 &search::BACKGROUND_STYLE,
-                self.render_background_style_select(ui, cx),
+                self.render_background_style_select(ink, ui, cx),
             )
-            .row(&search::APP_ICON, self.render_app_icon_row(window, ui, cx));
+            .row(
+                &search::WORKSPACE_ICON,
+                self.render_workspace_icon_select(window.scale_factor(), ink, ui, cx),
+            )
+            .row(
+                &search::APP_ICON,
+                self.render_app_icon_row(window, ink, ui, cx),
+            )
+            .into_rows();
 
         let reduce_motion = self.cached_config.reduce_motion_enabled();
-        let motion_row = div()
-            .id("row-reduce-motion")
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .gap(px(16.))
-            .px(px(12.))
-            .py(px(10.))
-            .child(setting_text(
-                ui,
-                search::REDUCE_MOTION.title,
-                search::REDUCE_MOTION.description,
-            ))
-            .child(
-                toggle_switch(
-                    "reduce-motion-toggle",
-                    search::REDUCE_MOTION.title,
-                    reduce_motion,
-                    ui,
-                )
-                .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                    this.persist_setting(
-                        false,
-                        "reduce_motion",
-                        serde_json::Value::Bool(!reduce_motion),
-                        cx,
-                    );
-                })),
-            );
-
         let comfortable_density = self.cached_config.comfortable_density_enabled();
-        let density_row = div()
-            .id("row-comfortable-density")
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .gap(px(16.))
-            .px(px(12.))
-            .py(px(10.))
-            .child(setting_text(
-                ui,
-                search::COMFORTABLE_DENSITY.title,
-                search::COMFORTABLE_DENSITY.description,
-            ))
-            .child(
-                toggle_switch(
+        let (preferences_matched, preferences_rows) = SearchCard::new()
+            .row(
+                &search::REDUCE_MOTION,
+                self.appearance_toggle_row(
+                    "reduce-motion-toggle",
+                    &search::REDUCE_MOTION,
+                    reduce_motion,
+                    "reduce_motion",
+                    ink,
+                    cx,
+                ),
+            )
+            .row(
+                &search::COMFORTABLE_DENSITY,
+                self.appearance_toggle_row(
                     "comfortable-density-toggle",
-                    search::COMFORTABLE_DENSITY.title,
+                    &search::COMFORTABLE_DENSITY,
                     comfortable_density,
-                    ui,
-                )
-                .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                    this.persist_setting(
-                        false,
-                        "comfortable_density",
-                        serde_json::Value::Bool(!comfortable_density),
-                        cx,
-                    );
-                })),
-            );
+                    "comfortable_density",
+                    ink,
+                    cx,
+                ),
+            )
+            .into_rows();
 
+        let mut first = true;
         let theme_block = Block::new("Theme")
-            .child(header)
+            .top_gap(kit::section_gap(&mut first))
+            .found(theme_matched)
+            .child(kit::section_head_with(ink, "Theme", None, reset))
+            .child(div().h(px(kit::SECTION_HEAD_GAP)).flex_none())
             .region("theme-mode", search::THEME_MODES, mode_row)
-            .child(div().h(px(14.)).flex_none())
-            .child(render_theme_diff_preview(ui))
-            .child(div().h(px(12.)).flex_none())
-            .card(preset_card)
+            .child(div().h(px(THEME_PREVIEW_GAP)).flex_none())
+            .child(render_theme_diff_preview(ui, ink))
+            .child(div().h(px(THEME_PREVIEW_GAP)).flex_none())
+            .child(kit::search_group(ink, theme_rows))
+            .finish();
+        let interface_block = Block::new("Interface")
+            .top_gap(kit::section_gap(&mut first))
+            .found(interface_matched)
+            .child(kit::section(
+                ink,
+                "Interface",
+                None,
+                kit::search_group(ink, interface_rows),
+            ))
             .finish();
         let preferences_block = Block::new("Preferences")
-            .top_gap(18.)
-            .child(section_header(ui, "Preferences"))
-            .card(
-                SearchCard::new(ui)
-                    .row(&search::REDUCE_MOTION, motion_row)
-                    .row(&search::COMFORTABLE_DENSITY, density_row),
-            )
+            .top_gap(kit::section_gap(&mut first))
+            .found(preferences_matched)
+            .child(kit::section(
+                ink,
+                "Preferences",
+                None,
+                kit::search_group(ink, preferences_rows),
+            ))
             .finish();
         div()
             .flex()
             .flex_col()
             .child(theme_block)
+            .child(interface_block)
             .child(preferences_block)
+    }
+
+    fn appearance_toggle_row(
+        &self,
+        id: &'static str,
+        copy: &'static search::SettingCopy,
+        on: bool,
+        config_key: &'static str,
+        ink: Ink,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        kit::row(
+            ink,
+            None,
+            setting_copy(copy, ink),
+            Some(
+                kit::switch(id, copy.title, on, ink)
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                        this.persist_setting(false, config_key, serde_json::Value::Bool(!on), cx);
+                    }))
+                    .into_any_element(),
+            ),
+        )
+        .into_any_element()
     }
 
     fn render_theme_mode_tile(
@@ -188,21 +217,10 @@ impl PaneFlowApp {
         label: &'static str,
         id: &'static str,
         preset: &crate::theme::ThemePreset,
-        ui: crate::theme::UiColors,
+        ink: Ink,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let is_active = self.theme_mode == mode;
-        let resting = if is_active {
-            with_alpha(ui.text, 0.85)
-        } else {
-            with_alpha(ui.text, 0.12)
-        };
-        let hovered = if is_active {
-            with_alpha(ui.text, 0.85)
-        } else {
-            with_alpha(ui.text, 0.32)
-        };
-
         let light = theme_preview_palette(preset.light);
         let dark = theme_preview_palette(preset.dark);
         let mockup = match mode {
@@ -240,9 +258,16 @@ impl PaneFlowApp {
             .rounded(px(THEME_MODE_TILE_RADIUS))
             .overflow_hidden()
             .border_2()
-            .border_color(resting)
-            .animated_hover(move |style, delta| {
-                style.border_color(lerp_color(resting, hovered, delta));
+            .border_color(if is_active { ink.primary } else { ink.edge })
+            .cursor(CursorStyle::PointingHand)
+            .when(!is_active, |frame| {
+                frame.hover(move |style| style.border_color(ink.tertiary))
+            })
+            .accessible_control(gpui::accesskit::Role::RadioButton, label)
+            .aria_toggled(if is_active {
+                gpui::accesskit::Toggled::True
+            } else {
+                gpui::accesskit::Toggled::False
             })
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.apply_theme_mode(mode, window, cx);
@@ -260,13 +285,18 @@ impl PaneFlowApp {
                 div()
                     .w_full()
                     .text_center()
-                    .text_size(crate::ui_primitives::BODY)
+                    .text_size(px(kit::SIZE_MD))
+                    .line_height(px(kit::LINE_MD))
                     .font_weight(if is_active {
                         gpui::FontWeight::MEDIUM
                     } else {
                         gpui::FontWeight::NORMAL
                     })
-                    .text_color(if is_active { ui.text } else { ui.muted })
+                    .text_color(if is_active {
+                        ink.primary
+                    } else {
+                        ink.secondary
+                    })
                     .child(label),
             )
     }
@@ -274,6 +304,7 @@ impl PaneFlowApp {
     fn render_theme_preset_select(
         &self,
         current: &crate::theme::ThemePreset,
+        ink: Ink,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
@@ -342,25 +373,18 @@ impl PaneFlowApp {
             trigger = trigger.child(deferred_select_menu(menu));
         }
 
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .gap(px(16.))
-            .px(px(12.))
-            .py(px(10.))
-            .child(setting_text(
-                ui,
-                search::THEME_PRESET.title,
-                search::THEME_PRESET.description,
-            ))
-            .child(div().flex_shrink_0().child(trigger))
-            .into_any_element()
+        kit::row(
+            ink,
+            None,
+            setting_copy(&search::THEME_PRESET, ink),
+            Some(trigger.into_any_element()),
+        )
+        .into_any_element()
     }
 
     fn render_interface_style_select(
         &self,
+        ink: Ink,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
@@ -424,21 +448,13 @@ impl PaneFlowApp {
             trigger = trigger.child(deferred_select_menu(menu));
         }
 
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .gap(px(16.))
-            .px(px(12.))
-            .py(px(10.))
-            .child(setting_text(
-                ui,
-                search::INTERFACE_STYLE.title,
-                search::INTERFACE_STYLE.description,
-            ))
-            .child(div().flex_shrink_0().child(trigger))
-            .into_any_element()
+        kit::row(
+            ink,
+            None,
+            setting_copy(&search::INTERFACE_STYLE, ink),
+            Some(trigger.into_any_element()),
+        )
+        .into_any_element()
     }
 
     pub(crate) fn apply_interface_style(&mut self, style: InterfaceStyle, cx: &mut Context<Self>) {
@@ -453,6 +469,7 @@ impl PaneFlowApp {
     fn render_workspace_icon_select(
         &self,
         scale_factor: f32,
+        ink: Ink,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
@@ -528,21 +545,13 @@ impl PaneFlowApp {
             trigger = trigger.child(deferred_select_menu(menu));
         }
 
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .gap(px(16.))
-            .px(px(12.))
-            .py(px(10.))
-            .child(setting_text(
-                ui,
-                search::WORKSPACE_ICON.title,
-                search::WORKSPACE_ICON.description,
-            ))
-            .child(div().flex_shrink_0().child(trigger))
-            .into_any_element()
+        kit::row(
+            ink,
+            None,
+            setting_copy(&search::WORKSPACE_ICON, ink),
+            Some(trigger.into_any_element()),
+        )
+        .into_any_element()
     }
 
     pub(crate) fn apply_workspace_icon(&mut self, icon: WorkspaceIcon, cx: &mut Context<Self>) {
@@ -557,6 +566,7 @@ impl PaneFlowApp {
     fn render_app_icon_row(
         &self,
         window: &gpui::Window,
+        ink: Ink,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
@@ -573,7 +583,7 @@ impl PaneFlowApp {
             .size(px(APP_ICON_TRIGGER_CHEVRON))
             .flex_none()
             .path("icons/settings/arrow-down-01.svg")
-            .text_color(with_alpha(ui.text, 0.8))
+            .text_color(ink.secondary)
             .with_transformation(gpui::Transformation::rotate(gpui::radians(
                 std::f32::consts::PI * amount,
             )));
@@ -598,18 +608,12 @@ impl PaneFlowApp {
             )
             .child(chevron);
 
-        let header = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .gap(px(16.))
-            .child(setting_text(
-                ui,
-                search::APP_ICON.title,
-                search::APP_ICON.description,
-            ))
-            .child(div().flex_shrink_0().child(trigger));
+        let header = kit::row(
+            ink,
+            None,
+            setting_copy(&search::APP_ICON, ink),
+            Some(trigger.into_any_element()),
+        );
 
         let gallery = (amount > 0.).then(|| {
             let mut grid = div()
@@ -619,12 +623,12 @@ impl PaneFlowApp {
                 .gap_y(px(APP_ICON_GRID_ROW_GAP));
             for (idx, &icon) in AppIcon::ALL.iter().enumerate() {
                 let is_active = current == icon;
-                let tile = app_icon_tile(idx, icon, is_active, scale_factor, ui).on_click(
+                let tile = app_icon_tile(idx, icon, is_active, scale_factor, ink).on_click(
                     cx.listener(move |this, _: &ClickEvent, _window, cx| {
                         this.apply_app_icon(icon, cx);
                     }),
                 );
-                grid = grid.child(app_icon_cell(tile, icon, is_active, ui));
+                grid = grid.child(app_icon_cell(tile, icon, is_active, ink));
             }
             let measure_into = self.app_icon_picker.height.clone();
             let natural = div()
@@ -634,13 +638,14 @@ impl PaneFlowApp {
                 .flex_col()
                 .flex_none()
                 .w_full()
-                .pt(px(APP_ICON_GALLERY_TOP))
+                .px(px(kit::ROW_INSET))
+                .pb(px(kit::ROW_INSET))
                 .child(
                     div()
                         .w_full()
                         .p(px(APP_ICON_GALLERY_PADDING))
                         .rounded(px(APP_ICON_GALLERY_RADIUS))
-                        .bg(with_alpha(ui.text, APP_ICON_GALLERY_FILL_ALPHA))
+                        .bg(ink.hover)
                         .child(grid),
                 )
                 .child(
@@ -672,8 +677,6 @@ impl PaneFlowApp {
             .id("row-app-icon")
             .flex()
             .flex_col()
-            .px(px(12.))
-            .py(px(10.))
             .child(header)
             .children(gallery)
             .into_any_element()
@@ -690,6 +693,7 @@ impl PaneFlowApp {
 
     fn render_background_style_select(
         &self,
+        ink: Ink,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
@@ -750,21 +754,13 @@ impl PaneFlowApp {
             trigger = trigger.child(deferred_select_menu(menu));
         }
 
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .gap(px(16.))
-            .px(px(12.))
-            .py(px(10.))
-            .child(setting_text(
-                ui,
-                search::BACKGROUND_STYLE.title,
-                search::BACKGROUND_STYLE.description,
-            ))
-            .child(div().flex_shrink_0().child(trigger))
-            .into_any_element()
+        kit::row(
+            ink,
+            None,
+            setting_copy(&search::BACKGROUND_STYLE, ink),
+            Some(trigger.into_any_element()),
+        )
+        .into_any_element()
     }
 
     pub(crate) fn apply_background_style(
@@ -801,6 +797,10 @@ impl PaneFlowApp {
         }
         self.persist_theme_selection(crate::ThemeMode::System, name, cx);
     }
+}
+
+fn setting_copy(copy: &search::SettingCopy, ink: Ink) -> Text {
+    Text::new(copy.title).line(kit::line(ink, copy.description))
 }
 
 #[derive(Clone, Copy)]
@@ -1022,7 +1022,7 @@ const PREVIEW_NEW: [PreviewLine; 3] = [
     ],
 ];
 
-fn render_theme_diff_preview(ui: crate::theme::UiColors) -> impl IntoElement {
+fn render_theme_diff_preview(ui: crate::theme::UiColors, ink: Ink) -> impl IntoElement {
     let p = crate::diff::palette(ui);
     let syntax = crate::theme::active_theme().syntax;
     let font = SharedString::from(crate::terminal::element::resolve_font_family(None));
@@ -1032,7 +1032,7 @@ fn render_theme_diff_preview(ui: crate::theme::UiColors) -> impl IntoElement {
         .rounded(px(THEME_PREVIEW_CORNER_RADIUS))
         .overflow_hidden()
         .border_1()
-        .border_color(ui.border)
+        .border_color(ink.edge)
         .bg(p.context_bg)
         .p(px(6.))
         .flex()
@@ -1130,10 +1130,14 @@ fn app_icon_tile(
     icon: AppIcon,
     is_active: bool,
     scale_factor: f32,
-    ui: crate::theme::UiColors,
+    ink: Ink,
 ) -> AnimatedHover {
-    let resting = with_alpha(ui.text, if is_active { 0.85 } else { 0. });
-    let hovered = with_alpha(ui.text, if is_active { 0.85 } else { 0.32 });
+    let resting = if is_active {
+        ink.primary
+    } else {
+        with_alpha(ink.primary, 0.)
+    };
+    let hovered = if is_active { ink.primary } else { ink.tertiary };
     div()
         .id(("app-icon", idx))
         .flex_none()
@@ -1153,12 +1157,7 @@ fn app_icon_tile(
         )
 }
 
-fn app_icon_cell(
-    tile: AnimatedHover,
-    icon: AppIcon,
-    is_active: bool,
-    ui: crate::theme::UiColors,
-) -> gpui::Div {
+fn app_icon_cell(tile: AnimatedHover, icon: AppIcon, is_active: bool, ink: Ink) -> gpui::Div {
     div()
         .w(px(APP_ICON_CELL_WIDTH))
         .flex_none()
@@ -1172,8 +1171,13 @@ fn app_icon_cell(
                 .w_full()
                 .text_center()
                 .truncate()
-                .text_size(crate::ui_primitives::LABEL_SM)
-                .text_color(if is_active { ui.text } else { ui.muted })
+                .text_size(px(kit::SIZE_SM))
+                .line_height(px(kit::LINE_SM))
+                .text_color(if is_active {
+                    ink.primary
+                } else {
+                    ink.secondary
+                })
                 .when(is_active, |label| {
                     label.font_weight(gpui::FontWeight::MEDIUM)
                 })
@@ -1235,7 +1239,7 @@ mod tests {
     #[test]
     fn every_app_icon_tile_builds_with_a_single_tooltip() {
         for (idx, &icon) in AppIcon::ALL.iter().enumerate() {
-            let _ = app_icon_tile(idx, icon, idx == 0, 1.0, crate::theme::ui_colors());
+            let _ = app_icon_tile(idx, icon, idx == 0, 1.0, Ink::of(crate::theme::ui_colors()));
         }
     }
 

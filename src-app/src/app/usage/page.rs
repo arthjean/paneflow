@@ -4,34 +4,33 @@ use gpui::{
     AnyElement, App, ClickEvent, Context, Div, FocusHandle, FontWeight, Hsla, InteractiveElement,
     IntoElement, KeyDownEvent, ParentElement, Role, ScrollHandle, SharedString, Stateful,
     StatefulInteractiveElement, Styled, Window, accesskit::Toggled, div, prelude::FluentBuilder,
-    px, relative, rgb, svg,
+    px, relative, rgb,
 };
 use jiff::civil::Date;
 use paneflow_agent_config::usage::accounts::UsageAgent;
 use paneflow_agent_config::usage::model::UsageLevel;
 
 use super::activity::{
-    ActivityInputs, ActivityView, LEVEL_MIX, Metric, NO_ACTIVITY, NO_TOKEN_DATA, Register, WEEKS,
-    activity_view, shift_days, step_day,
+    ActivityInputs, ActivityView, LEVEL_MIX, Metric, NO_TOKEN_DATA, Register, WEEKS, activity_view,
+    shift_days, step_day,
 };
 use super::model::{
     AccountBlock, BlockBody, UsageInputs, UsageView, WindowRow, agent_shown, usage_view,
 };
 use super::render::{focus_ring, pace_line, runtime_logo, tabular_numerals};
-use crate::settings::components::{
-    SETTINGS_CONTROL_CORNER_RADIUS, menu_row, select_menu_surface, setting_card, toggle_row_with,
-    toggle_switch, with_alpha,
-};
+use crate::settings::components::{select_menu_surface, with_alpha};
+use crate::settings::kit::{self, Ink, Text};
 use crate::settings::search::{self, Block, SearchCard, SettingCopy};
 use crate::theme::UiColors;
 use crate::ui_primitives::ring::{RingSize, concentric_rings, level_color, ring};
-use crate::ui_primitives::{TooltipDelayExt, lerp_color, section_eyebrow, text_tooltip};
+use crate::ui_primitives::{TooltipDelayExt, lerp_color, text_tooltip};
 use crate::{PaneFlowApp, SettingsSection};
 
 pub(crate) const INTRO: &str = "Plan limits come from Claude Code and Codex while they run in Paneflow. Activity is counted by Paneflow on this computer.";
 pub(crate) const NO_ACCOUNT: &str =
     "No Claude Code or Codex account found. Install an agent in Settings › Agents.";
 const OPEN_AGENTS_LABEL: &str = "Open agent settings";
+const ACTIVITY_SOURCE: &str = "Paneflow counts turns from agents that run in its panes.";
 pub(crate) const IMPORT_LABEL: &str = "Import past activity";
 pub(crate) const TRANSCRIPT_NOTE: &str = "Claude Code keeps transcripts for 30 days by default.";
 const SCALE_NOTE: &str = "One scale for all agents";
@@ -49,7 +48,7 @@ const INNER_SWATCH_ALPHA: f32 = 0.72;
 const CLAUDE_HEAT: u32 = 0xD9_77_57;
 const EMPTY_CELL_MIX: f32 = 0.05;
 const DAY_LABELS: [&str; 7] = ["Mon", "", "Wed", "", "Fri", "", ""];
-const SIDEBAR_AGENT_LOGO: f32 = 18.;
+const ICON_BUTTON_RADIUS: f32 = 8.;
 const SWITCH_FOCUS_OUTSET: f32 = 3.;
 const SWITCH_FOCUS_ALPHA: f32 = 0.35;
 
@@ -276,16 +275,15 @@ pub(crate) fn register_grid(
     grid
 }
 
-fn eyebrow_row(label: &'static str, ui: UiColors) -> Div {
+fn eyebrow_row(label: &'static str, ink: Ink, first: bool) -> Div {
     div()
         .flex()
         .flex_row()
         .items_end()
         .gap(px(10.))
-        .px(px(2.))
-        .pt(px(24.))
-        .pb(px(8.))
-        .child(section_eyebrow(label, ui))
+        .pt(px(if first { 0. } else { kit::SECTION_GAP }))
+        .pb(px(kit::SECTION_HEAD_GAP))
+        .child(kit::section_head(ink, label, None).flex_1().min_w_0())
 }
 
 fn muted_text(text: impl Into<SharedString>, ui: UiColors) -> Div {
@@ -389,6 +387,7 @@ fn legend_row(id: usize, row: &WindowRow, inner: bool, ui: UiColors) -> AnyEleme
 }
 
 pub(crate) fn render_tile(index: usize, block: &AccountBlock, ui: UiColors) -> AnyElement {
+    let ink = Ink::of(ui);
     let slug = block.agent.runtime_slug();
     let label: SharedString = block.label.clone().into();
     let name = div()
@@ -398,17 +397,18 @@ pub(crate) fn render_tile(index: usize, block: &AccountBlock, ui: UiColors) -> A
         .min_w_0()
         .child(
             div()
-                .text_size(px(13.))
+                .text_size(px(kit::SIZE_MD))
+                .line_height(px(kit::LINE_MD))
                 .font_weight(FontWeight::MEDIUM)
-                .text_color(ui.text)
+                .text_color(ink.primary)
                 .child(block.agent.display_name()),
         )
         .child(
             div()
                 .min_w_0()
-                .text_size(px(11.))
-                .line_height(relative(1.35))
-                .text_color(ui.muted)
+                .text_size(px(kit::SIZE_XS))
+                .line_height(px(kit::LINE_XS))
+                .text_color(ink.tertiary)
                 .child(label),
         );
     let mut text = div()
@@ -445,7 +445,7 @@ pub(crate) fn render_tile(index: usize, block: &AccountBlock, ui: UiColors) -> A
             tile_rings(slug, None, None, ui)
         }
     };
-    setting_card(ui)
+    kit::group(ink)
         .id(("usage-tile", index))
         .debug_selector(move || format!("usage-tile-{index}"))
         .flex_1()
@@ -486,12 +486,9 @@ fn tile_grid(view: &UsageView, columns: usize, ui: UiColors) -> AnyElement {
 }
 
 fn metric_pill(metric: Metric, selected: bool, group_focused: bool, ui: UiColors) -> Stateful<Div> {
-    let selected_bg = with_alpha(ui.text, 0.10);
-    let hover_bg = if selected {
-        selected_bg
-    } else {
-        with_alpha(ui.text, 0.05)
-    };
+    let ink = Ink::of(ui);
+    let selected_bg = ink.well;
+    let hover_bg = if selected { ink.well_hover } else { ink.hover };
     div()
         .id(SharedString::from(format!(
             "usage-metric-{}",
@@ -508,9 +505,9 @@ fn metric_pill(metric: Metric, selected: bool, group_focused: bool, ui: UiColors
         })
         .hover(move |style| style.bg(hover_bg))
         .cursor_pointer()
-        .text_size(px(12.))
+        .text_size(px(kit::SIZE_SM))
         .font_weight(FontWeight::MEDIUM)
-        .text_color(if selected { ui.text } else { ui.muted })
+        .text_color(if selected { ink.primary } else { ink.secondary })
         .role(Role::RadioButton)
         .aria_label(metric.label())
         .aria_toggled(if selected {
@@ -557,31 +554,27 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let ui = crate::theme::ui_colors();
+        let ink = Ink::of(ui);
         let updated = self.usage_page_view().and_then(|view| view.updated);
         let focused = self.usage.refresh_focus.is_focused(window);
-        let refresh = crate::settings::components::soft_icon_button(
-            "usage-refresh",
-            "Refresh",
-            "icons/refresh.svg",
-            ui,
-        )
-        .relative()
-        .flex_none()
-        .track_focus(&self.usage.refresh_focus)
-        .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-            this.handle_usage_button_key(UsageButton::Refresh, event, window, cx);
-        }))
-        .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
-            this.refresh_usage_page(cx);
-        }))
-        .when(focused, |button| {
-            button.child(focus_ring(SETTINGS_CONTROL_CORNER_RADIUS, ui))
-        });
+        let refresh = kit::icon_button("usage-refresh", "Refresh", "icons/refresh.svg", ink)
+            .relative()
+            .track_focus(&self.usage.refresh_focus)
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                this.handle_usage_button_key(UsageButton::Refresh, event, window, cx);
+            }))
+            .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                this.refresh_usage_page(cx);
+            }))
+            .when(focused, |button| {
+                button.child(focus_ring(px(ICON_BUTTON_RADIUS), ui))
+            });
         div()
             .flex()
             .flex_col()
-            .gap(px(8.))
-            .pb(px(4.))
+            .gap(px(4.))
+            .px(px(kit::TEXT_INSET))
+            .pb(px(kit::SECTION_GAP))
             .child(
                 div()
                     .flex()
@@ -593,21 +586,15 @@ impl PaneFlowApp {
                     .when_some(updated, |row, updated| {
                         row.child(
                             div()
-                                .text_size(crate::ui_primitives::LABEL_SM)
+                                .text_size(px(kit::SIZE_SM))
                                 .font_features(tabular_numerals())
-                                .text_color(ui.muted)
+                                .text_color(ink.tertiary)
                                 .child(updated),
                         )
                     })
                     .child(refresh),
             )
-            .child(
-                div()
-                    .text_size(px(12.))
-                    .line_height(relative(1.45))
-                    .text_color(ui.muted)
-                    .child(INTRO),
-            )
+            .child(kit::page_description(ink, INTRO))
             .into_any_element()
     }
 
@@ -617,6 +604,7 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let ui = crate::theme::ui_colors();
+        let ink = Ink::of(ui);
         let columns = tile_columns(page_width(f32::from(window.viewport_size().width)));
         let limits = match self.usage_page_view() {
             Some(view) => tile_grid(&view, columns, ui),
@@ -627,9 +615,13 @@ impl PaneFlowApp {
         let activity_copy = &search::USAGE_ACTIVITY;
         let sidebar_choices = self.usage_sidebar_agent_choices();
         let sidebar = (!sidebar_choices.is_empty()).then(|| {
+            let (matched, rows) = self
+                .render_sidebar_agents_card(&sidebar_choices, window, cx)
+                .into_rows();
             Block::new("Sidebar")
-                .child(eyebrow_row("Sidebar", ui))
-                .card(self.render_sidebar_agents_card(&sidebar_choices, window, cx))
+                .found(matched)
+                .child(eyebrow_row("Sidebar", ink, false))
+                .child(kit::search_group(ink, rows))
                 .finish()
         });
         div()
@@ -637,7 +629,7 @@ impl PaneFlowApp {
             .flex_col()
             .child(
                 Block::new("Plan limits")
-                    .child(eyebrow_row("Plan limits", ui))
+                    .child(eyebrow_row("Plan limits", ink, true))
                     .region(
                         "usage-plan-limits",
                         &[limits_copy.title, limits_copy.description],
@@ -649,7 +641,7 @@ impl PaneFlowApp {
             .child(
                 Block::new("Activity by agent")
                     .child(
-                        eyebrow_row("Activity by agent", ui).when(has_activity, |row| {
+                        eyebrow_row("Activity by agent", ink, false).when(has_activity, |row| {
                             row.child(div().flex_1())
                                 .child(self.render_metric_control(window, cx))
                         }),
@@ -690,18 +682,19 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) -> SearchCard {
         let ui = crate::theme::ui_colors();
+        let ink = Ink::of(ui);
         let shown = self.sidebar_usage_agents();
-        let mut card = SearchCard::new(ui);
+        let mut card = SearchCard::new();
         for (index, (agent, handle)) in choices.iter().enumerate() {
             let agent = *agent;
             let Some(copy) = sidebar_agent_copy(agent) else {
                 continue;
             };
-            let switch = toggle_switch(
+            let switch = kit::switch(
                 ("usage-sidebar-agent", index),
                 copy.title,
                 agent_shown(shown, agent),
-                ui,
+                ink,
             )
             .relative()
             .track_focus(handle)
@@ -724,14 +717,17 @@ impl PaneFlowApp {
                         .border_color(with_alpha(ui.text, SWITCH_FOCUS_ALPHA)),
                 )
             });
+            let lead = crate::settings::tabs::space_accounts::ACCOUNT_AGENTS
+                .iter()
+                .find(|(usage, _)| *usage == agent)
+                .map(|(_, terminal)| kit::mark_tile(*terminal, kit::LEAD, ink));
             card = card.row(
                 copy,
-                toggle_row_with(
-                    copy.title,
-                    copy.description,
-                    Some(runtime_logo(agent.runtime_slug(), SIDEBAR_AGENT_LOGO, ui)),
-                    ui,
-                    switch,
+                kit::row(
+                    ink,
+                    lead,
+                    Text::new(copy.title).line(kit::line(ink, copy.description)),
+                    Some(switch.into_any_element()),
                 ),
             );
         }
@@ -741,64 +737,40 @@ impl PaneFlowApp {
     fn render_no_account_card(
         &self,
         ui: UiColors,
-        window: &Window,
+        _window: &Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let focused = self.usage.open_agents_focus.is_focused(window);
-        setting_card(ui)
-            .p(crate::settings::components::menu_padding())
+        let ink = Ink::of(ui);
+        kit::group(ink)
+            .child(kit::row(
+                ink,
+                Some(kit::disc(ink, "icons/settings/ai-magic.svg")),
+                Text::new("No agent account yet").line(kit::line(ink, NO_ACCOUNT)),
+                None,
+            ))
+            .child(kit::rule(ink))
             .child(
-                div()
-                    .px(px(10.))
-                    .py(px(8.))
-                    .text_size(px(12.))
-                    .line_height(relative(1.45))
-                    .text_color(ui.muted)
-                    .child(NO_ACCOUNT),
-            )
-            .child(
-                menu_row("usage-open-agents", false, ui)
-                    .relative()
-                    .track_focus(&self.usage.open_agents_focus)
-                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                        this.handle_usage_button_key(UsageButton::OpenAgents, event, window, cx);
-                    }))
-                    .when(focused, |row| {
-                        row.child(focus_ring(crate::ui_primitives::ROW_RADIUS, ui))
-                    })
-                    .role(Role::Button)
-                    .aria_label(OPEN_AGENTS_LABEL)
-                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                        this.select_settings_section(SettingsSection::Agents, window, cx);
-                    }))
-                    .child(
-                        svg()
-                            .size(px(14.))
-                            .flex_none()
-                            .path("icons/settings/ai-magic.svg")
-                            .text_color(ui.muted),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_size(crate::ui_primitives::BODY)
-                            .text_color(ui.text)
-                            .child(OPEN_AGENTS_LABEL),
-                    )
-                    .child(
-                        svg()
-                            .size(px(12.))
-                            .flex_none()
-                            .path("icons/chevron-right.svg")
-                            .text_color(ui.muted),
-                    ),
+                kit::link_row(
+                    "usage-open-agents",
+                    ink,
+                    None,
+                    Text::new(OPEN_AGENTS_LABEL),
+                    kit::Place::Last,
+                )
+                .track_focus(&self.usage.open_agents_focus)
+                .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                    this.handle_usage_button_key(UsageButton::OpenAgents, event, window, cx);
+                }))
+                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                    this.select_settings_section(SettingsSection::Agents, window, cx);
+                })),
             )
             .into_any_element()
     }
 
     fn render_import_row(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let ui = crate::theme::ui_colors();
+        let ink = Ink::of(ui);
         let import = &self.usage.import;
         let status = if import.running {
             Some(import_progress_label(import.files))
@@ -812,14 +784,15 @@ impl PaneFlowApp {
             .flex_wrap()
             .items_center()
             .gap(px(12.))
-            .pt(px(8.))
-            .text_size(px(SMALL_TEXT))
-            .line_height(relative(1.45))
+            .pt(px(kit::SECTION_HEAD_GAP))
+            .px(px(kit::TEXT_INSET))
+            .text_size(px(kit::SIZE_SM))
+            .line_height(px(kit::LINE_SM))
             .child(
                 div()
                     .flex_1()
                     .min_w(px(220.))
-                    .text_color(ui.muted)
+                    .text_color(ink.tertiary)
                     .child(TRANSCRIPT_NOTE),
             )
             .when_some(status, |row, status| {
@@ -828,30 +801,25 @@ impl PaneFlowApp {
                         .id("usage-import-status")
                         .flex_none()
                         .font_features(tabular_numerals())
-                        .text_color(ui.muted)
+                        .text_color(ink.tertiary)
                         .role(Role::Status)
                         .child(status),
                 )
             })
             .when(!import.running, |row| {
                 row.child(
-                    crate::settings::components::ghost_icon_button(
-                        "usage-import",
-                        IMPORT_LABEL,
-                        "icons/download.svg",
-                        ui,
-                    )
-                    .relative()
-                    .track_focus(&self.usage.import_focus)
-                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                        this.handle_usage_button_key(UsageButton::Import, event, window, cx);
-                    }))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
-                        this.import_past_activity(cx);
-                    }))
-                    .when(focused, |button| {
-                        button.child(focus_ring(crate::ui_primitives::ROW_RADIUS, ui))
-                    }),
+                    kit::icon_button("usage-import", IMPORT_LABEL, "icons/download.svg", ink)
+                        .relative()
+                        .track_focus(&self.usage.import_focus)
+                        .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                            this.handle_usage_button_key(UsageButton::Import, event, window, cx);
+                        }))
+                        .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                            this.import_past_activity(cx);
+                        }))
+                        .when(focused, |button| {
+                            button.child(focus_ring(px(ICON_BUTTON_RADIUS), ui))
+                        }),
                 )
             })
             .into_any_element()
@@ -887,18 +855,16 @@ impl PaneFlowApp {
 
     fn render_activity_card(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let ui = crate::theme::ui_colors();
+        let ink = Ink::of(ui);
         let view = self.usage_activity_view();
         if view.is_empty() {
-            return setting_card(ui)
-                .px(px(16.))
-                .py(px(14.))
-                .child(
-                    div()
-                        .text_size(px(12.))
-                        .line_height(relative(1.45))
-                        .text_color(ui.muted)
-                        .child(NO_ACTIVITY),
-                )
+            return kit::group(ink)
+                .child(kit::row(
+                    ink,
+                    Some(kit::disc(ink, "icons/settings/chart-bar-line.svg")),
+                    Text::new("No activity yet").line(kit::line(ink, ACTIVITY_SOURCE)),
+                    None,
+                ))
                 .into_any_element();
         }
         let on_hover: HoverListener =
@@ -916,8 +882,9 @@ impl PaneFlowApp {
                 }
             }));
         let mut focused_day = None;
-        let mut card = setting_card(ui)
-            .px(px(16.))
+        let mut card = kit::group(ink)
+            .bg(select_menu_surface(ui))
+            .px(px(kit::ROW_INSET))
             .pt(px(14.))
             .pb(px(12.))
             .gap(px(10.));
@@ -932,9 +899,9 @@ impl PaneFlowApp {
                 .child(
                     div()
                         .flex_none()
-                        .text_size(px(12.5))
+                        .text_size(px(kit::SIZE_MD))
                         .font_weight(FontWeight::MEDIUM)
-                        .text_color(ui.text)
+                        .text_color(ink.primary)
                         .child(register.agent_name.clone()),
                 )
                 .child(
@@ -1011,10 +978,7 @@ impl PaneFlowApp {
                     .flex_col()
                     .gap(px(8.))
                     .when(index > 0, |register| {
-                        register
-                            .pt(px(10.))
-                            .border_t_1()
-                            .border_color(with_alpha(ui.border, 0.7))
+                        register.pt(px(10.)).border_t_1().border_color(ink.edge)
                     })
                     .child(header)
                     .child(body),
