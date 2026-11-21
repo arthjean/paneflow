@@ -7,10 +7,10 @@ use paneflow_ipc_client::host_control::{ControlConnectError, HostControl};
 use serde_json::{Value, json};
 
 use crate::protocol::{
-    CAPABILITY_AGENT_FOLLOW, CAPABILITY_EVENTS_FOLLOW, CAPABILITY_EVENTS_PUBLISH, ERR_EVICTED,
-    METHOD_AGENT_ACKNOWLEDGE, METHOD_AGENT_ACTIVITY_LOG, METHOD_AGENT_FOLLOW,
-    METHOD_AGENT_SNAPSHOT, METHOD_EVENTS_FOLLOW, METHOD_EVENTS_PUBLISH, METHOD_USAGE_IMPORT,
-    METHOD_USAGE_REFRESH, METHOD_USAGE_SNAPSHOT, REQUEST_DEADLINE, WorkerIdentity,
+    CAPABILITY_AGENT_FOLLOW, CAPABILITY_EVENTS_FOLLOW, ERR_EVICTED, METHOD_AGENT_ACKNOWLEDGE,
+    METHOD_AGENT_ACTIVITY_LOG, METHOD_AGENT_FOLLOW, METHOD_AGENT_SNAPSHOT, METHOD_EVENTS_FOLLOW,
+    METHOD_USAGE_IMPORT, METHOD_USAGE_REFRESH, METHOD_USAGE_SNAPSHOT, REQUEST_DEADLINE,
+    WorkerIdentity,
 };
 
 pub const CLIENT_NAME: &str = "paneflow-controller";
@@ -223,21 +223,6 @@ impl Controller {
 
     pub fn follow(self) -> Result<FollowSession, ControllerError> {
         FollowSession::start(self)
-    }
-
-    pub fn publish_events(
-        &mut self,
-        events: &[paneflow_api::methods::events::PublishedEvent],
-    ) -> Result<Vec<u64>, ControllerError> {
-        self.require(CAPABILITY_EVENTS_PUBLISH)?;
-        let answered = self
-            .control
-            .request(METHOD_EVENTS_PUBLISH, json!({"events": events}))
-            .map_err(ControllerError::Protocol)?;
-        Ok(answered["seqs"]
-            .as_array()
-            .map(|seqs| seqs.iter().filter_map(Value::as_u64).collect())
-            .unwrap_or_default())
     }
 
     fn open_events(&mut self, request: &EventRequest) -> Result<EventOpen, ControllerError> {
@@ -766,21 +751,14 @@ mod tests {
     #[test]
     fn a_worker_whose_capability_set_predates_the_event_log_refuses_it_before_any_frame() {
         let mut older = identity();
-        older.capabilities.retain(|capability| {
-            capability != CAPABILITY_EVENTS_FOLLOW && capability != CAPABILITY_EVENTS_PUBLISH
-        });
-        let mut controller = Controller {
+        older
+            .capabilities
+            .retain(|capability| capability != CAPABILITY_EVENTS_FOLLOW);
+        let controller = Controller {
             endpoint: PathBuf::from("endpoint"),
             control: unreachable_control(),
             identity: older,
         };
-        let published = controller
-            .publish_events(&[])
-            .expect_err("an older worker set does not carry events.publish");
-        assert_eq!(
-            published.to_string(),
-            "capability not advertised: events.publish"
-        );
         let followed = controller
             .follow_events(EventRequest::default())
             .err()

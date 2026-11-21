@@ -56,6 +56,7 @@ macro_rules! method {
 pub mod config;
 pub mod events;
 pub mod host;
+pub mod layout;
 pub mod prompt;
 pub mod surface;
 pub mod system;
@@ -215,7 +216,6 @@ pub fn worker_declarations() -> Vec<Descriptor> {
         Descriptor::of::<worker::UsageRefresh>(),
         Descriptor::of::<worker::UsageImport>(),
         Descriptor::of::<events::Follow>(),
-        Descriptor::of::<events::Publish>(),
         Descriptor::of::<config::Status>(),
         Descriptor::of::<config::Reload>(),
         Descriptor::of::<config::ListActions>(),
@@ -225,6 +225,11 @@ pub fn worker_declarations() -> Vec<Descriptor> {
         Descriptor::of::<prompt::Wait>(),
         Descriptor::of::<prompt::ReplyTo>(),
         Descriptor::of::<prompt::Follow>(),
+        Descriptor::of::<layout::ViewMethod>(),
+        Descriptor::of::<layout::Attach>(),
+        Descriptor::of::<layout::LeaseIds>(),
+        Descriptor::of::<layout::Apply>(),
+        Descriptor::of::<layout::Adopt>(),
     ]
 }
 

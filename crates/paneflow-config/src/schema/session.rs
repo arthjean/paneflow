@@ -29,6 +29,8 @@ pub struct SessionState {
     pub active_space: Option<SpaceId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_layout_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout_revision: Option<u64>,
 }
 
 pub const MAX_DETACHED_PANE_WINDOWS: usize = 16;

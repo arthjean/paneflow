@@ -50,9 +50,11 @@ impl PaneFlowApp {
             return;
         }
         let now_ms = self.layout.ms_at(std::time::Instant::now());
-        match self.layout.model.apply(Op::FocusPane { pane: id }, now_ms) {
-            Ok(applied) => self.layout.publish_applied(&applied),
-            Err(error) => log::debug!("layout: the focused pane was refused: {error}"),
+        if let Err(error) = self
+            .layout
+            .apply_recorded(Op::FocusPane { pane: id }, now_ms)
+        {
+            log::debug!("layout: the focused pane was refused: {error}");
         }
     }
 
@@ -97,7 +99,9 @@ impl PaneFlowApp {
         if let Err(error) = applied {
             return Err(match error {
                 OpError::Zoomed => "Unzoom before splitting panes".to_string(),
-                OpError::PaneLimit => format!("Maximum pane count reached ({MAX_PANES})"),
+                OpError::PaneLimit | OpError::IdsExhausted => {
+                    format!("Maximum pane count reached ({MAX_PANES})")
+                }
                 _ => "That pane no longer exists".to_string(),
             });
         }

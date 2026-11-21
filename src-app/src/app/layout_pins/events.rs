@@ -141,6 +141,7 @@ fn pin_every_layout_op_publishes_exactly_one_event_of_its_type_with_the_model_id
 
     rig.focus("a");
     since(&mut rig, &mut mark);
+    let before_split = rig.revision();
     rig.act(|app, window, cx| app.handle_split_v(&SplitVertically, window, cx));
     let events = since(&mut rig, &mut mark);
     let b = model_pane(&mut rig, "d");
@@ -151,7 +152,12 @@ fn pin_every_layout_op_publishes_exactly_one_event_of_its_type_with_the_model_id
     assert_eq!(one(&events, "surface.created")["pane_id"], b);
     let changed = one(&events, "layout.changed");
     assert_eq!(changed["tab_id"], first);
-    assert_eq!(changed["data"]["revision"], rig.revision());
+    assert_eq!(changed["data"]["revision"], before_split + 1);
+    assert_eq!(
+        rig.revision(),
+        before_split + 2,
+        "the new terminal binds its session with one more op"
+    );
     assert_eq!(one(&events, "pane.focused")["pane_id"], b);
 
     rig.act(|app, window, cx| app.handle_focus_left(&FocusLeft, window, cx));

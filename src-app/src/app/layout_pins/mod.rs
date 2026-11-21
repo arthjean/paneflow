@@ -6,6 +6,7 @@ mod parity;
 mod prompts;
 mod rearrange;
 mod sidebar;
+mod worker;
 
 use std::cell::RefCell;
 use std::process::Command;
@@ -73,7 +74,8 @@ fn every_layout_pin_holds_in_an_isolated_home() {
                 + parity::PINS
                 + prompts::PINS
                 + rearrange::PINS
-                + sidebar::PINS,
+                + sidebar::PINS
+                + worker::PINS,
         "only {passed} layout pins ran\n{stdout}"
     );
 }

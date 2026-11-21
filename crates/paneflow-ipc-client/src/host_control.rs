@@ -276,6 +276,10 @@ impl HostControl {
         &self.identity
     }
 
+    pub fn set_max_frame(&mut self, max_frame: usize) {
+        self.wire.set_max_frame(max_frame);
+    }
+
     pub fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
         self.request_with_deadline(method, params, REQUEST_DEADLINE)
     }

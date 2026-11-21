@@ -146,3 +146,84 @@ fn the_guard_catches_every_form_of_layout_write() {
         assert!(layout_writes(line).is_empty(), "{line}");
     }
 }
+
+fn named_bodies(text: &str) -> Vec<(String, &str)> {
+    let name = regex::Regex::new(r"\bfn\s+([a-z_0-9]+)").unwrap();
+    let production = text
+        .split("\n#[cfg(test)]\nmod tests")
+        .next()
+        .unwrap_or(text);
+    function_bodies(production)
+        .into_iter()
+        .map(|(line, body)| {
+            let header = production.lines().nth(line - 1).unwrap_or_default();
+            let found = name
+                .captures(header)
+                .map(|captures| captures[1].to_string())
+                .unwrap_or_default();
+            (found, body)
+        })
+        .collect()
+}
+
+fn callers_of<'a>(sources: &'a [(String, String)], call: &str) -> Vec<(String, String, &'a str)> {
+    sources
+        .iter()
+        .flat_map(|(rel, text)| {
+            named_bodies(text)
+                .into_iter()
+                .filter(|(_, body)| body.contains(call))
+                .map(move |(name, body)| (rel.clone(), name, body))
+        })
+        .collect()
+}
+
+#[test]
+fn the_window_writes_session_json_only_when_no_worker_holds_the_layout() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let sources: Vec<(String, String)> = rust_sources(&root)
+        .into_iter()
+        .filter(|(rel, _)| rel != "app/layout_bridge/guard.rs")
+        .collect();
+    let names = |found: Vec<(String, String, &str)>| -> Vec<String> {
+        found
+            .into_iter()
+            .map(|(rel, name, _)| format!("{rel}::{name}"))
+            .collect()
+    };
+    assert_eq!(
+        names(callers_of(&sources, "session_file::write_session_file(")),
+        ["app/session.rs::write_session_json_inner"]
+    );
+    assert_eq!(
+        names(callers_of(&sources, "write_session_json_inner(")),
+        ["app/session.rs::write_session_json_if_current"]
+    );
+    let checked = callers_of(&sources, "write_session_json_if_current(");
+    assert_eq!(
+        names(checked.clone()),
+        ["app/session.rs::write_fallback_session"]
+    );
+    assert!(
+        checked[0].2.contains("owner_lock_held("),
+        "the fallback write must test serve/owner.lock first"
+    );
+    let writers = callers_of(&sources, "write_fallback_session(");
+    assert_eq!(
+        names(writers.clone()),
+        [
+            "app/session.rs::save_session",
+            "app/session.rs::save_session_before_exit_as"
+        ]
+    );
+    for (_, name, body) in writers {
+        let attached = body
+            .find("layout_is_attached()")
+            .unwrap_or_else(|| panic!("{name} never asks whether a worker holds the layout"));
+        let write = body.find("write_fallback_session(").unwrap_or_default();
+        assert!(
+            attached < write,
+            "{name} writes session.json before asking whether a worker holds the layout"
+        );
+    }
+}

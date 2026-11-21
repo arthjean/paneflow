@@ -6,7 +6,6 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
 use std::time::Duration;
 
 use paneflow_api::methods::events::{EventIds, PublishedEvent};
-use paneflow_serve::Controller;
 use serde_json::Value;
 
 const LINE_WAIT: Duration = Duration::from_secs(20);
@@ -70,19 +69,15 @@ fn layout_event(kind: &str, pane: u64) -> PublishedEvent {
     }
 }
 
-fn publish(endpoint: &std::path::Path, events: &[PublishedEvent]) -> Vec<u64> {
-    Controller::connect(endpoint)
-        .expect("the worker answers")
-        .publish_events(events)
-        .expect("the worker takes layout events")
+fn publish(worker: &paneflow_serve::worker::RunningWorker, events: &[PublishedEvent]) -> Vec<u64> {
+    worker.worker().append_layout_events(events.to_vec())
 }
 
 #[test]
 fn paneflow_events_prints_filtered_events_and_survives_a_worker_restart() {
     let home = tempfile::tempdir().unwrap();
-    let endpoint = paneflow_home::serve_endpoint_path(home.path());
     let worker = paneflow_serve::open(home.path()).expect("the worker takes the home");
-    let first = publish(&endpoint, &[layout_event("pane.created", 1)]);
+    let first = publish(&worker, &[layout_event("pane.created", 1)]);
 
     let follower = Follower::spawn(
         home.path(),
@@ -99,7 +94,7 @@ fn paneflow_events_prints_filtered_events_and_survives_a_worker_restart() {
     assert_eq!(replayed["type"], "pane.created");
 
     let live = publish(
-        &endpoint,
+        &worker,
         &[
             layout_event("pane.focused", 1),
             layout_event("pane.closed", 1),
@@ -117,7 +112,7 @@ fn paneflow_events_prints_filtered_events_and_survives_a_worker_restart() {
     let worker = paneflow_serve::open(home.path()).expect("a new worker takes the home");
     let restarted = follower.json();
     assert_eq!(restarted["type"], "restarted", "{restarted}");
-    let after = publish(&endpoint, &[layout_event("pane.created", 2)]);
+    let after = publish(&worker, &[layout_event("pane.created", 2)]);
     let event = follower.json();
     assert_eq!(event["seq"].as_u64(), Some(after[0]));
     assert_eq!(event["pane_id"], 2);
@@ -127,9 +122,8 @@ fn paneflow_events_prints_filtered_events_and_survives_a_worker_restart() {
 #[test]
 fn paneflow_events_prints_one_human_line_per_event() {
     let home = tempfile::tempdir().unwrap();
-    let endpoint = paneflow_home::serve_endpoint_path(home.path());
     let worker = paneflow_serve::open(home.path()).expect("the worker takes the home");
-    let first = publish(&endpoint, &[layout_event("pane.created", 3)]);
+    let first = publish(&worker, &[layout_event("pane.created", 3)]);
     let follower = Follower::spawn(home.path(), &["--since", &(first[0] - 1).to_string()]);
     assert_eq!(
         follower.line(),

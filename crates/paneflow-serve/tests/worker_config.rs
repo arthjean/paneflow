@@ -17,6 +17,58 @@ fn call(home: &Path, method: &str, params: Value) -> Result<Value, String> {
     )
 }
 
+fn create_workspace(control: &mut HostControl, title: &str) -> Value {
+    let lease = control
+        .request("layout.lease_ids", json!({}))
+        .expect("a lease is granted");
+    let start = lease["start"].as_u64().unwrap();
+    let surface = paneflow_layout::NewSurface {
+        id: paneflow_layout::SurfaceId(start + 3),
+        definition: paneflow_config::schema::SurfaceDefinition {
+            surface_type: Some("terminal".to_string()),
+            ..Default::default()
+        },
+    };
+    let op = paneflow_layout::Op::CreateWorkspace {
+        workspace: paneflow_layout::NewWorkspace {
+            id: paneflow_layout::WorkspaceId(start),
+            title: title.to_string(),
+            cwd: "/work".into(),
+            space: None,
+            durable_id: None,
+            custom_buttons: Vec::new(),
+            managed_worktrees: Vec::new(),
+            tabs: vec![paneflow_layout::NewTab {
+                id: paneflow_layout::TabId(start + 1),
+                title: String::new(),
+                title_source: paneflow_config::schema::TabTitleSource::Preset,
+                worktree: None,
+                root: Some(paneflow_layout::NewNode::Pane(paneflow_layout::NewPane {
+                    id: paneflow_layout::PaneId(start + 2),
+                    surfaces: vec![surface],
+                    active: 0,
+                })),
+            }],
+            active_tab: 0,
+        },
+        select: true,
+    };
+    control
+        .request(
+            "layout.apply",
+            json!({"op": serde_json::to_value(&op).unwrap(), "ids_from": start + 4}),
+        )
+        .expect("the worker applies the op")
+}
+
+fn control(home: &Path) -> HostControl {
+    HostControl::connect(
+        &paneflow_home::serve_endpoint_path(home),
+        "worker-config-events",
+    )
+    .expect("the worker answers")
+}
+
 fn status_until(home: &Path, accept: impl Fn(&Value) -> bool) -> Value {
     let deadline = Instant::now() + PATIENCE;
     loop {
@@ -306,12 +358,7 @@ fn an_action_invoked_from_a_timer_or_a_handler_gets_that_origin_and_the_nesting_
     loaded(home.path());
     let deadline = Instant::now() + PATIENCE;
     let seen = loop {
-        call(
-            home.path(),
-            "events.publish",
-            json!({"events": [{"type": "pane.created", "workspace_id": 1, "pane_id": 4}]}),
-        )
-        .unwrap();
+        create_workspace(&mut control(home.path()), "events");
         let answer = call(home.path(), "action.invoke", json!({"name": "seen"})).unwrap();
         let seen = answer["result"].clone();
         if seen["event"].is_string() && seen["deep"].is_string() {
@@ -340,12 +387,7 @@ fn handlers_run_in_the_worker_and_failing_timers_keep_running_and_are_counted() 
     let status = loaded(home.path());
     assert_eq!(status["handlers"], 1);
     assert_eq!(status["timers"], 1);
-    call(
-        home.path(),
-        "events.publish",
-        json!({"events": [{"type": "pane.created", "workspace_id": 1, "pane_id": 4}]}),
-    )
-    .unwrap();
+    create_workspace(&mut control(home.path()), "events");
     let deadline = Instant::now() + PATIENCE;
     loop {
         let answer = call(home.path(), "action.invoke", json!({"name": "seen"})).unwrap();

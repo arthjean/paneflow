@@ -45,9 +45,9 @@
       "method": "events.follow"
     },
     {
-      "id": "layout_events_published_in_order",
-      "summary": "events.publish appends layout events in the order given and answers their seq values; a batch holding a type outside the workspace, tab, pane, surface and layout families is refused whole with -32602.",
-      "method": "events.publish"
+      "id": "layout_events_appended_by_the_worker",
+      "summary": "An op that layout.apply accepts appends the layout events it returns, in that order with consecutive seq values and their ids; a refused op appends nothing.",
+      "method": "layout.apply"
     }
   ]
 }

@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use gpui::{AppContext as _, Context, Entity};
 use paneflow_config::schema::{SessionId, TerminalSurfaceProfile};
@@ -103,7 +103,7 @@ impl PaneFlowApp {
             })
     }
 
-    fn spawn_layout_surface(&mut self, surface: SurfaceId, cx: &mut Context<Self>) {
+    pub(super) fn spawn_layout_surface(&mut self, surface: SurfaceId, cx: &mut Context<Self>) {
         if self.layout.surfaces.contains_key(&surface) {
             return;
         }
@@ -116,11 +116,30 @@ impl PaneFlowApp {
                 None => self.default_layout_surface(surface, app_ws, cx),
             }
         });
-        if let PaneSurface::Terminal(view) = &built {
-            let session = view.read(cx).terminal.session_id.clone();
-            self.layout.model.complete_spawn(surface, session);
-        }
+        let session = match &built {
+            PaneSurface::Terminal(view) => Some(view.read(cx).terminal.session_id.clone()),
+            PaneSurface::Markdown(_) => None,
+        };
         self.layout.register_surface(surface, built);
+        if let Some(session) = session
+            && self
+                .layout
+                .model
+                .state()
+                .surface(surface)
+                .is_some_and(|known| {
+                    known.kind() == paneflow_layout::SurfaceKind::Terminal
+                        && known.definition.session.is_none()
+                })
+        {
+            let now_ms = self.layout.ms_at(Instant::now());
+            if let Err(error) = self.layout.apply_recorded(
+                paneflow_layout::Op::BindSession { surface, session },
+                now_ms,
+            ) {
+                log::debug!("layout: a new terminal could not bind its session: {error}");
+            }
+        }
     }
 
     fn default_layout_surface(
@@ -164,7 +183,7 @@ impl PaneFlowApp {
         super::subscribed_terminal(view, cx)
     }
 
-    fn reattach_layout_surface(
+    pub(super) fn reattach_layout_surface(
         &mut self,
         surface: SurfaceId,
         session: SessionId,
@@ -222,7 +241,7 @@ impl PaneFlowApp {
                 session: session.clone(),
             },
         );
-        let until = self.layout.epoch + Duration::from_millis(until_ms);
+        let until = self.layout.instant_at(until_ms);
         let executor = cx.background_executor().clone();
         cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
             loop {
@@ -238,6 +257,10 @@ impl PaneFlowApp {
     }
 
     fn stop_layout_session(&mut self, session: &SessionId, cx: &mut Context<Self>) {
+        if self.layout.sync.is_live() {
+            self.layout.held.remove(session);
+            return;
+        }
         if let Some(view) = self.terminal_with_session(session, cx) {
             self.layout.held.remove(session);
             self.stop_terminals(vec![view], cx);
@@ -261,12 +284,16 @@ impl PaneFlowApp {
             })
             .map(|held| held.target)
             .collect();
+        if self.layout.sync.is_live() {
+            return;
+        }
         self.stop_hosted_sessions(targets, cx);
     }
 
     pub(crate) fn forget_layout_sessions(&mut self, sessions: &[SessionId]) {
         let sessions: std::collections::HashSet<SessionId> = sessions.iter().cloned().collect();
         self.layout.model.forget_sessions(&sessions);
+        self.layout.sync_snapshot();
         self.layout
             .held
             .retain(|session, _| !sessions.contains(session));

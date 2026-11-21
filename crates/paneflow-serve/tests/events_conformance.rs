@@ -12,10 +12,7 @@ use std::time::{Duration, Instant};
 use paneflow_host::protocol::{ClientHello, METHOD_AGENT_EVENT};
 use paneflow_host::{HostClient, SessionSummary};
 use paneflow_ipc_client::host_control::HostControl;
-use paneflow_serve::protocol::{
-    ERR_EVICTED, ERR_INVALID_PARAMS, METHOD_EVENTS_FOLLOW, METHOD_EVENTS_PUBLISH,
-    WORKER_PROTOCOL_VERSION,
-};
+use paneflow_serve::protocol::{ERR_EVICTED, METHOD_EVENTS_FOLLOW, WORKER_PROTOCOL_VERSION};
 use serde_json::{Value, json};
 
 const CONFORMANCE: &str = include_str!("../../../protocol/events-conformance-v1.json");
@@ -114,29 +111,56 @@ impl Follower {
     }
 }
 
-fn publish(endpoint: &Path, events: Value) -> Result<Vec<u64>, String> {
-    let mut control = HostControl::connect(endpoint, "events-conformance").expect("connects");
-    let answered = control.request(METHOD_EVENTS_PUBLISH, json!({"events": events}))?;
-    Ok(answered["seqs"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|seq| seq.as_u64().unwrap())
-        .collect())
+type Log = std::sync::Arc<paneflow_serve::server::Worker>;
+
+fn publish(log: &Log, events: Value) -> Result<Vec<u64>, String> {
+    let events: Vec<paneflow_api::methods::events::PublishedEvent> =
+        serde_json::from_value(events).map_err(|error| error.to_string())?;
+    Ok(log.append_layout_events(events))
 }
 
-fn publish_raw(endpoint: &Path, events: Value) -> Value {
-    let mut control = HostControl::connect(endpoint, "events-conformance").expect("connects");
-    let id = control
-        .write_request(METHOD_EVENTS_PUBLISH, json!({"events": events}))
-        .unwrap();
-    loop {
-        let line = control.read_stream_line(FRAME_WAIT).unwrap().unwrap();
-        let envelope: Value = serde_json::from_str(&line).unwrap();
-        if envelope["id"].as_u64() == Some(id) {
-            return envelope;
-        }
-    }
+fn create_workspace(control: &mut HostControl, title: &str) -> Value {
+    let lease = control
+        .request("layout.lease_ids", json!({}))
+        .expect("a lease is granted");
+    let start = lease["start"].as_u64().unwrap();
+    let surface = paneflow_layout::NewSurface {
+        id: paneflow_layout::SurfaceId(start + 3),
+        definition: paneflow_config::schema::SurfaceDefinition {
+            surface_type: Some("terminal".to_string()),
+            ..Default::default()
+        },
+    };
+    let op = paneflow_layout::Op::CreateWorkspace {
+        workspace: paneflow_layout::NewWorkspace {
+            id: paneflow_layout::WorkspaceId(start),
+            title: title.to_string(),
+            cwd: "/work".into(),
+            space: None,
+            durable_id: None,
+            custom_buttons: Vec::new(),
+            managed_worktrees: Vec::new(),
+            tabs: vec![paneflow_layout::NewTab {
+                id: paneflow_layout::TabId(start + 1),
+                title: String::new(),
+                title_source: paneflow_config::schema::TabTitleSource::Preset,
+                worktree: None,
+                root: Some(paneflow_layout::NewNode::Pane(paneflow_layout::NewPane {
+                    id: paneflow_layout::PaneId(start + 2),
+                    surfaces: vec![surface],
+                    active: 0,
+                })),
+            }],
+            active_tab: 0,
+        },
+        select: true,
+    };
+    control
+        .request(
+            "layout.apply",
+            json!({"op": serde_json::to_value(&op).unwrap(), "ids_from": start + 4}),
+        )
+        .expect("the worker applies the op")
 }
 
 fn shell_params() -> Value {
@@ -209,7 +233,9 @@ fn the_worker_event_log_passes_every_listed_conformance_case() {
     assert!(!epoch.is_empty());
     assert_eq!(second.header["epoch"], epoch.as_str());
 
-    ran.push(case_layout_events_published_in_order(&endpoint, &mut first));
+    ran.push(case_layout_events_appended_by_the_worker(
+        &endpoint, &mut first,
+    ));
     ran.push(case_terminal_events_from_the_host_stream(
         &mut owner, &mut first,
     ));
@@ -221,17 +247,19 @@ fn the_worker_event_log_passes_every_listed_conformance_case() {
         &first,
         &mut second,
     ));
+    let log = std::sync::Arc::clone(worker.worker());
     ran.push(case_since_replays_exactly_the_missed_events(
-        &endpoint, &epoch, &first,
+        &log, &endpoint, &epoch, &first,
     ));
-    ran.push(case_filters_keep_the_log_seq(&endpoint));
+    ran.push(case_filters_keep_the_log_seq(&log, &endpoint));
     ran.push(case_keepalive_when_quiet(&endpoint));
     ran.push(case_evicted_when_since_left_the_ring_or_the_epoch_differs(
-        &endpoint, &epoch,
+        &log, &endpoint, &epoch,
     ));
     ran.push(case_a_follower_over_eight_mebibytes_behind_is_closed_alone(
-        &endpoint,
+        &log, &endpoint,
     ));
+    drop(log);
 
     worker.stop();
     let _ = core_server.stop();
@@ -244,51 +272,78 @@ fn the_worker_event_log_passes_every_listed_conformance_case() {
     );
 }
 
-fn case_layout_events_published_in_order(endpoint: &Path, first: &mut Follower) -> String {
-    let seqs = publish(
-        endpoint,
-        json!([
-            {"type": "workspace.created", "workspace_id": 1},
-            {"type": "pane.created", "workspace_id": 1, "tab_id": 2, "pane_id": 3},
-            {"type": "layout.changed", "workspace_id": 1, "tab_id": 2, "data": {"revision": 4}},
-        ]),
-    )
-    .expect("layout events are accepted");
-    assert_eq!(seqs.len(), 3);
+fn case_layout_events_appended_by_the_worker(endpoint: &Path, first: &mut Follower) -> String {
+    let mut control = HostControl::connect(endpoint, "events-conformance").expect("connects");
+    let applied = create_workspace(&mut control, "conformance");
+    let kinds: Vec<String> = applied["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|event| event["type"].as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        kinds.contains(&"workspace.created".to_string()),
+        "{kinds:?}"
+    );
+    assert!(kinds.contains(&"pane.created".to_string()), "{kinds:?}");
+    let mut seqs = Vec::new();
+    for kind in &kinds {
+        let event = first.next_event();
+        assert_eq!(&event["type"], kind.as_str());
+        assert!(event["ts"].as_u64().is_some_and(|ts| ts > 0));
+        assert!(event["data"].is_object());
+        seqs.push(event["seq"].as_u64().unwrap());
+    }
     assert!(
         seqs.windows(2).all(|pair| pair[1] == pair[0] + 1),
         "{seqs:?}"
     );
-    for (seq, kind) in seqs
+    let workspace = first
+        .seen
         .iter()
-        .zip(["workspace.created", "pane.created", "layout.changed"])
-    {
-        let event = first.next_event();
-        assert_eq!(event["seq"].as_u64(), Some(*seq));
-        assert_eq!(event["type"], kind);
-        assert!(event["ts"].as_u64().is_some_and(|ts| ts > 0));
-        assert!(event["data"].is_object());
-        assert_eq!(event["workspace_id"], 1);
-    }
-    assert_eq!(first.seen[1]["pane_id"], 3);
-    assert_eq!(first.seen[2]["data"]["revision"], 4);
+        .rev()
+        .find(|event| event["type"] == "workspace.created")
+        .unwrap()["workspace_id"]
+        .clone();
+    assert!(workspace.as_u64().is_some());
+    let pane = first
+        .seen
+        .iter()
+        .rev()
+        .find(|event| event["type"] == "pane.created")
+        .unwrap();
+    assert_eq!(pane["workspace_id"], workspace);
+    assert!(pane["pane_id"].as_u64().is_some());
 
-    let refused = publish_raw(
-        endpoint,
-        json!([
-            {"type": "pane.created", "pane_id": 9},
-            {"type": "terminal.exited", "session": "forged"},
-        ]),
-    );
-    assert_eq!(refused["error"]["code"], ERR_INVALID_PARAMS, "{refused}");
-    let next = publish(endpoint, json!([{"type": "tab.selected", "tab_id": 2}])).unwrap();
+    let id = control
+        .write_request(
+            "layout.apply",
+            json!({"op": {"op": "rename_surface", "surface": 987_654_321u64, "name": "x"}}),
+        )
+        .unwrap();
+    let refused = loop {
+        let line = control.read_stream_line(FRAME_WAIT).unwrap().unwrap();
+        let envelope: Value = serde_json::from_str(&line).unwrap();
+        if envelope["id"].as_u64() == Some(id) {
+            break envelope;
+        }
+    };
+    assert!(refused["error"].is_object(), "{refused}");
+    let renamed = control
+        .request(
+            "layout.apply",
+            json!({"op": {"op": "rename_workspace", "workspace": workspace, "title": "renamed"}}),
+        )
+        .expect("the rename applies");
+    assert_eq!(renamed["events"][0]["type"], "workspace.renamed");
+    let next = first.next_event();
+    assert_eq!(next["type"], "workspace.renamed");
     assert_eq!(
-        next,
-        vec![seqs[2] + 1],
-        "a refused batch appends nothing, not even its valid events"
+        next["seq"].as_u64(),
+        Some(seqs[seqs.len() - 1] + 1),
+        "a refused op appends nothing"
     );
-    assert_eq!(first.next_event()["type"], "tab.selected");
-    "layout_events_published_in_order".to_string()
+    "layout_events_appended_by_the_worker".to_string()
 }
 
 fn case_terminal_events_from_the_host_stream(
@@ -415,6 +470,7 @@ fn case_header_then_consecutive_seq_to_two_followers(
 }
 
 fn case_since_replays_exactly_the_missed_events(
+    log: &Log,
     endpoint: &Path,
     epoch: &str,
     first: &Follower,
@@ -426,20 +482,16 @@ fn case_since_replays_exactly_the_missed_events(
     resumed.until_seq(last);
     let missed: Vec<u64> = seen.iter().copied().filter(|seq| *seq > since).collect();
     assert_eq!(resumed.seqs(), missed, "no gap and no duplicate");
-    let live = publish(
-        endpoint,
-        json!([{"type": "surface.renamed", "surface_id": 4}]),
-    )
-    .unwrap();
+    let live = publish(log, json!([{"type": "surface.renamed", "surface_id": 4}])).unwrap();
     assert_eq!(resumed.next_event()["seq"].as_u64(), Some(live[0]));
     "since_replays_exactly_the_missed_events".to_string()
 }
 
-fn case_filters_keep_the_log_seq(endpoint: &Path) -> String {
+fn case_filters_keep_the_log_seq(log: &Log, endpoint: &Path) -> String {
     let mut typed = follow(endpoint, json!({"types": ["surface.*", "pane.closed"]}));
     let mut scoped = follow(endpoint, json!({"workspace_id": 7}));
     let seqs = publish(
-        endpoint,
+        log,
         json!([
             {"type": "pane.created", "workspace_id": 8, "pane_id": 1},
             {"type": "surface.created", "workspace_id": 7, "surface_id": 2},
@@ -468,6 +520,7 @@ fn case_keepalive_when_quiet(endpoint: &Path) -> String {
 }
 
 fn case_evicted_when_since_left_the_ring_or_the_epoch_differs(
+    log: &Log,
     endpoint: &Path,
     epoch: &str,
 ) -> String {
@@ -476,7 +529,7 @@ fn case_evicted_when_since_left_the_ring_or_the_epoch_differs(
         .collect();
     let mut last = 0;
     for _ in 0..5 {
-        last = *publish(endpoint, Value::Array(batch.clone()))
+        last = *publish(log, Value::Array(batch.clone()))
             .unwrap()
             .last()
             .unwrap();
@@ -515,7 +568,10 @@ fn case_evicted_when_since_left_the_ring_or_the_epoch_differs(
     "evicted_when_since_left_the_ring_or_the_epoch_differs".to_string()
 }
 
-fn case_a_follower_over_eight_mebibytes_behind_is_closed_alone(endpoint: &Path) -> String {
+fn case_a_follower_over_eight_mebibytes_behind_is_closed_alone(
+    log: &Log,
+    endpoint: &Path,
+) -> String {
     let mut stalled = follow(endpoint, json!({}));
     let reading = follow(endpoint, json!({}));
     let reader = std::thread::spawn(move || {
@@ -533,12 +589,12 @@ fn case_a_follower_over_eight_mebibytes_behind_is_closed_alone(endpoint: &Path) 
     let total = 8 * 1024 * 1024 / pad.len() + 16;
     for _ in 0..total {
         publish(
-            endpoint,
+            log,
             json!([{"type": "layout.changed", "data": {"pad": pad}}]),
         )
         .unwrap();
     }
-    publish(endpoint, json!([{"type": "layout.resync"}])).unwrap();
+    publish(log, json!([{"type": "layout.resync"}])).unwrap();
     assert_eq!(
         reader.join().unwrap(),
         total,

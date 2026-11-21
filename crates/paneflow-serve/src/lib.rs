@@ -15,6 +15,7 @@ pub mod controller;
 pub mod core_link;
 pub mod event_log;
 pub mod integrations;
+pub mod layout_authority;
 pub mod notifications;
 pub mod prompts;
 pub mod protocol;

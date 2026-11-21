@@ -8,7 +8,6 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
 use std::time::Duration;
 
 use paneflow_api::methods::events::{EventIds, PublishedEvent};
-use paneflow_serve::Controller;
 use serde_json::{Value, json};
 
 const LINE_WAIT: Duration = Duration::from_secs(30);
@@ -136,11 +135,8 @@ fn layout_event(kind: &str, pane: u64) -> PublishedEvent {
     }
 }
 
-fn publish(endpoint: &Path, events: &[PublishedEvent]) -> Vec<u64> {
-    Controller::connect(endpoint)
-        .expect("the worker answers")
-        .publish_events(events)
-        .expect("the worker takes layout events")
+fn publish(worker: &paneflow_serve::worker::RunningWorker, events: &[PublishedEvent]) -> Vec<u64> {
+    worker.worker().append_layout_events(events.to_vec())
 }
 
 #[test]
@@ -460,7 +456,6 @@ fn a_worker_method_is_routed_to_the_worker_from_a_script() {
 #[test]
 fn handlers_hear_worker_events_and_a_worker_restart_calls_the_resync_handlers() {
     let home = tempfile::tempdir().unwrap();
-    let endpoint = paneflow_home::serve_endpoint_path(home.path());
     let worker = paneflow_serve::open(home.path()).expect("the worker takes the home");
     let script = Script::spawn(
         home.path(),
@@ -473,13 +468,13 @@ fn handlers_hear_worker_events_and_a_worker_restart_calls_the_resync_handlers() 
         ],
     );
     script.stderr_until("ready");
-    publish(&endpoint, &[layout_event("pane.created", 1)]);
+    publish(&worker, &[layout_event("pane.created", 1)]);
     assert_eq!(script.stdout_line(), "pane 1");
     worker.stop();
     let worker = paneflow_serve::open(home.path()).expect("a new worker takes the home");
     assert_eq!(script.stdout_line(), "resync");
     script.stderr_until("restarted");
-    publish(&endpoint, &[layout_event("pane.created", 2)]);
+    publish(&worker, &[layout_event("pane.created", 2)]);
     assert_eq!(script.stdout_line(), "pane 2");
     assert_eq!(script.status(), Some(0));
     worker.stop();
@@ -488,7 +483,6 @@ fn handlers_hear_worker_events_and_a_worker_restart_calls_the_resync_handlers() 
 #[test]
 fn wait_returns_a_worker_event_and_for_ends_a_listening_script_with_status_zero() {
     let home = tempfile::tempdir().unwrap();
-    let endpoint = paneflow_home::serve_endpoint_path(home.path());
     let worker = paneflow_serve::open(home.path()).expect("the worker takes the home");
     let script = Script::spawn(
         home.path(),
@@ -499,7 +493,7 @@ fn wait_returns_a_worker_event_and_for_ends_a_listening_script_with_status_zero(
     );
     script.stderr_until("ready");
     publish(
-        &endpoint,
+        &worker,
         &[
             layout_event("pane.focused", 8),
             layout_event("pane.closed", 9),

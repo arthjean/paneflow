@@ -1,13 +1,14 @@
 mod adopt;
 mod arrange;
+pub(crate) mod client;
 mod effects;
 mod gestures;
 #[cfg(test)]
 mod guard;
 mod project;
-pub(crate) mod publish;
 mod select;
 mod stage;
+pub(crate) mod sync;
 
 use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
@@ -32,7 +33,6 @@ pub(crate) type Spawner =
 
 pub(crate) struct LayoutBridge {
     model: Model,
-    epoch: Instant,
     panes: HashMap<PaneId, Entity<Pane>>,
     pane_ids: HashMap<EntityId, PaneId>,
     surfaces: HashMap<SurfaceId, PaneSurface>,
@@ -49,7 +49,9 @@ pub(crate) struct LayoutBridge {
     staged_surfaces: HashMap<SurfaceId, Spawner>,
     staged_workspaces: HashMap<WorkspaceId, Workspace>,
     held: HashMap<SessionId, HeldSurface>,
-    events: publish::LayoutEventSink,
+    pub(crate) sync: sync::LayoutSync,
+    #[cfg(test)]
+    published: std::cell::RefCell<Vec<paneflow_api::methods::events::PublishedEvent>>,
 }
 
 impl Default for LayoutBridge {
@@ -62,7 +64,6 @@ impl LayoutBridge {
     pub(crate) fn new(model: Model) -> Self {
         Self {
             model: model.with_ids(crate::layout_ids::source()),
-            epoch: Instant::now(),
             panes: HashMap::new(),
             pane_ids: HashMap::new(),
             surfaces: HashMap::new(),
@@ -79,16 +80,78 @@ impl LayoutBridge {
             staged_surfaces: HashMap::new(),
             staged_workspaces: HashMap::new(),
             held: HashMap::new(),
-            events: publish::LayoutEventSink::default(),
+            sync: sync::LayoutSync::default(),
+            #[cfg(test)]
+            published: std::cell::RefCell::new(Vec::new()),
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn publish_applied(&self, applied: &Applied) {
-        self.events.publish(publish::published_events(
-            &applied.events,
-            &applied.scopes,
-            applied.revision,
-        ));
+        self.published
+            .borrow_mut()
+            .extend(paneflow_serve::layout_authority::published_events(
+                &applied.events,
+                &applied.scopes,
+                applied.revision,
+            ));
+    }
+
+    #[cfg(not(test))]
+    pub(crate) fn publish_applied(&self, _: &Applied) {}
+
+    #[cfg(test)]
+    pub(crate) fn publish_resync(
+        &self,
+        events: &[paneflow_layout::Event],
+        before: &paneflow_layout::State,
+    ) {
+        let scopes: Vec<paneflow_layout::EventScope> = events
+            .iter()
+            .map(|event| event.scope(before, self.model.state()))
+            .collect();
+        self.published
+            .borrow_mut()
+            .extend(paneflow_serve::layout_authority::published_events(
+                events,
+                &scopes,
+                self.model.revision(),
+            ));
+    }
+
+    #[cfg(not(test))]
+    pub(crate) fn publish_resync(&self, _: &[paneflow_layout::Event], _: &paneflow_layout::State) {}
+
+    pub(crate) fn apply_recorded(&mut self, op: Op, now_ms: u64) -> Result<Applied, OpError> {
+        let ids_from = self.model.next_id();
+        let wire = op.clone();
+        let applied = self.model.apply(op, now_ms)?;
+        self.publish_applied(&applied);
+        self.sync.record_op(&wire, ids_from, applied.revision);
+        Ok(applied)
+    }
+
+    pub(crate) fn sync_snapshot(&mut self) {
+        if !self.sync.is_live() {
+            return;
+        }
+        let before = self.model.revision();
+        self.model.set_revision(before + 1);
+        let snapshot = self.model.snapshot();
+        self.sync.record_sync(&snapshot, before);
+    }
+
+    pub(crate) fn resync_recorded(
+        &mut self,
+        state: paneflow_layout::State,
+    ) -> Option<Vec<paneflow_layout::Event>> {
+        let before = self.model.revision();
+        let previous = self.model.state().clone();
+        let events = self.model.resync(state)?;
+        self.publish_resync(&events, &previous);
+        let snapshot = self.model.snapshot();
+        self.sync.record_sync(&snapshot, before);
+        Some(events)
     }
 
     #[cfg(test)]
@@ -97,7 +160,24 @@ impl LayoutBridge {
     }
 
     pub(crate) fn ms_at(&self, at: Instant) -> u64 {
-        u64::try_from(at.saturating_duration_since(self.epoch).as_millis()).unwrap_or(u64::MAX)
+        let now = Instant::now();
+        let wall = paneflow_serve::state::now_ms();
+        let ahead =
+            u64::try_from(at.saturating_duration_since(now).as_millis()).unwrap_or(u64::MAX);
+        let behind =
+            u64::try_from(now.saturating_duration_since(at).as_millis()).unwrap_or(u64::MAX);
+        wall.saturating_add(ahead).saturating_sub(behind)
+    }
+
+    pub(crate) fn instant_at(&self, ms: u64) -> Instant {
+        let wall = paneflow_serve::state::now_ms();
+        let now = Instant::now();
+        if ms >= wall {
+            now + std::time::Duration::from_millis(ms - wall)
+        } else {
+            now.checked_sub(std::time::Duration::from_millis(wall - ms))
+                .unwrap_or(now)
+        }
     }
 
     pub(crate) fn reserve_surface(
@@ -223,23 +303,20 @@ pub(crate) fn surface_entity(surface: &PaneSurface) -> EntityId {
     }
 }
 
-fn op_label(op: &Op) -> String {
-    let debug = format!("{op:?}");
-    debug
-        .split(|c: char| !c.is_alphanumeric())
-        .next()
-        .unwrap_or_default()
-        .to_string()
-}
-
 impl PaneFlowApp {
     pub(crate) fn apply_layout_op(
         &mut self,
         op: Op,
         cx: &mut Context<Self>,
     ) -> Result<Applied, OpError> {
-        let label = op_label(&op);
-        self.apply_layout_with(&label, move |model, now_ms| model.apply(op, now_ms), cx)
+        let label = op.label().to_string();
+        let wire = op.clone();
+        self.apply_layout_with(
+            &label,
+            move |model, now_ms| model.apply(op, now_ms),
+            Some(wire),
+            cx,
+        )
     }
 
     #[cfg(test)]
@@ -247,6 +324,7 @@ impl PaneFlowApp {
         let outcome = self.apply_layout_with(
             "Split",
             |_, _| -> Result<Applied, OpError> { panic!("a layout op panicked in a test build") },
+            None,
             cx,
         );
         outcome.err().unwrap_or(OpError::NotFound)
@@ -256,15 +334,20 @@ impl PaneFlowApp {
         &mut self,
         label: &str,
         apply: impl FnOnce(&mut Model, u64) -> Result<Applied, OpError>,
+        wire: Option<Op>,
         cx: &mut Context<Self>,
     ) -> Result<Applied, OpError> {
         self.adopt_layout(cx);
         let now_ms = self.layout.ms_at(Instant::now());
+        let ids_from = self.layout.model.next_id();
         let model = &mut self.layout.model;
         let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| apply(model, now_ms)));
         let applied = match outcome {
             Ok(Ok(applied)) => {
                 self.layout.publish_applied(&applied);
+                if let Some(wire) = &wire {
+                    self.layout.sync.record_op(wire, ids_from, applied.revision);
+                }
                 applied
             }
             Ok(Err(error)) => {
@@ -292,17 +375,15 @@ impl PaneFlowApp {
         Ok(applied)
     }
 
-    pub(crate) fn start_layout_event_stream(&mut self) {
-        if let Some(endpoint) = paneflow_home::serve_endpoint_path_for_current_home() {
-            self.layout.events.start(endpoint);
-        }
-    }
-
     #[cfg(test)]
     pub(crate) fn pending_layout_events(
         &self,
     ) -> Vec<paneflow_api::methods::events::PublishedEvent> {
-        self.layout.events.pending()
+        self.layout.published.borrow().clone()
+    }
+
+    pub(crate) fn layout_model_revision(&self) -> u64 {
+        self.layout.model.revision()
     }
 
     pub(crate) fn layout_revision_changed(&mut self, cx: &mut Context<Self>) {

@@ -51,14 +51,14 @@
       "summary": "events.follow streams the worker's numbered event log: a following header with the current seq and epoch, a replay of the events after since, then every new event with consecutive seq values; a since that left the ring of 1,024 events is refused with an evicted error."
     },
     {
-      "name": "events.publish",
-      "since": 1,
-      "summary": "events.publish appends layout events a window applied to the worker's log, in order; any event outside the workspace, tab, pane, surface and layout families refuses the batch."
-    },
-    {
       "name": "prompt.follow",
       "since": 1,
       "summary": "prompt.request, prompt.wait, prompt.reply and prompt.follow hold questions for the user in the worker: every follower that shows the kind receives them, the first reply wins and the others receive ended."
+    },
+    {
+      "name": "layout.authority",
+      "since": 1,
+      "summary": "layout.view, layout.attach, layout.lease_ids, layout.apply and layout.adopt hold the layout model in the worker, which writes session.json; a window that finds this capability attaches as a layout client, and one that does not stays the layout authority."
     }
   ]
 }

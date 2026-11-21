@@ -5,6 +5,7 @@ use paneflow_api::{Descriptor, Method, Owner, Reply};
 use paneflow_ipc_client::line_wire::Wire;
 use serde_json::{Value, json};
 
+use crate::layout_authority::ConnectionId;
 use crate::protocol::{ERR_INTERNAL, ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND};
 use crate::server::{Flow, Worker};
 
@@ -36,6 +37,7 @@ impl ServeError {
 pub(crate) struct Call<'a, P> {
     pub(crate) params: P,
     pub(crate) raw: &'a Value,
+    pub(crate) connection: ConnectionId,
 }
 
 pub(crate) struct Stream<'a, P> {
@@ -48,7 +50,8 @@ pub(crate) struct Stream<'a, P> {
 
 type Handler<P> = fn(&Arc<Worker>, Call<'_, P>) -> Result<Value, ServeError>;
 
-type ReadyHandler = Box<dyn Fn(&Arc<Worker>, &Value) -> Result<Value, ServeError> + Send + Sync>;
+type ReadyHandler =
+    Box<dyn Fn(&Arc<Worker>, &Value, ConnectionId) -> Result<Value, ServeError> + Send + Sync>;
 
 type StreamHandler =
     Box<dyn Fn(&mut Wire, &Arc<Worker>, &AtomicBool, &Value, &Value) -> Flow + Send + Sync>;
@@ -125,9 +128,16 @@ impl RegistryBuilder {
     }
 
     fn ready_handler<M: Method>(handler: Handler<M::Params>) -> ReadyHandler {
-        Box::new(move |worker, raw| {
+        Box::new(move |worker, raw, connection| {
             let params = decode::<M::Params>(raw)?;
-            handler(worker, Call { params, raw })
+            handler(
+                worker,
+                Call {
+                    params,
+                    raw,
+                    connection,
+                },
+            )
         })
     }
 
@@ -256,9 +266,9 @@ impl Registry {
             .ok_or_else(|| ServeError::method_not_found(method))?;
         entry.validate(params)?;
         match &entry.serve {
-            Serve::Ready(handler) => handler(worker, params),
+            Serve::Ready(handler) => handler(worker, params, ConnectionId::INTERNAL),
             Serve::Closing(handler, after) => {
-                let answer = handler(worker, params);
+                let answer = handler(worker, params, ConnectionId::INTERNAL);
                 after(worker);
                 answer
             }
@@ -268,6 +278,10 @@ impl Registry {
         }
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "a served request carries its wire, worker, shutdown flag, id, method, params and connection"
+    )]
     pub(crate) fn serve(
         &self,
         wire: &mut Wire,
@@ -276,6 +290,7 @@ impl Registry {
         id: &Value,
         method: &str,
         params: &Value,
+        connection: ConnectionId,
     ) -> Served {
         let Some(entry) = self.get(method) else {
             return Served::Reply(Err(ServeError::method_not_found(method)));
@@ -284,9 +299,9 @@ impl Registry {
             return Served::Reply(Err(error));
         }
         match &entry.serve {
-            Serve::Ready(handler) => Served::Reply(handler(worker, params)),
+            Serve::Ready(handler) => Served::Reply(handler(worker, params, connection)),
             Serve::Closing(handler, after) => {
-                Served::ReplyThenClose(handler(worker, params), *after)
+                Served::ReplyThenClose(handler(worker, params, connection), *after)
             }
             Serve::Stream(handler) => Served::Streamed(handler(wire, worker, shutdown, id, params)),
         }

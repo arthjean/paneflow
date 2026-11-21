@@ -81,6 +81,10 @@ impl Wire {
         }
     }
 
+    pub fn set_max_frame(&mut self, max_frame: usize) {
+        self.max_frame = max_frame;
+    }
+
     pub fn new(stream: Stream, max_frame: usize) -> io::Result<Self> {
         #[cfg(windows)]
         {

@@ -2,6 +2,7 @@ use paneflow_config::schema::{
     ButtonCommand, DockSession, LayoutNode, ManagedWorktreeDef, PullRequestSession, SessionId,
     SpaceId, SurfaceDefinition, TabTitleSource,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::ids::{PaneId, SplitId, SurfaceId, TabId, WorkspaceId};
 
@@ -9,7 +10,8 @@ pub const MAX_PANES: usize = paneflow_config::schema::MAX_LAYOUT_LEAVES;
 pub const MAX_TABS_PER_WORKSPACE: usize = 32;
 pub const MAX_PANE_SURFACES: usize = 64;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Direction {
     Horizontal,
     Vertical,
@@ -31,13 +33,14 @@ impl Direction {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SurfaceKind {
     Terminal,
     Markdown,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Surface {
     pub id: SurfaceId,
     pub definition: SurfaceDefinition,
@@ -67,7 +70,7 @@ impl Surface {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Pane {
     pub id: PaneId,
     pub surfaces: Vec<Surface>,
@@ -86,26 +89,27 @@ impl Pane {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Child {
     pub node: Node,
     pub ratio: f32,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Split {
     pub id: SplitId,
     pub direction: Direction,
     pub children: Vec<Child>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Node {
     Pane(Pane),
     Split(Split),
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct TabExtras {
     pub worktree_raw: Option<Vec<u8>>,
     pub unread: bool,
@@ -113,7 +117,7 @@ pub struct TabExtras {
     pub dock: Option<DockSession>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Tab {
     pub id: TabId,
     pub title: String,
@@ -139,7 +143,7 @@ impl Tab {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct WorkspaceExtras {
     pub durable_id: Option<paneflow_config::schema::WorkspaceId>,
     pub legacy_layout: Option<LayoutNode>,
@@ -150,7 +154,7 @@ pub struct WorkspaceExtras {
     pub muted: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Workspace {
     pub id: WorkspaceId,
     pub title: String,
@@ -176,7 +180,7 @@ impl Workspace {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct State {
     pub version: u32,
     pub workspaces: Vec<Workspace>,
@@ -254,7 +258,7 @@ impl State {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SurfaceLocation {
     pub workspace: WorkspaceId,
     pub tab: TabId,

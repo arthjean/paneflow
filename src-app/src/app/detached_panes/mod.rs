@@ -1,4 +1,4 @@
-mod persistence;
+pub(crate) mod persistence;
 mod window;
 
 use gpui::{

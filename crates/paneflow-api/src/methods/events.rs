@@ -168,31 +168,3 @@ pub struct PublishedEvent {
     #[serde(default)]
     pub data: serde_json::Map<String, serde_json::Value>,
 }
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PublishParams {
-    #[schemars(description = "Events in the order their ops were applied")]
-    pub events: Vec<PublishedEvent>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Published {
-    #[schemars(description = "The seq each event received, in order")]
-    pub seqs: Vec<u64>,
-}
-
-method! {
-    Publish {
-        name: "events.publish",
-        summary: "Append layout events to the worker's log, in order. Any event outside the layout family refuses the whole batch with -32602.",
-        owner: Owner::Worker,
-        fallback: NO_FALLBACK,
-        gate: Gate::Open,
-        reply: Reply::Ready,
-        params: PublishParams,
-        result: Published,
-        examples: [({"events": [{"type": "pane.created", "workspace_id": 1, "tab_id": 2, "pane_id": 5}]} => {"seqs": [42]})],
-    }
-}

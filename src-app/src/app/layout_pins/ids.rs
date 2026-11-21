@@ -6,7 +6,7 @@ use super::Rig;
 use crate::pane::PaneEvent;
 use crate::{SplitVertically, ToggleZoom};
 
-pub(super) const PINS: usize = 7;
+pub(super) const PINS: usize = 8;
 
 fn split_v(rig: &mut Rig<'_>) {
     rig.act(|app, window, cx| app.handle_split_v(&SplitVertically, window, cx));
@@ -322,4 +322,71 @@ fn pin_a_session_without_ids_takes_the_surface_id_its_host_recorded(cx: &mut Tes
         rig.surface_id("c") > recorded,
         "the counter starts above the highest id"
     );
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_the_window_state_restores_a_placement_and_a_dock_and_drops_an_unknown_pane(
+    cx: &mut TestAppContext,
+) {
+    let (state, names, b, tab) = {
+        let mut rig = Rig::mount(cx);
+        two_panes_and_a_stacked_surface(&mut rig);
+        detach(&mut rig, "b");
+        let b = model_pane_id(&mut rig, "b");
+        rig.act(|app, _, cx| app.save_session(cx));
+        let recorded =
+            crate::window_state::recorded_layout().expect("the window recorded its layout");
+        assert_eq!(recorded.detached.len(), 1);
+        assert_eq!(recorded.detached[0].pane, b);
+        let state = crate::app::session::shared_session_state(rig.state());
+        assert!(
+            state.detached_panes.is_empty(),
+            "session.json no longer holds placements"
+        );
+        assert!(
+            state
+                .workspaces
+                .iter()
+                .flat_map(|ws| ws.tabs.iter())
+                .all(|tab| tab.dock.is_none())
+        );
+        let tab = state.workspaces[0].tabs[0]
+            .layout_ids
+            .as_ref()
+            .expect("the tab has ids")
+            .tab;
+        (state, rig.names(), b, tab)
+    };
+    let placed = |pane| crate::window_state::PersistedDetached {
+        pane,
+        x: 40.,
+        y: 50.,
+        width: 640.,
+        height: 480.,
+    };
+    crate::window_state::seed_loaded_layout(Some(crate::window_state::WindowLayoutState {
+        docks: vec![crate::window_state::PersistedDock {
+            tab,
+            dock: paneflow_config::schema::DockSession {
+                open: false,
+                tabs: Vec::new(),
+                active: 0,
+                tree: true,
+            },
+        }],
+        detached: vec![placed(987_654), placed(b)],
+    }));
+    let mut rig = Rig::mount_restored(cx, &state, names);
+    rig.act(|app, window, cx| app.restore_detached_panes(window, cx));
+    crate::window_state::seed_loaded_layout(None);
+    assert!(is_detached(&mut rig, "b"));
+    assert!(!is_detached(&mut rig, "a"));
+    assert_eq!(model_pane_id(&mut rig, "b"), b);
+    assert!(
+        rig.cx
+            .update(|_, cx| rig.app.read(cx).workspaces[0].tabs()[0].files_sidebar_open),
+        "the dock of the tab came back from window-state.json"
+    );
+    assert!(rig.toasts().is_empty(), "{:?}", rig.toasts());
 }

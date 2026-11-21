@@ -21,6 +21,7 @@ paneflow-config.workspace = true
 paneflow-home.workspace = true
 paneflow-host.workspace = true
 paneflow-ipc-client.workspace = true
+paneflow-layout.workspace = true
 paneflow-mcp-install.workspace = true
 paneflow-process.workspace = true
 paneflow-script.workspace = true

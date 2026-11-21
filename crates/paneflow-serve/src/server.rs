@@ -15,8 +15,8 @@ use serde_json::{Value, json};
 use crate::event_log::{Delivery, EventLog, Filter};
 use crate::protocol::{
     DEFAULT_ACTIVITY_LOG_LIMIT, ERR_BUSY, ERR_EVICTED, ERR_FRAME_TOO_LARGE, ERR_HANDSHAKE_REQUIRED,
-    ERR_INVALID_REQUEST, ERR_PARSE, MAX_CONTROL_FRAME_BYTES, MAX_EVENT_LINE_BYTES,
-    METHOD_HOST_HELLO, METHOD_WORKER_HELLO, WorkerIdentity, error_envelope, result_envelope,
+    ERR_INVALID_REQUEST, ERR_PARSE, MAX_CONTROL_FRAME_BYTES, METHOD_HOST_HELLO,
+    METHOD_WORKER_HELLO, WorkerIdentity, error_envelope, result_envelope,
 };
 use crate::registry::{RegistryBuilder, ServeError, Served, registry};
 use crate::state::WorkerState;
@@ -47,6 +47,7 @@ pub struct Worker {
     pub events: EventLog,
     pub config: Arc<crate::config_runtime::ConfigRuntime>,
     pub prompts: crate::prompts::PromptBroker,
+    pub layout: Arc<crate::layout_authority::LayoutAuthority>,
 }
 
 impl Worker {
@@ -274,6 +275,7 @@ impl Worker {
     }
 
     pub fn request_shutdown(&self) {
+        self.layout.flush();
         let _gate = self
             .shutdown_gate
             .lock()
@@ -308,32 +310,18 @@ impl Worker {
         serde_json::to_value(&self.identity).unwrap_or_else(|_| json!({}))
     }
 
-    pub fn publish_events(
+    pub fn append_layout_events(
         &self,
-        params: paneflow_api::methods::events::PublishParams,
-    ) -> Result<Value, ServeError> {
-        for event in &params.events {
-            if !paneflow_api::methods::events::is_layout_event_type(&event.kind) {
-                return Err(ServeError::invalid_params(format!(
-                    "events.publish accepts layout events only; '{}' is not one",
-                    event.kind
-                )));
-            }
-            let size = serde_json::to_vec(event).map_or(usize::MAX, |bytes| bytes.len());
-            if size > MAX_EVENT_LINE_BYTES {
-                return Err(ServeError::invalid_params(format!(
-                    "a {} event of {size} bytes exceeds the {MAX_EVENT_LINE_BYTES} byte event limit",
-                    event.kind
-                )));
-            }
+        events: Vec<paneflow_api::methods::events::PublishedEvent>,
+    ) -> Vec<u64> {
+        if events.is_empty() {
+            return Vec::new();
         }
-        let seqs = self.events.append_all(
-            params
-                .events
+        self.events.append_all(
+            events
                 .into_iter()
                 .map(|event| (event.kind, event.ids, event.data)),
-        );
-        Ok(json!({"seqs": seqs}))
+        )
     }
 
     pub fn wait_for_shutdown(&self) {
@@ -395,6 +383,7 @@ impl Worker {
             "core_connected": self.core_connected.load(Ordering::Acquire),
             "capabilities": self.identity.capabilities,
             "counters": self.work_counters(),
+            "layout": self.layout.status(),
         })
     }
 
@@ -593,8 +582,28 @@ pub(crate) fn write_error(wire: &mut Wire, id: &Value, error: &ServeError) -> Fl
     }
 }
 
+struct Attachment<'a> {
+    worker: &'a Worker,
+    connection: crate::layout_authority::ConnectionId,
+}
+
+impl Drop for Attachment<'_> {
+    fn drop(&mut self) {
+        self.worker.layout.disconnect(self.connection);
+    }
+}
+
+fn next_connection() -> crate::layout_authority::ConnectionId {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    crate::layout_authority::ConnectionId(NEXT.fetch_add(1, Ordering::Relaxed))
+}
+
 fn handle_connection(mut wire: Wire, worker: Arc<Worker>, shutdown: Arc<AtomicBool>) {
     let mut greeted = false;
+    let attachment = Attachment {
+        worker: &worker,
+        connection: next_connection(),
+    };
     loop {
         if shutdown.load(Ordering::Acquire) {
             return;
@@ -669,8 +678,19 @@ fn handle_connection(mut wire: Wire, worker: Arc<Worker>, shutdown: Arc<AtomicBo
         } else {
             method
         };
+        if method.starts_with("layout.") {
+            wire.set_max_frame(crate::layout_authority::MAX_LAYOUT_FRAME_BYTES);
+        }
         let served = match registry() {
-            Ok(registry) => registry.serve(&mut wire, &worker, &shutdown, &id, method, &params),
+            Ok(registry) => registry.serve(
+                &mut wire,
+                &worker,
+                &shutdown,
+                &id,
+                method,
+                &params,
+                attachment.connection,
+            ),
             Err(error) => Served::Reply(Err(error)),
         };
         let flow = match served {
@@ -699,7 +719,7 @@ fn reply(wire: &mut Wire, id: &Value, answer: Result<Value, ServeError>) -> Flow
 }
 
 pub(crate) fn register_methods(builder: RegistryBuilder) -> RegistryBuilder {
-    use paneflow_api::methods::{config, events, prompt, system, worker};
+    use paneflow_api::methods::{config, events, layout, prompt, system, worker};
 
     builder
         .ready::<worker::Hello>(|worker, _| Ok(worker.identity_value()))
@@ -725,7 +745,6 @@ pub(crate) fn register_methods(builder: RegistryBuilder) -> RegistryBuilder {
         .ready::<worker::UsageRefresh>(|worker, call| Ok(worker.refresh_usage(call.raw)))
         .ready::<worker::UsageImport>(|worker, call| Ok(worker.import_usage(call.raw)))
         .stream::<events::Follow>(stream_events)
-        .ready::<events::Publish>(|worker, call| worker.publish_events(call.params))
         .ready::<config::Status>(|worker, _| to_value(worker.config.status()))
         .ready::<config::Reload>(|worker, _| to_value(worker.config.reload(worker)))
         .ready::<config::ListActions>(|worker, _| to_value(worker.config.actions()))
@@ -746,6 +765,33 @@ pub(crate) fn register_methods(builder: RegistryBuilder) -> RegistryBuilder {
             worker.prompts.reply(call.params).and_then(to_value)
         })
         .stream::<prompt::Follow>(stream_prompts)
+        .ready::<layout::ViewMethod>(|worker, call| {
+            to_value(worker.layout.view(call.params.unless_revision))
+        })
+        .ready::<layout::Attach>(|worker, call| {
+            to_value(worker.layout.attach(call.connection, call.params.client))
+        })
+        .ready::<layout::LeaseIds>(|worker, call| {
+            worker.layout.lease(call.connection).and_then(to_value)
+        })
+        .ready::<layout::Apply>(|worker, call| {
+            let (applied, events) = worker.layout.apply(
+                call.connection,
+                serde_json::Value::Object(call.params.op.0),
+                call.params.ids_from,
+                crate::state::now_ms(),
+            )?;
+            worker.append_layout_events(events);
+            to_value(applied)
+        })
+        .ready::<layout::Adopt>(|worker, call| {
+            let (adopted, events) =
+                worker
+                    .layout
+                    .adopt(call.connection, call.params.view, call.params.acknowledged)?;
+            worker.append_layout_events(events);
+            to_value(adopted)
+        })
         .inline::<system::Describe>(|_, call| registry()?.describe(call.params.method.as_deref()))
 }
 

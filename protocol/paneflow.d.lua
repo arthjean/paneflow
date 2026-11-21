@@ -450,19 +450,6 @@ paneflow.events = {}
 ---@return integer? code
 paneflow.events.follow = function(params) end
 
----@class paneflow.events.publish.params
----@field events table[] Events in the order their ops were applied
-
----@class paneflow.events.publish.result
----@field seqs integer[]
-
----Append layout events to the worker's log, in order. Any event outside the layout family refuses the whole batch with -32602.
----@param params paneflow.events.publish.params
----@return paneflow.events.publish.result? result
----@return string? message
----@return integer? code
-paneflow.events.publish = function(params) end
-
 ---@class paneflow.events.subscribe.params
 ---@field surfaces? integer[] Only stream events about these surfaces
 ---@field types? string[] Only stream these event types: surface_changed and the ai.* lifecycle types
@@ -508,6 +495,81 @@ paneflow.keymap = {}
 ---@return string? message
 ---@return integer? code
 paneflow.keymap.list = function(params) end
+
+---@class paneflow.layout.adopt.params
+---@field acknowledged integer The last revision the worker acknowledged to this client
+---@field view table The layout model as plain data: {revision, state: {version, workspaces, active_workspace, active_space}, undo}, every workspace, tab, pane, split and surface carrying its stable id
+
+---@class paneflow.layout.adopt.result
+---@field accepted boolean
+---@field revision integer
+---@field view? table
+
+---Hand the worker a client's model after an outage. The worker takes it when its own revision is not greater than the revision it last acknowledged to the client, and otherwise returns its own view.
+---@param params paneflow.layout.adopt.params
+---@return paneflow.layout.adopt.result? result
+---@return string? message
+---@return integer? code
+paneflow.layout.adopt = function(params) end
+
+---@class paneflow.layout.apply.params
+---@field ids_from? integer The client's next id when it applied the op; ids the op allocates are taken from the client's leases from here
+---@field op table One layout operation, named by its op field: split, close_pane, focus_pane, rename_surface, set_ratios, bind_session and the others of paneflow-layout, with the ids it acts on
+
+---@class paneflow.layout.apply.result
+---@field events table[]
+---@field revision integer
+
+---Apply one layout op to the worker's model and return the new revision and its events. A refused op fails with -32070 and data {reason}: not_found, zoomed, pane_limit, tab_limit, surface_limit, ids_exhausted, invalid, or window_owns_layout while a window of an earlier build owns the layout.
+---@param params paneflow.layout.apply.params
+---@return paneflow.layout.apply.result? result
+---@return string? message
+---@return integer? code
+paneflow.layout.apply = function(params) end
+
+---@class paneflow.layout.attach.params
+---@field client? string A name for the client in worker.status
+
+---@class paneflow.layout.attach.result
+---@field epoch string
+---@field revision integer
+---@field view table
+
+---Attach this connection as a layout client until it closes, and return the view, its revision and the worker's epoch.
+---@param params paneflow.layout.attach.params?
+---@return paneflow.layout.attach.result? result
+---@return string? message
+---@return integer? code
+paneflow.layout.attach = function(params) end
+
+---@class paneflow.layout.lease_ids.params
+
+---@class paneflow.layout.lease_ids.result
+---@field ["end"] integer
+---@field start integer
+
+---Grant this connection a contiguous block of 1,024 ids for the elements it creates; the worker never grants an id twice, across restarts included.
+---@param params paneflow.layout.lease_ids.params?
+---@return paneflow.layout.lease_ids.result? result
+---@return string? message
+---@return integer? code
+paneflow.layout.lease_ids = function(params) end
+
+---@class paneflow.layout.view.params
+---@field unless_revision? integer The revision the client holds; when it is still the worker's, view is null
+
+---@class paneflow.layout.view.result
+---@field attached boolean
+---@field epoch string
+---@field revision integer
+---@field view? table
+
+---Return the layout model the worker holds, with its revision and the worker's epoch.
+---@param params paneflow.layout.view.params?
+---@return paneflow.layout.view.result? result
+---@return string? message
+---@return integer? code
+paneflow.layout.view = function(params) end
 
 ---@class paneflow.pane
 paneflow.pane = {}

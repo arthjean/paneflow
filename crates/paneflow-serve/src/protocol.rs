@@ -28,11 +28,10 @@ pub const METHOD_USAGE_REFRESH: &str = "usage.refresh";
 pub const METHOD_USAGE_IMPORT: &str = "usage.import";
 
 pub const METHOD_EVENTS_FOLLOW: &str = "events.follow";
-pub const METHOD_EVENTS_PUBLISH: &str = "events.publish";
 
 pub const CAPABILITY_AGENT_FOLLOW: &str = "agent.follow";
 pub const CAPABILITY_EVENTS_FOLLOW: &str = "events.follow";
-pub const CAPABILITY_EVENTS_PUBLISH: &str = "events.publish";
+pub const CAPABILITY_LAYOUT_AUTHORITY: &str = "layout.authority";
 
 pub const ERR_EVICTED: i64 = -32040;
 

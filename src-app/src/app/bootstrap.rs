@@ -97,10 +97,17 @@ impl PaneFlowApp {
         let session_restore_failed = session_corruption.is_some();
         crate::startup_trace::mark("session_loaded");
 
-        let pending_detached_panes = saved_session
+        let file_revision = saved_session
             .as_ref()
-            .map(|session| session.detached_panes.clone())
-            .unwrap_or_default();
+            .and_then(|session| session.layout_revision)
+            .unwrap_or(0);
+        let pending_detached_panes = crate::app::detached_panes::persistence::pending_placements(
+            crate::window_state::loaded_detached(),
+            saved_session
+                .as_ref()
+                .map(|session| session.detached_panes.clone())
+                .unwrap_or_default(),
+        );
 
         let (workspaces, active_idx, active_space, session_restored) = match saved_session {
             Some(session) => {
@@ -574,6 +581,7 @@ impl PaneFlowApp {
             app.plan_conversation_restore(cx);
         }
 
+        app.note_layout_file_revision(file_revision);
         app.restore_dock_sessions(cx);
         if startup.runs_desktop_services() {
             app.spawn_restore_probe(cx);
@@ -584,7 +592,7 @@ impl PaneFlowApp {
             app.start_host_agent_stream();
             app.start_lua_config_stream();
             app.start_prompt_stream();
-            app.start_layout_event_stream();
+            app.start_layout_client();
             app.refresh_usage_inventory(false, cx);
             app.start_usage_auto_refresh(cx);
             app.start_write_approval_stream();
@@ -701,6 +709,7 @@ impl PaneFlowApp {
                             app.process_lua_config_frames(cx);
                             app.process_prompt_frames(cx);
                             app.process_write_approval_frames(cx);
+                            app.process_layout_client(cx);
                             app.process_config_changes(cx);
                             app.process_update_check(cx);
                         })

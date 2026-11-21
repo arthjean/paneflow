@@ -140,11 +140,13 @@ fn current_release_session() -> SessionState {
         }],
         active_space: None,
         next_layout_id: None,
+        layout_revision: None,
     }
 }
 
 fn without_ids(mut state: SessionState) -> SessionState {
     state.next_layout_id = None;
+    state.layout_revision = None;
     for ws in &mut state.workspaces {
         ws.layout_id = None;
         for tab in &mut ws.tabs {
@@ -1199,7 +1201,11 @@ fn zoom_is_a_flag_that_leaves_the_tree_and_the_export_alone() {
     let mut fx = Fixture::new();
     fx.workspace("alpha", "a");
     fx.split("a", Direction::Vertical, "b");
-    let before = export(&fx.model, &[]);
+    let unrevised = |model: &paneflow_layout::Model| SessionState {
+        layout_revision: None,
+        ..export(model, &[])
+    };
+    let before = unrevised(&fx.model);
     let tree = fx.model.state().workspaces[0].tabs[0].root.clone();
     let tab = fx.tab_id(0, 0);
     let applied = fx.apply(Op::SetZoom {
@@ -1207,7 +1213,7 @@ fn zoom_is_a_flag_that_leaves_the_tree_and_the_export_alone() {
         pane: Some(fx.pane_id("b")),
     });
     assert_eq!(fx.model.state().workspaces[0].tabs[0].root, tree);
-    assert_eq!(export(&fx.model, &[]), before);
+    assert_eq!(unrevised(&fx.model), before);
     assert_eq!(applied.events, [Event::LayoutChanged { tab }]);
     fx.apply(Op::ApplyPreset {
         tab,

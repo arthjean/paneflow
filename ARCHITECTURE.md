@@ -27,7 +27,8 @@ focused library crates:
 | `paneflow-ghostty-smoke` | `crates/paneflow-ghostty-smoke/` | Package-level native smoke binary for Ghostty, PTY I/O, resize, and shutdown verification |
 | `paneflow-config` | `crates/paneflow-config/` | Config schema, tolerant JSON loader, file watcher |
 | `paneflow-host` | `crates/paneflow-host/` | GPU-free local host library and executable: owns PTYs, child processes, canonical libghostty state and the durable session manifests under `~/.paneflow/host/` |
-| `paneflow-serve` | `crates/paneflow-serve/` | The per-home worker: owns the activity reducer, the session projection and the advertised-capability protocol Controllers speak |
+| `paneflow-serve` | `crates/paneflow-serve/` | The per-home worker: owns the layout model and `session.json`, the activity reducer, the session projection and the advertised-capability protocol Controllers speak |
+| `paneflow-layout` | `crates/paneflow-layout/` | The GPU-free layout model: workspaces, tabs, split trees, ops with their events and effects, undo records, revisions and id leases, shared by the worker and the window |
 | `paneflow-shim` | `crates/paneflow-shim/` | PATH shim wrapping every agent CLI of the `runtimes/` catalog so Paneflow can observe its lifecycle |
 | `paneflow-ai-hook` | `crates/paneflow-ai-hook/` | The hook binary agent CLIs invoke to report session events back over IPC |
 | `paneflow-ipc-client` | `crates/paneflow-ipc-client/` | Blocking JSON-RPC client for the local IPC socket (shared by the MCP bridge and the CLI) |
@@ -55,8 +56,12 @@ Returning a pane restores its original logical position without spawning a PTY.
 Terminal and code-view focus subscriptions follow the current native window.
 The child observes ownership changes instead of reading the app during render,
 because native window creation can synchronously render while the app is borrowed.
-Window bounds are debounced before session snapshot construction. A detached
-pane restores only when the saved layout leaf count still matches its tab.
+A detached window's bounds belong to the window, not to the layout: they are
+saved in `window-state.json` keyed by the pane's layout id, beside each tab's
+dock, and `session.json` never carries them. A placement whose pane id is no
+longer in the layout is dropped silently at start; a placement read from a
+`session.json` of an earlier release restores once by its pane id, or by
+position when the saved leaf count still matches its tab.
 Closing a child returns its pane; closing the main window still quits the app.
 
 Detachment is exposed through pane controls, the pane context menu, and
@@ -92,6 +97,12 @@ implemented. It requires portable native drag support beyond the pinned GPUI API
   the Windows listener blocks in `accept`. Stateless methods reply in place;
   stateful methods go to the main thread through a bounded async channel, and
   `serve_ipc_requests` wakes on the first request and drains the queued batch.
+- **Layout client threads**: `paneflow-layout-client` sends the window's
+  layout ops, syncs and lease requests to the worker in order over one
+  connection and returns each answer through a channel the main thread drains
+  on its wake; `paneflow-layout-changes` follows the worker's layout events.
+  The main thread never makes a socket call for the layout
+  (`src-app/src/app/layout_bridge/client.rs`, `sync.rs`).
 - Blocking work (git subprocesses, filesystem walks, fleet-wide search) is
   pushed to background executors - registering a recursive file watcher or
   scanning a monorepo on the render thread is how you get a
@@ -571,8 +582,8 @@ app state.
 `paneflow-serve` is the per-home worker. It sits between the PTY core and
 every Controller (the GPUI app, the `paneflow` CLI, the MCP bridge) and owns
 the concerns that must survive a restart of the UI but not of the terminals:
-the activity reducer, the session projection, and the capability set it
-advertises at bootstrap.
+the layout model and `session.json`, the activity reducer, the session
+projection, and the capability set it advertises at bootstrap.
 
 The worker is the `paneflow` executable itself, started as
 `paneflow serve run --home <home>` and detached through the same
@@ -692,7 +703,7 @@ stale code.
 - **The method families it owns, nothing more.** The worker answers the
   methods `crates/paneflow-api` declares with the worker as owner (`worker.*`,
   `agent.*`, `usage.*`, `events.*`, `config.*`, `action.*`, `keymap.*`,
-  `prompt.*`), plus `host.hello` as a greeting and
+  `prompt.*`, `layout.*`), plus `host.hello` as a greeting and
   `system.describe`, which lists exactly those methods. Its dispatch is the
   registry in `crates/paneflow-serve/src/registry.rs`: a worker method with no
   handler, or a handler whose reply kind differs from its declaration, fails
@@ -716,13 +727,69 @@ stale code.
   A follower more than 8 MiB behind is closed alone. Terminal and agent events
   are derived from the host's `agent.follow` frames by comparing each row with
   the worker's last known values, so a reconnect or a worker start announces
-  only what moved; layout events come from the window, which publishes the
-  events each model op returns with `events.publish` from a background thread
-  and keeps at most 1,024 unsent, replaced by one `layout.resync` when they
-  overflow. `protocol/events-conformance-v1.json` lists the cases
+  only what moved; layout events are appended by the worker itself, in the
+  order the op that produced them was applied by `layout.apply` or
+  `layout.adopt`. `protocol/events-conformance-v1.json` lists the cases
   `crates/paneflow-serve/tests/events_conformance.rs` runs against a real host
   and worker. The window's legacy `events.subscribe` is a separate stream and
   is unchanged.
+- **The layout authority.** `crates/paneflow-serve/src/layout_authority.rs`
+  holds the one `paneflow_layout::Model` of a home and is the only writer of
+  `session.json` while a worker runs. It loads the file at start, migrating an
+  older schema, and an unreadable file leaves an empty model and is renamed
+  aside on the first write so the window's recovery dialog still has it. The
+  model carries a `revision` that every accepted change raises by one, written
+  to the file as `layout_revision`. `layout.view` answers the model,
+  `layout.attach` records a window as the layout client, `layout.apply` applies
+  one op and answers its revision and events, and `layout.adopt` replaces the
+  model with a client's when the worker's revision is not greater than the
+  revision the client says it acknowledged, and otherwise answers the worker's
+  model. A connection that sends any `layout.*` method may send frames up to
+  16 MiB. The file is written 150 ms after the last change, staged and
+  renamed, and a clean stop flushes it before the endpoint closes; a failed
+  write keeps the model in memory and shows in `worker.status`. A
+  `session.json` another process rewrote since the worker last read or wrote
+  it is read again before the next `layout.attach` or `layout.adopt`. The worker
+  performs the effects ops return that need no window: it stops a closed
+  terminal through the host's `session.stop` when its undo hold expires (the
+  5 s hold is timed by the worker), rehomes a session through
+  `session.workspace`, and stops the sessions an accepted adopt removed.
+- **Id leases.** Ids are never chosen by the worker on a client's behalf.
+  `layout.lease_ids` grants a block of 1,024 ids and moves the persisted
+  counter past it before it answers, and a worker that starts from a file
+  advances that counter by one more block, so an id granted before a crash is
+  never granted again. A client creates panes, surfaces, tabs and workspaces
+  with ids from its blocks without waiting; `layout.apply` replays the op with
+  the client's next id (`ids_from`) so the worker allocates the same ids the
+  client did, and refuses an op whose ids fall outside the client's blocks
+  with `invalid`, or with `ids_exhausted` when the blocks are used up.
+- **The window is a layout client.** When the worker advertises
+  `layout.authority`, the window attaches, adopts its restored model with the
+  `layout_revision` of the file it read, and takes a lease. Every gesture is
+  applied to the window's own model at once and projected in the same frame,
+  then sent to the worker by `paneflow-layout-client`; a divider drag sends one
+  op when it ends. An answer whose revision differs from the window's, a
+  refused op, or a layout event the window did not cause makes it fetch the
+  view (`layout.view` with `unless_revision` answers nothing when nothing
+  moved) and reproject, keeping every pane whose id persists; a refused split
+  or undo shows the toast it shows when refused locally. The window still
+  creates every terminal session and binds it with a `bind_session` op. While
+  attached it leaves stops to the worker and never writes `session.json`.
+- **The fallback write.** When no worker answers, or the worker predates
+  `layout.authority`, the window is the layout authority: it keeps applying
+  ops with the ids left in its lease and writes `session.json` on the 150 ms
+  debounce with its model's revision, but only while no worker holds
+  `serve/owner.lock`, or when the worker that holds it predates the layout
+  methods. A creating op that needs ids the lease no longer has is refused
+  with the split's pane-limit toast. When a worker returns, the window adopts
+  its model back with the last revision the worker acknowledged, or the
+  revision the window last wrote when the worker is a new start; a worker
+  whose revision is greater keeps its model, and the window shows it with one
+  "layout was refreshed" toast. A quit while attached waits up to 2 s for the
+  worker to acknowledge the last change. A window that quits without being
+  attached writes `session.json` itself whoever holds `serve/owner.lock`, so
+  its last model is on disk even when a worker holds the lock and does not
+  answer; the worker reads that file again before the next window attaches.
 - **One prompt broker.** `crates/paneflow-serve/src/prompts.rs` holds the
   questions an action, a script or later an agent asks the user, in memory
   only. `prompt.request` queues one when a `prompt.follow` client can show its

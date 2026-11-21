@@ -202,7 +202,7 @@ struct DiffDockState {
 }
 
 struct PaneFlowApp {
-    pending_detached_panes: Vec<paneflow_config::schema::DetachedPaneSession>,
+    pending_detached_panes: Vec<crate::app::detached_panes::persistence::PendingPlacement>,
     workspaces: Vec<Workspace>,
     active_idx: usize,
     active_space: Option<paneflow_config::schema::SpaceId>,

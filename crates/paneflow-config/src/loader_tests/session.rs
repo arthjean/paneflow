@@ -72,6 +72,7 @@ fn make_surface(cwd: &str) -> SurfaceDefinition {
 fn test_session_roundtrip_single_workspace() {
     let state = SessionState {
         next_layout_id: None,
+        layout_revision: None,
         version: SESSION_SCHEMA_VERSION,
         active_workspace: 0,
         workspaces: vec![make_workspace(
@@ -93,6 +94,7 @@ fn test_session_roundtrip_single_workspace() {
 fn test_session_roundtrip_multiple_workspaces() {
     let state = SessionState {
         next_layout_id: None,
+        layout_revision: None,
         version: SESSION_SCHEMA_VERSION,
         active_workspace: 1,
         workspaces: vec![
@@ -126,6 +128,7 @@ fn test_session_roundtrip_multiple_workspaces() {
 fn test_session_roundtrip_nested_splits() {
     let state = SessionState {
         next_layout_id: None,
+        layout_revision: None,
         version: SESSION_SCHEMA_VERSION,
         active_workspace: 0,
         workspaces: vec![make_workspace(
@@ -169,6 +172,7 @@ fn test_session_roundtrip_nested_splits() {
 fn test_session_roundtrip_with_scrollback() {
     let state = SessionState {
         next_layout_id: None,
+        layout_revision: None,
         version: SESSION_SCHEMA_VERSION,
         active_workspace: 0,
         workspaces: vec![make_workspace(
@@ -702,6 +706,7 @@ fn test_a_tab_built_in_process_is_preset() {
 fn test_tab_title_source_survives_a_roundtrip() {
     let state = SessionState {
         next_layout_id: None,
+        layout_revision: None,
         version: SESSION_SCHEMA_VERSION,
         active_workspace: 0,
         workspaces: vec![make_workspace(
@@ -943,6 +948,7 @@ fn space_membership_and_the_active_space_round_trip_as_additive_fields() {
     workspaces[1].space = Some(home);
     let state = SessionState {
         next_layout_id: None,
+        layout_revision: None,
         version: SESSION_SCHEMA_VERSION,
         active_workspace: 0,
         workspaces,
@@ -996,6 +1002,7 @@ fn the_previous_version_reads_a_session_that_carries_spaces() {
     workspace.space = Some(SpaceId::parse(WORK_SPACE).unwrap());
     let state = SessionState {
         next_layout_id: None,
+        layout_revision: None,
         version: SESSION_SCHEMA_VERSION,
         active_workspace: 0,
         workspaces: vec![workspace],

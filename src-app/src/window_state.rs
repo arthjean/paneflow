@@ -10,7 +10,7 @@ const MIN_WINDOW_WIDTH: f32 = 800.;
 const MIN_WINDOW_HEIGHT: f32 = 500.;
 const FALLBACK_MAX_WINDOW_WIDTH: f32 = 3840.;
 const FALLBACK_MAX_WINDOW_HEIGHT: f32 = 2160.;
-const MAX_WINDOW_STATE_BYTES: u64 = 4096;
+const MAX_WINDOW_STATE_BYTES: u64 = 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 struct PersistedWindowSize {
@@ -24,7 +24,28 @@ pub(crate) struct AgentsSectionState {
     pub(crate) collapsed: bool,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct PersistedDock {
+    pub(crate) tab: u64,
+    pub(crate) dock: paneflow_config::schema::DockSession,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct PersistedDetached {
+    pub(crate) pane: u64,
+    pub(crate) x: f32,
+    pub(crate) y: f32,
+    pub(crate) width: f32,
+    pub(crate) height: f32,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct WindowLayoutState {
+    pub(crate) docks: Vec<PersistedDock>,
+    pub(crate) detached: Vec<PersistedDetached>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct PersistedWindowState {
     #[serde(flatten)]
     size: PersistedWindowSize,
@@ -40,6 +61,35 @@ struct PersistedWindowState {
         deserialize_with = "lenient_width"
     )]
     files_tree_width: Option<f32>,
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "lenient_entries"
+    )]
+    docks: Vec<PersistedDock>,
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "lenient_entries"
+    )]
+    detached_panes: Vec<PersistedDetached>,
+}
+
+fn lenient_entries<'de, D, T>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(value
+        .as_array()
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| serde_json::from_value(entry.clone()).ok())
+                .collect()
+        })
+        .unwrap_or_default())
 }
 
 fn lenient_width<'de, D>(deserializer: D) -> Result<Option<f32>, D::Error>
@@ -64,7 +114,26 @@ impl PersistedWindowState {
             agents_section_collapsed: agents.collapsed.then_some(true),
             sidebar_width: sidebar_width.filter(|width| is_valid_section_height(*width)),
             files_tree_width: None,
+            docks: Vec::new(),
+            detached_panes: Vec::new(),
         }
+    }
+
+    fn with_layout(mut self, layout: WindowLayoutState) -> Self {
+        self.docks = layout.docks;
+        self.detached_panes = layout
+            .detached
+            .into_iter()
+            .filter(|placed| {
+                placed.x.is_finite()
+                    && placed.y.is_finite()
+                    && placed.width.is_finite()
+                    && placed.height.is_finite()
+                    && placed.width > 0.
+                    && placed.height > 0.
+            })
+            .collect();
+        self
     }
 
     fn with_files_tree_width(mut self, width: Option<f32>) -> Self {
@@ -100,10 +169,12 @@ static AGENTS_SECTION: Mutex<AgentsSectionState> = Mutex::new(AgentsSectionState
 });
 static SIDEBAR_WIDTH: Mutex<Option<f32>> = Mutex::new(None);
 static FILES_TREE_WIDTH: Mutex<Option<f32>> = Mutex::new(None);
+static LAYOUT_STATE: Mutex<Option<WindowLayoutState>> = Mutex::new(None);
+static LOADED_LAYOUT: Mutex<Option<WindowLayoutState>> = Mutex::new(None);
 
 pub(crate) fn initial_bounds(cx: &App) -> Bounds<Pixels> {
     let loaded = load();
-    let persisted = loaded.map_or(
+    let persisted = loaded.as_ref().map_or(
         PersistedWindowSize {
             width: DEFAULT_WINDOW_WIDTH,
             height: DEFAULT_WINDOW_HEIGHT,
@@ -112,10 +183,17 @@ pub(crate) fn initial_bounds(cx: &App) -> Bounds<Pixels> {
     );
     *last_windowed_size_guard() = Some(persisted);
     *agents_section_guard() = loaded
-        .map(|state| state.agents_section())
+        .as_ref()
+        .map(PersistedWindowState::agents_section)
         .unwrap_or_default();
-    *sidebar_width_guard() = loaded.and_then(|state| state.sidebar_width());
-    *files_tree_width_guard() = loaded.and_then(|state| state.files_tree_width());
+    *sidebar_width_guard() = loaded
+        .as_ref()
+        .and_then(PersistedWindowState::sidebar_width);
+    *files_tree_width_guard() = loaded.as_ref().and_then(|state| state.files_tree_width());
+    *loaded_layout_guard() = loaded.as_ref().map(|state| WindowLayoutState {
+        docks: state.docks.clone(),
+        detached: state.detached_panes.clone(),
+    });
     let visible_bounds = cx.primary_display().map(|display| display.visible_bounds());
     let display_size = visible_bounds.map(|bounds| bounds.size).unwrap_or_else(|| {
         size(
@@ -204,6 +282,48 @@ pub(crate) fn record_files_tree_width(width: Option<f32>) {
     *files_tree_width_guard() = width;
 }
 
+pub(crate) fn loaded_dock(tab: u64) -> Option<paneflow_config::schema::DockSession> {
+    loaded_layout_guard()
+        .as_ref()?
+        .docks
+        .iter()
+        .find(|entry| entry.tab == tab)
+        .map(|entry| entry.dock.clone())
+}
+
+#[cfg(test)]
+pub(crate) fn seed_loaded_layout(layout: Option<WindowLayoutState>) {
+    *loaded_layout_guard() = layout;
+}
+
+#[cfg(test)]
+pub(crate) fn recorded_layout() -> Option<WindowLayoutState> {
+    layout_state_guard().clone()
+}
+
+pub(crate) fn loaded_detached() -> Vec<PersistedDetached> {
+    loaded_layout_guard()
+        .as_ref()
+        .map(|layout| layout.detached.clone())
+        .unwrap_or_default()
+}
+
+fn layout_to_save(
+    recorded: Option<WindowLayoutState>,
+    loaded: Option<WindowLayoutState>,
+) -> WindowLayoutState {
+    recorded.or(loaded).unwrap_or_default()
+}
+
+pub(crate) fn record_layout(layout: WindowLayoutState) -> bool {
+    let mut held = layout_state_guard();
+    if held.as_ref() == Some(&layout) {
+        return false;
+    }
+    *held = Some(layout);
+    true
+}
+
 pub(crate) fn save() {
     if let Some(path) = state_path() {
         save_to(&path);
@@ -215,7 +335,11 @@ fn save_to(path: &std::path::Path) {
         return;
     };
     let state = PersistedWindowState::new(size, *agents_section_guard(), *sidebar_width_guard())
-        .with_files_tree_width(*files_tree_width_guard());
+        .with_files_tree_width(*files_tree_width_guard())
+        .with_layout(layout_to_save(
+            layout_state_guard().clone(),
+            loaded_layout_guard().clone(),
+        ));
     if let Err(error) = write_state(path, &state) {
         log::warn!("window state: failed to persist: {error}");
     }
@@ -285,6 +409,14 @@ fn agents_section_guard() -> MutexGuard<'static, AgentsSectionState> {
 
 fn sidebar_width_guard() -> MutexGuard<'static, Option<f32>> {
     SIDEBAR_WIDTH.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn layout_state_guard() -> MutexGuard<'static, Option<WindowLayoutState>> {
+    LAYOUT_STATE.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn loaded_layout_guard() -> MutexGuard<'static, Option<WindowLayoutState>> {
+    LOADED_LAYOUT.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 fn files_tree_width_guard() -> MutexGuard<'static, Option<f32>> {
@@ -542,6 +674,100 @@ mod tests {
             assert_eq!(loaded.sidebar_width(), Some(300.), "{raw}");
             assert_eq!((loaded.size.width, loaded.size.height), (1400., 950.));
         }
+    }
+
+    fn placed(pane: u64) -> PersistedDetached {
+        PersistedDetached {
+            pane,
+            x: 10.,
+            y: 20.,
+            width: 800.,
+            height: 600.,
+        }
+    }
+
+    #[test]
+    fn docks_and_detached_placements_round_trip_keyed_by_layout_id() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("window-state.json");
+        let layout = WindowLayoutState {
+            docks: vec![PersistedDock {
+                tab: 7,
+                dock: paneflow_config::schema::DockSession {
+                    open: true,
+                    tabs: vec![paneflow_config::schema::DockTabSession::Changes],
+                    active: 0,
+                    tree: true,
+                },
+            }],
+            detached: vec![placed(11)],
+        };
+
+        write_state(
+            &path,
+            &PersistedWindowState::new(size(), AgentsSectionState::default(), None)
+                .with_layout(layout.clone()),
+        )
+        .expect("write");
+
+        let raw = read_json(&path);
+        assert_eq!(raw["docks"][0]["tab"], 7);
+        assert_eq!(raw["detached_panes"][0]["pane"], 11);
+        let loaded = load_from(&path).expect("loaded");
+        assert_eq!(loaded.docks, layout.docks);
+        assert_eq!(loaded.detached_panes, layout.detached);
+    }
+
+    #[test]
+    fn an_unusable_dock_or_placement_entry_is_dropped_and_the_rest_loads() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("window-state.json");
+        std::fs::write(
+            &path,
+            r#"{"width": 1400.0, "height": 950.0,
+                "docks": [{"tab": "x"}, {"tab": 3, "dock": {"open": true}}],
+                "detached_panes": [{"pane": 4}, {"pane": 5, "x": 1, "y": 2, "width": 3, "height": 4}]}"#,
+        )
+        .expect("seed");
+
+        let loaded = load_from(&path).expect("the file stays readable");
+
+        assert_eq!(loaded.docks.len(), 1);
+        assert_eq!(loaded.docks[0].tab, 3);
+        assert_eq!(loaded.detached_panes.len(), 1);
+        assert_eq!(loaded.detached_panes[0].pane, 5);
+        assert_eq!((loaded.size.width, loaded.size.height), (1400., 950.));
+    }
+
+    #[test]
+    fn a_save_before_the_window_recorded_its_layout_keeps_the_loaded_docks_and_placements() {
+        let loaded = WindowLayoutState {
+            docks: Vec::new(),
+            detached: vec![placed(4)],
+        };
+        let recorded = WindowLayoutState {
+            docks: Vec::new(),
+            detached: vec![placed(9)],
+        };
+
+        assert_eq!(layout_to_save(None, Some(loaded.clone())), loaded);
+        assert_eq!(
+            layout_to_save(Some(recorded.clone()), Some(loaded)),
+            recorded
+        );
+        assert_eq!(layout_to_save(None, None), WindowLayoutState::default());
+    }
+
+    #[test]
+    fn a_placement_with_unusable_bounds_is_not_written() {
+        let mut broken = placed(2);
+        broken.width = f32::NAN;
+        let state = PersistedWindowState::new(size(), AgentsSectionState::default(), None)
+            .with_layout(WindowLayoutState {
+                docks: Vec::new(),
+                detached: vec![placed(1), broken],
+            });
+        assert_eq!(state.detached_panes, vec![placed(1)]);
     }
 
     struct BoundsProbe;

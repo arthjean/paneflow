@@ -23,6 +23,10 @@ const MAX_CORRUPTION_BACKUPS: usize = 5;
 
 const SAVE_DEBOUNCE_MS: u64 = 150;
 
+const ATTACHED_EXIT_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
+const ATTACHED_EXIT_POLL: std::time::Duration = std::time::Duration::from_millis(20);
+
 const RESTORE_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
 const RESTORE_REPROBE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
@@ -49,6 +53,7 @@ impl PaneFlowApp {
     pub(crate) fn build_session_state(&self, cx: &App) -> paneflow_config::schema::SessionState {
         paneflow_config::schema::SessionState {
             next_layout_id: Some(self.next_layout_id()),
+            layout_revision: Some(self.layout_model_revision()),
             detached_panes: self.serialize_detached_panes(cx),
             version: paneflow_config::schema::SESSION_SCHEMA_VERSION,
             active_workspace: self.active_idx,
@@ -105,13 +110,20 @@ impl PaneFlowApp {
         }
     }
 
-    pub(crate) fn save_session(&self, cx: &mut Context<Self>) {
+    pub(crate) fn save_session(&mut self, cx: &mut Context<Self>) {
         self.publish_space_directories();
         let seq = self.save_seq.fetch_add(1, Ordering::SeqCst) + 1;
         if self.session_restore_failed || self.session_exit_pending {
             return;
         }
-        let state = self.build_session_state(cx);
+        self.record_window_layout(cx);
+        if self.layout_is_attached() {
+            self.adopt_layout(cx);
+            return;
+        }
+        let state = shared_session_state(self.build_session_state(cx));
+        let revision = state.layout_revision.unwrap_or_default();
+        let owner = FallbackOwner::of(self);
         let restore_failed = self.session_restore_failed;
         let save_seq = self.save_seq.clone();
         cx.spawn(async move |this, cx| {
@@ -122,14 +134,19 @@ impl PaneFlowApp {
             let result = smol::unblock(move || {
                 let path = paneflow_config::loader::session_path()
                     .ok_or_else(|| anyhow::anyhow!("Could not locate the session directory"))?;
-                write_session_json_if_current(&path, &state, restore_failed, &save_seq, seq)
+                write_fallback_session(&path, &state, owner, restore_failed, &save_seq, seq)
             }).await;
             let _ = this.update(cx, |app, cx| {
                 if app.save_seq.load(Ordering::SeqCst) != seq {
                     return;
                 }
                 match result {
-                    Ok(_) => app.session_save_error_shown = false,
+                    Ok(written) => {
+                        app.session_save_error_shown = false;
+                        if written == FallbackWrite::Written {
+                            app.layout.sync.file_revision = revision;
+                        }
+                    }
                     Err(error) => {
                         log::warn!("session save failed: {error:#}");
                         if !app.session_save_error_shown {
@@ -142,12 +159,52 @@ impl PaneFlowApp {
         }).detach();
     }
 
+    pub(crate) fn window_layout_state(&self, cx: &App) -> crate::window_state::WindowLayoutState {
+        let mut docks = Vec::new();
+        for ws in &self.workspaces {
+            for tab in ws.tabs() {
+                let Some(layout_tab) = self.layout_tab_id(tab.id) else {
+                    continue;
+                };
+                if let Some(dock) =
+                    self.dock_session_for_tab(tab.id, &ws.cwd, tab.files_sidebar_open, cx)
+                {
+                    docks.push(crate::window_state::PersistedDock {
+                        tab: layout_tab.0,
+                        dock,
+                    });
+                }
+            }
+        }
+        let detached = self
+            .serialize_detached_panes(cx)
+            .into_iter()
+            .filter_map(|placed| {
+                Some(crate::window_state::PersistedDetached {
+                    pane: placed.pane?,
+                    x: placed.x,
+                    y: placed.y,
+                    width: placed.width,
+                    height: placed.height,
+                })
+            })
+            .collect();
+        crate::window_state::WindowLayoutState { docks, detached }
+    }
+
+    fn record_window_layout(&self, cx: &mut Context<Self>) {
+        if crate::window_state::record_layout(self.window_layout_state(cx)) {
+            cx.background_spawn(async { crate::window_state::save() })
+                .detach();
+        }
+    }
+
     pub(crate) fn save_session_before_exit(
         &mut self,
         cx: &mut Context<Self>,
         on_saved: impl FnOnce(&mut Self, &mut Context<Self>) + 'static,
     ) {
-        self.save_session_before_exit_as(|_| {}, cx, on_saved);
+        self.save_session_before_exit_as(false, cx, on_saved);
     }
 
     pub(crate) fn save_stopped_session_before_exit(
@@ -155,12 +212,12 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
         on_saved: impl FnOnce(&mut Self, &mut Context<Self>) + 'static,
     ) {
-        self.save_session_before_exit_as(forget_terminal_sessions, cx, on_saved);
+        self.save_session_before_exit_as(true, cx, on_saved);
     }
 
     fn save_session_before_exit_as(
         &mut self,
-        prepare: fn(&mut paneflow_config::schema::SessionState),
+        forget_sessions: bool,
         cx: &mut Context<Self>,
         on_saved: impl FnOnce(&mut Self, &mut Context<Self>) + 'static,
     ) {
@@ -172,18 +229,54 @@ impl PaneFlowApp {
             return;
         }
         self.session_exit_pending = true;
+        self.record_window_layout(cx);
+        if self.layout_is_attached() {
+            self.adopt_layout(cx);
+            if forget_sessions {
+                self.unbind_layout_sessions();
+            }
+        }
         cx.spawn(async move |this, cx| {
             let mut on_saved = Some(on_saved);
+            let deadline = std::time::Instant::now() + ATTACHED_EXIT_WAIT;
             loop {
-                let Ok((mut state, restore_failed, save_seq, seq)) = this.update(cx, |app, cx| {
+                let Ok(attached) = this.update(cx, |app, _| app.layout_is_attached()) else {
+                    return;
+                };
+                if !attached {
+                    break;
+                }
+                let Ok(drained) = this.update(cx, |app, _| app.layout_sync_drained()) else {
+                    return;
+                };
+                if drained {
+                    smol::unblock(crate::window_state::save).await;
+                    let _ = this.update(cx, |app, cx| {
+                        app.session_exit_pending = false;
+                        if let Some(on_saved) = on_saved.take() {
+                            on_saved(app, cx);
+                        }
+                    });
+                    return;
+                }
+                if std::time::Instant::now() >= deadline {
+                    break;
+                }
+                smol::Timer::after(ATTACHED_EXIT_POLL).await;
+            }
+            loop {
+                let Ok((mut state, owner, restore_failed, save_seq, seq)) = this.update(cx, |app, cx| {
                     let seq = app.save_seq.fetch_add(1, Ordering::SeqCst) + 1;
-                    (app.build_session_state(cx), app.session_restore_failed, app.save_seq.clone(), seq)
+                    (app.build_session_state(cx), FallbackOwner::QuittingWindow, app.session_restore_failed, app.save_seq.clone(), seq)
                 }) else { return };
-                prepare(&mut state);
+                if forget_sessions {
+                    forget_terminal_sessions(&mut state);
+                }
+                let state = shared_session_state(state);
                 let result = smol::unblock(move || {
                     let path = paneflow_config::loader::session_path()
                         .ok_or_else(|| anyhow::anyhow!("Could not locate the session directory"))?;
-                    let saved = write_session_json_if_current(&path, &state, restore_failed, &save_seq, seq)?;
+                    let saved = write_fallback_session(&path, &state, owner, restore_failed, &save_seq, seq)? != FallbackWrite::Stale;
                     if saved {
                         crate::window_state::save();
                     }
@@ -615,8 +708,11 @@ impl PaneFlowApp {
                 if let Some(id) = ids.take(saved_ids.map(|saved| saved.tab)) {
                     tab.id = id;
                 }
-                tab.files_sidebar_open = tab_session.dock.as_ref().is_some_and(|dock| dock.tree);
-                tab.restored_dock = tab_session.dock.clone();
+                let dock = saved_ids
+                    .and_then(|saved| crate::window_state::loaded_dock(saved.tab))
+                    .or_else(|| tab_session.dock.clone());
+                tab.files_sidebar_open = dock.as_ref().is_some_and(|dock| dock.tree);
+                tab.restored_dock = dock;
                 tabs.push(tab);
             }
             let mut workspace =
@@ -1067,6 +1163,20 @@ fn without_persisted_scrollback(mut layout: LayoutNode) -> LayoutNode {
     layout
 }
 
+pub(crate) fn shared_session_state(
+    mut state: paneflow_config::schema::SessionState,
+) -> paneflow_config::schema::SessionState {
+    state.detached_panes.clear();
+    for tab in state
+        .workspaces
+        .iter_mut()
+        .flat_map(|ws| ws.tabs.iter_mut())
+    {
+        tab.dock = None;
+    }
+    state
+}
+
 fn forget_terminal_sessions(state: &mut paneflow_config::schema::SessionState) {
     fn forget(node: &mut LayoutNode) {
         match node {
@@ -1193,7 +1303,7 @@ fn restored_tab_worktree(tab: &paneflow_config::schema::TabSession) -> Option<Pa
     Some(path)
 }
 
-fn persisted_expanded_paths(cwd: &str, expanded: &[PathBuf]) -> Vec<String> {
+pub(crate) fn persisted_expanded_paths(cwd: &str, expanded: &[PathBuf]) -> Vec<String> {
     let mut paths: Vec<String> = expanded
         .iter()
         .filter_map(|p| p.strip_prefix(cwd).ok())
@@ -1229,24 +1339,8 @@ fn show_session_message(title: &str, detail: &str, cx: &mut Context<PaneFlowApp>
     });
 }
 
-fn retry_session_io<T>(mut operation: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
-    for attempt in 0..4 {
-        match operation() {
-            Err(error)
-                if attempt < 3
-                    && matches!(
-                        error.kind(),
-                        std::io::ErrorKind::PermissionDenied
-                            | std::io::ErrorKind::WouldBlock
-                            | std::io::ErrorKind::Interrupted
-                    ) =>
-            {
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-            result => return result,
-        }
-    }
-    unreachable!()
+fn retry_session_io<T>(operation: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
+    paneflow_config::session_file::retry_session_io(operation)
 }
 
 fn archive_unrestored_session(path: &Path) -> anyhow::Result<Vec<PathBuf>> {
@@ -1285,6 +1379,54 @@ fn archive_session_file(path: &Path) -> anyhow::Result<Option<PathBuf>> {
     Ok(Some(backup))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FallbackOwner {
+    Window,
+    WorkerWithoutLayout,
+    QuittingWindow,
+}
+
+impl FallbackOwner {
+    fn of(app: &PaneFlowApp) -> Self {
+        if app.layout.sync.worker_lacks_layout() {
+            Self::WorkerWithoutLayout
+        } else {
+            Self::Window
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FallbackWrite {
+    Written,
+    OwnedByWorker,
+    Stale,
+}
+
+pub(crate) fn write_fallback_session(
+    path: &Path,
+    state: &paneflow_config::schema::SessionState,
+    owner: FallbackOwner,
+    restore_failed: bool,
+    save_seq: &AtomicU64,
+    seq: u64,
+) -> anyhow::Result<FallbackWrite> {
+    if owner == FallbackOwner::Window
+        && let Some(home) = path.parent()
+        && paneflow_serve::layout_authority::owner_lock_held(home)
+    {
+        log::debug!(
+            "session save: the background process holds serve/owner.lock, so it writes session.json"
+        );
+        return Ok(FallbackWrite::OwnedByWorker);
+    }
+    if write_session_json_if_current(path, state, restore_failed, save_seq, seq)? {
+        Ok(FallbackWrite::Written)
+    } else {
+        Ok(FallbackWrite::Stale)
+    }
+}
+
 fn write_session_json_if_current(
     path: &Path,
     state: &paneflow_config::schema::SessionState,
@@ -1308,35 +1450,12 @@ fn write_session_json_inner(
     path: &Path,
     state: &paneflow_config::schema::SessionState,
 ) -> anyhow::Result<()> {
-    if let Some(parent) = path.parent() {
-        paneflow_home::create_private_dir_all(parent)
-            .context("Could not create the session directory")?;
-    }
-    let json = serde_json::to_vec_pretty(state)?;
-    anyhow::ensure!(
-        json.len() as u64 <= MAX_SESSION_SIZE_BYTES,
-        "The session exceeds the size that Paneflow can restore"
-    );
-    let mut staged =
-        paneflow_home::stage_write(path, &json).context("Could not write the new session")?;
-    let target = staged.target().to_path_buf();
-    let recovery = pending_session_path(&target);
-    retry_session_io(|| staged.promote(&recovery))
-        .context("Could not stage the session for recovery")?;
-    retry_session_io(|| std::fs::rename(&recovery, &target)).with_context(|| {
-        format!(
-            "Could not replace {}. The new session is preserved at {}",
-            target.display(),
-            recovery.display()
-        )
-    })?;
+    paneflow_config::session_file::write_session_file(path, state)?;
     Ok(())
 }
 
 fn pending_session_path(path: &Path) -> PathBuf {
-    paneflow_home::resolve_write_target(path)
-        .unwrap_or_else(|_| path.to_path_buf())
-        .with_extension("json.pending")
+    paneflow_config::session_file::pending_session_path(path)
 }
 
 fn serde_category_tag(err: &serde_json::Error) -> &'static str {
@@ -1793,6 +1912,7 @@ mod tests {
         };
         let mut state = paneflow_config::schema::SessionState {
             next_layout_id: None,
+            layout_revision: None,
             version: paneflow_config::schema::SESSION_SCHEMA_VERSION,
             active_workspace: 0,
             workspaces: vec![paneflow_config::schema::WorkspaceSession {
@@ -2751,6 +2871,7 @@ mod tests {
             .collect();
         let state = paneflow_config::schema::SessionState {
             next_layout_id: None,
+            layout_revision: None,
             version: paneflow_config::schema::SESSION_SCHEMA_VERSION,
             active_workspace,
             workspaces: spaces
@@ -2848,5 +2969,182 @@ mod tests {
         let (active_idx, active_space) =
             restored_space_view(&mut workspaces, &state, &space_config(&[]));
         assert_eq!((active_idx, active_space), (1, None));
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum Writer {
+        SessionFile,
+        WindowState,
+    }
+
+    fn session_state_writers(
+        state: &paneflow_config::schema::SessionState,
+    ) -> Vec<(&'static str, Writer, bool)> {
+        let paneflow_config::schema::SessionState {
+            version: _,
+            active_workspace: _,
+            workspaces,
+            detached_panes,
+            active_space: _,
+            next_layout_id: _,
+            layout_revision: _,
+        } = state;
+        let mut writers = vec![
+            ("version", Writer::SessionFile, true),
+            ("active_workspace", Writer::SessionFile, true),
+            ("workspaces", Writer::SessionFile, !workspaces.is_empty()),
+            (
+                "detached_panes",
+                Writer::WindowState,
+                !detached_panes.is_empty(),
+            ),
+            ("active_space", Writer::SessionFile, true),
+            ("next_layout_id", Writer::SessionFile, true),
+            ("layout_revision", Writer::SessionFile, true),
+        ];
+        for workspace in workspaces {
+            let paneflow_config::schema::WorkspaceSession {
+                id: _,
+                layout_id: _,
+                title: _,
+                cwd: _,
+                tabs,
+                active_tab: _,
+                legacy_layout: _,
+                custom_buttons: _,
+                expanded_paths: _,
+                managed_worktrees: _,
+                sidebar_collapsed: _,
+                muted: _,
+                space: _,
+            } = workspace;
+            for tab in tabs {
+                let paneflow_config::schema::TabSession {
+                    title: _,
+                    title_source: _,
+                    layout: _,
+                    worktree: _,
+                    worktree_raw: _,
+                    unread: _,
+                    pull_request: _,
+                    dock,
+                    layout_ids: _,
+                } = tab;
+                writers.push(("tab.dock", Writer::WindowState, dock.is_some()));
+            }
+        }
+        writers
+    }
+
+    #[test]
+    fn every_session_state_field_has_one_writer_and_the_session_file_drops_the_window_ones() {
+        let mut state = session_with_tabs(2);
+        state.next_layout_id = Some(9);
+        state.layout_revision = Some(4);
+        state.detached_panes = vec![paneflow_config::schema::DetachedPaneSession {
+            pane: Some(3),
+            location: paneflow_config::schema::DetachedPaneLocation {
+                workspace: 0,
+                tab: 0,
+                leaf: 0,
+            },
+            layout_leaf_count: Some(1),
+            x: 1.,
+            y: 2.,
+            width: 300.,
+            height: 200.,
+        }];
+        for tab in &mut state.workspaces[0].tabs {
+            tab.dock = Some(paneflow_config::schema::DockSession {
+                open: true,
+                tabs: Vec::new(),
+                active: 0,
+                tree: true,
+            });
+        }
+        assert!(
+            session_state_writers(&state)
+                .iter()
+                .all(|(_, _, present)| *present),
+            "the fixture fills every field it assigns"
+        );
+
+        let shared = shared_session_state(state.clone());
+
+        for (field, writer, present) in session_state_writers(&shared) {
+            match writer {
+                Writer::SessionFile => assert!(present, "{field} stays in session.json"),
+                Writer::WindowState => assert!(!present, "{field} leaves session.json"),
+            }
+        }
+        assert_eq!(shared.workspaces[0].tabs.len(), 2);
+        assert_eq!(shared.layout_revision, Some(4));
+        assert_eq!(shared.next_layout_id, Some(9));
+    }
+
+    #[test]
+    fn the_fallback_write_yields_to_a_worker_with_the_layout_and_not_to_an_older_one() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let path = paneflow_home::session_path_in(home.path());
+        let state = session_with_tabs(1);
+        let worker = paneflow_serve::open(home.path()).expect("a worker holds serve/owner.lock");
+        let _ = std::fs::remove_file(&path);
+
+        let owned = write_fallback_session(
+            &path,
+            &state,
+            FallbackOwner::Window,
+            false,
+            &AtomicU64::new(1),
+            1,
+        )
+        .expect("the write is decided");
+        assert_eq!(owned, FallbackWrite::OwnedByWorker);
+        assert!(
+            !path.exists(),
+            "the window wrote while a worker holds the lock"
+        );
+
+        let older = write_fallback_session(
+            &path,
+            &state,
+            FallbackOwner::WorkerWithoutLayout,
+            false,
+            &AtomicU64::new(1),
+            1,
+        )
+        .expect("the write succeeds");
+        assert_eq!(older, FallbackWrite::Written);
+        assert!(path.exists());
+
+        let _ = std::fs::remove_file(&path);
+        let quitting = write_fallback_session(
+            &path,
+            &state,
+            FallbackOwner::QuittingWindow,
+            false,
+            &AtomicU64::new(1),
+            1,
+        )
+        .expect("the write succeeds");
+        assert_eq!(
+            quitting,
+            FallbackWrite::Written,
+            "a window that quits unattached leaves its model on disk even while a worker holds the lock"
+        );
+        assert!(path.exists());
+
+        worker.stop();
+        let _ = std::fs::remove_file(&path);
+        let free = write_fallback_session(
+            &path,
+            &state,
+            FallbackOwner::Window,
+            false,
+            &AtomicU64::new(1),
+            1,
+        )
+        .expect("the write succeeds");
+        assert_eq!(free, FallbackWrite::Written);
     }
 }

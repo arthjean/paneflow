@@ -95,8 +95,10 @@ pub fn load(session: &SessionState) -> Loaded {
             pane.detached = true;
         }
     }
+    let mut model = Model::from_parts(state, counter, UndoHistory::default());
+    model.set_revision(session.layout_revision.unwrap_or(0));
     Loaded {
-        model: Model::from_parts(state, counter, UndoHistory::default()),
+        model,
         detached,
         reassigned: claims.reassigned,
         dropped_detached,
@@ -350,6 +352,7 @@ pub fn export(model: &Model, detached: &[DetachedPlacement]) -> SessionState {
         workspaces: state.workspaces.iter().map(export_workspace).collect(),
         detached_panes: export_detached(state, detached),
         next_layout_id: Some(model.next_id()),
+        layout_revision: Some(model.revision()),
     }
 }
 
@@ -500,6 +503,7 @@ mod tests {
             detached_panes: Vec::new(),
             active_space: None,
             next_layout_id: Some(30),
+            layout_revision: None,
         };
         let loaded = super::load(&state);
         assert_eq!(loaded.reassigned, 1);

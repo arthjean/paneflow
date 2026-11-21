@@ -3845,132 +3845,6 @@
     {
       "examples": [
         {
-          "params": {
-            "events": [
-              {
-                "pane_id": 5,
-                "tab_id": 2,
-                "type": "pane.created",
-                "workspace_id": 1
-              }
-            ]
-          },
-          "result": {
-            "seqs": [
-              42
-            ]
-          }
-        }
-      ],
-      "fallback": null,
-      "gate": "none",
-      "gate_note": null,
-      "in_capabilities": false,
-      "name": "events.publish",
-      "owner": "worker",
-      "params": {
-        "$defs": {
-          "PublishedEvent": {
-            "properties": {
-              "data": {
-                "additionalProperties": true,
-                "default": {},
-                "type": "object"
-              },
-              "pane_id": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "session": {
-                "description": "The terminal session id the host assigned",
-                "type": [
-                  "string",
-                  "null"
-                ]
-              },
-              "surface_id": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "tab_id": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              },
-              "type": {
-                "description": "A layout event type: workspace.*, tab.*, pane.*, surface.* or layout.*",
-                "type": "string"
-              },
-              "workspace_id": {
-                "format": "uint64",
-                "minimum": 0,
-                "type": [
-                  "integer",
-                  "null"
-                ]
-              }
-            },
-            "required": [
-              "type"
-            ],
-            "type": "object"
-          }
-        },
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {
-          "events": {
-            "description": "Events in the order their ops were applied",
-            "items": {
-              "$ref": "#/$defs/PublishedEvent"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "events"
-        ],
-        "title": "PublishParams",
-        "type": "object"
-      },
-      "reply": "ready",
-      "result": {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": false,
-        "properties": {
-          "seqs": {
-            "description": "The seq each event received, in order",
-            "items": {
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "seqs"
-        ],
-        "title": "Published",
-        "type": "object"
-      },
-      "stream": false,
-      "summary": "Append layout events to the worker's log, in order. Any event outside the layout family refuses the whole batch with -32602."
-    },
-    {
-      "examples": [
-        {
           "params": {},
           "result": {
             "actions": 2,
@@ -5354,6 +5228,475 @@
       },
       "stream": true,
       "summary": "Stream the prompts this client can show: a following header, a requested frame for each pending prompt oldest first, then requested frames (id, spec, origin, remaining time) and ended frames (id, reason), keepalive frames when quiet."
+    },
+    {
+      "examples": [
+        {
+          "params": {},
+          "result": {
+            "attached": true,
+            "epoch": "1a2b-19a7c3f0e00-0",
+            "revision": 12,
+            "view": {
+              "revision": 12,
+              "state": {
+                "active_space": null,
+                "active_workspace": 0,
+                "version": 3,
+                "workspaces": []
+              },
+              "undo": {
+                "held": [],
+                "records": []
+              }
+            }
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "none",
+      "gate_note": null,
+      "in_capabilities": false,
+      "name": "layout.view",
+      "owner": "worker",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "unless_revision": {
+            "description": "The revision the client holds; when it is still the worker's, view is null",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "title": "ViewParams",
+        "type": "object"
+      },
+      "reply": "ready",
+      "result": {
+        "$defs": {
+          "LayoutSnapshot": {
+            "description": "The layout model as plain data: {revision, state: {version, workspaces, active_workspace, active_space}, undo}, every workspace, tab, pane, split and surface carrying its stable id",
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "attached": {
+            "description": "Whether a window is attached as a layout client",
+            "type": "boolean"
+          },
+          "epoch": {
+            "description": "Names this worker start; a client that sees another epoch fetches the view again",
+            "type": "string"
+          },
+          "revision": {
+            "description": "Increases by one for every change of the model",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "view": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/LayoutSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The model, or null when unless_revision names the current revision"
+          }
+        },
+        "required": [
+          "epoch",
+          "revision",
+          "attached",
+          "view"
+        ],
+        "title": "View",
+        "type": "object"
+      },
+      "stream": false,
+      "summary": "Return the layout model the worker holds, with its revision and the worker's epoch."
+    },
+    {
+      "examples": [
+        {
+          "params": {
+            "client": "window"
+          },
+          "result": {
+            "epoch": "1a2b-19a7c3f0e00-0",
+            "revision": 12,
+            "view": {
+              "revision": 12,
+              "state": {
+                "active_space": null,
+                "active_workspace": 0,
+                "version": 3,
+                "workspaces": []
+              }
+            }
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "none",
+      "gate_note": null,
+      "in_capabilities": false,
+      "name": "layout.attach",
+      "owner": "worker",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "client": {
+            "description": "A name for the client in worker.status",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "title": "AttachParams",
+        "type": "object"
+      },
+      "reply": "ready",
+      "result": {
+        "$defs": {
+          "LayoutSnapshot": {
+            "description": "The layout model as plain data: {revision, state: {version, workspaces, active_workspace, active_space}, undo}, every workspace, tab, pane, split and surface carrying its stable id",
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "epoch": {
+            "type": "string"
+          },
+          "revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "view": {
+            "$ref": "#/$defs/LayoutSnapshot"
+          }
+        },
+        "required": [
+          "epoch",
+          "revision",
+          "view"
+        ],
+        "title": "Attached",
+        "type": "object"
+      },
+      "stream": false,
+      "summary": "Attach this connection as a layout client until it closes, and return the view, its revision and the worker's epoch."
+    },
+    {
+      "examples": [
+        {
+          "params": {},
+          "result": {
+            "end": 5121,
+            "start": 4097
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "none",
+      "gate_note": null,
+      "in_capabilities": false,
+      "name": "layout.lease_ids",
+      "owner": "worker",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "LeaseParams",
+        "type": "object"
+      },
+      "reply": "ready",
+      "result": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "end": {
+            "description": "One past the last id of the block",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "start": {
+            "description": "First id of the block",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start",
+          "end"
+        ],
+        "title": "Lease",
+        "type": "object"
+      },
+      "stream": false,
+      "summary": "Grant this connection a contiguous block of 1,024 ids for the elements it creates; the worker never grants an id twice, across restarts included."
+    },
+    {
+      "examples": [
+        {
+          "params": {
+            "op": {
+              "op": "focus_pane",
+              "pane": 5
+            }
+          },
+          "result": {
+            "events": [
+              {
+                "data": {},
+                "pane_id": 5,
+                "tab_id": 2,
+                "type": "pane.focused",
+                "workspace_id": 1
+              },
+              {
+                "data": {
+                  "revision": 13
+                },
+                "tab_id": 2,
+                "type": "layout.changed",
+                "workspace_id": 1
+              }
+            ],
+            "revision": 13
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "none",
+      "gate_note": null,
+      "in_capabilities": false,
+      "name": "layout.apply",
+      "owner": "worker",
+      "params": {
+        "$defs": {
+          "LayoutOp": {
+            "description": "One layout operation, named by its op field: split, close_pane, focus_pane, rename_surface, set_ratios, bind_session and the others of paneflow-layout, with the ids it acts on",
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "ids_from": {
+            "description": "The client's next id when it applied the op; ids the op allocates are taken from the client's leases from here",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "op": {
+            "$ref": "#/$defs/LayoutOp"
+          }
+        },
+        "required": [
+          "op"
+        ],
+        "title": "ApplyParams",
+        "type": "object"
+      },
+      "reply": "ready",
+      "result": {
+        "$defs": {
+          "PublishedEvent": {
+            "properties": {
+              "data": {
+                "additionalProperties": true,
+                "default": {},
+                "type": "object"
+              },
+              "pane_id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "session": {
+                "description": "The terminal session id the host assigned",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "surface_id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "tab_id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "type": {
+                "description": "A layout event type: workspace.*, tab.*, pane.*, surface.* or layout.*",
+                "type": "string"
+              },
+              "workspace_id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "data"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/$defs/PublishedEvent"
+            },
+            "type": "array"
+          },
+          "revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision",
+          "events"
+        ],
+        "title": "AppliedOp",
+        "type": "object"
+      },
+      "stream": false,
+      "summary": "Apply one layout op to the worker's model and return the new revision and its events. A refused op fails with -32070 and data {reason}: not_found, zoomed, pane_limit, tab_limit, surface_limit, ids_exhausted, invalid, or window_owns_layout while a window of an earlier build owns the layout."
+    },
+    {
+      "examples": [
+        {
+          "params": {
+            "acknowledged": 12,
+            "view": {
+              "revision": 14,
+              "state": {
+                "active_space": null,
+                "active_workspace": 0,
+                "version": 3,
+                "workspaces": []
+              }
+            }
+          },
+          "result": {
+            "accepted": true,
+            "revision": 14,
+            "view": null
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "none",
+      "gate_note": null,
+      "in_capabilities": false,
+      "name": "layout.adopt",
+      "owner": "worker",
+      "params": {
+        "$defs": {
+          "LayoutSnapshot": {
+            "description": "The layout model as plain data: {revision, state: {version, workspaces, active_workspace, active_space}, undo}, every workspace, tab, pane, split and surface carrying its stable id",
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "acknowledged": {
+            "description": "The last revision the worker acknowledged to this client",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "view": {
+            "$ref": "#/$defs/LayoutSnapshot"
+          }
+        },
+        "required": [
+          "view",
+          "acknowledged"
+        ],
+        "title": "AdoptParams",
+        "type": "object"
+      },
+      "reply": "ready",
+      "result": {
+        "$defs": {
+          "LayoutSnapshot": {
+            "description": "The layout model as plain data: {revision, state: {version, workspaces, active_workspace, active_space}, undo}, every workspace, tab, pane, split and surface carrying its stable id",
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "accepted": {
+            "description": "True when the worker took the client's model; false when its own revision was greater than the acknowledged one",
+            "type": "boolean"
+          },
+          "revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "view": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/LayoutSnapshot"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The worker's view when it refused the client's model"
+          }
+        },
+        "required": [
+          "accepted",
+          "revision",
+          "view"
+        ],
+        "title": "Adopted",
+        "type": "object"
+      },
+      "stream": false,
+      "summary": "Hand the worker a client's model after an outage. The worker takes it when its own revision is not greater than the revision it last acknowledged to the client, and otherwise returns its own view."
     }
   ]
 }

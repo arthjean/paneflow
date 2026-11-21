@@ -81,6 +81,14 @@ pub fn config_path_in(home: &Path) -> PathBuf {
     home.join("paneflow.json")
 }
 
+pub fn session_path_in(home: &Path) -> PathBuf {
+    home.join("session.json")
+}
+
+pub fn window_state_path_in(home: &Path) -> PathBuf {
+    home.join("window-state.json")
+}
+
 pub fn session_path() -> Option<PathBuf> {
     paneflow_home().map(|home| home.join("session.json"))
 }

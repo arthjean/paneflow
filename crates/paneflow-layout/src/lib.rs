@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 use paneflow_config::schema::SessionId;
 
 pub use events::{Event, EventScope};
-pub use ids::{IdSource, PaneId, SplitId, SurfaceId, TabId, WorkspaceId};
+pub use ids::{IdBlock, IdSource, LEASE_BLOCK, PaneId, SplitId, SurfaceId, TabId, WorkspaceId};
 pub use model::{
     Child, Direction, MAX_PANE_SURFACES, MAX_PANES, MAX_TABS_PER_WORKSPACE, Node, Pane, Split,
     State, Surface, SurfaceKind, SurfaceLocation, Tab, TabExtras, Workspace, WorkspaceExtras,
@@ -30,6 +30,7 @@ pub enum OpError {
     PaneLimit,
     TabLimit,
     SurfaceLimit,
+    IdsExhausted,
     Invalid,
 }
 
@@ -41,6 +42,7 @@ impl OpError {
             Self::PaneLimit => "pane_limit",
             Self::TabLimit => "tab_limit",
             Self::SurfaceLimit => "surface_limit",
+            Self::IdsExhausted => "ids_exhausted",
             Self::Invalid => "invalid",
         }
     }
@@ -89,6 +91,14 @@ pub struct Applied {
 pub struct View {
     pub revision: u64,
     pub state: State,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Snapshot {
+    pub revision: u64,
+    pub state: State,
+    #[serde(default)]
+    pub undo: UndoHistory,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -242,9 +252,19 @@ impl Model {
     }
 
     pub fn apply(&mut self, op: Op, now_ms: u64) -> Result<Applied, OpError> {
+        let ids = self.counter.clone();
+        self.apply_with_ids(op, now_ms, &ids)
+    }
+
+    pub fn apply_with_ids(
+        &mut self,
+        op: Op,
+        now_ms: u64,
+        ids: &IdSource,
+    ) -> Result<Applied, OpError> {
         let mut scratch = ops::Scratch {
             state: self.state.clone(),
-            counter: IdSource::starting_at(self.counter.next_value()),
+            counter: ids.fork(),
             reserved: self.reserved.clone(),
             undo: self.undo.clone(),
             effects: Vec::new(),
@@ -252,14 +272,22 @@ impl Model {
             now_ms,
         };
         ops::run(&mut scratch, op)?;
+        if scratch.counter.is_overdrawn() {
+            return Err(OpError::IdsExhausted);
+        }
         let events = events::diff(&self.state, &scratch.state);
         let scopes = events
             .iter()
             .map(|event| event.scope(&self.state, &scratch.state))
             .collect();
         self.state = scratch.state;
-        self.counter
-            .claim(scratch.counter.next_value().saturating_sub(1));
+        ids.adopt(&scratch.counter);
+        if !ids.shares_with(&self.counter) {
+            let highest = highest_id(&self.state);
+            if highest >= self.counter.next_value() {
+                self.counter.claim(highest);
+            }
+        }
         self.reserved = scratch.reserved;
         self.undo = scratch.undo;
         self.revision += 1;
@@ -270,6 +298,37 @@ impl Model {
             effects: scratch.effects,
             focus: scratch.focus,
         })
+    }
+
+    pub fn set_revision(&mut self, revision: u64) {
+        self.revision = revision;
+    }
+
+    pub fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            revision: self.revision,
+            state: self.state.clone(),
+            undo: self.undo.clone(),
+        }
+    }
+
+    pub fn restore(&mut self, snapshot: Snapshot) -> Vec<Event> {
+        let highest = highest_id(&snapshot.state).max(snapshot.undo.highest_id());
+        if highest >= self.counter.next_value() {
+            self.counter.claim(highest);
+        }
+        for id in collect_ids(&snapshot.state) {
+            self.reserved.remove(&id);
+        }
+        let events = events::diff(&self.state, &snapshot.state);
+        self.state = snapshot.state;
+        self.undo = snapshot.undo;
+        self.revision = snapshot.revision;
+        events
+    }
+
+    pub fn is_unused_id(&self, id: u64) -> bool {
+        id != 0 && !self.state.contains_id(id) && !self.undo.contains_id(id)
     }
 
     pub fn resync(&mut self, state: State) -> Option<Vec<Event>> {

@@ -4976,6 +4976,7 @@ dependencies = [
  "paneflow-home",
  "paneflow-host",
  "paneflow-ipc-client",
+ "paneflow-layout",
  "paneflow-mcp-install",
  "paneflow-process",
  "paneflow-script",

@@ -78,6 +78,7 @@ impl RunningWorker {
 
     pub fn stop(mut self) {
         self.worker.request_shutdown();
+        self.worker.layout.close();
         self.worker.config.stop(crate::bootstrap::DRAIN_WAIT);
         if let Some(waker) = self.pump_waker.take() {
             waker.wake();
@@ -127,6 +128,12 @@ fn open_with_build_id(home: &Path, build_id: String) -> Result<RunningWorker, Wo
     let rebuilt = state.rebuild_from_home(home);
     log::info!("paneflow-serve: rebuilt {rebuilt} sessions from manifests and seeds");
     let epoch = crate::event_log::fresh_epoch(identity.pid, identity.started_at_ms);
+    let layout = Arc::new(crate::layout_authority::LayoutAuthority::open(
+        home,
+        paneflow_home::host_endpoint_path(home),
+        epoch.clone(),
+    ));
+    layout.start();
     let worker = Arc::new(Worker {
         identity,
         home: home.to_path_buf(),
@@ -144,6 +151,7 @@ fn open_with_build_id(home: &Path, build_id: String) -> Result<RunningWorker, Wo
         events: crate::event_log::EventLog::new(epoch),
         config: Arc::new(crate::config_runtime::ConfigRuntime::new(home)),
         prompts: crate::prompts::PromptBroker::default(),
+        layout,
     });
     let server = ServerHandle::spawn(Arc::clone(&worker), endpoint.clone()).map_err(|source| {
         WorkerError::Endpoint {

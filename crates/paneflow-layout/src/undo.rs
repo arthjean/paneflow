@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::collections::{HashSet, VecDeque};
 
 use paneflow_config::schema::{LayoutNode, SessionId, TabTitleSource};
@@ -8,13 +9,13 @@ use crate::model::Pane;
 pub const MAX_CLOSED_RECORDS: usize = 5;
 pub const CLOSED_SESSION_GRACE_MS: u64 = 5_000;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HeldSession {
     pub session: SessionId,
     pub until_ms: u64,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ClosedPane {
     pub workspace: WorkspaceId,
     pub tab: TabId,
@@ -22,7 +23,7 @@ pub struct ClosedPane {
     pub pane: Pane,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ClosedTab {
     pub workspace: WorkspaceId,
     pub tab: TabId,
@@ -34,7 +35,8 @@ pub struct ClosedTab {
     pub panes: Vec<Pane>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ClosedRecord {
     Pane(ClosedPane),
     Tab(ClosedTab),
@@ -72,7 +74,7 @@ impl ClosedRecord {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct UndoHistory {
     records: VecDeque<ClosedRecord>,
     held: Vec<HeldSession>,
@@ -85,6 +87,24 @@ impl UndoHistory {
 
     pub fn contains_id(&self, id: u64) -> bool {
         self.records.iter().any(|record| record.contains_id(id))
+    }
+
+    pub fn highest_id(&self) -> u64 {
+        self.records
+            .iter()
+            .flat_map(|record| {
+                let tab = match record {
+                    ClosedRecord::Pane(_) => None,
+                    ClosedRecord::Tab(closed) => Some(closed.tab.get()),
+                };
+                tab.into_iter()
+                    .chain(record.panes().iter().flat_map(|pane| {
+                        std::iter::once(pane.id.get())
+                            .chain(pane.surfaces.iter().map(|surface| surface.id.get()))
+                    }))
+            })
+            .max()
+            .unwrap_or(0)
     }
 
     pub fn newest(&self) -> Option<&ClosedRecord> {

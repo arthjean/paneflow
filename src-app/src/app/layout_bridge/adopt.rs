@@ -20,6 +20,8 @@ pub(super) fn surface_definition(surface: &PaneSurface, cx: &App) -> SurfaceDefi
                 cwd: terminal.current_cwd.clone(),
                 font_size: terminal.font_size_override,
                 session: Some(terminal.session_id.clone()),
+                agent: terminal.detected_agent.map(|agent| agent.tag().to_string()),
+                agent_session: view.read(cx).agent_session().cloned(),
                 ..SurfaceDefinition::default()
             }
         }
@@ -76,6 +78,12 @@ impl LayoutBridge {
         definition.custom_name = live.custom_name;
         definition.session = live.session;
         definition.font_size = live.font_size;
+        if live.agent.is_some() {
+            definition.agent = live.agent;
+        }
+        if live.agent_session.is_some() {
+            definition.agent_session = live.agent_session;
+        }
         if live.cwd.is_some() {
             definition.cwd = live.cwd;
         }
@@ -182,7 +190,7 @@ impl LayoutBridge {
         }
     }
 
-    fn adopt_tab(&mut self, tab: &crate::workspace::Tab, cx: &App) -> Tab {
+    fn adopt_tab(&mut self, tab: &crate::workspace::Tab, live: TabExtras, cx: &App) -> Tab {
         let id = match self.tab_ids.get(&tab.id) {
             Some(id) => *id,
             None => {
@@ -194,10 +202,11 @@ impl LayoutBridge {
                 id
             }
         };
-        let previous = self.model.state().find_tab(id).map(|(ws, idx)| {
-            let known = &self.model.state().workspaces[ws].tabs[idx];
-            (known.focused, known.extras.clone())
-        });
+        let previous = self
+            .model
+            .state()
+            .find_tab(id)
+            .map(|(ws, idx)| self.model.state().workspaces[ws].tabs[idx].focused);
         let full = tab.saved_layout.as_ref().or(tab.root.as_ref());
         let root = full.map(|tree| self.adopt_node(tree, cx));
         let zoomed = tab
@@ -206,8 +215,8 @@ impl LayoutBridge {
             .and(tab.root.as_ref())
             .and_then(LayoutTree::first_leaf)
             .and_then(|pane| self.pane_ids.get(&pane.entity_id()).copied());
-        let (previous_focus, extras) = previous.unwrap_or((None, TabExtras::default()));
-        let focused = previous_focus
+        let focused = previous
+            .flatten()
             .filter(|pane| root.as_ref().is_some_and(|root| root.contains(*pane)))
             .or_else(|| root.as_ref().and_then(Node::first_pane).map(|pane| pane.id));
         Tab {
@@ -221,11 +230,16 @@ impl LayoutBridge {
                 .worktree
                 .as_ref()
                 .map(|path| path.to_string_lossy().into_owned()),
-            extras,
+            extras: live,
         }
     }
 
-    fn adopt_workspace(&mut self, ws: &crate::workspace::Workspace, cx: &App) -> Workspace {
+    fn adopt_workspace(
+        &mut self,
+        ws: &crate::workspace::Workspace,
+        live: (WorkspaceExtras, Vec<TabExtras>),
+        cx: &App,
+    ) -> Workspace {
         let id = match self.workspace_ids.get(&ws.id) {
             Some(id) => *id,
             None => {
@@ -237,12 +251,13 @@ impl LayoutBridge {
                 id
             }
         };
-        let extras = self
+        let legacy_layout = self
             .model
             .state()
             .workspace(id)
-            .map(|known| known.extras.clone())
-            .unwrap_or_default();
+            .and_then(|known| known.extras.legacy_layout.clone());
+        let (extras, tab_extras) = live;
+        let mut tab_extras = tab_extras.into_iter();
         Workspace {
             id,
             title: ws.title.clone(),
@@ -251,11 +266,14 @@ impl LayoutBridge {
             tabs: ws
                 .tabs()
                 .iter()
-                .map(|tab| self.adopt_tab(tab, cx))
+                .map(|tab| {
+                    let live = tab_extras.next().unwrap_or_default();
+                    self.adopt_tab(tab, live, cx)
+                })
                 .collect(),
             active_tab: ws.active_tab_idx(),
             extras: WorkspaceExtras {
-                durable_id: Some(ws.durable_id.clone()),
+                legacy_layout,
                 ..extras
             },
         }
@@ -267,8 +285,7 @@ impl PaneFlowApp {
         let Some(id) = self.layout.pane_id(pane) else {
             return;
         };
-        let before = self.layout.model.state().clone();
-        let mut state = before.clone();
+        let mut state = self.layout.model.state().clone();
         let Some((ws, tab)) = state.find_pane(id) else {
             return;
         };
@@ -277,29 +294,79 @@ impl PaneFlowApp {
             return;
         }
         tab.focused = Some(id);
-        if let Some(events) = self.layout.model.resync(state) {
-            let scopes = super::publish::scoped_events(&events, &before, self.layout.model.state());
-            self.layout.events.publish(super::publish::published_events(
-                &events,
-                &scopes,
-                self.layout.model.revision(),
-            ));
-        }
+        self.layout.resync_recorded(state);
+    }
+
+    fn live_extras(
+        &self,
+        ws: &crate::workspace::Workspace,
+        cx: &App,
+    ) -> (WorkspaceExtras, Vec<TabExtras>) {
+        let workspace = WorkspaceExtras {
+            durable_id: Some(ws.durable_id.clone()),
+            legacy_layout: None,
+            custom_buttons: ws.custom_buttons.clone(),
+            expanded_paths: crate::app::session::persisted_expanded_paths(
+                &ws.cwd,
+                &ws.files_expanded,
+            ),
+            managed_worktrees: ws
+                .managed_worktrees
+                .iter()
+                .map(|wt| paneflow_config::schema::ManagedWorktreeDef {
+                    path: wt.path.to_string_lossy().into_owned(),
+                    repo_root: wt.repo_root.to_string_lossy().into_owned(),
+                    branch: wt.branch.clone(),
+                    teardown: wt.teardown.as_str().to_string(),
+                })
+                .collect(),
+            sidebar_collapsed: !ws.sidebar_expanded,
+            muted: ws.muted,
+        };
+        let tabs = ws
+            .tabs()
+            .iter()
+            .map(|tab| TabExtras {
+                worktree_raw: tab
+                    .worktree
+                    .as_deref()
+                    .filter(|path| path.to_str().is_none())
+                    .map(crate::runtime_paths::path_to_raw),
+                unread: ws
+                    .agent_completion_notification
+                    .is_unread_for(&tab.surface_ids(cx)),
+                pull_request: self.tab_pull_request(ws, tab).map(|pr| {
+                    paneflow_config::schema::PullRequestSession {
+                        branch: self.tab_row_branch(ws, tab),
+                        number: pr.number,
+                        state: pr.state.wire_str().to_string(),
+                    }
+                }),
+                dock: None,
+            })
+            .collect();
+        (workspace, tabs)
     }
 
     pub(crate) fn adopt_layout(&mut self, cx: &mut Context<Self>) {
+        let extras: Vec<(WorkspaceExtras, Vec<TabExtras>)> = self
+            .workspaces
+            .iter()
+            .map(|ws| self.live_extras(ws, cx))
+            .collect();
         let mut bridge = std::mem::take(&mut self.layout);
         let state = State {
             version: paneflow_config::schema::SESSION_SCHEMA_VERSION,
             workspaces: self
                 .workspaces
                 .iter()
-                .map(|ws| bridge.adopt_workspace(ws, cx))
+                .zip(extras)
+                .map(|(ws, live)| bridge.adopt_workspace(ws, live, cx))
                 .collect(),
             active_workspace: self.active_idx,
             active_space: self.active_space.clone(),
         };
-        bridge.model.resync(state);
+        bridge.resync_recorded(state);
         self.layout = bridge;
     }
 }

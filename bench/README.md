@@ -1722,3 +1722,59 @@ The mark names are the metric names, so adding a mark adds a metric and the
 comparison table reports it as new. The `cpu_share` field is `null`, not
 measured, for this suite: the timed work happens in a child process, so the
 harness cannot attribute a core share to it.
+
+## Worker suite
+
+`scripts/bench-worker.sh` (or `.ps1`) runs
+`src-app/tests/worker_round_trip.rs::worker_round_trip_benchmark` under the
+`gates` profile and writes `bench/results/worker-<stamp>-<sha>.json`. It
+measures the two costs the layout authority in the worker depends on
+(assumption A3 of `tasks/prd-lua-scripting.md`):
+
+- **Round trip.** 1,000 `worker.hello` requests on one open connection to a
+  worker started from the built `paneflow` binary, after 50 warm-up
+  requests. The result records the median, the 95th percentile and the
+  maximum in microseconds.
+- **Replacement.** 20 replacements through `ensure_worker_running`, each with
+  a copy of the binary that carries another build id, which is what an update
+  does: drain the running worker, start the new one, wait for it to answer. A
+  probe thread opens a connection every millisecond, and each replacement's
+  outage is the time between the last answer of the retiring worker and the
+  first answer of its successor. The result records the median and the
+  maximum in milliseconds.
+
+Each measurement runs twice; when the two medians differ by more than 10 %,
+both are discarded and the pair is repeated, up to five times. The `runs`
+object of each measurement lists the discarded pairs. The suite gates
+nothing: `crates/paneflow-host/tests/persistent_baseline/gates.rs` holds no
+worker budget. `scripts/perf-gates.sh` also runs it and leaves
+`worker.json` in the `perf-gates` artifact, so the perf-gate runner class
+records the two numbers on every run; a failed or noisy measurement there
+is a warning, never a failed job.
+
+### Measurement of 2026-11-21 (US-050)
+
+Fedora, Linux x86_64, `gates` profile, `bench/results/worker-20261121T080347Z-884c18586846.json`
+(the tracked tree held only the suite itself):
+
+| Measurement | Median | p95 | Max |
+|---|---|---|---|
+| No-op round trip | 17.1 µs | 19.2 µs | 31.3 µs |
+| Endpoint outage during a replacement | 141.6 ms | | 145.9 ms |
+
+The round trip pair was discarded twice (spreads of 18.8 % and 18.4 %)
+before the third pair agreed; the replacement pair agreed on the first
+attempt. The perf-gate runner class has not run the suite yet.
+
+Against A3: one 60 Hz frame is 16,667 µs, so even the slowest no-op round
+trip took 0.2 % of a frame. A layout op's acknowledgement carries a larger
+payload than `worker.hello` (the op, then the revision and its events), but
+no measured cost comes within two orders of magnitude of a frame, and the
+window never waits for it anyway: every op is applied to the window's own
+model first (D7). A replacement leaves the endpoint silent for about 140 ms,
+which is longer than a frame: a gesture made during it is applied locally and
+reaches the worker on reconnection, which is the behavior US-054 specifies.
+
+Proposed budgets, for Arthur to accept before any enters `gates.rs`: a no-op
+round trip p95 at or below 1 ms, and a replacement outage at or below 1 s at
+its maximum, both measured on the perf-gate runner class.

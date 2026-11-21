@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashSet};
 
 use paneflow_config::schema::{
@@ -15,20 +16,21 @@ use crate::tree;
 use crate::undo::{CLOSED_SESSION_GRACE_MS, ClosedPane, ClosedRecord, ClosedTab, UndoHistory};
 use crate::{Effect, OpError};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NewSurface {
     pub id: SurfaceId,
     pub definition: SurfaceDefinition,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NewPane {
     pub id: PaneId,
     pub surfaces: Vec<NewSurface>,
     pub active: usize,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum NewNode {
     Pane(NewPane),
     Split {
@@ -38,7 +40,7 @@ pub enum NewNode {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NewTab {
     pub id: TabId,
     pub title: String,
@@ -47,7 +49,7 @@ pub struct NewTab {
     pub root: Option<NewNode>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NewWorkspace {
     pub id: WorkspaceId,
     pub title: String,
@@ -60,13 +62,15 @@ pub struct NewWorkspace {
     pub active_tab: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Edge {
     Before,
     After,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Preset {
     EvenHorizontal,
     EvenVertical,
@@ -74,7 +78,8 @@ pub enum Preset {
     MainVertical,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
 pub enum Op {
     Split {
         target: PaneId,
@@ -225,6 +230,100 @@ pub enum Op {
     UndoClose {
         tab: Option<TabId>,
     },
+}
+
+fn pane_ids(pane: &NewPane, ids: &mut Vec<u64>) {
+    ids.push(pane.id.0);
+    ids.extend(pane.surfaces.iter().map(|surface| surface.id.0));
+}
+
+fn node_ids(node: &NewNode, ids: &mut Vec<u64>) {
+    match node {
+        NewNode::Pane(pane) => pane_ids(pane, ids),
+        NewNode::Split { children, .. } => {
+            for child in children {
+                node_ids(child, ids);
+            }
+        }
+    }
+}
+
+fn tab_ids(tab: &NewTab, ids: &mut Vec<u64>) {
+    ids.push(tab.id.0);
+    if let Some(root) = &tab.root {
+        node_ids(root, ids);
+    }
+}
+
+impl Op {
+    pub fn new_ids(&self) -> Vec<u64> {
+        let mut ids = Vec::new();
+        match self {
+            Self::Split { pane, .. } => pane_ids(pane, &mut ids),
+            Self::AddSurface { surface, .. } => ids.push(surface.id.0),
+            Self::OpenTab { tab, .. } => tab_ids(tab, &mut ids),
+            Self::CreateWorkspace { workspace, .. } => {
+                ids.push(workspace.id.0);
+                for tab in &workspace.tabs {
+                    tab_ids(tab, &mut ids);
+                }
+            }
+            Self::MovePaneToNewTab { tab, .. } => ids.push(tab.0),
+            Self::MoveSurface {
+                split: Some((_, _, pane)),
+                ..
+            } => ids.push(pane.0),
+            Self::RestoreLayout { layout, .. } => node_ids(layout, &mut ids),
+            Self::LaunchTemplate { root, .. } => node_ids(root, &mut ids),
+            _ => {}
+        }
+        ids
+    }
+
+    pub fn creates(&self) -> bool {
+        !self.new_ids().is_empty()
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Split { .. } => "split",
+            Self::AddSurface { .. } => "add_surface",
+            Self::SelectSurface { .. } => "select_surface",
+            Self::OpenTab { .. } => "open_tab",
+            Self::CreateWorkspace { .. } => "create_workspace",
+            Self::CloseSurface { .. } => "close_surface",
+            Self::ClosePane { .. } => "close_pane",
+            Self::CloseTab { .. } => "close_tab",
+            Self::CloseWorkspace { .. } => "close_workspace",
+            Self::FocusPane { .. } => "focus_pane",
+            Self::SelectTab { .. } => "select_tab",
+            Self::SelectWorkspace { .. } => "select_workspace",
+            Self::RenameSurface { .. } => "rename_surface",
+            Self::RenameTab { .. } => "rename_tab",
+            Self::UnlockTabTitle { .. } => "unlock_tab_title",
+            Self::RenameWorkspace { .. } => "rename_workspace",
+            Self::SetWorkspaceCwd { .. } => "set_workspace_cwd",
+            Self::BindSession { .. } => "bind_session",
+            Self::UnbindSession { .. } => "unbind_session",
+            Self::UpdateSurface { .. } => "update_surface",
+            Self::BindWorktree { .. } => "bind_worktree",
+            Self::SwapPanes { .. } => "swap_panes",
+            Self::MovePane { .. } => "move_pane",
+            Self::MoveSurface { .. } => "move_surface",
+            Self::MovePaneToNewTab { .. } => "move_pane_to_new_tab",
+            Self::MoveTab { .. } => "move_tab",
+            Self::ReorderTab { .. } => "reorder_tab",
+            Self::ReorderWorkspace { .. } => "reorder_workspace",
+            Self::SetRatios { .. } => "set_ratios",
+            Self::Equalize { .. } => "equalize",
+            Self::ApplyPreset { .. } => "apply_preset",
+            Self::SetZoom { .. } => "set_zoom",
+            Self::SetDetached { .. } => "set_detached",
+            Self::RestoreLayout { .. } => "restore_layout",
+            Self::LaunchTemplate { .. } => "launch_template",
+            Self::UndoClose { .. } => "undo_close",
+        }
+    }
 }
 
 pub(crate) struct Scratch {
