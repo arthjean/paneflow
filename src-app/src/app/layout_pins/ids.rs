@@ -17,8 +17,12 @@ fn two_panes_and_a_stacked_surface(rig: &mut Rig<'_>) {
     rig.focus("a");
     split_v(rig);
     rig.emit("b", PaneEvent::NewTab);
-    assert_eq!(rig.shape(0, 0), "V(0.500 a, 0.500 b+c*)");
-    rig.requests();
+    let shape = rig.shape(0, 0);
+    let requests = rig.requests();
+    assert_eq!(
+        shape, "V(0.500 a, 0.500 b+c*)",
+        "host requests: {requests:?}"
+    );
 }
 
 fn detach(rig: &mut Rig<'_>, name: &str) {
