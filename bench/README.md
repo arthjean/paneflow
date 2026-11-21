@@ -1764,7 +1764,19 @@ Fedora, Linux x86_64, `gates` profile, `bench/results/worker-20261121T080347Z-88
 
 The round trip pair was discarded twice (spreads of 18.8 % and 18.4 %)
 before the third pair agreed; the replacement pair agreed on the first
-attempt. The perf-gate runner class has not run the suite yet.
+attempt.
+
+The perf-gate runner class (GitHub `ubuntu-24.04`, Linux x86_64, `gates`
+profile) ran the suite at `552e5076` in the `Performance gates` job of
+`run_tests.yml`, `bench/results/worker-20261121T102500Z-552e5076bb3d.json`:
+
+| Measurement | Median | p95 | Max |
+|---|---|---|---|
+| No-op round trip | 14.9 µs | 17.9 µs | 53.2 µs |
+| Endpoint outage during a replacement | 148.8 ms | | 150.5 ms |
+
+Both pairs agreed on the first attempt. The medians and the p95 match the Fedora ones
+within 15 %, so the reading against A3 below holds for the runner class.
 
 Against A3: one 60 Hz frame is 16,667 µs, so even the slowest no-op round
 trip took 0.2 % of a frame. A layout op's acknowledgement carries a larger
