@@ -240,16 +240,21 @@ impl PaneFlowApp {
                 if let Some(session) = &request.scope_session {
                     params["scope_session"] = serde_json::Value::String(session.clone());
                 }
-                let reply =
-                    match registry().serve(self, "surface.send_text", &params, caller_pid, cx) {
-                        IpcReply::Ready(reply) => reply,
-                        IpcReply::Deferred(_) | IpcReply::Async(_) => {
-                            return ready(failure(
-                                "paneflow tmux-compat: send-keys was not answered at once"
-                                    .to_string(),
-                            ));
-                        }
-                    };
+                let reply = match registry().serve(
+                    self,
+                    "surface.send_text",
+                    &params,
+                    caller_pid,
+                    false,
+                    cx,
+                ) {
+                    IpcReply::Ready(reply) => reply,
+                    IpcReply::Deferred(_) | IpcReply::Async(_) => {
+                        return ready(failure(
+                            "paneflow tmux-compat: send-keys was not answered at once".to_string(),
+                        ));
+                    }
+                };
                 if reply.get(JSONRPC_ERROR_KEY).is_some() {
                     return ready(failure(error_message(&reply)));
                 }

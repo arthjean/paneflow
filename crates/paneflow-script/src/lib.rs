@@ -13,6 +13,7 @@ pub mod serve;
 pub mod stdlib;
 pub mod stubs;
 pub mod timers;
+pub mod ui;
 
 pub use clock::{Clock, FakeClock, SystemClock, Wake};
 pub use config::{ActionFailure, ActionResult, LoadReport, Stats};

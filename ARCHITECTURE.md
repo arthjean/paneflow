@@ -691,7 +691,8 @@ stale code.
   signaled.
 - **The method families it owns, nothing more.** The worker answers the
   methods `crates/paneflow-api` declares with the worker as owner (`worker.*`,
-  `agent.*`, `usage.*`, `events.*`), plus `host.hello` as a greeting and
+  `agent.*`, `usage.*`, `events.*`, `config.*`, `action.*`, `keymap.*`,
+  `prompt.*`), plus `host.hello` as a greeting and
   `system.describe`, which lists exactly those methods. Its dispatch is the
   registry in `crates/paneflow-serve/src/registry.rs`: a worker method with no
   handler, or a handler whose reply kind differs from its declaration, fails
@@ -722,6 +723,42 @@ stale code.
   `crates/paneflow-serve/tests/events_conformance.rs` runs against a real host
   and worker. The window's legacy `events.subscribe` is a separate stream and
   is unchanged.
+- **One prompt broker.** `crates/paneflow-serve/src/prompts.rs` holds the
+  questions an action, a script or later an agent asks the user, in memory
+  only. `prompt.request` queues one when a `prompt.follow` client can show its
+  kind (`no_client` with no follower, `unsupported` when none shows it, `busy`
+  at 16 pending) and waits at most `wait_ms` (25 s) before returning `pending`
+  with an id that `prompt.wait` resumes, so no call outlives a client's reply
+  deadline. Every follower receives a `requested` frame, the first
+  `prompt.reply` wins, and every follower then receives `ended`; a later reply
+  is refused with `not_pending` (-32060). A prompt ends with `timeout` after
+  its `timeout` (300 s by default, at most 3,600 s), with `no_client` when the
+  last follower able to show it leaves, with `failed` when its asker has not
+  waited on it for 15 s or the worker stops. The window follows the stream on
+  a background thread and shows one prompt at a time in the palette shell
+  (`src-app/src/app/prompts/`): a prompt activated from the attention queue
+  first, then the user's actions and scripts, then agents, oldest first, and
+  never while the command palette or the file finder is open. In Lua,
+  `paneflow.ui.input` and `paneflow.ui.pick` loop on `prompt.request` and
+  `prompt.wait` from an offloaded thread and pause the action's 30 s limit
+  while they wait. `protocol/prompt-conformance-v1.json` lists the
+  multi-client cases `crates/paneflow-serve/tests/prompt_conformance.rs` runs
+  with plain protocol clients against a real worker.
+- **A gesture grant lets an init.lua action type for the human.** The write
+  gate (`PANEFLOW_IPC_SCRIPTING=1` or `ai_unrestricted`) refuses
+  `surface.send_text` and `surface.send_keystroke` from every client but the
+  window, the worker included. When the window runs an action from a key or
+  the palette (`src-app/src/app/lua_config.rs`), it mints a random 128-bit
+  grant, keeps it in memory, and passes it in the `ctx.grant` of
+  `action.invoke`. The worker stores it in the run's task scope, never in the
+  Lua `ctx` table, and attaches it as a top-level `grant` member of the
+  JSON-RPC envelope of every window call that run makes, nested
+  `paneflow.invoke` calls included; timers and handlers the run schedules run
+  in their own tasks and carry none. The window admits a request whose grant
+  it minted and has not revoked, and revokes it when the `action.invoke` reply
+  arrives or after `ACTION_REPLY_DEADLINE`. The same action run from the CLI,
+  the MCP bridge, an agent or a timer has no grant and stays gated, and an
+  `origin` of `key` or `palette` sent by any other client grants nothing.
 
 ### Plan usage and the activity ledger
 

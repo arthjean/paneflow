@@ -227,6 +227,44 @@ paneflow.client = {}
 ---@return boolean
 function paneflow.client.queue(name) end
 
+---@class paneflow.ui
+paneflow.ui = {}
+
+---@class paneflow.ui.item
+---@field id string Returned when the item is chosen
+---@field title string? The label shown and filtered on, the id by default
+---@field subtitle string?
+---@field icon "document"|"folder"|"branch"|"terminal"|"code"|"server"|"database"|"package"|"globe"|"link"|"person"|"tag"|"clock"|"star"|"gear"|"plus"|nil
+---@field detail string? Text shown at the end of the row
+---@field selected boolean? Starts ticked when multiple is true
+
+---@class paneflow.ui.input.spec
+---@field title string
+---@field placeholder string?
+---@field value string? Text the field starts with
+---@field confirm string? Label of the confirming row
+---@field timeout number? Seconds before the prompt ends with "timeout", 300 by default, at most 3600
+
+---@class paneflow.ui.pick.spec: paneflow.ui.input.spec
+---@field items (string|paneflow.ui.item)[] At most 2000; a string is its own id and title
+---@field multiple boolean? Tick several items; the answer is the list of ids in the order of items
+---@field allow_other boolean? Accept typed text that matches no item; the answer is { text = ... }
+
+---Ask the user for a line of text in every window that can show it; the first answer wins and the action's 30 s limit pauses while it waits.
+---Returns nil and "cancelled", "timeout", "no_client", "unsupported", "busy" or "failed" (with a detail) when nobody answers.
+---@param spec paneflow.ui.input.spec
+---@return string? text
+---@return string? reason
+---@return string? detail
+function paneflow.ui.input(spec) end
+
+---Ask the user to choose among items; the answer is an id, a list of ids with multiple, or { text = ... } with allow_other.
+---@param spec paneflow.ui.pick.spec
+---@return string|string[]|{ text: string }|nil answer
+---@return string? reason
+---@return string? detail
+function paneflow.ui.pick(spec) end
+
 ---@class paneflow.action.invoke.params
 ---@field args? table The action's arguments, checked against its declared schema
 ---@field ctx? table
@@ -495,6 +533,83 @@ paneflow.pane = {}
 ---@return string? message
 ---@return integer? code
 paneflow.pane.write = function(params) end
+
+---@class paneflow.prompt
+paneflow.prompt = {}
+
+---@class paneflow.prompt.follow.params
+---@field kinds ("input"|"pick")[] The prompt kinds this client can show
+
+---@class paneflow.prompt.follow.result
+---@field kinds ("input"|"pick")[]
+---@field pending integer
+---@field type "following"
+
+---Stream the prompts this client can show: a following header, a requested frame for each pending prompt oldest first, then requested frames (id, spec, origin, remaining time) and ended frames (id, reason), keepalive frames when quiet.
+---@param params paneflow.prompt.follow.params
+---@return paneflow.prompt.follow.result? result
+---@return string? message
+---@return integer? code
+paneflow.prompt.follow = function(params) end
+
+---@class paneflow.prompt.reply.params
+---@field answer? string|string[]|table The text, the id, the list of ids or {text}, as the prompt's kind takes
+---@field cancel? boolean Dismiss the prompt; the asker receives cancelled
+---@field id integer
+
+---@class paneflow.prompt.reply.result
+---@field id integer
+---@field reason "answered"|"cancelled"|"timeout"|"no_client"|"failed"
+
+---Answer or cancel a pending prompt. The first reply wins and every follower receives ended; a later one is refused with -32060 and data {reason: not_pending}.
+---@param params paneflow.prompt.reply.params
+---@return paneflow.prompt.reply.result? result
+---@return string? message
+---@return integer? code
+paneflow.prompt.reply = function(params) end
+
+---@class paneflow.prompt.request.params
+---@field allow_other? boolean Accept typed text that matches no item; the answer is {text}
+---@field confirm? string Label of the confirming row
+---@field items? (string|table)[] The choices of a pick prompt, at most 2000: an id string or an item
+---@field kind "input"|"pick" input asks for a line of text, pick for a choice among items
+---@field multiple? boolean Let the user tick several items; the answer is the list of ids
+---@field origin? table Who asks, shown under the title
+---@field placeholder? string
+---@field timeout? number Seconds before the prompt ends with timeout: 300 by default, at most 3600
+---@field title string
+---@field value? string Text the field starts with
+---@field wait_ms? integer Milliseconds to wait for the answer before returning pending with the id, 0 by default, at most 25000
+
+---@class paneflow.prompt.request.result
+---@field answer? string|string[]|table
+---@field detail? string
+---@field id? integer
+---@field status "answered"|"pending"|"cancelled"|"timeout"|"no_client"|"unsupported"|"busy"|"failed"
+
+---Ask the user through every attached client that can show the prompt; the first answer wins. Returns {status: answered, answer} within wait_ms, {status: pending, id} when wait_ms passes first, or the reason it ended: cancelled, timeout, no_client, unsupported, busy or failed with a detail.
+---@param params paneflow.prompt.request.params
+---@return paneflow.prompt.request.result? result
+---@return string? message
+---@return integer? code
+paneflow.prompt.request = function(params) end
+
+---@class paneflow.prompt.wait.params
+---@field id integer
+---@field wait_ms? integer Milliseconds to wait, 0 by default, at most 25000
+
+---@class paneflow.prompt.wait.result
+---@field answer? string|string[]|table
+---@field detail? string
+---@field id? integer
+---@field status "answered"|"pending"|"cancelled"|"timeout"|"no_client"|"unsupported"|"busy"|"failed"
+
+---Keep waiting on a pending prompt by id, with the same outcomes as prompt.request.
+---@param params paneflow.prompt.wait.params
+---@return paneflow.prompt.wait.result? result
+---@return string? message
+---@return integer? code
+paneflow.prompt.wait = function(params) end
 
 ---@class paneflow.surface
 paneflow.surface = {}

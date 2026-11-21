@@ -46,6 +46,7 @@ pub struct Worker {
     pub probe_slots: ProbeSlots,
     pub events: EventLog,
     pub config: Arc<crate::config_runtime::ConfigRuntime>,
+    pub prompts: crate::prompts::PromptBroker,
 }
 
 impl Worker {
@@ -281,6 +282,7 @@ impl Worker {
         self.shutdown_requested.notify_all();
         self.bus.disconnect_all();
         self.events.close();
+        self.prompts.close();
     }
 
     pub fn absorb_state_events(&self) {
@@ -697,7 +699,7 @@ fn reply(wire: &mut Wire, id: &Value, answer: Result<Value, ServeError>) -> Flow
 }
 
 pub(crate) fn register_methods(builder: RegistryBuilder) -> RegistryBuilder {
-    use paneflow_api::methods::{config, events, system, worker};
+    use paneflow_api::methods::{config, events, prompt, system, worker};
 
     builder
         .ready::<worker::Hello>(|worker, _| Ok(worker.identity_value()))
@@ -731,6 +733,19 @@ pub(crate) fn register_methods(builder: RegistryBuilder) -> RegistryBuilder {
             worker.config.invoke(call.params).and_then(to_value)
         })
         .ready::<config::ListKeymap>(|worker, _| to_value(worker.config.keymap()))
+        .ready::<prompt::Request>(|worker, call| {
+            worker.prompts.request(&call.params).and_then(to_value)
+        })
+        .ready::<prompt::Wait>(|worker, call| {
+            worker
+                .prompts
+                .wait(call.params.id, call.params.wait_ms)
+                .and_then(to_value)
+        })
+        .ready::<prompt::ReplyTo>(|worker, call| {
+            worker.prompts.reply(call.params).and_then(to_value)
+        })
+        .stream::<prompt::Follow>(stream_prompts)
         .inline::<system::Describe>(|_, call| registry()?.describe(call.params.method.as_deref()))
 }
 
@@ -887,6 +902,86 @@ fn stream_events(
                     "the stream was dropped"
                 };
                 return finish(wire, reason);
+            }
+        }
+    }
+}
+
+struct Following<'a> {
+    worker: &'a Worker,
+    id: u64,
+}
+
+impl Drop for Following<'_> {
+    fn drop(&mut self) {
+        self.worker.prompts.unfollow(self.id);
+    }
+}
+
+fn stream_prompts(
+    stream: crate::registry::Stream<'_, paneflow_api::methods::prompt::FollowParams>,
+) -> Flow {
+    use paneflow_api::methods::prompt::{FollowHeader, FollowingKind};
+    let crate::registry::Stream {
+        wire,
+        worker,
+        shutdown,
+        id,
+        params,
+    } = stream;
+    if params.kinds.is_empty() {
+        return write_error(
+            wire,
+            id,
+            &ServeError::invalid_params("'kinds' must name at least one of input and pick"),
+        );
+    }
+    let feed = worker.prompts.follow(params.kinds.clone());
+    let _following = Following {
+        worker,
+        id: feed.id,
+    };
+    let header = FollowHeader {
+        kind: FollowingKind::Following,
+        kinds: params.kinds,
+        pending: feed.pending.len(),
+    };
+    let header = serde_json::to_value(header).unwrap_or(Value::Null);
+    if wire.write_json(&result_envelope(id, header)).is_err() {
+        return Flow::Close;
+    }
+    for frame in &feed.pending {
+        if wire.write_json(frame).is_err() {
+            return Flow::Close;
+        }
+    }
+    let mut last_frame_at = Instant::now();
+    loop {
+        if shutdown.load(Ordering::Acquire) {
+            let _ = wire.write_json(&json!({"type": "end", "reason": "the worker is stopping"}));
+            return Flow::Close;
+        }
+        let until_keepalive = FOLLOW_KEEPALIVE.saturating_sub(last_frame_at.elapsed());
+        match feed.frames.recv_timeout(until_keepalive) {
+            Ok(frame) => {
+                if wire.write_json(&frame).is_err() {
+                    return Flow::Close;
+                }
+                last_frame_at = Instant::now();
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                worker.prompts.sweep();
+                if last_frame_at.elapsed() >= FOLLOW_KEEPALIVE {
+                    if wire.write_json(&json!({"type": "keepalive"})).is_err() {
+                        return Flow::Close;
+                    }
+                    last_frame_at = Instant::now();
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                let _ =
+                    wire.write_json(&json!({"type": "end", "reason": "the worker is stopping"}));
+                return Flow::Close;
             }
         }
     }

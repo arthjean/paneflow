@@ -3,6 +3,7 @@ mod events;
 mod ids;
 mod lua;
 mod parity;
+mod prompts;
 mod rearrange;
 mod sidebar;
 
@@ -70,6 +71,7 @@ fn every_layout_pin_holds_in_an_isolated_home() {
                 + ids::PINS
                 + lua::PINS
                 + parity::PINS
+                + prompts::PINS
                 + rearrange::PINS
                 + sidebar::PINS,
         "only {passed} layout pins ran\n{stdout}"
@@ -225,7 +227,7 @@ impl<'a> Rig<'a> {
     }
 
     pub(super) fn ipc(&mut self, method: &str, params: Value) -> Value {
-        let reply = self.act(|app, _, cx| app.handle_ipc(method, &params, None, cx));
+        let reply = self.act(|app, _, cx| app.handle_ipc(method, &params, None, false, cx));
         let slot: Rc<RefCell<Option<Value>>> = Rc::default();
         match reply {
             IpcReply::Ready(value) => *slot.borrow_mut() = Some(value),

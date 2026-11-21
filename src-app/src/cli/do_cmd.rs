@@ -502,6 +502,20 @@ pub(super) fn with_full_path(message: &str, path: Option<&str>) -> String {
     }
 }
 
+pub(super) fn script_label(chunk_name: &str) -> String {
+    match chunk_name.strip_prefix('@') {
+        Some(path) => std::path::Path::new(path).file_name().map_or_else(
+            || path.to_string(),
+            |name| name.to_string_lossy().to_string(),
+        ),
+        None => chunk_name
+            .trim_start_matches('=')
+            .trim_start_matches('(')
+            .trim_end_matches(')')
+            .to_string(),
+    }
+}
+
 fn report_error(message: &str) -> i32 {
     eprintln!("Error: {message}");
     EXIT_RUNTIME
@@ -580,6 +594,9 @@ fn run_local_action(action: &str, path: &std::path::Path, pairs: &[String], args
     };
     options.config_root = Some(root.clone());
     options.lua_dir = Some(root.join(paneflow_home::LUA_DIR_NAME));
+    options.script_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string());
     let catalog = match paneflow_api::catalog() {
         Ok(catalog) => catalog,
         Err(error) => return report_error(&error.to_string()),
@@ -645,10 +662,11 @@ pub(super) fn run(args: DoArgs) -> i32 {
         Ok(prepared) => prepared,
         Err(error) => return report_error(&error.message),
     };
-    let options = match options(&args, dir, values) {
+    let mut options = match options(&args, dir, values) {
         Ok(options) => options,
         Err(error) => return report_error(&error.message),
     };
+    options.script_name = Some(script_label(&name));
     let catalog = match paneflow_api::catalog() {
         Ok(catalog) => catalog,
         Err(error) => return report_error(&error.to_string()),
@@ -698,6 +716,13 @@ fn print_outcome(outcome: &Outcome, indent: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_prompt_names_a_file_script_by_its_file_name_and_the_others_by_their_source() {
+        assert_eq!(script_label("@/home/me/scripts/deploy.lua"), "deploy.lua");
+        assert_eq!(script_label("=stdin"), "stdin");
+        assert_eq!(script_label("=(command line)"), "command line");
+    }
 
     #[test]
     fn a_path_like_argument_is_a_file_and_anything_else_an_action() {

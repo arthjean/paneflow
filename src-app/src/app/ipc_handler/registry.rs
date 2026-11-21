@@ -302,6 +302,7 @@ impl Registry {
         method: &str,
         params: &Value,
         caller_pid: Option<i64>,
+        granted: bool,
         cx: &mut Context<PaneFlowApp>,
     ) -> IpcReply {
         let Some(entry) = self.get(method) else {
@@ -314,7 +315,7 @@ impl Registry {
         }
         if let Some(refusal) = gate_refusal(
             entry.spec().gate,
-            app.cached_config.ai_unrestricted_enabled(),
+            app.cached_config.ai_unrestricted_enabled() || granted,
         ) {
             return IpcReply::Ready(refusal.into_value());
         }

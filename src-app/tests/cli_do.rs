@@ -604,3 +604,61 @@ fn limit_flags_and_fail_fast_are_read_from_the_command_line() {
     );
     assert!(output.stdout.is_empty());
 }
+
+#[test]
+fn a_script_prompt_returns_no_client_with_no_window_and_the_answer_of_a_follower() {
+    let home = tempfile::tempdir().unwrap();
+    let worker = paneflow_serve::open(home.path()).expect("the worker takes the home");
+    let script = home.path().join("ask.lua");
+    std::fs::write(
+        &script,
+        "local answer, reason = paneflow.ui.input{ title = 'Deploy to?', placeholder = 'staging' }\n\
+         return { answer = answer, reason = reason }",
+    )
+    .unwrap();
+    let script_arg = script.display().to_string();
+    let output = run(home.path(), &[&script_arg]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let value: Value = serde_json::from_str(&stdout(&output)).unwrap();
+    assert_eq!(value, json!({"reason": "no_client"}));
+
+    let endpoint = paneflow_home::serve_endpoint_path(home.path());
+    let mut follower =
+        paneflow_ipc_client::host_control::HostControl::connect(&endpoint, "cli-do-prompts")
+            .unwrap();
+    follower
+        .request("prompt.follow", json!({"kinds": ["input"]}))
+        .unwrap();
+    let asking = command(home.path(), &[&script_arg])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let requested = loop {
+        let line = follower
+            .read_stream_line(LINE_WAIT)
+            .unwrap()
+            .expect("the stream stays open");
+        let frame: Value = serde_json::from_str(&line).unwrap();
+        if frame["type"] == "requested" {
+            break frame;
+        }
+    };
+    assert_eq!(requested["spec"]["placeholder"], "staging");
+    assert_eq!(
+        requested["origin"],
+        json!({"kind": "script", "file": "ask.lua"})
+    );
+    paneflow_ipc_client::host_control::HostControl::connect(&endpoint, "cli-do-reply")
+        .unwrap()
+        .request(
+            "prompt.reply",
+            json!({"id": requested["id"], "answer": "production"}),
+        )
+        .unwrap();
+    let output = asking.wait_with_output().unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    let value: Value = serde_json::from_str(&stdout(&output)).unwrap();
+    assert_eq!(value, json!({"answer": "production"}));
+    worker.stop();
+}

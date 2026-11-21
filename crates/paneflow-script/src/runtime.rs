@@ -75,6 +75,14 @@ pub struct SessionIds {
 pub trait Backend: Send + Sync {
     fn discover(&self) -> Discovery;
     fn call(&self, method: &str, params: Value) -> Result<Value, CallError>;
+    fn call_granted(
+        &self,
+        method: &str,
+        params: Value,
+        _grant: Option<&str>,
+    ) -> Result<Value, CallError> {
+        self.call(method, params)
+    }
     fn follow(&self) -> Result<Box<dyn EventFeed>, CallError>;
     fn resolve_session(&self, session: &str) -> Option<SessionIds>;
     fn window_attached(&self) -> bool {
@@ -136,6 +144,7 @@ pub struct Options {
     pub deadline: Option<Duration>,
     pub config_root: Option<PathBuf>,
     pub serving: bool,
+    pub script_name: Option<String>,
 }
 
 impl Options {
@@ -154,6 +163,7 @@ impl Options {
             deadline: None,
             config_root: None,
             serving: false,
+            script_name: None,
         }
     }
 }
@@ -211,6 +221,7 @@ pub(crate) struct Shared {
         RefCell<std::collections::HashMap<crate::executor::TaskId, crate::config::TaskScope>>,
     pub stats: Arc<crate::config::Stats>,
     pub serving: bool,
+    pub script_name: Option<String>,
     pub required: RefCell<Vec<PathBuf>>,
     pub mailbox: crate::serve::Mailbox,
 }
@@ -342,6 +353,11 @@ impl Runtime {
             tasks: RefCell::new(std::collections::HashMap::new()),
             stats: Arc::new(crate::config::Stats::default()),
             serving: options.serving,
+            script_name: options.script_name.clone().or_else(|| {
+                options
+                    .serving
+                    .then(|| paneflow_home::INIT_LUA_FILE_NAME.to_string())
+            }),
             required: RefCell::new(Vec::new()),
             mailbox: crate::serve::new_mailbox(wake),
         });
@@ -373,6 +389,7 @@ impl Runtime {
             crate::exec::install(&lua, &paneflow, &guard)?;
             crate::api::install_call(&lua, &paneflow, &guard)?;
             crate::config::install(&lua, &paneflow, &guard)?;
+            crate::ui::install(&lua, &paneflow, &guard)?;
             if let Some(root) = options.config_root.as_deref() {
                 crate::stdlib::install_config_searcher(&lua, root)?;
             }

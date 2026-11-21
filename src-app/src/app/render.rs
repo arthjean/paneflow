@@ -996,6 +996,10 @@ impl Render for PaneFlowApp {
         if self.command_palette_open {
             app_content = app_content.child(self.render_command_palette(window, cx));
         }
+        self.show_next_prompt(window, cx);
+        if self.prompts.shown.is_some() {
+            app_content = app_content.child(self.render_prompt(window, cx));
+        }
         if self.custom_buttons_modal.is_some() {
             app_content = app_content.child(self.render_custom_buttons_modal(cx));
         }

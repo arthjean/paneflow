@@ -647,3 +647,56 @@ fn a_retired_runtime_cancels_its_timers_and_handlers_and_lets_running_actions_fi
     assert_eq!(stats.timers(), 0);
     assert_eq!(stats.handlers(), 0);
 }
+
+#[test]
+fn a_gesture_grant_rides_on_the_window_calls_of_its_run_only_and_never_reaches_lua() {
+    let (harness, _root) = config_harness(FakeBackend::new());
+    let report = load(
+        &harness,
+        "paneflow.action{ name = 'inner', title = 'Inner', run = function() paneflow.surface.send_keystroke{ keystroke = 'enter' } end }\n\
+         paneflow.action{ name = 'type_branch', title = 'Type branch', run = function(ctx)\n\
+           paneflow.surface.send_text{ text = 'git status', submit = true }\n\
+           paneflow.invoke('inner')\n\
+           return { grant = tostring(ctx.grant) }\n\
+         end }",
+    );
+    assert!(report.ok && report.problems.is_empty(), "{report:?}");
+    let granted = InvokeContext {
+        origin: Some("key".to_string()),
+        surface_id: Some(4),
+        client_id: Some("window".to_string()),
+        grant: Some("g-1".to_string()),
+        ..InvokeContext::default()
+    };
+    let outcome = harness
+        .runtime
+        .run_action("type_branch".into(), json!({}), granted);
+    assert_eq!(outcome, Outcome::Returned(Some(json!({"grant": "nil"}))));
+    let window_calls = |grants: Vec<(String, Option<String>)>| {
+        grants
+            .into_iter()
+            .filter(|(method, _)| method.starts_with("surface."))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        window_calls(std::mem::take(&mut *harness.backend.grants.lock().unwrap())),
+        [
+            ("surface.send_text".to_string(), Some("g-1".to_string())),
+            (
+                "surface.send_keystroke".to_string(),
+                Some("g-1".to_string())
+            ),
+        ]
+    );
+    let outcome = harness
+        .runtime
+        .run_action("type_branch".into(), json!({}), cli(Some(4)));
+    assert_eq!(outcome, Outcome::Returned(Some(json!({"grant": "nil"}))));
+    assert_eq!(
+        window_calls(std::mem::take(&mut *harness.backend.grants.lock().unwrap())),
+        [
+            ("surface.send_text".to_string(), None),
+            ("surface.send_keystroke".to_string(), None),
+        ]
+    );
+}

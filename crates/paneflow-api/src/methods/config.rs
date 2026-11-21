@@ -11,12 +11,20 @@ pub const CONFIG_RELOADED: &str = "config.reloaded";
 
 pub const CONFIG_EVENT_TYPES: &[&str] = &[CONFIG_RELOADED];
 
-pub const SLOW_REPLY_METHODS: &[&str] = &["action.invoke", "config.reload"];
+pub const SLOW_REPLY_METHODS: &[&str] = &["config.reload", "prompt.request", "prompt.wait"];
 
 pub const SLOW_REPLY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(45);
 
+pub const ACTION_INVOKE: &str = "action.invoke";
+
+pub const ACTION_REPLY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(
+    2 * super::prompt::MAX_TIMEOUT_SECS + SLOW_REPLY_DEADLINE.as_secs(),
+);
+
 pub fn reply_deadline(method: &str, default: std::time::Duration) -> std::time::Duration {
-    if SLOW_REPLY_METHODS.contains(&method) {
+    if method == ACTION_INVOKE {
+        ACTION_REPLY_DEADLINE
+    } else if SLOW_REPLY_METHODS.contains(&method) {
         SLOW_REPLY_DEADLINE
     } else {
         default
@@ -112,6 +120,11 @@ pub struct InvokeContext {
     pub workspace_id: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "An opaque grant the window mints for a run it starts from a key or the palette; the run's writes to that window carry it in the request's grant field and pass the write gate. Never shown to Lua"
+    )]
+    pub grant: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]

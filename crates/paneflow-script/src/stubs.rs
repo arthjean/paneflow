@@ -420,9 +420,49 @@ paneflow.client = {}
 ---@param name string A name from paneflow.client.list_actions
 ---@return boolean
 function paneflow.client.queue(name) end
+
+---@class paneflow.ui
+paneflow.ui = {}
+
+---@class paneflow.ui.item
+---@field id string Returned when the item is chosen
+---@field title string? The label shown and filtered on, the id by default
+---@field subtitle string?
+---@field icon "document"|"folder"|"branch"|"terminal"|"code"|"server"|"database"|"package"|"globe"|"link"|"person"|"tag"|"clock"|"star"|"gear"|"plus"|nil
+---@field detail string? Text shown at the end of the row
+---@field selected boolean? Starts ticked when multiple is true
+
+---@class paneflow.ui.input.spec
+---@field title string
+---@field placeholder string?
+---@field value string? Text the field starts with
+---@field confirm string? Label of the confirming row
+---@field timeout number? Seconds before the prompt ends with "timeout", 300 by default, at most 3600
+
+---@class paneflow.ui.pick.spec: paneflow.ui.input.spec
+---@field items (string|paneflow.ui.item)[] At most 2000; a string is its own id and title
+---@field multiple boolean? Tick several items; the answer is the list of ids in the order of items
+---@field allow_other boolean? Accept typed text that matches no item; the answer is { text = ... }
+
+---Ask the user for a line of text in every window that can show it; the first answer wins and the action's 30 s limit pauses while it waits.
+---Returns nil and "cancelled", "timeout", "no_client", "unsupported", "busy" or "failed" (with a detail) when nobody answers.
+---@param spec paneflow.ui.input.spec
+---@return string? text
+---@return string? reason
+---@return string? detail
+function paneflow.ui.input(spec) end
+
+---Ask the user to choose among items; the answer is an id, a list of ids with multiple, or { text = ... } with allow_other.
+---@param spec paneflow.ui.pick.spec
+---@return string|string[]|{ text: string }|nil answer
+---@return string? reason
+---@return string? detail
+function paneflow.ui.pick(spec) end
 "#;
 
-const RUNTIME_NAMESPACES: &[&str] = &["json", "layout", "exec", "args", "ctx", "action", "client"];
+const RUNTIME_NAMESPACES: &[&str] = &[
+    "json", "layout", "exec", "args", "ctx", "action", "client", "ui",
+];
 
 pub fn lua_stubs(descriptions: &[Value]) -> String {
     let mut out = String::new();

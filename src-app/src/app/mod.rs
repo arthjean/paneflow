@@ -38,6 +38,7 @@ pub mod macos_menu;
 pub(crate) mod menu_icons;
 pub mod notifications;
 pub mod pane_palette;
+pub(crate) mod prompts;
 pub mod pull_request;
 pub mod quit_dialog;
 pub mod recents;

@@ -52,11 +52,22 @@ impl WorkerBackend {
         )
     }
 
-    fn call_window(&self, method: &str, params: Value, fallback: bool) -> Result<Value, CallError> {
+    fn call_window(
+        &self,
+        method: &str,
+        params: Value,
+        fallback: bool,
+        grant: Option<&str>,
+    ) -> Result<Value, CallError> {
         match self.control_target() {
-            Some(ControlTarget::Controller(socket)) => IpcClient::new(socket)
-                .call(method, params)
-                .map_err(|message| wire_error(&message)),
+            Some(ControlTarget::Controller(socket)) => {
+                let client = IpcClient::new(socket);
+                match grant {
+                    Some(grant) => client.call_granted(method, params, grant),
+                    None => client.call(method, params),
+                }
+                .map_err(|message| wire_error(&message))
+            }
             Some(ControlTarget::Host(endpoint)) if fallback => {
                 self.call_host(&endpoint, method, params)
             }
@@ -88,7 +99,7 @@ impl WorkerBackend {
     }
 
     fn learn(&self) {
-        let Ok(listed) = self.call_window("surface.list", json!({}), true) else {
+        let Ok(listed) = self.call_window("surface.list", json!({}), true, None) else {
             return;
         };
         for row in listed["surfaces"].as_array().into_iter().flatten() {
@@ -96,7 +107,7 @@ impl WorkerBackend {
                 continue;
             };
             let Ok(status) =
-                self.call_window("surface.status", json!({"surface_id": surface}), true)
+                self.call_window("surface.status", json!({"surface_id": surface}), true, None)
             else {
                 continue;
             };
@@ -143,6 +154,15 @@ impl Backend for WorkerBackend {
     }
 
     fn call(&self, method: &str, params: Value) -> Result<Value, CallError> {
+        self.call_granted(method, params, None)
+    }
+
+    fn call_granted(
+        &self,
+        method: &str,
+        params: Value,
+        grant: Option<&str>,
+    ) -> Result<Value, CallError> {
         let Some(descriptor) = self
             .catalog
             .as_ref()
@@ -159,6 +179,7 @@ impl Backend for WorkerBackend {
                 method,
                 params,
                 descriptor.spec.fallback == Some(Owner::Host),
+                grant,
             ),
             Owner::Host => {
                 let endpoint = paneflow_home::host_endpoint_path(&self.home);

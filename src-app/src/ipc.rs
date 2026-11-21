@@ -23,6 +23,7 @@ pub struct IpcRequest {
     pub response_tx: mpsc::Sender<Value>,
     pub state: Arc<RequestState>,
     pub caller_pid: Option<i64>,
+    pub grant: Option<String>,
 }
 
 const REQUEST_QUEUED: u8 = 0;
@@ -932,6 +933,7 @@ fn handle_connection(
                                 params,
                                 response_id,
                                 caller_pid,
+                                request_grant(&req),
                             ),
                         }
                     }
@@ -1256,12 +1258,20 @@ fn subscriber_connected(writer: &Stream) -> bool {
     connected != 0
 }
 
+fn request_grant(request: &Value) -> Option<String> {
+    request
+        .get(paneflow_ipc_client::GRANT_FIELD)
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
 fn dispatch_to_gpui(
     request_tx: &smol::channel::Sender<IpcRequest>,
     method: String,
     params: Value,
     id: Value,
     caller_pid: Option<i64>,
+    grant: Option<String>,
 ) -> Value {
     let (resp_tx, resp_rx) = mpsc::channel();
     let state = Arc::new(RequestState::default());
@@ -1271,6 +1281,7 @@ fn dispatch_to_gpui(
         response_tx: resp_tx,
         state: Arc::clone(&state),
         caller_pid,
+        grant,
     };
 
     match request_tx.try_send(ipc_req) {
@@ -1467,7 +1478,9 @@ mod connection_limit_tests {
 
 #[cfg(test)]
 mod request_contract_tests {
-    use super::{json, multiple_instances_allowed, request_params, subscription_filter};
+    use super::{
+        json, multiple_instances_allowed, request_grant, request_params, subscription_filter,
+    };
 
     #[test]
     fn only_the_documented_value_allows_multiple_instances() {
@@ -1475,6 +1488,19 @@ mod request_contract_tests {
         for value in [None, Some(""), Some("0"), Some("true"), Some("yes")] {
             assert!(!multiple_instances_allowed(value), "{value:?}");
         }
+    }
+
+    #[test]
+    fn a_grant_is_read_from_the_envelope_and_never_from_the_params() {
+        assert_eq!(
+            request_grant(&json!({"method": "m", "grant": "g-1", "params": {}})),
+            Some("g-1".to_string())
+        );
+        assert_eq!(
+            request_grant(&json!({"method": "m", "params": {"grant": "g-1"}})),
+            None
+        );
+        assert_eq!(request_grant(&json!({"method": "m", "grant": 7})), None);
     }
 
     #[test]
@@ -1814,6 +1840,7 @@ mod dispatch_tests {
             response_tx,
             state: Arc::new(RequestState::default()),
             caller_pid: None,
+            grant: None,
         }
     }
 
@@ -1827,6 +1854,7 @@ mod dispatch_tests {
             "surface.read".to_string(),
             json!({ "surface_id": 1 }),
             json!("req-overload"),
+            None,
             None,
         );
 
@@ -1845,6 +1873,7 @@ mod dispatch_tests {
             "surface.read".to_string(),
             json!({ "surface_id": 1 }),
             json!("req-closed"),
+            None,
             None,
         );
 

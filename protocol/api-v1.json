@@ -4423,6 +4423,13 @@
                   "null"
                 ]
               },
+              "grant": {
+                "description": "An opaque grant the window mints for a run it starts from a key or the palette; the run's writes to that window carry it in the request's grant field and pass the write gate. Never shown to Lua",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "origin": {
                 "description": "What started the run: key, palette, cli, api, script, agent, timer or event; api by default",
                 "type": [
@@ -4630,6 +4637,723 @@
       },
       "stream": false,
       "summary": "List the key bindings init.lua declared and the keys it unbound, for the window to apply."
+    },
+    {
+      "examples": [
+        {
+          "params": {
+            "kind": "input",
+            "origin": {
+              "kind": "action",
+              "name": "new_branch",
+              "title": "New branch"
+            },
+            "title": "New branch",
+            "value": "feature/",
+            "wait_ms": 20000
+          },
+          "result": {
+            "answer": "feature/login",
+            "id": 3,
+            "status": "answered"
+          }
+        },
+        {
+          "params": {
+            "items": [
+              "api",
+              {
+                "icon": "globe",
+                "id": "web",
+                "subtitle": "Next.js"
+              }
+            ],
+            "kind": "pick",
+            "title": "Project"
+          },
+          "result": {
+            "id": 4,
+            "status": "pending"
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "none",
+      "gate_note": null,
+      "in_capabilities": false,
+      "name": "prompt.request",
+      "owner": "worker",
+      "params": {
+        "$defs": {
+          "OriginKind": {
+            "enum": [
+              "action",
+              "script",
+              "agent"
+            ],
+            "type": "string"
+          },
+          "PickItem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/PickItemSpec"
+              }
+            ]
+          },
+          "PickItemSpec": {
+            "additionalProperties": false,
+            "properties": {
+              "detail": {
+                "description": "Text shown at the end of the row",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "icon": {
+                "description": "document, folder, branch, terminal, code, server, database, package, globe, link, person, tag, clock, star, gear or plus",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "selected": {
+                "description": "Starts ticked when multiple is true",
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "subtitle": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "title": {
+                "description": "The label shown and filtered on; the id when absent",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id"
+            ],
+            "type": "object"
+          },
+          "PromptKind": {
+            "enum": [
+              "input",
+              "pick"
+            ],
+            "type": "string"
+          },
+          "PromptOrigin": {
+            "additionalProperties": false,
+            "properties": {
+              "agent": {
+                "description": "The agent's name",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "file": {
+                "description": "The script's file name",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "$ref": "#/$defs/OriginKind",
+                "description": "action for an action of init.lua, script for a script or a handler, agent for a coding agent"
+              },
+              "name": {
+                "description": "The action's name",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "surface_id": {
+                "description": "The surface the asker runs in or acts on",
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "title": {
+                "description": "The action's title",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "workspace_id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "allow_other": {
+            "description": "Accept typed text that matches no item; the answer is {text}",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "confirm": {
+            "description": "Label of the confirming row",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "items": {
+            "description": "The choices of a pick prompt, at most 2000: an id string or an item",
+            "items": {
+              "$ref": "#/$defs/PickItem"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "kind": {
+            "$ref": "#/$defs/PromptKind",
+            "description": "input asks for a line of text, pick for a choice among items"
+          },
+          "multiple": {
+            "description": "Let the user tick several items; the answer is the list of ids",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "origin": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PromptOrigin"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Who asks, shown under the title"
+          },
+          "placeholder": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timeout": {
+            "description": "Seconds before the prompt ends with timeout: 300 by default, at most 3600",
+            "format": "double",
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "value": {
+            "description": "Text the field starts with",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "wait_ms": {
+            "description": "Milliseconds to wait for the answer before returning pending with the id, 0 by default, at most 25000",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "title"
+        ],
+        "title": "RequestParams",
+        "type": "object"
+      },
+      "reply": "ready",
+      "result": {
+        "$defs": {
+          "OtherAnswer": {
+            "additionalProperties": false,
+            "properties": {
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "text"
+            ],
+            "type": "object"
+          },
+          "PromptAnswer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "$ref": "#/$defs/OtherAnswer"
+              }
+            ]
+          },
+          "PromptStatus": {
+            "enum": [
+              "answered",
+              "pending",
+              "cancelled",
+              "timeout",
+              "no_client",
+              "unsupported",
+              "busy",
+              "failed"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "answer": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PromptAnswer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The text of an input, the id or the list of ids of a pick, or {text} for typed text a pick accepted"
+          },
+          "detail": {
+            "description": "Why the prompt failed, for status failed only",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "description": "The prompt's id; absent when nothing was queued",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/$defs/PromptStatus"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "PromptOutcome",
+        "type": "object"
+      },
+      "stream": false,
+      "summary": "Ask the user through every attached client that can show the prompt; the first answer wins. Returns {status: answered, answer} within wait_ms, {status: pending, id} when wait_ms passes first, or the reason it ended: cancelled, timeout, no_client, unsupported, busy or failed with a detail."
+    },
+    {
+      "examples": [
+        {
+          "params": {
+            "id": 4,
+            "wait_ms": 20000
+          },
+          "result": {
+            "answer": "web",
+            "id": 4,
+            "status": "answered"
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "none",
+      "gate_note": null,
+      "in_capabilities": false,
+      "name": "prompt.wait",
+      "owner": "worker",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "wait_ms": {
+            "description": "Milliseconds to wait, 0 by default, at most 25000",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "WaitParams",
+        "type": "object"
+      },
+      "reply": "ready",
+      "result": {
+        "$defs": {
+          "OtherAnswer": {
+            "additionalProperties": false,
+            "properties": {
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "text"
+            ],
+            "type": "object"
+          },
+          "PromptAnswer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "$ref": "#/$defs/OtherAnswer"
+              }
+            ]
+          },
+          "PromptStatus": {
+            "enum": [
+              "answered",
+              "pending",
+              "cancelled",
+              "timeout",
+              "no_client",
+              "unsupported",
+              "busy",
+              "failed"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "answer": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PromptAnswer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The text of an input, the id or the list of ids of a pick, or {text} for typed text a pick accepted"
+          },
+          "detail": {
+            "description": "Why the prompt failed, for status failed only",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "description": "The prompt's id; absent when nothing was queued",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/$defs/PromptStatus"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "PromptOutcome",
+        "type": "object"
+      },
+      "stream": false,
+      "summary": "Keep waiting on a pending prompt by id, with the same outcomes as prompt.request."
+    },
+    {
+      "examples": [
+        {
+          "params": {
+            "answer": "feature/login",
+            "id": 3
+          },
+          "result": {
+            "id": 3,
+            "reason": "answered"
+          }
+        },
+        {
+          "params": {
+            "cancel": true,
+            "id": 4
+          },
+          "result": {
+            "id": 4,
+            "reason": "cancelled"
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "none",
+      "gate_note": null,
+      "in_capabilities": false,
+      "name": "prompt.reply",
+      "owner": "worker",
+      "params": {
+        "$defs": {
+          "OtherAnswer": {
+            "additionalProperties": false,
+            "properties": {
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "text"
+            ],
+            "type": "object"
+          },
+          "PromptAnswer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "$ref": "#/$defs/OtherAnswer"
+              }
+            ]
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "answer": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/PromptAnswer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The text, the id, the list of ids or {text}, as the prompt's kind takes"
+          },
+          "cancel": {
+            "description": "Dismiss the prompt; the asker receives cancelled",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "id": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "ReplyParams",
+        "type": "object"
+      },
+      "reply": "ready",
+      "result": {
+        "$defs": {
+          "EndReason": {
+            "enum": [
+              "answered",
+              "cancelled",
+              "timeout",
+              "no_client",
+              "failed"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "reason": {
+            "$ref": "#/$defs/EndReason",
+            "description": "answered or cancelled"
+          }
+        },
+        "required": [
+          "id",
+          "reason"
+        ],
+        "title": "Replied",
+        "type": "object"
+      },
+      "stream": false,
+      "summary": "Answer or cancel a pending prompt. The first reply wins and every follower receives ended; a later one is refused with -32060 and data {reason: not_pending}."
+    },
+    {
+      "examples": [
+        {
+          "params": {
+            "kinds": [
+              "input",
+              "pick"
+            ]
+          },
+          "result": {
+            "kinds": [
+              "input",
+              "pick"
+            ],
+            "pending": 1,
+            "type": "following"
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "none",
+      "gate_note": null,
+      "in_capabilities": false,
+      "name": "prompt.follow",
+      "owner": "worker",
+      "params": {
+        "$defs": {
+          "PromptKind": {
+            "enum": [
+              "input",
+              "pick"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "kinds": {
+            "description": "The prompt kinds this client can show",
+            "items": {
+              "$ref": "#/$defs/PromptKind"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "kinds"
+        ],
+        "title": "FollowParams",
+        "type": "object"
+      },
+      "reply": "stream",
+      "result": {
+        "$defs": {
+          "FollowingKind": {
+            "enum": [
+              "following"
+            ],
+            "type": "string"
+          },
+          "PromptKind": {
+            "enum": [
+              "input",
+              "pick"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "kinds": {
+            "items": {
+              "$ref": "#/$defs/PromptKind"
+            },
+            "type": "array"
+          },
+          "pending": {
+            "description": "How many requested frames for already pending prompts follow",
+            "format": "uint",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": {
+            "$ref": "#/$defs/FollowingKind"
+          }
+        },
+        "required": [
+          "type",
+          "kinds",
+          "pending"
+        ],
+        "title": "FollowHeader",
+        "type": "object"
+      },
+      "stream": true,
+      "summary": "Stream the prompts this client can show: a following header, a requested frame for each pending prompt oldest first, then requested frames (id, spec, origin, remaining time) and ended frames (id, reason), keepalive frames when quiet."
     }
   ]
 }

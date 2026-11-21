@@ -348,6 +348,8 @@ struct PaneFlowApp {
     worktree_remove_focus: FocusHandle,
     host_agents: crate::app::host_agents::HostAgentView,
     lua_config: crate::app::lua_config::LuaConfigView,
+    prompts: crate::app::prompts::PromptsView,
+    prompt_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     usage: crate::app::usage::UsagePanel,
     write_approvals: crate::app::write_approvals::WriteApprovalView,
     about_dialog: Option<crate::app::about_dialog::AboutDialog>,

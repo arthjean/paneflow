@@ -170,11 +170,28 @@ pub fn problem_from_message(severity: Severity, message: &str) -> ConfigProblem 
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ActionLabel {
+    pub name: String,
+    pub title: String,
+}
+
+impl ActionLabel {
+    fn of(action: &ActionDef) -> Self {
+        Self {
+            name: action.summary.name.clone(),
+            title: action.summary.title.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct TaskScope {
     pub ids: PaneContext,
+    pub action: Option<ActionLabel>,
     pub origin: String,
     pub client_id: Option<String>,
+    pub grant: Option<String>,
     pub deadline: Option<Duration>,
     pub depth: usize,
     pub queue: Vec<String>,
@@ -216,6 +233,15 @@ pub(crate) fn current_ids(shared: &Shared) -> Option<PaneContext> {
         .map(|scope| scope.ids.clone())
 }
 
+pub(crate) fn current_grant(shared: &Shared) -> Option<String> {
+    let task = current_task(shared)?;
+    shared
+        .tasks
+        .borrow()
+        .get(&task)
+        .and_then(|scope| scope.grant.clone())
+}
+
 pub(crate) fn current_deadline(shared: &Shared) -> Option<Duration> {
     let task = current_task(shared)?;
     shared
@@ -225,7 +251,7 @@ pub(crate) fn current_deadline(shared: &Shared) -> Option<Duration> {
         .and_then(|scope| scope.deadline)
 }
 
-fn at_load(shared: &Shared) -> bool {
+pub(crate) fn at_load(shared: &Shared) -> bool {
     matches!(shared.executor.current(), Some((_, TaskKind::TopLevel)))
 }
 
@@ -725,20 +751,19 @@ async fn invoke(lua: Lua, (name, args): (String, LuaValue)) -> mlua::Result<Mult
     }
     if let Some(action) = shared.config.action(&name) {
         let opened = task.is_some_and(|task| open_caller_scope(&shared, task));
-        let entered = task.is_some_and(|task| {
-            shared
-                .tasks
-                .borrow_mut()
-                .get_mut(&task)
-                .map(|scope| scope.depth += 1)
-                .is_some()
+        let caller = task.and_then(|task| {
+            shared.tasks.borrow_mut().get_mut(&task).map(|scope| {
+                scope.depth += 1;
+                scope.action.replace(ActionLabel::of(&action))
+            })
         });
         let result = call_action(&lua, &shared, &action, args).await;
-        if entered
+        if let Some(caller) = caller
             && let Some(task) = task
             && let Some(scope) = shared.tasks.borrow_mut().get_mut(&task)
         {
             scope.depth = scope.depth.saturating_sub(1);
+            scope.action = caller;
         }
         if opened && let Some(task) = task {
             shared.tasks.borrow_mut().remove(&task);
@@ -772,6 +797,7 @@ async fn invoke(lua: Lua, (name, args): (String, LuaValue)) -> mlua::Result<Mult
             tab_id: scope.ids.tab_id,
             workspace_id: scope.ids.workspace_id,
             client_id: scope.client_id.clone(),
+            grant: None,
         })
         .unwrap_or_else(|_| json!({})),
     });
@@ -870,9 +896,11 @@ pub(crate) fn install(lua: &Lua, paneflow: &Table, guard: &Function) -> mlua::Re
     Ok(())
 }
 
-pub struct Deadline<F> {
+pub(crate) struct Deadline<F> {
     future: Pin<Box<F>>,
-    sleep: crate::executor::Sleep,
+    shared: Rc<Shared>,
+    task: TaskId,
+    armed: Option<(Duration, crate::executor::Sleep)>,
 }
 
 impl<F: Future> Future for Deadline<F> {
@@ -882,10 +910,56 @@ impl<F: Future> Future for Deadline<F> {
         if let Poll::Ready(value) = self.future.as_mut().poll(context) {
             return Poll::Ready(Some(value));
         }
-        if Pin::new(&mut self.sleep).poll(context).is_ready() {
-            return Poll::Ready(None);
+        let at = self
+            .shared
+            .tasks
+            .borrow()
+            .get(&self.task)
+            .and_then(|scope| scope.deadline);
+        let Some(at) = at else {
+            self.armed = None;
+            return Poll::Pending;
+        };
+        if self.armed.as_ref().is_none_or(|(armed, _)| *armed != at) {
+            let sleep = self.shared.executor.sleep_until(at);
+            self.armed = Some((at, sleep));
         }
-        Poll::Pending
+        let expired = self
+            .armed
+            .as_mut()
+            .is_some_and(|(_, sleep)| Pin::new(sleep).poll(context).is_ready());
+        if expired {
+            Poll::Ready(None)
+        } else {
+            Poll::Pending
+        }
+    }
+}
+
+pub(crate) struct PausedDeadline {
+    shared: Rc<Shared>,
+    task: TaskId,
+    remaining: Duration,
+}
+
+impl PausedDeadline {
+    pub(crate) fn pause(shared: &Rc<Shared>) -> Option<Self> {
+        let task = current_task(shared)?;
+        let at = shared.tasks.borrow_mut().get_mut(&task)?.deadline.take()?;
+        Some(Self {
+            shared: shared.clone(),
+            task,
+            remaining: at.saturating_sub(shared.executor.now()),
+        })
+    }
+}
+
+impl Drop for PausedDeadline {
+    fn drop(&mut self) {
+        let resumed = self.shared.executor.now() + self.remaining;
+        if let Some(scope) = self.shared.tasks.borrow_mut().get_mut(&self.task) {
+            scope.deadline = Some(resumed);
+        }
     }
 }
 
@@ -940,8 +1014,10 @@ pub(crate) fn spawn_action(
                     tab_id: context.tab_id,
                     workspace_id: context.workspace_id,
                 },
+                action: Some(ActionLabel::of(&action)),
                 origin: context.origin.clone().unwrap_or_else(|| "api".to_string()),
                 client_id: context.client_id.clone(),
+                grant: context.grant.clone(),
                 deadline: Some(deadline),
                 depth: 1,
                 queue: Vec::new(),
@@ -956,7 +1032,9 @@ pub(crate) fn spawn_action(
         };
         let outcome = Deadline {
             future: Box::pin(run),
-            sleep: executor.sleep_until(deadline),
+            shared: shared.clone(),
+            task,
+            armed: None,
         }
         .await;
         let scope = shared.tasks.borrow_mut().remove(&task);

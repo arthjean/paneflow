@@ -17,6 +17,25 @@ pub(crate) struct AttentionItem {
     pub(crate) errored: bool,
 }
 
+pub(crate) fn prompt_items(
+    pending: &[crate::app::prompts::PendingPrompt],
+    surface_workspaces: &HashMap<u64, usize>,
+) -> Vec<AttentionItem> {
+    pending
+        .iter()
+        .filter_map(|prompt| {
+            let surface_id = prompt.surface_id()?;
+            let workspace_idx = *surface_workspaces.get(&surface_id)?;
+            Some(AttentionItem {
+                surface_id: Some(surface_id),
+                workspace_idx: Some(workspace_idx),
+                waiting_secs: prompt.asked_at.elapsed().as_secs(),
+                errored: false,
+            })
+        })
+        .collect()
+}
+
 pub(crate) fn sort_items(items: &mut [AttentionItem]) {
     items.sort_by(|a, b| {
         b.surface_id
@@ -92,12 +111,14 @@ impl PaneFlowApp {
 
     pub(crate) fn attention_items(&self, cx: &Context<Self>) -> Vec<AttentionItem> {
         let mut live_surfaces: HashSet<u64> = HashSet::new();
+        let mut surface_workspaces: HashMap<u64, usize> = HashMap::new();
         let mut session_surfaces = HashMap::new();
         for (ws_idx, ws) in self.workspaces.iter().enumerate() {
             for pane in ws.collect_panes() {
                 for t in pane.read(cx).terminals() {
                     let surface_id = t.read(cx).surface_id();
                     live_surfaces.insert(surface_id);
+                    surface_workspaces.insert(surface_id, ws_idx);
                     session_surfaces
                         .insert(t.read(cx).terminal.session_id.clone(), (surface_id, ws_idx));
                 }
@@ -113,6 +134,7 @@ impl PaneFlowApp {
                 errored: false,
             });
         }
+        items.extend(prompt_items(&self.prompts.pending, &surface_workspaces));
         for (ws_idx, ws) in self.workspaces.iter().enumerate() {
             for session in ws.agent_sessions.values() {
                 if session.state != AgentState::WaitingForInput {
@@ -179,6 +201,7 @@ impl PaneFlowApp {
         let (ws_idx, pane) = (loc.workspace_idx, loc.pane);
         self.activate_workspace_at(ws_idx, WorkspaceFocusTarget::Pane { pane }, window, cx);
         self.jump_cursor = Some(surface_id);
+        self.activate_surface_prompt(surface_id, cx);
     }
 }
 
@@ -267,6 +290,59 @@ mod tests {
             Some(AttentionLevel::Finished)
         );
         assert_eq!(SpaceAttention::default().most_urgent(), None);
+    }
+
+    fn asked(
+        id: u64,
+        surface: Option<u64>,
+        waited_secs: u64,
+    ) -> crate::app::prompts::PendingPrompt {
+        use paneflow_api::methods::prompt::{OriginKind, PromptKind, PromptOrigin, PromptSpec};
+        crate::app::prompts::PendingPrompt {
+            id,
+            spec: std::sync::Arc::new(PromptSpec {
+                kind: PromptKind::Input,
+                title: "Name".into(),
+                placeholder: None,
+                value: None,
+                confirm: None,
+                timeout: None,
+                items: None,
+                multiple: None,
+                allow_other: None,
+            }),
+            origin: Some(PromptOrigin {
+                kind: OriginKind::Action,
+                title: Some("New branch".into()),
+                name: None,
+                file: None,
+                agent: None,
+                surface_id: surface,
+                workspace_id: None,
+            }),
+            asked_at: std::time::Instant::now()
+                .checked_sub(std::time::Duration::from_secs(waited_secs))
+                .unwrap(),
+        }
+    }
+
+    #[test]
+    fn a_pending_prompt_on_a_live_surface_is_one_item_with_its_wait_and_none_otherwise() {
+        let live = HashMap::from([(7_u64, 2_usize)]);
+        let items = prompt_items(
+            &[
+                asked(1, Some(7), 42),
+                asked(2, None, 5),
+                asked(3, Some(99), 5),
+            ],
+            &live,
+        );
+        assert_eq!(items.len(), 1, "no surface or a closed one gives no item");
+        assert_eq!(items[0].surface_id, Some(7));
+        assert_eq!(items[0].workspace_idx, Some(2));
+        assert!(items[0].waiting_secs >= 42);
+        assert!(!items[0].errored);
+        assert!(prompt_items(&[], &live).is_empty());
     }
 
     #[test]

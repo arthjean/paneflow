@@ -16,6 +16,7 @@ pub mod core_link;
 pub mod event_log;
 pub mod integrations;
 pub mod notifications;
+pub mod prompts;
 pub mod protocol;
 pub mod registry;
 pub mod script_backend;

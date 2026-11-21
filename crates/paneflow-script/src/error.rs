@@ -65,6 +65,8 @@ pub fn describe(error: &mlua::Error) -> String {
 
 pub const INTERNAL_CHUNK: &str = "[paneflow]";
 
+pub const MLUA_CHUNK: &str = "__mlua";
+
 pub fn located(lua: &Lua, message: impl fmt::Display) -> mlua::Error {
     mlua::Error::RuntimeError(format!("{}{message}", location(lua)))
 }
@@ -76,7 +78,7 @@ pub fn location(lua: &Lua) -> String {
             let line = debug.current_line();
             match (source.what, source.short_src.as_deref(), line) {
                 ("Lua" | "main", Some(source), Some(line))
-                    if !source.starts_with(INTERNAL_CHUNK) =>
+                    if !source.starts_with(INTERNAL_CHUNK) && !source.starts_with(MLUA_CHUNK) =>
                 {
                     Some(format!("{source}:{line}: "))
                 }

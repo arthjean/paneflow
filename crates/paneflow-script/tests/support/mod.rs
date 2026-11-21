@@ -17,6 +17,7 @@ pub struct FakeBackend {
     pub unavailable: Option<CallError>,
     pub context: PaneContext,
     pub calls: Mutex<Vec<(String, Value)>>,
+    pub grants: Mutex<Vec<(String, Option<String>)>>,
     responder: Responder,
     feed: Mutex<Option<Receiver<FeedFrame>>>,
     pub sessions: HashMap<String, SessionIds>,
@@ -31,6 +32,7 @@ impl FakeBackend {
             unavailable: None,
             context: PaneContext::default(),
             calls: Mutex::new(Vec::new()),
+            grants: Mutex::new(Vec::new()),
             responder: Box::new(|method, _| Ok(json!({"method": method}))),
             feed: Mutex::new(None),
             sessions: HashMap::new(),
@@ -96,6 +98,19 @@ impl Backend for FakeBackend {
             .unwrap_or_else(PoisonError::into_inner)
             .push((method.to_string(), params.clone()));
         (self.responder)(method, &params)
+    }
+
+    fn call_granted(
+        &self,
+        method: &str,
+        params: Value,
+        grant: Option<&str>,
+    ) -> Result<Value, CallError> {
+        self.grants
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((method.to_string(), grant.map(str::to_string)));
+        self.call(method, params)
     }
 
     fn follow(&self) -> Result<Box<dyn EventFeed>, CallError> {

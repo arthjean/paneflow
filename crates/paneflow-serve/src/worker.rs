@@ -143,6 +143,7 @@ fn open_with_build_id(home: &Path, build_id: String) -> Result<RunningWorker, Wo
         probe_slots: crate::usage::probe::ProbeSlots::default(),
         events: crate::event_log::EventLog::new(epoch),
         config: Arc::new(crate::config_runtime::ConfigRuntime::new(home)),
+        prompts: crate::prompts::PromptBroker::default(),
     });
     let server = ServerHandle::spawn(Arc::clone(&worker), endpoint.clone()).map_err(|source| {
         WorkerError::Endpoint {

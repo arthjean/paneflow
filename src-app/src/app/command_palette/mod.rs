@@ -1,5 +1,5 @@
 mod catalog;
-mod matcher;
+pub(crate) mod matcher;
 
 use std::ops::Range;
 use std::rc::Rc;
@@ -75,6 +75,9 @@ struct PaletteRow {
 
 impl PaneFlowApp {
     pub(crate) fn open_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.prompts.shown.is_some() {
+            return;
+        }
         if self.command_palette_open {
             self.close_command_palette(window, cx);
             return;
@@ -463,6 +466,9 @@ impl PaneFlowApp {
         }
         if !self.command_palette_open {
             self.open_command_palette(window, cx);
+        }
+        if !self.command_palette_open {
+            return;
         }
         self.command_palette_section = None;
         self.enter_palette_scope(Scope::MoveToSpace, cx);

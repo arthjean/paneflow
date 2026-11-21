@@ -56,6 +56,7 @@ macro_rules! method {
 pub mod config;
 pub mod events;
 pub mod host;
+pub mod prompt;
 pub mod surface;
 pub mod system;
 pub mod tmux;
@@ -220,6 +221,10 @@ pub fn worker_declarations() -> Vec<Descriptor> {
         Descriptor::of::<config::ListActions>(),
         Descriptor::of::<config::InvokeAction>(),
         Descriptor::of::<config::ListKeymap>(),
+        Descriptor::of::<prompt::Request>(),
+        Descriptor::of::<prompt::Wait>(),
+        Descriptor::of::<prompt::ReplyTo>(),
+        Descriptor::of::<prompt::Follow>(),
     ]
 }
 

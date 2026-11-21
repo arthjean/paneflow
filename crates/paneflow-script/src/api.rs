@@ -199,9 +199,12 @@ pub async fn invoke(lua: Lua, name: String, args: LuaValue) -> mlua::Result<Mult
         };
     let backend = shared.backend.clone();
     let method = name.clone();
+    let grant = crate::config::current_grant(&shared);
     let answer = shared
         .executor
-        .offload("call", move || backend.call(&method, params))
+        .offload("call", move || {
+            backend.call_granted(&method, params, grant.as_deref())
+        })
         .await;
     match answer {
         Some(Ok(result)) => Ok(MultiValue::from_iter([to_lua(&lua, &result)?])),

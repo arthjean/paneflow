@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui::{App, AppContext, BackgroundExecutor, Context, Entity, Focusable};
 use paneflow_api::Method;
@@ -126,21 +126,26 @@ impl PaneFlowApp {
             if !req.state.try_start() {
                 continue;
             }
-            let result = match self.handle_ipc(&req.method, &req.params, req.caller_pid, cx) {
-                IpcReply::Ready(result) => result,
-                IpcReply::Deferred(job) => {
-                    answer_off_thread(job, req.response_tx).detach();
-                    continue;
-                }
-                IpcReply::Async(task) => {
-                    let response_tx = req.response_tx;
-                    cx.spawn(async move |_, _| {
-                        let _ = response_tx.send(task.await);
-                    })
-                    .detach();
-                    continue;
-                }
-            };
+            let granted = req
+                .grant
+                .as_deref()
+                .is_some_and(|grant| self.lua_config.grants.admits(grant, Instant::now()));
+            let result =
+                match self.handle_ipc(&req.method, &req.params, req.caller_pid, granted, cx) {
+                    IpcReply::Ready(result) => result,
+                    IpcReply::Deferred(job) => {
+                        answer_off_thread(job, req.response_tx).detach();
+                        continue;
+                    }
+                    IpcReply::Async(task) => {
+                        let response_tx = req.response_tx;
+                        cx.spawn(async move |_, _| {
+                            let _ = response_tx.send(task.await);
+                        })
+                        .detach();
+                        continue;
+                    }
+                };
             let _ = req.response_tx.send(result);
         }
     }
@@ -173,9 +178,10 @@ impl PaneFlowApp {
         method: &str,
         params: &serde_json::Value,
         caller_pid: Option<i64>,
+        granted: bool,
         cx: &mut Context<Self>,
     ) -> IpcReply {
-        registry().serve(self, method, params, caller_pid, cx)
+        registry().serve(self, method, params, caller_pid, granted, cx)
     }
 }
 
@@ -287,6 +293,7 @@ mod tests {
                 state
             },
             caller_pid: None,
+            grant: None,
         }
     }
 

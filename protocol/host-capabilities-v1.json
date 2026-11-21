@@ -54,6 +54,11 @@
       "name": "events.publish",
       "since": 1,
       "summary": "events.publish appends layout events a window applied to the worker's log, in order; any event outside the workspace, tab, pane, surface and layout families refuses the batch."
+    },
+    {
+      "name": "prompt.follow",
+      "since": 1,
+      "summary": "prompt.request, prompt.wait, prompt.reply and prompt.follow hold questions for the user in the worker: every follower that shows the kind receives them, the first reply wins and the others receive ended."
     }
   ]
 }

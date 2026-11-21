@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "protocol": "paneflow-worker",
+  "version": 1,
+  "description": "Cases the worker's prompt broker must pass over its real endpoint. crates/paneflow-serve/tests/prompt_conformance.rs runs every case with plain protocol clients against a real paneflow serve worker on a per-process endpoint, with no display; a case listed here with no runner is a failure, not a skip.",
+  "cases": [
+    {
+      "id": "first_reply_wins_and_the_other_follower_receives_ended",
+      "summary": "With two followers and one prompt, the first prompt.reply gives the asker {status: answered, answer}, the second follower receives ended with reason answered, and a late reply from it is refused with -32060 and data {reason: not_pending}.",
+      "method": "prompt.reply"
+    },
+    {
+      "id": "a_cancel_ends_the_prompt_for_the_other_follower",
+      "summary": "With two followers, a reply with cancel = true gives the asker cancelled and the other follower receives ended with reason cancelled.",
+      "method": "prompt.reply"
+    },
+    {
+      "id": "a_kind_no_follower_shows_is_unsupported",
+      "summary": "With one follower that shows input only, a pick request returns unsupported at once and queues nothing.",
+      "method": "prompt.request"
+    },
+    {
+      "id": "a_follower_leaving_while_another_stays_keeps_the_prompt_pending",
+      "summary": "When one of two followers disconnects, the prompt stays pending and the remaining follower can still answer it.",
+      "method": "prompt.follow"
+    },
+    {
+      "id": "a_late_follower_receives_the_pending_prompts_oldest_first",
+      "summary": "Three prompts requested in order reach a follower that connects afterwards as three requested frames, oldest first, after a following header that counts them.",
+      "method": "prompt.follow"
+    },
+    {
+      "id": "no_client_with_no_follower_and_when_the_last_one_leaves",
+      "summary": "A prompt requested with no follower returns no_client and queues nothing; a prompt pending when its only follower disconnects ends with no_client for the asker.",
+      "method": "prompt.request"
+    },
+    {
+      "id": "pending_after_wait_ms_then_prompt_wait_returns_the_answer",
+      "summary": "A request whose wait_ms passes returns {status: pending, id}; prompt.wait on that id returns the answer once a follower replies.",
+      "method": "prompt.wait"
+    },
+    {
+      "id": "a_malformed_request_is_refused_naming_the_field",
+      "summary": "A pick with two items sharing an id, a request with no title, or allow_other with multiple is refused with -32602 naming the field.",
+      "method": "prompt.request"
+    },
+    {
+      "id": "the_seventeenth_pending_prompt_is_busy",
+      "summary": "With 16 prompts pending, another request returns busy.",
+      "method": "prompt.request"
+    },
+    {
+      "id": "an_unanswered_prompt_times_out_for_the_asker_and_the_followers",
+      "summary": "A prompt with timeout 1 that nobody answers ends with timeout for the asker, and every follower receives ended with reason timeout.",
+      "method": "prompt.request"
+    },
+    {
+      "id": "a_worker_shutdown_fails_the_waiting_asker",
+      "summary": "A worker that stops while an asker waits gives it failed with a detail saying the worker stopped.",
+      "method": "prompt.request"
+    }
+  ]
+}

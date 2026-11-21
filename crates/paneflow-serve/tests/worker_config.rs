@@ -424,3 +424,175 @@ fn the_lua_state_is_capped_at_256_mib() {
     assert!(message.contains("memory"), "{message}");
     worker.stop();
 }
+
+fn follow_prompts(home: &Path) -> HostControl {
+    let endpoint = paneflow_home::serve_endpoint_path(home);
+    let mut follower = HostControl::connect(&endpoint, "worker-config-prompts").unwrap();
+    let header = follower
+        .request("prompt.follow", json!({"kinds": ["input", "pick"]}))
+        .expect("prompt.follow");
+    assert_eq!(header["type"], "following");
+    follower
+}
+
+fn next_prompt(follower: &mut HostControl) -> Value {
+    loop {
+        let line = follower
+            .read_stream_line(PATIENCE)
+            .expect("a prompt frame")
+            .expect("the stream stays open");
+        let frame: Value = serde_json::from_str(&line).unwrap();
+        if frame["type"] == "requested" {
+            return frame;
+        }
+    }
+}
+
+#[test]
+fn an_action_asks_through_the_worker_and_types_with_the_answer_of_the_first_client() {
+    let home = tempfile::tempdir().unwrap();
+    write_init(
+        home.path(),
+        "paneflow.action{ name = 'new_branch', title = 'New branch', run = function()\n\
+           local name, reason = paneflow.ui.input{ title = 'New branch', value = 'feature/' }\n\
+           if not name then return reason end\n\
+           return 'git switch -c ' .. name end }",
+    );
+    let _worker = paneflow_serve::open(home.path()).unwrap();
+    loaded(home.path());
+    let invoke = json!({"name": "new_branch", "ctx": {"origin": "key", "surface_id": 4, "client_id": "window"}});
+    assert_eq!(
+        call(home.path(), "action.invoke", invoke.clone()).unwrap(),
+        json!({"result": "no_client"}),
+        "with no window attached nobody is asked"
+    );
+    let mut follower = follow_prompts(home.path());
+    let asking = {
+        let home = home.path().to_path_buf();
+        std::thread::spawn(move || call(&home, "action.invoke", invoke).unwrap())
+    };
+    let shown = next_prompt(&mut follower);
+    assert_eq!(shown["spec"]["title"], "New branch");
+    assert_eq!(shown["spec"]["value"], "feature/");
+    assert_eq!(shown["origin"]["kind"], "action");
+    assert_eq!(shown["origin"]["title"], "New branch");
+    assert_eq!(shown["origin"]["surface_id"], 4);
+    call(
+        home.path(),
+        "prompt.reply",
+        json!({"id": shown["id"], "answer": "fix/login"}),
+    )
+    .unwrap();
+    assert_eq!(
+        asking.join().unwrap(),
+        json!({"result": "git switch -c fix/login"})
+    );
+}
+
+#[cfg(unix)]
+struct FakeWindow {
+    socket: std::path::PathBuf,
+    requests: std::sync::Arc<std::sync::Mutex<Vec<Value>>>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+#[cfg(unix)]
+impl FakeWindow {
+    fn listen(home: &Path) -> Self {
+        use std::io::{BufRead, BufReader, Write};
+        use std::sync::atomic::Ordering;
+        let socket = paneflow_home::ipc_endpoint_path(home);
+        let _ = std::fs::remove_file(&socket);
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (seen, halted) = (requests.clone(), stop.clone());
+        std::thread::spawn(move || {
+            while !halted.load(Ordering::Acquire) {
+                let Ok((stream, _)) = listener.accept() else {
+                    std::thread::sleep(Duration::from_millis(5));
+                    continue;
+                };
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut line = String::new();
+                if BufReader::new(&stream).read_line(&mut line).unwrap_or(0) == 0 {
+                    continue;
+                }
+                let request: Value = serde_json::from_str(&line).unwrap();
+                let reply = json!({"jsonrpc": "2.0", "id": request["id"], "result": {"bytes": 2}});
+                seen.lock().unwrap().push(request);
+                let _ = (&stream).write_all(format!("{reply}\n").as_bytes());
+            }
+        });
+        Self {
+            socket,
+            requests,
+            stop,
+        }
+    }
+
+    fn take(&self) -> Vec<Value> {
+        std::mem::take(&mut *self.requests.lock().unwrap())
+    }
+}
+
+#[cfg(unix)]
+impl Drop for FakeWindow {
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Release);
+        let _ = std::fs::remove_file(&self.socket);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_window_grant_rides_on_the_envelope_of_its_runs_writes_and_nowhere_else() {
+    let home = tempfile::tempdir().unwrap();
+    write_init(
+        home.path(),
+        "paneflow.action{ name = 'type_it', title = 'Type it', run = function()\n\
+           local sent, message = paneflow.surface.send_text{ text = 'ls', surface_id = 4 }\n\
+           return { sent = sent ~= nil, message = message } end }",
+    );
+    let window = FakeWindow::listen(home.path());
+    let _worker = paneflow_serve::open(home.path()).unwrap();
+    loaded(home.path());
+    let writes = |window: &FakeWindow| {
+        window
+            .take()
+            .into_iter()
+            .filter(|request| request["method"] == "surface.send_text")
+            .collect::<Vec<_>>()
+    };
+
+    let granted = json!({"name": "type_it", "ctx": {"origin": "key", "client_id": "window", "grant": "g-123"}});
+    assert_eq!(
+        call(home.path(), "action.invoke", granted).unwrap(),
+        json!({"result": {"sent": true}})
+    );
+    let sent = writes(&window);
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert_eq!(sent[0]["grant"], "g-123");
+    assert!(
+        sent[0]["params"].get("grant").is_none(),
+        "the grant is never a method parameter: {}",
+        sent[0]
+    );
+
+    let claimed = json!({"name": "type_it", "ctx": {"origin": "key", "client_id": "window"}});
+    assert_eq!(
+        call(home.path(), "action.invoke", claimed).unwrap(),
+        json!({"result": {"sent": true}})
+    );
+    let sent = writes(&window);
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    assert!(
+        sent[0].get("grant").is_none(),
+        "a run without a grant sends none: {}",
+        sent[0]
+    );
+}

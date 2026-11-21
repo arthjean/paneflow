@@ -1,11 +1,12 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui::{Context, Window};
 use paneflow_api::methods::config::{
-    ActionList, ActionSummary, CONFIG_RELOADED, ConfigProblem, ConfigStatus, InvokeContext, Keymap,
-    SLOW_REPLY_DEADLINE, Severity,
+    ACTION_INVOKE, ACTION_REPLY_DEADLINE, ActionList, ActionSummary, CONFIG_RELOADED,
+    ConfigProblem, ConfigStatus, InvokeContext, Keymap, Severity,
 };
 use paneflow_ipc_client::host_control::HostControl;
 use paneflow_serve::controller::{EventFrame, EventRequest, EventStream};
@@ -46,6 +47,36 @@ pub(crate) struct LuaConfigView {
     pub(crate) reachable: bool,
     outage_noticed: bool,
     last_notice: Option<String>,
+    pub(crate) grants: GestureGrants,
+}
+
+pub(crate) const GESTURE_ORIGINS: [&str; 2] = ["key", "palette"];
+
+#[derive(Default)]
+pub(crate) struct GestureGrants {
+    live: HashMap<String, Instant>,
+}
+
+impl GestureGrants {
+    pub(crate) fn mint(&mut self, now: Instant) -> String {
+        self.live.retain(|_, until| *until > now);
+        let grant = uuid::Uuid::new_v4().simple().to_string();
+        self.live.insert(grant.clone(), now + ACTION_REPLY_DEADLINE);
+        grant
+    }
+
+    pub(crate) fn revoke(&mut self, grant: &str) {
+        self.live.remove(grant);
+    }
+
+    pub(crate) fn admits(&self, grant: &str, now: Instant) -> bool {
+        self.live.get(grant).is_some_and(|until| *until > now)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn live_count(&self) -> usize {
+        self.live.len()
+    }
 }
 
 impl LuaConfigView {
@@ -267,7 +298,7 @@ fn invoke_blocking(
         "ctx": serde_json::to_value(context).unwrap_or_else(|_| json!({})),
     });
     control
-        .request_with_deadline("action.invoke", params, SLOW_REPLY_DEADLINE)
+        .request_with_deadline(ACTION_INVOKE, params, ACTION_REPLY_DEADLINE)
         .map(|_| ())
         .map_err(|error| InvokeFailure::Failed(wire_message(&error).to_string()))
 }
@@ -425,23 +456,41 @@ impl PaneFlowApp {
             self.notify_scripting_unavailable(cx);
             return;
         }
-        let context = self.focused_invoke_context(origin, window, cx);
+        let mut context = self.focused_invoke_context(origin, window, cx);
+        let grant = GESTURE_ORIGINS
+            .contains(&origin)
+            .then(|| self.lua_config.grants.mint(Instant::now()));
+        context.grant = grant.clone();
         let title = self.lua_config.title_of(&name);
         let endpoint = paneflow_home::serve_endpoint_path_for_current_home();
         cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
             let result =
                 smol::unblock(move || invoke_blocking(endpoint, name, args, context)).await;
-            let Err(failure) = result else {
-                return;
-            };
-            let _ = this.update(cx, |app, cx| match failure {
-                InvokeFailure::Unreachable => app.notify_scripting_unavailable(cx),
-                InvokeFailure::Failed(message) => {
-                    app.show_toast(format!("{title}: {}", first_line(&message)), cx);
+            let _ = this.update(cx, |app, cx| {
+                if let Some(grant) = grant.as_deref() {
+                    app.lua_config.grants.revoke(grant);
                 }
+                let Err(failure) = result else {
+                    return;
+                };
+                app.report_invoke_failure(&title, failure, cx);
             });
         })
         .detach();
+    }
+
+    fn report_invoke_failure(
+        &mut self,
+        title: &str,
+        failure: InvokeFailure,
+        cx: &mut Context<Self>,
+    ) {
+        match failure {
+            InvokeFailure::Unreachable => self.notify_scripting_unavailable(cx),
+            InvokeFailure::Failed(message) => {
+                self.show_toast(format!("{title}: {}", first_line(&message)), cx);
+            }
+        }
     }
 
     pub(crate) fn handle_run_lua_action(
@@ -472,6 +521,29 @@ impl PaneFlowApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_gesture_grant_admits_its_run_until_revoked_or_past_the_reply_deadline() {
+        let now = Instant::now();
+        let mut grants = GestureGrants::default();
+        let grant = grants.mint(now);
+        let other = grants.mint(now);
+        assert_ne!(grant, other, "each run gets its own grant");
+        assert_eq!(grant.len(), 32, "128 random bits in hex");
+        assert!(grants.admits(&grant, now));
+        assert!(!grants.admits("forged", now));
+        assert!(!grants.admits("", now));
+        assert!(!grants.admits(&grant, now + ACTION_REPLY_DEADLINE));
+        grants.revoke(&grant);
+        assert!(!grants.admits(&grant, now));
+        assert!(grants.admits(&other, now));
+        grants.mint(now + ACTION_REPLY_DEADLINE);
+        assert!(
+            !grants.admits(&other, now),
+            "a grant past its deadline is dropped at the next mint"
+        );
+        assert_eq!(GESTURE_ORIGINS, ["key", "palette"]);
+    }
 
     fn problem(severity: Severity, line: Option<u32>, message: &str) -> ConfigProblem {
         ConfigProblem {

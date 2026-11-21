@@ -298,8 +298,11 @@ fn ipc(
     method: &str,
     params: Value,
 ) -> Value {
-    let reply =
-        cx.update(|_, cx| app.update(cx, |app, cx| app.handle_ipc(method, &params, None, cx)));
+    let reply = cx.update(|_, cx| {
+        app.update(cx, |app, cx| {
+            app.handle_ipc(method, &params, None, false, cx)
+        })
+    });
     let slot: Rc<RefCell<Option<Value>>> = Rc::default();
     match reply {
         IpcReply::Ready(value) => *slot.borrow_mut() = Some(value),
