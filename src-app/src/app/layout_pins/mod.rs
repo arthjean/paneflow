@@ -80,6 +80,25 @@ fn every_layout_pin_holds_in_an_isolated_home() {
     );
 }
 
+pub(super) fn forget_the_previous_pin() {
+    assert_isolated_home();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while crate::app::session::session_writes_in_flight() > 0 {
+        assert!(
+            Instant::now() < deadline,
+            "a session write of an earlier pin never finished"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let Some(session) = paneflow_config::loader::session_path() else {
+        return;
+    };
+    let _ = std::fs::remove_file(paneflow_config::session_file::pending_session_path(
+        &session,
+    ));
+    let _ = std::fs::remove_file(&session);
+}
+
 pub(super) fn assert_isolated_home() {
     assert_eq!(
         std::env::var(CHILD_ENV).as_deref(),
@@ -98,6 +117,7 @@ pub(crate) struct Rig<'a> {
 
 impl<'a> Rig<'a> {
     pub(crate) fn mount(cx: &'a mut TestAppContext) -> Self {
+        forget_the_previous_pin();
         Self::mount_with(cx, FakeHost::default())
     }
 
@@ -144,6 +164,7 @@ impl<'a> Rig<'a> {
         names: Vec<(SessionId, String)>,
         host: FakeHost,
     ) -> Self {
+        forget_the_previous_pin();
         let path = paneflow_config::loader::session_path().expect("a session path");
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir).expect("the session directory");

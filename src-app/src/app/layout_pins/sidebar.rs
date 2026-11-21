@@ -1,6 +1,6 @@
 use gpui::{AppContext as _, TestAppContext, px};
 
-use super::assert_isolated_home;
+use super::forget_the_previous_pin;
 use crate::PaneFlowApp;
 use crate::app::bootstrap::Startup;
 use crate::app::fake_host::FakeHost;
@@ -15,7 +15,7 @@ const MIN_RENAME_FIELD_WIDTH: f32 = 120.;
 #[gpui::test]
 #[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
 fn pin_the_tab_rename_field_spans_its_row_and_takes_the_typed_title(cx: &mut TestAppContext) {
-    assert_isolated_home();
+    forget_the_previous_pin();
     cx.executor().allow_parking();
     cx.update(|cx| {
         cx.set_global(DisplayOnlyTerminals);

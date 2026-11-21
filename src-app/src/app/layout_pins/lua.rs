@@ -7,7 +7,7 @@ use gpui::{AppContext as _, Entity, TestAppContext, VisualTestContext};
 use paneflow_ipc_client::host_control::HostControl;
 use serde_json::{Value, json};
 
-use super::assert_isolated_home;
+use super::forget_the_previous_pin;
 use crate::PaneFlowApp;
 use crate::app::bootstrap::Startup;
 use crate::app::fake_host::FakeHost;
@@ -42,7 +42,7 @@ fn seen(home: &Path) -> Value {
 }
 
 fn mount(cx: &mut TestAppContext) -> (Entity<PaneFlowApp>, &mut VisualTestContext) {
-    assert_isolated_home();
+    forget_the_previous_pin();
     cx.executor().allow_parking();
     cx.update(|cx| {
         cx.set_global(DisplayOnlyTerminals);

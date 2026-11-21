@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -34,6 +34,28 @@ const RESTORE_REPROBE_INTERVAL: std::time::Duration = std::time::Duration::from_
 static SESSION_WRITE_LOCK: Mutex<()> = Mutex::new(());
 static SESSION_TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 static SESSION_CORRUPTION_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+static SESSION_WRITES_IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
+
+struct SessionWriteInFlight;
+
+impl SessionWriteInFlight {
+    fn begin() -> Self {
+        SESSION_WRITES_IN_FLIGHT.fetch_add(1, Ordering::SeqCst);
+        Self
+    }
+}
+
+impl Drop for SessionWriteInFlight {
+    fn drop(&mut self) {
+        SESSION_WRITES_IN_FLIGHT.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn session_writes_in_flight() -> usize {
+    SESSION_WRITES_IN_FLIGHT.load(Ordering::SeqCst)
+}
 
 fn session_write_guard() -> MutexGuard<'static, ()> {
     SESSION_WRITE_LOCK
@@ -131,7 +153,9 @@ impl PaneFlowApp {
             if save_seq.load(Ordering::SeqCst) != seq {
                 return;
             }
+            let in_flight = SessionWriteInFlight::begin();
             let result = smol::unblock(move || {
+                let _in_flight = in_flight;
                 let path = paneflow_config::loader::session_path()
                     .ok_or_else(|| anyhow::anyhow!("Could not locate the session directory"))?;
                 write_fallback_session(&path, &state, owner, restore_failed, &save_seq, seq)
@@ -273,7 +297,9 @@ impl PaneFlowApp {
                     forget_terminal_sessions(&mut state);
                 }
                 let state = shared_session_state(state);
+                let in_flight = SessionWriteInFlight::begin();
                 let result = smol::unblock(move || {
+                    let _in_flight = in_flight;
                     let path = paneflow_config::loader::session_path()
                         .ok_or_else(|| anyhow::anyhow!("Could not locate the session directory"))?;
                     let saved = write_fallback_session(&path, &state, owner, restore_failed, &save_seq, seq)? != FallbackWrite::Stale;
