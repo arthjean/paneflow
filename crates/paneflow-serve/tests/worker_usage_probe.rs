@@ -167,6 +167,10 @@ fn opening_the_bubble_probes_each_requested_account_through_its_real_binary_once
         "codex",
         &[
             ("\"initialize\"", fixture("codex-0.166.0-initialize.jsonl")),
+            (
+                "\"account/read\"",
+                fixture("codex-0.165.0-account_read.jsonl"),
+            ),
             ("account/rateLimits/read", codex_limits),
         ],
     );
@@ -216,6 +220,8 @@ fn opening_the_bubble_probes_each_requested_account_through_its_real_binary_once
     assert_eq!(codex_plan["primary"]["used_percent"], 3.0);
     assert_eq!(codex_plan["primary"]["window_secs"], 43_200 * 60);
     assert_eq!(codex_plan["agent_version"], "0.166.0");
+    assert_eq!(codex_plan["email"], "probe@example.com");
+    assert_eq!(codex_plan["plan"], "ChatGPT Plus");
 
     let claude_env = recorded(&bin, "claude", "env");
     assert!(

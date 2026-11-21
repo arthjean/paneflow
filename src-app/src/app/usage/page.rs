@@ -53,10 +53,11 @@ const SIDEBAR_AGENT_LOGO: f32 = 18.;
 const SWITCH_FOCUS_OUTSET: f32 = 3.;
 const SWITCH_FOCUS_ALPHA: f32 = 0.35;
 
-const fn sidebar_agent_copy(agent: UsageAgent) -> &'static SettingCopy {
+const fn sidebar_agent_copy(agent: UsageAgent) -> Option<&'static SettingCopy> {
     match agent {
-        UsageAgent::ClaudeCode => &search::USAGE_SIDEBAR_CLAUDE_CODE,
-        UsageAgent::Codex => &search::USAGE_SIDEBAR_CODEX,
+        UsageAgent::ClaudeCode => Some(&search::USAGE_SIDEBAR_CLAUDE_CODE),
+        UsageAgent::Codex => Some(&search::USAGE_SIDEBAR_CODEX),
+        UsageAgent::Grok => None,
     }
 }
 
@@ -64,7 +65,7 @@ pub(crate) fn sidebar_agent_choices(
     present: impl Fn(UsageAgent) -> bool,
     shown: impl Fn(UsageAgent) -> bool,
 ) -> Vec<(usize, UsageAgent)> {
-    let choices: Vec<(usize, UsageAgent)> = UsageAgent::ALL
+    let choices: Vec<(usize, UsageAgent)> = UsageAgent::METERED
         .into_iter()
         .enumerate()
         .filter(|(_, agent)| present(*agent))
@@ -528,6 +529,7 @@ impl PaneFlowApp {
             .and_then(|id| self.cached_config.space(id))
             .map(|space| space.name.as_str());
         usage_view(&UsageInputs {
+            defaults: &self.default_account_keys(),
             inventory: &self.usage.inventory,
             plans: &self.usage.plans,
             agents: None,
@@ -692,7 +694,9 @@ impl PaneFlowApp {
         let mut card = SearchCard::new(ui);
         for (index, (agent, handle)) in choices.iter().enumerate() {
             let agent = *agent;
-            let copy = sidebar_agent_copy(agent);
+            let Some(copy) = sidebar_agent_copy(agent) else {
+                continue;
+            };
             let switch = toggle_switch(
                 ("usage-sidebar-agent", index),
                 copy.title,
@@ -1201,10 +1205,11 @@ mod tests {
         );
         assert_eq!(sidebar_agent_choices(|_| false, |_| false), []);
         for agent in UsageAgent::ALL {
-            assert!(
+            assert_eq!(
                 sidebar_agent_copy(agent)
-                    .title
-                    .starts_with(agent.display_name())
+                    .is_some_and(|copy| copy.title.starts_with(agent.display_name())),
+                agent.reports_usage(),
+                "{agent:?}"
             );
         }
     }

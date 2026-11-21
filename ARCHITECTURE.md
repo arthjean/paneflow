@@ -701,14 +701,22 @@ The worker also owns plan usage: the session and weekly limits of each Claude
 Code and Codex subscription, and a daily ledger of turns, tokens and active
 time per account. An account is one (agent, canonical config directory) pair;
 `paneflow_agent_config::usage::accounts::inventory` lists them from the
-default directories, every space's `CLAUDE_CONFIG_DIR` or `CODEX_HOME`, and the
-agent profiles. The code lives in `crates/paneflow-serve/src/usage/`, and the
+default directories, every space's `CLAUDE_CONFIG_DIR`, `CODEX_HOME` or
+`GROK_HOME`, and the agent profiles. Grok has accounts but no usage: see the
+probes below. The code lives in `crates/paneflow-serve/src/usage/`, and the
 app only renders what the worker publishes (`src-app/src/app/usage/`).
 
-**No credential is ever read.** Paneflow never opens `.credentials.json`,
-`auth.json` or a keychain item, never reads an OAuth token, and never sends an
-HTTP request for usage. Limits reach the worker through three paths, all of
-which leave authentication to the agent's own unmodified binary:
+**No token is ever read.** Paneflow never opens Claude Code's
+`.credentials.json`, Codex's `auth.json` or a keychain item, never keeps an
+OAuth token, and never sends an HTTP request for usage. Grok is the one
+exception to "no credential file is opened": its CLI names the signed-in
+account nowhere else, so
+`paneflow_agent_config::usage::accounts::grok_account_identity` reads
+`<GROK_HOME>/auth.json`, capped at 1 MiB, and keeps only the `email` and
+`subscription_tier` of the `auth.x.ai` login; the tokens beside them are
+parsed and dropped, never stored, logged or sent. Limits reach the worker
+through three paths, all of which leave authentication to the agent's own
+unmodified binary:
 
 - **The status line relay.** When `usage.plan_limits` is on (the default) and
   the user has no status line of their own, the Claude integration installs a
@@ -721,19 +729,83 @@ which leave authentication to the agent's own unmodified binary:
   never rewritten, and `usage.plan_limits: false` or removing the integration
   removes the managed one.
 - **The probes.** `usage.refresh`, sent when the sidebar bubble opens, when the
-  Usage page refreshes, and by the app's automatic refresh, makes the worker
+  Usage page refreshes, when Settings > Agents opens on an account whose
+  identity is unknown or stale, and by the app's automatic refresh, makes the worker
   probe each requested account at most
   once per 30 s, two at a time, on background threads
   (`usage/probe.rs`): Claude Code runs as
   `claude -p --input-format stream-json --output-format stream-json` with the
   account's `CLAUDE_CONFIG_DIR`, hooks and MCP servers off, and answers the
   `get_usage` control request without any user message; Codex runs as
-  `codex app-server` and answers `account/rateLimits/read`. The real binary is
+  `codex app-server` and answers `account/read`, then
+  `account/rateLimits/read`. The same answers carry the signed-in identity
+  (the `account` of Claude's `initialize` response, Codex's `account/read`),
+  so the worker stores each account's email and plan name beside its limits
+  and Settings > Agents lists the accounts without any sign-in step. An
+  account whose limits cannot be read but whose agent names a signed-in email
+  still records that identity. The real binary is
   resolved with every Paneflow shim directory removed from `PATH`, and no
-  `PANEFLOW_*` variable reaches it.
+  `PANEFLOW_*` variable reaches it. Grok reports no limits outside its own
+  interface (`grok usage --json` refuses), so its probe only runs
+  `grok models` with the account's `GROK_HOME` and reads the first line:
+  "logged in" records the identity above, or the plan name `Grok account`
+  when the file names nobody, and "not authenticated" clears it.
+  `UsageAgent::reports_usage` is false for Grok, which keeps it out of the
+  Usage page, the sidebar capsule, the automatic refresh and the activity
+  import: it is probed only while Settings > Agents or Spaces is open.
 - **Codex rollouts.** At each Codex turn end, and every five minutes while a
   Codex session runs, the worker reads the tail of the newest
   `<CODEX_HOME>/sessions/**/rollout-*.jsonl` for its last `rate_limits`.
+
+**Several accounts, no credential swap.** An account is a config directory, so
+Paneflow never copies or rewrites an agent's credentials to change accounts.
+**Add account** in Settings > Agents opens one dialog that names the folder:
+`~/.claude-`, `~/.codex-` or `~/.grok-` followed by a suffix, prefilled with
+the first free number (from 2) and editable (`~/.claude-work`). The suffix
+takes letters, digits, hyphens and underscores, 32 characters at most, and is
+refused when the folder exists or an account already names it. The name is
+chosen at creation only, because the directory is the account's identity
+everywhere else (plans, ledger, default account, spaces, and on macOS Claude
+Code's keychain service name). Paneflow then creates the folder with an agent
+profile named `Claude Code <suffix>` pointing at it, installs Hooks and MCP
+there when the agent's default directory has them, and signs in without
+leaving the page.
+`paneflow_serve::usage::login` drives the agent's own sign-in on a background
+thread: Claude Code runs `claude auth login`, which opens the browser itself,
+and Paneflow confirms the result with `claude auth status --json`; Codex goes
+through `codex app-server`, whose `account/login/start` returns the page that
+Paneflow opens and whose `account/login/completed` reports the outcome; Grok
+runs `grok login`, which without a terminal prints a device-code page that
+Paneflow opens, and `grok models` confirms the result. The
+account row shows the wait with **Open the page** and **Cancel**. For Claude,
+**Open the page** opens the manual link the CLI prints, and a field relays the
+code that page shows to the CLI's standard input; Paneflow never keeps it, and
+never reads the credentials the CLI writes. **Cancel** on an account that
+**Add account** has just created removes it whole: its profile goes, a space it
+was assigned to returns to its previous account, and the sign-in thread deletes
+the folder Paneflow created, with its hooks record, once the CLI has exited.
+Cancel on an existing account only stops the sign-in. An account row carries
+no menu: its only control is **Sign in** while it is signed out, and the CLI's
+other sign-in modes are run by hand in a pane. Once the account's email is
+known, from the probe or Claude's `.claude.json`, a profile that still carries
+that generated name is renamed to the email. `agents.default_accounts`
+(runtime slug to directory) names the account new panes start on; nothing in
+Settings writes it since the row menu went, so it is set in `paneflow.json`.
+`space_env::space_env` layers it under the space's own variables, so every new
+pane, plain shells included, starts on that account unless its space names its
+own directory. Open panes keep the account they started with, and two panes can
+run two accounts of the same agent at once.
+
+A space names its account the same way, without anyone typing a variable. The
+`Accounts` card of a space page (`settings/tabs/space_accounts.rs`) reads the
+space's `CLAUDE_CONFIG_DIR`, `CODEX_HOME` and `GROK_HOME` back into a choice
+and writes the choice as a `~`-relative path, or removes the key for `Default`. It never
+offers an agent's default directory: setting `CLAUDE_CONFIG_DIR` to `~/.claude`
+moves Claude Code's global config and, on macOS, its keychain service name, so
+that account stays reachable only as `Default`. **Add account…** in the menu
+opens the same dialog and assigns the new directory to the space before the
+sign-in starts. The Environment editor hides those keys and merges them
+back on save, so the menu stays their only editor.
 
 The automatic refresh belongs to the app, not the worker, so nothing is probed
 once the window is gone: `start_usage_auto_refresh`

@@ -51,6 +51,8 @@ pub struct AgentsConfig {
     pub claude_preassign_session_id: Option<bool>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub update_methods: std::collections::BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub default_accounts: std::collections::BTreeMap<String, String>,
 }
 
 impl AgentsConfig {

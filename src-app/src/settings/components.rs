@@ -171,60 +171,43 @@ pub fn hairline_inset(ui: crate::theme::UiColors) -> impl IntoElement {
         .child(div().h_full().w_full().bg(with_alpha(ui.border, 0.5)))
 }
 
-pub fn section_title(
-    ui: crate::theme::UiColors,
-    label: &'static str,
-    description: Option<&'static str>,
-) -> impl IntoElement {
-    let query = crate::settings::search::active_query();
-    div()
-        .flex()
-        .flex_col()
-        .gap(px(2.))
-        .px(px(2.))
-        .pb(px(8.))
-        .child(
-            div()
-                .text_size(crate::ui_primitives::BODY_EMPHASIS)
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(ui.text)
-                .child(highlight_matches(label.to_string(), &query)),
-        )
-        .when_some(description, |d, description| {
-            d.child(
-                div()
-                    .max_w(px(520.))
-                    .text_size(crate::ui_primitives::LABEL_SM)
-                    .text_color(ui.muted)
-                    .child(description),
-            )
-        })
+const TOGGLE_FOCUS_RADIUS: Pixels = px(11.);
+const FOCUS_HALO_ALPHA: f32 = 0.24;
+const FOCUS_HALO_SPREAD: Pixels = px(4.);
+const FOCUS_EDGE_SPREAD: Pixels = px(1.);
+const FOCUS_INSET_WIDTH: Pixels = px(2.);
+
+fn keyboard_focus_halo(accent: Hsla) -> Vec<gpui::BoxShadow> {
+    vec![
+        gpui::BoxShadow::new(px(0.), px(0.), with_alpha(accent, FOCUS_HALO_ALPHA))
+            .spread_radius(FOCUS_HALO_SPREAD),
+        gpui::BoxShadow::new(px(0.), px(0.), accent).spread_radius(FOCUS_EDGE_SPREAD),
+    ]
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn toggle_row(
-    id: &'static str,
-    title: &'static str,
-    description: &'static str,
-    icon: Option<AnyElement>,
-    current: bool,
-    config_key: &'static str,
-    ui: crate::theme::UiColors,
-    cx: &mut gpui::Context<crate::PaneFlowApp>,
-) -> impl IntoElement {
-    let target_value = !current;
-    toggle_row_with(
-        title,
-        description,
-        icon,
-        ui,
-        toggle_switch(id, title, current, ui).on_click(cx.listener(
-            move |this, _: &ClickEvent, _window, cx| {
-                this.persist_setting(false, config_key, serde_json::Value::Bool(target_value), cx);
-            },
-        )),
-    )
+fn keyboard_focus_inset(accent: Hsla) -> Vec<gpui::BoxShadow> {
+    vec![
+        gpui::BoxShadow::new(px(0.), px(0.), accent)
+            .spread_radius(FOCUS_INSET_WIDTH)
+            .inset(),
+    ]
 }
+
+pub(crate) trait KeyboardStopExt: InteractiveElement + Sized {
+    fn keyboard_stop(self, radius: Pixels) -> Self {
+        let ring = keyboard_focus_inset(crate::theme::ui_colors().accent);
+        self.tab_index(0)
+            .focus_visible(move |style| style.rounded(radius).shadow(ring))
+    }
+
+    fn opaque_keyboard_stop(self, radius: Pixels) -> Self {
+        let ring = keyboard_focus_halo(crate::theme::ui_colors().accent);
+        self.tab_index(0)
+            .focus_visible(move |style| style.rounded(radius).shadow(ring))
+    }
+}
+
+impl<E: InteractiveElement> KeyboardStopExt for E {}
 
 pub fn toggle_switch(
     id: impl Into<ElementId>,
@@ -238,6 +221,7 @@ pub fn toggle_switch(
         .flex_shrink_0()
         .focusable()
         .accessible_control(gpui::accesskit::Role::Switch, label)
+        .keyboard_stop(TOGGLE_FOCUS_RADIUS)
         .aria_toggled(if on {
             gpui::accesskit::Toggled::True
         } else {
@@ -499,6 +483,7 @@ pub fn secondary_button(
         Some(hover_bg),
     )
     .accessible_control(gpui::accesskit::Role::Button, label)
+    .keyboard_stop(ROW_RADIUS)
     .child(label)
     .on_click(on_click)
 }
@@ -532,6 +517,7 @@ pub fn raised_button(
         true,
     )
     .accessible_control(gpui::accesskit::Role::Button, label)
+    .opaque_keyboard_stop(ROW_RADIUS)
     .child(label)
 }
 
@@ -647,6 +633,7 @@ pub fn soft_button(
         ui,
     )
     .accessible_control(gpui::accesskit::Role::Button, label)
+    .keyboard_stop(ROW_RADIUS)
     .child(label)
     .on_click(on_click)
 }
@@ -692,6 +679,7 @@ pub(crate) fn raised_icon_button(
         enabled,
     )
     .accessible_control(gpui::accesskit::Role::Button, label.clone())
+    .opaque_keyboard_stop(ROW_RADIUS)
     .child(svg().size(px(13.)).flex_none().path(icon).text_color(ink))
     .child(label)
 }
@@ -711,6 +699,7 @@ pub(crate) fn soft_icon_button(
         ui,
     )
     .accessible_control(gpui::accesskit::Role::Button, label.clone())
+    .keyboard_stop(ROW_RADIUS)
     .child(
         svg()
             .size(px(13.))
@@ -787,6 +776,7 @@ pub(crate) fn ghost_icon_button(
         ui,
     )
     .accessible_control(gpui::accesskit::Role::Button, label.clone())
+    .keyboard_stop(ROW_RADIUS)
     .child(
         svg()
             .size(px(13.))
@@ -830,6 +820,7 @@ pub fn solid_button(
         Some(hovered),
     )
     .accessible_control(gpui::accesskit::Role::Button, label)
+    .opaque_keyboard_stop(ROW_RADIUS)
     .child(label)
 }
 
@@ -1081,6 +1072,7 @@ pub fn select_trigger(
     div()
         .id(id.into())
         .accessible_control(gpui::accesskit::Role::ComboBox, label)
+        .keyboard_stop(SETTINGS_CONTROL_CORNER_RADIUS)
         .aria_expanded(expanded)
         .relative()
         .flex()
@@ -1593,6 +1585,10 @@ pub(crate) const SELECT_TRIGGER_BORDER: Pixels = px(1.);
 pub(crate) const SELECT_MENU_GAP: Pixels = px(4.);
 
 pub fn deferred_select_menu(menu: SelectMenu) -> AnyElement {
+    deferred_select_menu_at(menu, 1)
+}
+
+pub(crate) fn deferred_select_menu_at(menu: SelectMenu, priority: usize) -> AnyElement {
     let reveal_id = menu.reveal_id.clone();
     let trigger: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>> = std::rc::Rc::default();
     let probe = trigger.clone();
@@ -1616,7 +1612,7 @@ pub fn deferred_select_menu(menu: SelectMenu) -> AnyElement {
                 )),
                 placed: None,
             })
-            .with_priority(1),
+            .with_priority(priority),
         )
         .into_any_element()
 }
@@ -1753,6 +1749,7 @@ pub(crate) fn settings_breadcrumb(
                 .hover(|style| style.text_color(ui.text))
                 .role(gpui::accesskit::Role::Button)
                 .aria_label(back_label)
+                .keyboard_stop(px(6.))
                 .on_click(on_back)
                 .child(parent),
         )
@@ -1802,6 +1799,7 @@ pub(crate) fn card_button(
         Some(with_alpha(ui.text, CARD_BUTTON_FILL_HOVER)),
     )
     .accessible_control(gpui::accesskit::Role::Button, label.clone())
+    .keyboard_stop(ROW_RADIUS)
     .child(label)
 }
 

@@ -220,9 +220,25 @@ impl PaneFlowApp {
 
         let agent_profile_name_input = cx.new(|cx| {
             crate::widgets::text_input::TextInput::new("", "Claude perso", cx)
-                .with_accessible_name("Profile name")
+                .with_accessible_name("Launch preset name")
         });
         cx.observe(&agent_profile_name_input, |_, _, cx| cx.notify())
+            .detach();
+        let agent_account_name_input = cx.new(|cx| {
+            crate::widgets::text_input::TextInput::new("", "work", cx)
+                .with_accessible_name("Account folder name")
+        });
+        cx.observe(&agent_account_name_input, |_, _, cx| cx.notify())
+            .detach();
+        let agent_sign_in_code_input = cx.new(|cx| {
+            crate::widgets::text_input::TextInput::new(
+                "",
+                "Paste the code shown after you sign in",
+                cx,
+            )
+            .with_accessible_name("Sign-in code")
+        });
+        cx.observe(&agent_sign_in_code_input, |_, _, cx| cx.notify())
             .detach();
         let space_name_input = cx.new(|cx| {
             crate::widgets::text_input::TextInput::new("", "Space name", cx)
@@ -340,14 +356,22 @@ impl PaneFlowApp {
             workspace_pane_command_input,
             workspace_pane_prompt_input,
             agent_profile_editor: None,
+            agent_account_namer: None,
             app_icon_picker: Default::default(),
             integration_status: None,
             integration_busy: None,
             integration_errors: std::collections::HashMap::new(),
-            agent_detail: None,
+            agent_settings_dialog: None,
+            agent_profile_menu: None,
+            agent_account_adding: None,
+            agent_sign_in: None,
+            space_account_menu: None,
+            agent_sign_in_code_input,
+            agent_dialog_focus: cx.focus_handle(),
             agent_update_menu_open: None,
             agent_updates: std::collections::HashMap::new(),
             agent_profile_name_input,
+            agent_account_name_input,
             space_name_input,
             space_name_editor: None,
             space_delete_armed: None,

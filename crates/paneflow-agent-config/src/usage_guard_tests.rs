@@ -7,6 +7,9 @@ const FORBIDDEN: &[&str] = &[
     "Claude Code-credentials",
 ];
 
+const GROK_IDENTITY_FILE: &str = "auth.json";
+const GROK_IDENTITY_SOURCE: &str = "crates/paneflow-agent-config/src/usage/grok_identity.rs";
+
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..")
 }
@@ -43,11 +46,30 @@ fn no_usage_module_names_a_credential_store() {
     for source in sources {
         let text = std::fs::read_to_string(&source).expect("a readable usage source");
         for needle in FORBIDDEN {
-            assert!(
-                !text.contains(needle),
+            let allowed = usize::from(
+                *needle == GROK_IDENTITY_FILE && source.ends_with(GROK_IDENTITY_SOURCE),
+            );
+            assert_eq!(
+                text.matches(needle).count(),
+                allowed,
                 "{} references the credential store `{needle}`",
                 source.display()
             );
         }
+    }
+}
+
+#[test]
+fn the_grok_identity_reader_keeps_two_fields_and_no_token() {
+    let text = std::fs::read_to_string(workspace_root().join(GROK_IDENTITY_SOURCE))
+        .expect("the Grok identity source");
+    for field in ["\"email\"", "\"subscription_tier\"", "\"oidc_issuer\""] {
+        assert!(text.contains(field), "{field}");
+    }
+    for token in ["\"key\"", "refresh_token", "access_token", "id_token"] {
+        assert!(
+            !text.contains(token),
+            "the reader names the token field {token}"
+        );
     }
 }

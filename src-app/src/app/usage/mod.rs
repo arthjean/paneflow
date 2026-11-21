@@ -22,8 +22,9 @@ use serde_json::Value;
 
 use self::activity::Metric;
 use self::model::{
-    InventoryEntry, ProbeAttempts, StaleInputs, UsageInputs, UsageView, probe_key, stale_accounts,
-    step_cursor, toggled_agents, usage_view,
+    AgentAccountInputs, AgentAccountRow, InventoryEntry, ProbeAttempts, StaleInputs, UsageInputs,
+    UsageView, agent_account_rows, probe_key, stale_accounts, step_cursor, toggled_agents,
+    usage_view,
 };
 use crate::ui_primitives::ClipLine;
 use crate::{PaneFlowApp, SettingsSection};
@@ -31,6 +32,7 @@ use crate::{PaneFlowApp, SettingsSection};
 const AUTO_REFRESH_FIRST_TICK: Duration = Duration::from_secs(10);
 const AUTO_REFRESH_TICK: Duration = Duration::from_secs(60);
 const AUTO_REFRESH_AGE_MS: u64 = 5 * 60 * 1000;
+const ACCOUNT_CHECK_MS: u64 = 15_000;
 
 pub(crate) struct UsagePanel {
     plans: Vec<AccountPlan>,
@@ -57,7 +59,7 @@ pub(crate) struct UsagePanel {
     import: ImportStatus,
     import_focus: FocusHandle,
     auto_attempts: ProbeAttempts,
-    sidebar_agent_focus: [FocusHandle; UsageAgent::ALL.len()],
+    sidebar_agent_focus: [FocusHandle; UsageAgent::METERED.len()],
 }
 
 impl UsagePanel {
@@ -98,12 +100,47 @@ impl UsagePanel {
             import: ImportStatus::default(),
             import_focus: cx.focus_handle(),
             auto_attempts: ProbeAttempts::new(),
-            sidebar_agent_focus: UsageAgent::ALL.map(|_| cx.focus_handle()),
+            sidebar_agent_focus: UsageAgent::METERED.map(|_| cx.focus_handle()),
         }
     }
 
     pub(crate) fn is_open(&self) -> bool {
         self.bubble_open
+    }
+
+    pub(crate) fn inventory_dirs(
+        &self,
+        agent: UsageAgent,
+    ) -> impl Iterator<Item = &std::path::Path> {
+        self.inventory
+            .iter()
+            .filter(move |entry| entry.account.agent == agent)
+            .map(|entry| entry.account.config_dir.as_path())
+    }
+
+    pub(crate) fn known_email(&self, agent: UsageAgent, key: &str) -> Option<String> {
+        let same = |dir: &std::path::Path| {
+            paneflow_agent_config::usage::accounts::account_dir_key(dir) == key
+        };
+        self.plans
+            .iter()
+            .filter(|plan| plan.agent == agent.runtime_slug())
+            .find(|plan| same(std::path::Path::new(&plan.config_dir)))
+            .and_then(|plan| plan.email.clone())
+            .or_else(|| {
+                self.inventory
+                    .iter()
+                    .find(|entry| entry.account.agent == agent && same(&entry.account.config_dir))
+                    .map(|entry| entry.account.label.clone())
+                    .filter(|label| label.contains('@'))
+            })
+    }
+
+    pub(crate) fn forget_account_attempts(
+        &mut self,
+        matches: impl Fn(&(UsageAgent, String)) -> bool,
+    ) {
+        self.auto_attempts.retain(|key, _| !matches(key));
     }
 
     pub(crate) fn bubble_top(&self) -> ClipLine {
@@ -126,7 +163,7 @@ fn read_inventory(
         .map(|account| InventoryEntry {
             status_line: match account.agent {
                 UsageAgent::ClaudeCode => claude_status_line_state(&account.config_dir),
-                UsageAgent::Codex => StatusLineState::Missing,
+                UsageAgent::Codex | UsageAgent::Grok => StatusLineState::Missing,
             },
             account,
         })
@@ -279,6 +316,12 @@ impl PaneFlowApp {
     }
 
     fn auto_refresh_usage(&mut self, cx: &mut Context<Self>) {
+        if matches!(
+            self.settings_section,
+            Some(SettingsSection::Agents | SettingsSection::Spaces)
+        ) {
+            self.check_agent_accounts(cx);
+        }
         let page_open = self.settings_section == Some(SettingsSection::Usage);
         if !page_open && !self.usage_capsule_enabled() {
             return;
@@ -315,16 +358,114 @@ impl PaneFlowApp {
         .detach();
     }
 
+    pub(crate) fn default_account_keys(&self) -> Vec<(UsageAgent, String)> {
+        let Some(env) = crate::space_env::configured_default_account_env(&self.cached_config)
+        else {
+            return Vec::new();
+        };
+        UsageAgent::ALL
+            .into_iter()
+            .filter_map(|agent| {
+                let dir = env.get(&crate::space_env::platform_key(agent.config_dir_key()))?;
+                Some((
+                    agent,
+                    paneflow_agent_config::usage::accounts::account_dir_key(
+                        &paneflow_agent_config::usage::accounts::canonical_account_dir(
+                            std::path::Path::new(dir),
+                        ),
+                    ),
+                ))
+            })
+            .collect()
+    }
+
+    fn active_space_name(&self) -> Option<&str> {
+        self.active_space
+            .as_ref()
+            .and_then(|id| self.cached_config.space(id))
+            .map(|space| space.name.as_str())
+    }
+
+    pub(crate) fn agent_accounts(&self, agent: UsageAgent) -> Vec<AgentAccountRow> {
+        let now_ms = now_ms();
+        let settled: ProbeAttempts = self
+            .usage
+            .auto_attempts
+            .iter()
+            .filter(|(_, at)| now_ms.saturating_sub(**at) >= ACCOUNT_CHECK_MS)
+            .map(|(key, at)| (key.clone(), *at))
+            .collect();
+        agent_account_rows(
+            &AgentAccountInputs {
+                inventory: &self.usage.inventory,
+                plans: &self.usage.plans,
+                attempts: &settled,
+                active_space: self.active_space_name(),
+                defaults: &self.default_account_keys(),
+                now_ms,
+                utc_offset_secs: self.usage.utc_offset_secs,
+            },
+            agent,
+        )
+    }
+
+    pub(crate) fn check_agent_accounts(&mut self, cx: &mut Context<Self>) {
+        let now_ms = now_ms();
+        let unchecked: Vec<InventoryEntry> = self
+            .usage
+            .inventory
+            .iter()
+            .filter(|entry| !entry.account.api_billing)
+            .filter(|entry| {
+                let key = probe_key(&entry.account);
+                let recent = self
+                    .usage
+                    .auto_attempts
+                    .get(&key)
+                    .is_some_and(|at| now_ms.saturating_sub(*at) < AUTO_REFRESH_AGE_MS);
+                let plan = self.usage.plans.iter().find(|plan| {
+                    plan.agent == key.0.runtime_slug()
+                        && paneflow_agent_config::usage::accounts::account_dir_key(
+                            std::path::Path::new(&plan.config_dir),
+                        ) == key.1
+                });
+                let known = plan.is_some_and(|plan| {
+                    plan.email.is_some()
+                        && now_ms.saturating_sub(plan.received_at_ms.unwrap_or(plan.updated_at_ms))
+                            < AUTO_REFRESH_AGE_MS
+                });
+                !recent && !known
+            })
+            .cloned()
+            .collect();
+        if unchecked.is_empty() {
+            return;
+        }
+        for entry in &unchecked {
+            self.usage
+                .auto_attempts
+                .insert(probe_key(&entry.account), now_ms);
+        }
+        cx.spawn(async move |this, cx| {
+            let usage = smol::unblock(move || refresh_worker_usage(&unchecked)).await;
+            let _ = this.update(cx, |app, cx| {
+                if let Some(usage) = usage {
+                    app.apply_snapshot(usage, cx);
+                }
+            });
+            smol::Timer::after(Duration::from_millis(ACCOUNT_CHECK_MS)).await;
+            let _ = this.update(cx, |_, cx| cx.notify());
+        })
+        .detach();
+    }
+
     pub(crate) fn sidebar_usage_view(&self) -> Option<UsageView> {
         if !self.usage_capsule_enabled() {
             return None;
         }
-        let active_space = self
-            .active_space
-            .as_ref()
-            .and_then(|id| self.cached_config.space(id))
-            .map(|space| space.name.as_str());
+        let active_space = self.active_space_name();
         usage_view(&UsageInputs {
+            defaults: &self.default_account_keys(),
             inventory: &self.usage.inventory,
             plans: &self.usage.plans,
             agents: self.sidebar_usage_agents(),
@@ -373,6 +514,7 @@ impl PaneFlowApp {
                 app.usage.utc_offset_secs = offset;
                 if app.usage.inventory != entries {
                     app.usage.inventory = entries;
+                    app.adopt_known_account_emails(cx);
                     cx.notify();
                 }
             });
@@ -474,6 +616,7 @@ impl PaneFlowApp {
     fn apply_plans(&mut self, plans: Vec<AccountPlan>, cx: &mut Context<Self>) {
         if plans != self.usage.plans {
             self.usage.plans = plans;
+            self.adopt_known_account_emails(cx);
             cx.notify();
         }
     }
@@ -632,6 +775,7 @@ mod tests {
         assert_eq!(inventory, []);
         assert_eq!(
             usage_view(&UsageInputs {
+                defaults: &[],
                 inventory: &inventory,
                 plans: &[],
                 agents: None,
@@ -672,6 +816,7 @@ mod tests {
         origins[0].env.clear();
         let inventory = read_inventory(&origins, Some(home.path()));
         let view = usage_view(&UsageInputs {
+            defaults: &[],
             inventory: &inventory,
             plans: &plans,
             agents: None,
@@ -808,6 +953,7 @@ mod tests {
         let inventory = read_inventory(&origins, Some(home.path()));
         let plans = usage.plans.expect("the snapshot carries the plans");
         let tiles = usage_view(&UsageInputs {
+            defaults: &[],
             inventory: &inventory,
             plans: &plans,
             agents: None,

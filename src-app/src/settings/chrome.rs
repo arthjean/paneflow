@@ -614,8 +614,10 @@ impl PaneFlowApp {
         self.workspace_template_detail_open = false;
         self.workspace_template_delete_armed = false;
         self.workspace_template_notice = None;
-        self.agent_detail = None;
+        self.agent_settings_dialog = None;
+        self.agent_profile_menu = None;
         self.agent_profile_editor = None;
+        self.agent_account_namer = None;
         self.agent_update_menu_open = None;
         if self.recording_shortcut.is_some() {
             self.recording_shortcut = None;
@@ -633,9 +635,12 @@ impl PaneFlowApp {
         if section == SettingsSection::Agents {
             self.probe_agent_versions(cx);
             self.refresh_integration_status(cx);
+            self.check_agent_accounts(cx);
         }
         if section == SettingsSection::Spaces {
             self.refresh_space_integration_status(cx);
+            self.refresh_integration_status(cx);
+            self.check_agent_accounts(cx);
         }
         if section == SettingsSection::Usage {
             self.open_usage_page(cx);

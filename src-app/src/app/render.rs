@@ -922,6 +922,15 @@ impl Render for PaneFlowApp {
             app_content = app_content.child(self.render_custom_buttons_modal(cx));
         }
 
+        let agent_dialog_shown = match self.settings_section {
+            Some(crate::SettingsSection::Agents) => self.agent_dialog_is_open(),
+            Some(crate::SettingsSection::Spaces) => self.agent_account_namer.is_some(),
+            _ => false,
+        };
+        if agent_dialog_shown {
+            app_content = app_content.child(self.render_agent_dialogs(cx));
+        }
+
         if self.about_dialog.is_some() {
             app_content = app_content.child(self.render_about_dialog(cx));
         }

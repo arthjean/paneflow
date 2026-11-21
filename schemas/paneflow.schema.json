@@ -608,6 +608,18 @@
             "enum": ["auto", "self", "npm", "bun", "pnpm", "yarn", "script"]
           },
           "default": {}
+        },
+        "default_accounts": {
+          "type": "object",
+          "description": "The account every new pane starts on, keyed by runtime slug (claude-code, codex, grok): an absolute config directory, or one starting with ~, passed as CLAUDE_CONFIG_DIR, CODEX_HOME or GROK_HOME. A space that sets its own directory wins. An agent left out uses its own default directory.",
+          "propertyNames": {
+            "enum": ["claude-code", "codex", "grok"]
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": {}
         }
       }
     },

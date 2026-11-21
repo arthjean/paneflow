@@ -1594,7 +1594,7 @@ glides its row into view the same way. Every other Settings page scrolls
 the same way, without a scrollbar or its gutter. With Reduce motion every one
 of them lands at once (`src-app/src/widgets/smooth_scroll.rs`).
 
-The Agents page (`src-app/src/settings/tabs/agents.rs`) follows the same list
+The Agents page (`src-app/src/settings/tabs/agents/`) follows the same list
 and drill-in grammar for the agents found on PATH. The heading is followed by
 one 12 px muted intro line and one card of inset rows (squircle 14 in 6 px of
 padding): the 24 px logo, the name at 13 Medium over `{binary} {version}`,
@@ -1607,7 +1607,7 @@ at 0.55 beside their 12 px muted names, wrapped with 14 px gaps, each naming
 the binary it looks for in a tooltip; no row, no folding. With no agent on
 PATH, a welcome card says `No coding agent on your PATH` at 14 Semibold over
 one 12 px muted sentence and the same strip, centered. Profiles whose agent is
-not installed, or that cannot be read, are listed under `Other profiles`, and
+not installed, or that cannot be read, are listed under `Other launch presets`, and
 their editor keeps the base agent select. `Permissions` closes the page.
 
 Clicking an agent opens its page under an `Agents › {name}` breadcrumb, and
@@ -1643,14 +1643,18 @@ a `New space` button at its trailing edge, preceded by the limit reason once 9
 spaces exist, and one 12 px muted intro line follows. One card lists `Default`,
 then every space, as inset rows: squircle 14 inside the 6 px card padding, so
 they sit concentric in the 20 radius card, with a 24 px mark, the name at 13
-Medium over a muted count of workspaces and variables, and a chevron. A row
-shows a failed agent setup in `vc_deleted`, or the count of environment
-warnings after the amber triangle. `Default` has no chevron and does not open.
+Medium over one muted line (the workspace count, the email or folder of each
+account the space sets, then the count of its other variables), and a
+chevron. A row
+shows `Hooks not added` in `vc_deleted` when Paneflow could not add its hooks
+to one of the space's accounts, or the count of environment warnings after the
+amber triangle. `Default` has no chevron and does not open.
 
 Clicking a space opens its page, and the heading becomes a breadcrumb at 26
 Semibold: `Spaces` in `muted` (`text` on hover, back to the list on click), an
-18 px chevron, and the space name truncated. Escape steps back: it closes the
-environment editor or the delete question first, then returns to the list. The
+18 px chevron, and the space name truncated. Escape steps back: it closes an
+account menu, the environment editor or the delete question first, then
+returns to the list. The
 page stacks, 24 px apart: an identity card (16 px padding) with the 56 px mark
 and, beside it, the name field (32 px tall, 14 Medium, 320 px at most) over the
 color marks at 16 px in 24 px circular targets, the first one aligned with the
@@ -1662,15 +1666,31 @@ it lays a black scrim at 0.5 with a white 18 px pencil over it. Clicking it
 opens the system file picker; the chosen image is decoded off the render
 thread, oriented, cropped to its centered square, scaled to 96 px, and stored as
 a PNG in the home's `avatars/` directory, which the mark then draws in a circle
-with the color as its loading and fallback state. Under the `Environment`
-eyebrow, with a soft `Edit` at its trailing edge, a card lists the variables in
-the terminal font at 11 px, name in `text` on a 180 px column and value in
-`muted`, with a secret value masked; with none, one row says so and offers
-`Add variable`. Editing swaps the list for name and value fields in the same
-card, with `Add variable`, `Cancel`, and the blue `Save`. Warnings follow the
-card. `Agent setup` lists one row per runtime: its 18 px logo, the runtime name
-at 12 Medium over `Hooks and MCP · {state}`, and `Install` or `Retry`, a spinner
-while it installs, or a muted tick once installed. The last card holds `Delete
+with the color as its loading and fallback state. Under the `Accounts`
+eyebrow, one card holds a row per account agent that is installed or that the
+space already sets (Claude Code, Codex): the 18 px logo, the name at 12 Medium
+over a state line, then card buttons and a 220 px select at the trailing edge.
+The state line names the default account (`Your default account, {email}`),
+the chosen account's plan and meters, `Checking {folder}…`, or, in
+`vc_deleted`, `No account is signed in to {folder}` beside `Sign in`. While a
+sign-in runs it reads `Finish signing in in your browser` beside `Open the
+page` and `Cancel`, and Claude's code field opens under the row at the text
+column. A missing or failed hooks install adds a second line with `Add hooks`
+or `Retry`. The select lists `Default` with the default account's email, each
+signed-in account (its email, then its plan or state in `muted`), the space's
+folder when no account matches it, and `Add account…` behind an add glyph;
+the agent's default folder is never offered. Under the `Environment`
+eyebrow, with a soft `Edit` at its trailing edge, a card lists the variables
+other than the account keys in the terminal font at 11 px, name in `text` on a
+180 px column and value in `muted`, with a secret value masked and an empty one
+reading `Turned off` for a credential, `Empty` otherwise; with none, one row
+says so and offers `Add variable`. Editing swaps the list for one plain intro
+line, `Name` and `Value` column labels at 11 Medium `muted`, and the fields,
+with `AWS_PROFILE` and `work` as example placeholders, `Add variable`,
+`Cancel`, and the blue `Save`; the first field takes focus. Warnings follow the
+card. A credential that Paneflow's environment sets warns only when the space
+sets that tool's account, and carries `Turn off {KEY} here`, which adds the key
+with an empty value. The last card holds `Delete
 space` over the fate of its workspaces and a `Delete` ghost in `vc_deleted`;
 the confirmation asks `Delete {name}?` beside `Cancel` and the red `Delete
 space`. Buttons inside a card are squircle 14 of `text` at 0.06, 0.1 on hover,
@@ -2020,6 +2040,18 @@ squircle of radius 8 filled with `text` at 0.03 and outlined at 1 px in
 `agent_error` at 0.64 and 0.2. Search and filter bars, palettes, and inline
 renames keep their quieter fields. A clickable field that is not editable,
 such as a folder picker, takes the same surface without the ring.
+
+In Settings, Tab and Shift+Tab walk every control in reading order: the
+shared buttons, switches and selects (`KeyboardStopExt` in
+`settings::components`), the text fields, and each page's own controls such
+as the Spaces rows, color marks and breadcrumb. The Usage page keeps its own
+cursor, and a shortcut being recorded keeps the keys. Keyboard focus draws a
+2 px inset `accent` ring at the control's radius; a control with an opaque
+fill (raised and solid buttons, the space image) wears the field ring instead,
+1 px of `accent` with 4 px of `accent` at 0.24 outside. The ring is inset by
+default because GPUI paints an outer shadow under the whole element, which
+floods a transparent control. Pointer focus draws nothing. Enter and Space
+press the focused control.
 
 Focus is shown by the pane border and the title bar, not by dimming: every
 pane keeps full contrast by default, and `unfocused_pane_opacity` below 1.0

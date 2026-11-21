@@ -6,6 +6,8 @@ use paneflow_agent_config::usage::model::{LimitWindow, PlanLimits};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::usage::probe::AccountIdentity;
+
 pub const PLANS_WRITE_INTERVAL: Duration = Duration::from_secs(10);
 pub const MAX_PLANS_BYTES: u64 = 256 * 1024;
 pub const MAX_PLAN_ACCOUNTS: usize = 64;
@@ -56,10 +58,24 @@ pub struct AccountPlan {
     pub received_at_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<String>,
     pub updated_at_ms: u64,
 }
 
 impl AccountPlan {
+    fn observe(&mut self, agent_version: Option<String>, identity: Option<AccountIdentity>) {
+        if agent_version.is_some() {
+            self.agent_version = agent_version;
+        }
+        if let Some(identity) = identity {
+            self.email = identity.email;
+            self.plan = identity.plan;
+        }
+    }
+
     fn usage_agent(&self) -> Option<UsageAgent> {
         UsageAgent::for_runtime_slug(&self.agent)
     }
@@ -82,9 +98,15 @@ pub enum PlanUpdate {
         limits: PlanLimits,
         observed_at_ms: u64,
         agent_version: Option<String>,
+        identity: Option<AccountIdentity>,
     },
     NoLimitsReported {
         agent_version: Option<String>,
+        identity: Option<AccountIdentity>,
+    },
+    Identity {
+        agent_version: Option<String>,
+        identity: AccountIdentity,
     },
     NoCodexData,
 }
@@ -169,6 +191,8 @@ impl PlanStore {
                     secondary: None,
                     received_at_ms: None,
                     agent_version: None,
+                    email: None,
+                    plan: None,
                     updated_at_ms: now_ms,
                 });
                 self.accounts.len() - 1
@@ -181,6 +205,7 @@ impl PlanStore {
                 limits,
                 observed_at_ms,
                 agent_version,
+                identity,
             } => {
                 if account
                     .received_at_ms
@@ -192,16 +217,19 @@ impl PlanStore {
                 account.secondary = merge(account.secondary, limits.secondary);
                 account.received_at_ms = Some(observed_at_ms);
                 account.state = PlanState::Reported;
-                if agent_version.is_some() {
-                    account.agent_version = agent_version;
-                }
+                account.observe(agent_version, identity);
             }
-            PlanUpdate::NoLimitsReported { agent_version } => {
+            PlanUpdate::NoLimitsReported {
+                agent_version,
+                identity,
+            } => {
                 account.state = PlanState::NoLimitsReported;
-                if agent_version.is_some() {
-                    account.agent_version = agent_version;
-                }
+                account.observe(agent_version, identity);
             }
+            PlanUpdate::Identity {
+                agent_version,
+                identity,
+            } => account.observe(agent_version, Some(identity)),
             PlanUpdate::NoCodexData => account.state = PlanState::NoCodexData,
         }
         if self.accounts[index] != before {
@@ -304,6 +332,7 @@ mod tests {
             limits: plausible_claude_rate_limits(rate_limits, NOW),
             observed_at_ms,
             agent_version: None,
+            identity: None,
         }
     }
 
@@ -384,6 +413,10 @@ mod tests {
             limits: plausible_claude_rate_limits(&limits(10.0, 40.0, reset), NOW),
             observed_at_ms: 2_000,
             agent_version: Some("2.1.316".into()),
+            identity: Some(AccountIdentity {
+                email: Some("dev@example.com".into()),
+                plan: Some("Claude Max".into()),
+            }),
         };
         assert!(store.update(UsageAgent::ClaudeCode, &dir, probed, 2_000));
         assert!(
@@ -408,6 +441,8 @@ mod tests {
         );
         assert_eq!(account.received_at_ms, Some(3_000));
         assert_eq!(account.agent_version.as_deref(), Some("2.1.316"));
+        assert_eq!(account.email.as_deref(), Some("dev@example.com"));
+        assert_eq!(account.plan.as_deref(), Some("Claude Max"));
     }
 
     #[test]
@@ -425,7 +460,8 @@ mod tests {
             UsageAgent::ClaudeCode,
             &dir,
             PlanUpdate::NoLimitsReported {
-                agent_version: None
+                agent_version: None,
+                identity: None,
             },
             9
         ));

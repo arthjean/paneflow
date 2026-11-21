@@ -4,11 +4,13 @@ use std::process::Command;
 use std::sync::{Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use paneflow_agent_config::usage::accounts::{UsageAgent, account_dir_key, canonical_account_dir};
+use paneflow_agent_config::usage::accounts::{
+    UsageAgent, account_dir_key, canonical_account_dir, grok_account_identity,
+};
 use paneflow_agent_config::usage::model::{
     PlanLimits, plausible_claude_rate_limits, plausible_codex_rate_limits,
 };
-use paneflow_process::{LineSession, ProcError, spawn_line_session};
+use paneflow_process::{LineSession, ProcError, run_with_timeout, spawn_line_session};
 use serde_json::{Value, json};
 
 pub const PROBE_FLOOR: Duration = Duration::from_secs(30);
@@ -23,6 +25,11 @@ const CLAUDE_INIT_ID: &str = "paneflow-initialize";
 const CLAUDE_USAGE_ID: &str = "paneflow-get-usage";
 const CODEX_INIT_ID: u64 = 1;
 const CODEX_RATE_LIMITS_ID: u64 = 2;
+const CODEX_ACCOUNT_ID: u64 = 3;
+const MAX_IDENTITY_CHARS: usize = 120;
+const GROK_STATUS_ARGS: &[&str] = &["models"];
+const GROK_STATUS_CAP: u64 = 256 * 1024;
+const GROK_UNNAMED_PLAN: &str = "Grok account";
 const CLAUDE_PROBE_ARGS: &[&str] = &[
     "-p",
     "--input-format",
@@ -42,15 +49,48 @@ const CLAUDE_PROBE_ENV: &[(&str, &str)] = &[
 ];
 const CLAUDE_PROBE_ENV_REMOVED: &[&str] = &["FORCE_CODE_TERMINAL"];
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AccountIdentity {
+    pub email: Option<String>,
+    pub plan: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum ProbeOutcome {
     Limits {
         limits: PlanLimits,
         agent_version: Option<String>,
+        identity: Option<AccountIdentity>,
     },
     NoLimitsReported {
         agent_version: Option<String>,
+        identity: Option<AccountIdentity>,
     },
+    IdentityOnly {
+        agent_version: Option<String>,
+        identity: AccountIdentity,
+    },
+}
+
+impl ProbeOutcome {
+    fn with_identity(self, known: Option<AccountIdentity>) -> Self {
+        match self {
+            Self::Limits {
+                limits,
+                agent_version,
+                ..
+            } => Self::Limits {
+                limits,
+                agent_version,
+                identity: known,
+            },
+            Self::NoLimitsReported { agent_version, .. } => Self::NoLimitsReported {
+                agent_version,
+                identity: known,
+            },
+            Self::IdentityOnly { .. } => self,
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -101,13 +141,7 @@ pub const fn binary_name(agent: UsageAgent) -> &'static str {
     match agent {
         UsageAgent::ClaudeCode => "claude",
         UsageAgent::Codex => "codex",
-    }
-}
-
-const fn default_dir_name(agent: UsageAgent) -> &'static str {
-    match agent {
-        UsageAgent::ClaudeCode => ".claude",
-        UsageAgent::Codex => ".codex",
+        UsageAgent::Grok => "grok",
     }
 }
 
@@ -193,6 +227,9 @@ pub fn probe(
     if !config_dir.is_dir() {
         return Err(ProbeError::NoConfigDir(config_dir.to_path_buf()));
     }
+    if agent == UsageAgent::Grok {
+        return grok_probe(program, config_dir, user_home, deadline);
+    }
     let command = probe_command(agent, program, config_dir, user_home);
     let mut session = spawn_line_session(command, PROBE_LINE_CAP).map_err(ProbeError::Spawn)?;
     let started = Instant::now();
@@ -204,6 +241,7 @@ pub fn probe(
     let answered = match agent {
         UsageAgent::ClaudeCode => claude_exchange(&mut exchange, now_secs),
         UsageAgent::Codex => codex_exchange(&mut exchange, now_secs),
+        UsageAgent::Grok => Err(ProbeError::UnknownSchema),
     };
     if !session.close(PROBE_EXIT_GRACE) {
         log::debug!(
@@ -220,25 +258,7 @@ fn probe_command(
     config_dir: &Path,
     user_home: Option<&Path>,
 ) -> Command {
-    let mut command = Command::new(&program.program);
-    command
-        .args(&program.leading_args)
-        .current_dir(&program.work_dir);
-    for (key, _) in std::env::vars_os() {
-        if key.to_string_lossy().starts_with(PANEFLOW_ENV_PREFIX) {
-            command.env_remove(key);
-        }
-    }
-    let key = agent.config_dir_key();
-    let is_default = user_home.is_some_and(|home| {
-        account_dir_key(&canonical_account_dir(&home.join(default_dir_name(agent))))
-            == account_dir_key(config_dir)
-    });
-    if is_default {
-        command.env_remove(key);
-    } else {
-        command.env(key, config_dir);
-    }
+    let mut command = agent_command(agent, program, config_dir, user_home);
     match agent {
         UsageAgent::ClaudeCode => {
             command.args(CLAUDE_PROBE_ARGS);
@@ -250,6 +270,93 @@ fn probe_command(
         UsageAgent::Codex => {
             command.arg("app-server");
         }
+        UsageAgent::Grok => {
+            command.args(GROK_STATUS_ARGS);
+        }
+    }
+    command
+}
+
+pub fn grok_signed_in(
+    program: &ProbeProgram,
+    config_dir: &Path,
+    user_home: Option<&Path>,
+    deadline: Duration,
+) -> Result<Option<bool>, ProbeError> {
+    let command = probe_command(UsageAgent::Grok, program, config_dir, user_home);
+    let output =
+        run_with_timeout(command, deadline, GROK_STATUS_CAP).map_err(|error| match error {
+            ProcError::Timeout => ProbeError::Timeout(deadline),
+            other => ProbeError::Spawn(other),
+        })?;
+    let mut said = String::from_utf8_lossy(&output.stdout).into_owned();
+    said.push('\n');
+    said.push_str(&String::from_utf8_lossy(&output.stderr));
+    Ok(grok_status_of(&said))
+}
+
+pub fn grok_status_of(said: &str) -> Option<bool> {
+    let said = said.to_lowercase();
+    if said.contains("not authenticated") || said.contains("not logged in") {
+        Some(false)
+    } else if said.contains("logged in") {
+        Some(true)
+    } else {
+        None
+    }
+}
+
+fn grok_probe(
+    program: &ProbeProgram,
+    config_dir: &Path,
+    user_home: Option<&Path>,
+    deadline: Duration,
+) -> Result<ProbeOutcome, ProbeError> {
+    let identity = match grok_signed_in(program, config_dir, user_home, deadline)? {
+        Some(true) => {
+            let named = grok_account_identity(config_dir);
+            AccountIdentity {
+                email: named.email.as_deref().and_then(email_text),
+                plan: named
+                    .plan
+                    .as_deref()
+                    .and_then(display_text)
+                    .or_else(|| Some(GROK_UNNAMED_PLAN.to_string())),
+            }
+        }
+        Some(false) => AccountIdentity::default(),
+        None => return Err(ProbeError::UnknownSchema),
+    };
+    Ok(ProbeOutcome::IdentityOnly {
+        agent_version: None,
+        identity,
+    })
+}
+
+pub fn agent_command(
+    agent: UsageAgent,
+    program: &ProbeProgram,
+    config_dir: &Path,
+    user_home: Option<&Path>,
+) -> Command {
+    let mut command = Command::new(&program.program);
+    command
+        .args(&program.leading_args)
+        .current_dir(&program.work_dir);
+    for (key, _) in std::env::vars_os() {
+        if key.to_string_lossy().starts_with(PANEFLOW_ENV_PREFIX) {
+            command.env_remove(key);
+        }
+    }
+    let key = agent.config_dir_key();
+    let is_default = user_home.is_some_and(|home| {
+        account_dir_key(&canonical_account_dir(&home.join(agent.default_dir_name())))
+            == account_dir_key(config_dir)
+    });
+    if is_default {
+        command.env_remove(key);
+    } else {
+        command.env(key, config_dir);
     }
     command
 }
@@ -325,17 +432,130 @@ fn claude_exchange(exchange: &mut Exchange<'_>, now_secs: u64) -> Result<ProbeOu
         "request": {"subtype": "initialize", "hooks": null},
     }))?;
     let initialized = exchange.await_message(claude_control_response(CLAUDE_INIT_ID))?;
-    let agent_version = claude_answer(&initialized)?
+    let answer = claude_answer(&initialized)?;
+    let agent_version = answer
         .get("claude_code_version")
         .and_then(Value::as_str)
         .and_then(version_text);
+    let identity = claude_identity(answer);
     exchange.send(&json!({
         "type": "control_request",
         "request_id": CLAUDE_USAGE_ID,
         "request": {"subtype": "get_usage", "skip_behaviors": true},
     }))?;
     let usage = exchange.await_message(claude_control_response(CLAUDE_USAGE_ID))?;
-    claude_usage_outcome(claude_answer(&usage)?, agent_version, now_secs)
+    let outcome = claude_answer(&usage)
+        .and_then(|usage| claude_usage_outcome(usage, agent_version.clone(), now_secs));
+    identified(outcome, agent_version, Some(identity))
+}
+
+fn identified(
+    outcome: Result<ProbeOutcome, ProbeError>,
+    agent_version: Option<String>,
+    identity: Option<AccountIdentity>,
+) -> Result<ProbeOutcome, ProbeError> {
+    match (outcome, identity) {
+        (Ok(outcome), identity) => Ok(outcome.with_identity(identity)),
+        (Err(ProbeError::Answered(_)), Some(identity)) if identity.email.is_some() => {
+            Ok(ProbeOutcome::IdentityOnly {
+                agent_version,
+                identity,
+            })
+        }
+        (Err(error), _) => Err(error),
+    }
+}
+
+pub fn claude_identity(initialized: &Value) -> AccountIdentity {
+    let account = initialized
+        .get("account")
+        .filter(|account| account.is_object());
+    let field = |name: &str| {
+        account
+            .and_then(|account| account.get(name))
+            .and_then(Value::as_str)
+    };
+    AccountIdentity {
+        email: field("email").and_then(email_text),
+        plan: field("subscriptionType").and_then(claude_plan_label),
+    }
+}
+
+pub fn codex_identity(result: &Value) -> AccountIdentity {
+    let Some(account) = result.get("account").filter(|account| account.is_object()) else {
+        return AccountIdentity::default();
+    };
+    let plan = match account.get("type").and_then(Value::as_str) {
+        Some("chatgpt") => account
+            .get("planType")
+            .and_then(Value::as_str)
+            .and_then(codex_plan_label),
+        Some("apiKey") => Some("OpenAI API key".to_string()),
+        Some("amazonBedrock") => Some("Amazon Bedrock".to_string()),
+        _ => None,
+    };
+    AccountIdentity {
+        email: account
+            .get("email")
+            .and_then(Value::as_str)
+            .and_then(email_text),
+        plan,
+    }
+}
+
+fn display_text(text: &str) -> Option<String> {
+    let text = text.trim();
+    (!text.is_empty()
+        && text.chars().count() <= MAX_IDENTITY_CHARS
+        && !text.chars().any(char::is_control))
+    .then(|| text.to_string())
+}
+
+fn email_text(text: &str) -> Option<String> {
+    display_text(text).filter(|email| {
+        email
+            .split_once('@')
+            .is_some_and(|(user, domain)| !user.is_empty() && !domain.is_empty())
+            && !email.chars().any(char::is_whitespace)
+    })
+}
+
+fn capitalized(word: &str) -> String {
+    let mut chars = word.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
+}
+
+fn plan_words(raw: &str) -> String {
+    raw.split(['_', '-', ' '])
+        .filter(|word| !word.is_empty())
+        .map(capitalized)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+pub fn claude_plan_label(raw: &str) -> Option<String> {
+    let raw = display_text(raw)?;
+    if raw.chars().any(char::is_uppercase) {
+        return Some(raw);
+    }
+    let words = plan_words(&raw);
+    Some(if words.starts_with("Claude") {
+        words
+    } else {
+        format!("Claude {words}")
+    })
+}
+
+pub fn codex_plan_label(raw: &str) -> Option<String> {
+    let raw = display_text(raw)?.to_lowercase();
+    let name = match raw.as_str() {
+        "prolite" => "Pro Lite".to_string(),
+        "edu" => "Edu".to_string(),
+        other => plan_words(other),
+    };
+    Some(format!("ChatGPT {name}"))
 }
 
 pub fn claude_usage_outcome(
@@ -344,7 +564,10 @@ pub fn claude_usage_outcome(
     now_secs: u64,
 ) -> Result<ProbeOutcome, ProbeError> {
     match usage.get("rate_limits_available").and_then(Value::as_bool) {
-        Some(false) => Ok(ProbeOutcome::NoLimitsReported { agent_version }),
+        Some(false) => Ok(ProbeOutcome::NoLimitsReported {
+            agent_version,
+            identity: None,
+        }),
         Some(true) => {
             let rate_limits = usage
                 .get("rate_limits")
@@ -357,6 +580,7 @@ pub fn claude_usage_outcome(
             Ok(ProbeOutcome::Limits {
                 limits: plausible_claude_rate_limits(&status_line_shape, now_secs),
                 agent_version,
+                identity: None,
             })
         }
         None => Err(ProbeError::UnknownSchema),
@@ -422,12 +646,22 @@ fn codex_exchange(exchange: &mut Exchange<'_>, now_secs: u64) -> Result<ProbeOut
     exchange.send(&json!({"jsonrpc": "2.0", "method": "initialized"}))?;
     exchange.send(&json!({
         "jsonrpc": "2.0",
+        "id": CODEX_ACCOUNT_ID,
+        "method": "account/read",
+        "params": {},
+    }))?;
+    let account = exchange.await_message(codex_reply(CODEX_ACCOUNT_ID))?;
+    let identity = codex_result(&account).ok().map(codex_identity);
+    exchange.send(&json!({
+        "jsonrpc": "2.0",
         "id": CODEX_RATE_LIMITS_ID,
         "method": "account/rateLimits/read",
         "params": null,
     }))?;
     let read = exchange.await_message(codex_reply(CODEX_RATE_LIMITS_ID))?;
-    codex_rate_limits_outcome(codex_result(&read)?, agent_version, now_secs)
+    let outcome = codex_result(&read)
+        .and_then(|read| codex_rate_limits_outcome(read, agent_version.clone(), now_secs));
+    identified(outcome, agent_version, identity)
 }
 
 pub fn codex_rate_limits_outcome(
@@ -446,6 +680,7 @@ pub fn codex_rate_limits_outcome(
     Ok(ProbeOutcome::Limits {
         limits: plausible_codex_rate_limits(&rollout_shape, now_secs),
         agent_version,
+        identity: None,
     })
 }
 
@@ -631,11 +866,13 @@ mod tests {
         let ProbeOutcome::Limits {
             limits,
             agent_version,
+            identity,
         } = outcome
         else {
             panic!("limits expected: {outcome:?}");
         };
         assert_eq!(agent_version.as_deref(), Some("2.1.316"));
+        assert_eq!(identity, Some(AccountIdentity::default()));
         assert_eq!(limits.primary, None, "a null five_hour window is absent");
         let week = limits.secondary.unwrap();
         assert_eq!(week.used_percent, 67.0);
@@ -683,7 +920,8 @@ mod tests {
         assert_eq!(
             outcome,
             ProbeOutcome::NoLimitsReported {
-                agent_version: Some("2.1.316".into())
+                agent_version: Some("2.1.316".into()),
+                identity: Some(AccountIdentity::default()),
             }
         );
     }
@@ -790,6 +1028,10 @@ mod tests {
         let fake = fake(&[
             ("\"initialize\"", fixture("codex-0.166.0-initialize.jsonl")),
             (
+                "\"account/read\"",
+                fixture("codex-0.165.0-account_read.jsonl"),
+            ),
+            (
                 "account/rateLimits/read",
                 fixture("codex-0.166.0-rate_limits.jsonl"),
             ),
@@ -806,11 +1048,19 @@ mod tests {
         let ProbeOutcome::Limits {
             limits,
             agent_version,
+            identity,
         } = outcome
         else {
             panic!("limits expected: {outcome:?}");
         };
         assert_eq!(agent_version.as_deref(), Some("0.166.0"));
+        assert_eq!(
+            identity,
+            Some(AccountIdentity {
+                email: Some("probe@example.com".into()),
+                plan: Some("ChatGPT Plus".into()),
+            })
+        );
         let month = limits.primary.unwrap();
         assert_eq!(month.used_percent, 3.0);
         assert_eq!(month.window_secs, 43_200 * 60);
@@ -821,6 +1071,78 @@ mod tests {
             !env.lines().any(|line| line.starts_with("CODEX_HOME=")),
             "the default CODEX_HOME is left unset: {env}"
         );
+    }
+
+    #[test]
+    fn a_signed_in_account_keeps_its_identity_when_its_limits_cannot_be_read() {
+        let config = config_dir();
+        let scratch = tempfile::tempdir().unwrap();
+        let error = reply(
+            scratch.path(),
+            "error.jsonl",
+            &[
+                json!({"id": 2, "error": {"code": -32600, "message": "rate limits need a ChatGPT login"}}),
+            ],
+        );
+        let fake = fake(&[
+            ("\"initialize\"", fixture("codex-0.166.0-initialize.jsonl")),
+            (
+                "\"account/read\"",
+                fixture("codex-0.165.0-account_read.jsonl"),
+            ),
+            ("account/rateLimits/read", error),
+        ]);
+        let outcome = probe(
+            UsageAgent::Codex,
+            &fake.program,
+            config.path(),
+            None,
+            Duration::from_secs(20),
+            CODEX_RECORDED_AT,
+        )
+        .unwrap();
+        assert_eq!(
+            outcome,
+            ProbeOutcome::IdentityOnly {
+                agent_version: Some("0.166.0".into()),
+                identity: AccountIdentity {
+                    email: Some("probe@example.com".into()),
+                    plan: Some("ChatGPT Plus".into()),
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn the_identity_comes_from_the_agent_answers_and_rejects_unusable_text() {
+        let claude = claude_identity(
+            &json!({"account": {"email": "dev@example.com", "subscriptionType": "max"}}),
+        );
+        assert_eq!(claude.email.as_deref(), Some("dev@example.com"));
+        assert_eq!(claude.plan.as_deref(), Some("Claude Max"));
+        assert_eq!(
+            claude_plan_label("Claude Ultra").as_deref(),
+            Some("Claude Ultra")
+        );
+        assert_eq!(claude_identity(&json!({})), AccountIdentity::default());
+        assert_eq!(
+            codex_plan_label("prolite").as_deref(),
+            Some("ChatGPT Pro Lite")
+        );
+        assert_eq!(codex_plan_label("team").as_deref(), Some("ChatGPT Team"));
+        assert_eq!(
+            codex_identity(&json!({"account": {"type": "apiKey"}})),
+            AccountIdentity {
+                email: None,
+                plan: Some("OpenAI API key".into()),
+            }
+        );
+        assert_eq!(
+            codex_identity(&json!({"account": null})),
+            AccountIdentity::default()
+        );
+        assert_eq!(email_text("not an email"), None);
+        assert_eq!(email_text("a@b\u{7}c"), None);
     }
 
     #[test]
@@ -840,9 +1162,15 @@ mod tests {
             "unknown.jsonl",
             &[json!({"id": 2, "result": {"limits": {}}})],
         );
+        let signed_out = reply(
+            scratch.path(),
+            "signed_out.jsonl",
+            &[json!({"id": 3, "result": {"account": null, "requiresOpenaiAuth": true}})],
+        );
         let run = |answer: &PathBuf| {
             let fake = fake(&[
                 ("\"initialize\"", init.clone()),
+                ("\"account/read\"", signed_out.clone()),
                 ("account/rateLimits/read", answer.clone()),
             ]);
             probe(
@@ -882,7 +1210,8 @@ mod tests {
             claude_usage_outcome(&usage, None, CLAUDE_RECORDED_AT).unwrap(),
             ProbeOutcome::Limits {
                 limits: PlanLimits::default(),
-                agent_version: None
+                agent_version: None,
+                identity: None,
             }
         );
         let session = json!({"rate_limits_available": true, "rate_limits": {
@@ -973,7 +1302,7 @@ mod tests {
                 continue;
             }
             let paneflow_home = tempfile::tempdir().unwrap();
-            let dir = canonical_account_dir(&home.join(default_dir_name(agent)));
+            let dir = canonical_account_dir(&home.join(agent.default_dir_name()));
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -994,7 +1323,11 @@ mod tests {
                         agent_version: Some(_),
                         ..
                     } | ProbeOutcome::NoLimitsReported {
-                        agent_version: Some(_)
+                        agent_version: Some(_),
+                        ..
+                    } | ProbeOutcome::IdentityOnly {
+                        agent_version: Some(_),
+                        ..
                     }
                 ),
                 "{outcome:?}"

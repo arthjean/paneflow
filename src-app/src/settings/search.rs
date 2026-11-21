@@ -227,11 +227,11 @@ const APPEARANCE_HEADERS: &[&str] = &["Theme", "Preferences", "System", "Light",
 const TERMINAL_HEADERS: &[&str] = &["Cursor", "Display"];
 const AGENTS_HEADERS: &[&str] = &[
     "Agents",
-    "Profiles",
+    "Launch presets",
     "Updates",
     "Hooks",
-    "Not installed",
-    "Other profiles",
+    "More agents",
+    "Other launch presets",
     "Permissions",
 ];
 const MCP_HEADERS: &[&str] = &["MCP bridge"];
@@ -456,6 +456,10 @@ impl SearchCard {
         self
     }
 
+    pub(crate) fn into_rows(self) -> (bool, Vec<(f32, AnyElement)>) {
+        (self.any_match, self.rows)
+    }
+
     fn finish(self) -> Div {
         let mut card = setting_card(self.ui).py(px(crate::settings::components::CARD_PADDING_Y));
         let mut previous: Option<f32> = None;
@@ -521,6 +525,11 @@ impl Block {
         self.inner = self
             .inner
             .child(collapse(key, amount, element.into_any_element()));
+        self
+    }
+
+    pub(crate) fn found(mut self, matched: bool) -> Self {
+        self.matched |= matched;
         self
     }
 

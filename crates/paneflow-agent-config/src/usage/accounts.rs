@@ -5,6 +5,9 @@ use std::path::{Component, Path, PathBuf};
 use serde_json::Value;
 
 use crate::io::absolute_env_dir;
+pub use crate::usage::grok_identity::{
+    grok_account_identity, grok_identity_of, grok_plan_label, GrokIdentity, GROK_IDENTITY_FILE,
+};
 use crate::usage::status_line::{status_line_state, StatusLineState};
 
 pub const CLAUDE_BILLING_KEYS: &[&str] = &[
@@ -13,21 +16,29 @@ pub const CLAUDE_BILLING_KEYS: &[&str] = &[
     "CLAUDE_CODE_OAUTH_TOKEN",
 ];
 pub const CODEX_BILLING_KEYS: &[&str] = &["OPENAI_API_KEY"];
+pub const GROK_BILLING_KEYS: &[&str] = &["XAI_API_KEY"];
 pub const ACCOUNT_LABEL_FILE_CAP: u64 = 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum UsageAgent {
     ClaudeCode,
     Codex,
+    Grok,
 }
 
 impl UsageAgent {
-    pub const ALL: [Self; 2] = [Self::ClaudeCode, Self::Codex];
+    pub const ALL: [Self; 3] = [Self::ClaudeCode, Self::Codex, Self::Grok];
+    pub const METERED: [Self; 2] = [Self::ClaudeCode, Self::Codex];
+
+    pub const fn reports_usage(self) -> bool {
+        matches!(self, Self::ClaudeCode | Self::Codex)
+    }
 
     pub const fn display_name(self) -> &'static str {
         match self {
             Self::ClaudeCode => "Claude Code",
             Self::Codex => "Codex",
+            Self::Grok => "Grok",
         }
     }
 
@@ -35,6 +46,7 @@ impl UsageAgent {
         match self {
             Self::ClaudeCode => "CLAUDE_CONFIG_DIR",
             Self::Codex => "CODEX_HOME",
+            Self::Grok => "GROK_HOME",
         }
     }
 
@@ -42,6 +54,7 @@ impl UsageAgent {
         match self {
             Self::ClaudeCode => CLAUDE_BILLING_KEYS,
             Self::Codex => CODEX_BILLING_KEYS,
+            Self::Grok => GROK_BILLING_KEYS,
         }
     }
 
@@ -49,6 +62,15 @@ impl UsageAgent {
         match self {
             Self::ClaudeCode => "claude-code",
             Self::Codex => "codex",
+            Self::Grok => "grok",
+        }
+    }
+
+    pub const fn default_dir_name(self) -> &'static str {
+        match self {
+            Self::ClaudeCode => ".claude",
+            Self::Codex => ".codex",
+            Self::Grok => ".grok",
         }
     }
 
@@ -62,6 +84,7 @@ impl UsageAgent {
         match agent {
             "claude_code" | "claude" => Some(Self::ClaudeCode),
             "codex" => Some(Self::Codex),
+            "grok" => Some(Self::Grok),
             _ => None,
         }
     }
@@ -181,7 +204,11 @@ pub fn inventory(origins: &[AccountOrigin], home: Option<&Path>) -> Vec<UsageAcc
     accounts
         .into_iter()
         .map(|(_, account_file, mut account)| {
-            if let Some(email) = account_file.as_deref().and_then(claude_account_email) {
+            let email = match account.agent {
+                UsageAgent::Grok => grok_account_identity(&account.config_dir).email,
+                _ => account_file.as_deref().and_then(claude_account_email),
+            };
+            if let Some(email) = email {
                 account.label = email;
             }
             account
@@ -203,7 +230,9 @@ fn resolve(origin: &AccountOrigin, agent: UsageAgent, home: Option<&Path>) -> Op
         }
         (None, OriginKind::Default) => match agent {
             UsageAgent::ClaudeCode => (home?.join(".claude"), home?.join(".claude.json")),
-            UsageAgent::Codex => (home?.join(".codex"), PathBuf::new()),
+            UsageAgent::Codex | UsageAgent::Grok => {
+                (home?.join(agent.default_dir_name()), PathBuf::new())
+            }
         },
         (None, _) => return None,
     };
@@ -355,7 +384,7 @@ mod tests {
     }
 
     #[test]
-    fn the_default_origin_yields_one_claude_and_one_codex_account() {
+    fn the_default_origin_yields_one_account_per_agent() {
         let home = tempfile::tempdir().unwrap();
         let home = canonical_dir(home.path());
         let accounts = inventory(&[default_origin(&[])], Some(&home));
@@ -370,6 +399,11 @@ mod tests {
                 (
                     UsageAgent::Codex,
                     home.join(".codex"),
+                    vec!["Default".to_string()]
+                ),
+                (
+                    UsageAgent::Grok,
+                    home.join(".grok"),
                     vec!["Default".to_string()]
                 ),
             ]
@@ -580,7 +614,10 @@ mod tests {
             .iter()
             .map(|account| account.label.as_str())
             .collect();
-        assert_eq!(labels, vec!["me@perso.dev", "me@company.com", "Default"]);
+        assert_eq!(
+            labels,
+            vec!["me@perso.dev", "me@company.com", "Default", "Default"]
+        );
     }
 
     #[test]
@@ -762,5 +799,59 @@ mod tests {
             std::fs::write(&settings, text).unwrap();
             assert_eq!(claude_status_line_state(dir.path()), state, "{text}");
         }
+    }
+
+    #[test]
+    fn a_grok_account_is_named_by_its_first_party_login_and_never_by_its_token() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            grok_account_identity(dir.path()),
+            GrokIdentity::default(),
+            "a folder nobody signed in to has no identity"
+        );
+        std::fs::write(
+            dir.path().join(GROK_IDENTITY_FILE),
+            r#"{
+  "https://sso.example.com::cli": {"key": "t1", "email": "old@example.com"},
+  "https://auth.x.ai::grok-cli": {
+    "key": "t2",
+    "refresh_token": "t3",
+    "email": " me@example.com ",
+    "subscription_tier": "SUBSCRIPTION_TIER_SUPER_GROK_HEAVY"
+  }
+}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            grok_account_identity(dir.path()),
+            GrokIdentity {
+                email: Some("me@example.com".to_string()),
+                plan: Some("SuperGrok Heavy".to_string()),
+            }
+        );
+        let home = dir.path().parent().unwrap();
+        let accounts = inventory(
+            &[origin(
+                OriginKind::Profile,
+                "Grok 2",
+                Some(UsageAgent::Grok),
+                &[("GROK_HOME", dir.path().to_str().unwrap())],
+            )],
+            Some(home),
+        );
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].agent, UsageAgent::Grok);
+        assert_eq!(accounts[0].label, "me@example.com");
+    }
+
+    #[test]
+    fn a_free_or_unnamed_grok_tier_shows_no_plan() {
+        for tier in ["", "SUBSCRIPTION_TIER_FREE", "TIER_UNSPECIFIED", "none"] {
+            assert_eq!(grok_plan_label(tier), None, "{tier}");
+        }
+        assert_eq!(
+            grok_plan_label("TIER_SUPER_GROK").as_deref(),
+            Some("SuperGrok")
+        );
     }
 }

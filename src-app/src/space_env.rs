@@ -5,13 +5,17 @@ use paneflow_config::schema::{PaneFlowConfig, SpaceId};
 
 pub(crate) const CONFIG_DIR_KEYS: &[&str] = &["CLAUDE_CONFIG_DIR", "CODEX_HOME", "GH_CONFIG_DIR"];
 
-pub(crate) const SHADOWING_CREDENTIAL_KEYS: &[&str] = &[
-    "ANTHROPIC_API_KEY",
-    "ANTHROPIC_AUTH_TOKEN",
-    "CLAUDE_CODE_OAUTH_TOKEN",
-    "OPENAI_API_KEY",
-    "GH_TOKEN",
-    "GITHUB_TOKEN",
+pub(crate) const SHADOWING_CREDENTIALS: &[(&str, &str, &str)] = &[
+    ("ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR", "Claude Code"),
+    ("ANTHROPIC_AUTH_TOKEN", "CLAUDE_CONFIG_DIR", "Claude Code"),
+    (
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "CLAUDE_CONFIG_DIR",
+        "Claude Code",
+    ),
+    ("OPENAI_API_KEY", "CODEX_HOME", "Codex"),
+    ("GH_TOKEN", "GH_CONFIG_DIR", "GitHub CLI"),
+    ("GITHUB_TOKEN", "GH_CONFIG_DIR", "GitHub CLI"),
 ];
 
 pub(crate) const SUBPROCESS_ENV_ALLOWLIST: &[&str] = &[
@@ -81,12 +85,14 @@ pub(crate) fn stores_secret(key: &str) -> bool {
 pub(crate) fn shadowing_credentials(
     env: &BTreeMap<String, String>,
     inherited: impl Fn(&str) -> bool,
-) -> Vec<&'static str> {
-    SHADOWING_CREDENTIAL_KEYS
+) -> Vec<(&'static str, &'static str)> {
+    let defines = |wanted: &str| env.keys().any(|defined| platform_key(defined) == wanted);
+    SHADOWING_CREDENTIALS
         .iter()
-        .copied()
-        .filter(|key| inherited(key))
-        .filter(|key| !env.keys().any(|defined| platform_key(defined) == *key))
+        .filter(|(credential, account, _)| {
+            defines(account) && inherited(credential) && !defines(credential)
+        })
+        .map(|(credential, _, tool)| (*credential, *tool))
         .collect()
 }
 
@@ -145,13 +151,60 @@ pub(crate) fn resolve_env(
         .collect()
 }
 
-pub(crate) fn space_env(
+fn declared_space_env(
     config: &PaneFlowConfig,
     space: Option<&SpaceId>,
 ) -> Option<HashMap<String, String>> {
     let declared = config.space(space?)?;
     let env = resolve_env(&declared.id, &declared.env, dirs::home_dir().as_deref());
     (!env.is_empty()).then_some(env)
+}
+
+pub(crate) fn default_account_env(
+    accounts: &BTreeMap<String, String>,
+    home: Option<&Path>,
+) -> Option<HashMap<String, String>> {
+    let env: HashMap<String, String> = accounts
+        .iter()
+        .filter_map(|(slug, dir)| {
+            let Some(agent) = paneflow_agent_config::usage::accounts::UsageAgent::for_runtime_slug(slug)
+            else {
+                warn_once(format!(
+                    "agents: ignoring the default account of {slug:?}: Paneflow tracks accounts only for claude-code, codex and grok"
+                ));
+                return None;
+            };
+            let key = agent.config_dir_key();
+            let expanded = expand_value(key, dir, home);
+            if let Some(reason) = env_value_error(key, &expanded) {
+                warn_once(format!(
+                    "agents: ignoring the default account {key}={expanded:?}: {reason}"
+                ));
+                return None;
+            }
+            Some((platform_key(key), expanded))
+        })
+        .collect();
+    (!env.is_empty()).then_some(env)
+}
+
+pub(crate) fn configured_default_account_env(
+    config: &PaneFlowConfig,
+) -> Option<HashMap<String, String>> {
+    default_account_env(
+        &config.agents.as_ref()?.default_accounts,
+        dirs::home_dir().as_deref(),
+    )
+}
+
+pub(crate) fn space_env(
+    config: &PaneFlowConfig,
+    space: Option<&SpaceId>,
+) -> Option<HashMap<String, String>> {
+    layered_env([
+        configured_default_account_env(config),
+        declared_space_env(config, space),
+    ])
 }
 
 pub(crate) fn workspace_env(
@@ -248,7 +301,7 @@ pub(crate) fn integration_target(
     config: &PaneFlowConfig,
     space: &SpaceId,
 ) -> Option<paneflow_mcp_install::IntegrationTarget> {
-    let env = space_env(config, Some(space))?;
+    let env = declared_space_env(config, Some(space))?;
     integration_target_in(
         &paneflow_home::paneflow_home()?,
         space,
@@ -444,12 +497,15 @@ mod tests {
     fn inherited_credentials_shadow_the_space_unless_it_redefines_them() {
         let env = BTreeMap::from([
             ("CLAUDE_CONFIG_DIR".to_string(), "/x".to_string()),
+            ("GH_CONFIG_DIR".to_string(), "/gh".to_string()),
             ("GITHUB_TOKEN".to_string(), String::new()),
         ]);
-        let inherited = |key: &str| matches!(key, "GITHUB_TOKEN" | "ANTHROPIC_API_KEY");
+        let inherited =
+            |key: &str| matches!(key, "GITHUB_TOKEN" | "ANTHROPIC_API_KEY" | "OPENAI_API_KEY");
         assert_eq!(
             shadowing_credentials(&env, inherited),
-            vec!["ANTHROPIC_API_KEY"]
+            vec![("ANTHROPIC_API_KEY", "Claude Code")],
+            "OPENAI_API_KEY is ignored: this space sets no Codex account"
         );
         assert!(shadowing_credentials(&env, |_| false).is_empty());
     }
@@ -475,6 +531,50 @@ mod tests {
         );
         assert!(!env.contains_key("CODEX_HOME"));
         assert!(!env.contains_key("PANEFLOW_SOCKET_PATH"));
+    }
+
+    #[test]
+    fn the_default_account_reaches_every_new_pane_unless_the_space_sets_its_own() {
+        let absolute =
+            |unix: &str, windows: &str| if cfg!(windows) { windows } else { unix }.to_string();
+        let home = absolute("/home/a", "C:\\Users\\a");
+        let accounts = BTreeMap::from([
+            ("claude-code".to_string(), "~/.claude-work".to_string()),
+            ("codex".to_string(), "relative/codex".to_string()),
+            ("grok".to_string(), "~/.grok-work".to_string()),
+            ("gemini".to_string(), "~/.gemini-work".to_string()),
+        ]);
+        let env = default_account_env(&accounts, Some(Path::new(&home))).unwrap();
+        let key = platform_key("CLAUDE_CONFIG_DIR");
+        assert_eq!(
+            env.len(),
+            2,
+            "a relative folder and an untracked agent are dropped"
+        );
+        assert_eq!(
+            env.get(&platform_key("GROK_HOME")).map(PathBuf::from),
+            Some(Path::new(&home).join(".grok-work"))
+        );
+        assert_eq!(
+            env.get(&key).map(PathBuf::from),
+            Some(Path::new(&home).join(".claude-work"))
+        );
+
+        let space_dir = absolute("/srv/space-claude", "C:\\srv\\space-claude");
+        let default_dir = absolute("/srv/default-claude", "C:\\srv\\default-claude");
+        let mut config = config_with(&[("CLAUDE_CONFIG_DIR", &space_dir)]);
+        config.agents = Some(paneflow_config::schema::AgentsConfig {
+            default_accounts: BTreeMap::from([("claude-code".to_string(), default_dir.clone())]),
+            ..Default::default()
+        });
+        assert_eq!(
+            space_env(&config, None).and_then(|env| env.get(&key).cloned()),
+            Some(default_dir)
+        );
+        assert_eq!(
+            space_env(&config, Some(&work())).and_then(|env| env.get(&key).cloned()),
+            Some(space_dir)
+        );
     }
 
     #[test]

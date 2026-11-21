@@ -56,6 +56,7 @@ pub fn import_files(accounts: &[(UsageAgent, PathBuf)]) -> Vec<ImportFile> {
             config_dir: dir.display().to_string(),
         };
         let (kind, roots, wanted): (TranscriptKind, &[&str], fn(&str) -> bool) = match agent {
+            UsageAgent::Grok => continue,
             UsageAgent::ClaudeCode => (TranscriptKind::Claude, &["projects"], is_claude_transcript),
             UsageAgent::Codex => (
                 TranscriptKind::Codex,

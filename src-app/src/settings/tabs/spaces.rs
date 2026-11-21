@@ -1,30 +1,29 @@
 use gpui::{
     AnyElement, ClickEvent, Context, CursorStyle, InteractiveElement, IntoElement, KeyDownEvent,
     MouseButton, ParentElement, PathPromptOptions, SharedString, StatefulInteractiveElement,
-    Styled, Window, div, prelude::*, px, rgb, svg,
+    Styled, Window, div, prelude::*, px, svg,
 };
 use paneflow_config::schema::{
     DEFAULT_SPACE_NAME, MAX_SPACES, SpaceColor, SpaceConfig, SpaceId, validate_space_name,
 };
-use paneflow_mcp_install::{IntegrationState, IntegrationStatus};
+use paneflow_mcp_install::IntegrationStatus;
 
 use std::collections::BTreeMap;
 
 use crate::PaneFlowApp;
-use crate::agent_launcher::TerminalAgent;
 use crate::app::spaces::SPACE_LIMIT_REASON;
 use crate::settings::components::{
     CARD_BUTTON_FILL_HOVER, CARD_BUTTON_FILL_REST, CARD_PADDING_X, CARD_PADDING_Y,
-    GHOST_HOVER_ALPHA, SETTINGS_ROW_PADDING_Y, card_button, destructive_color, ghost_icon_button,
-    ghost_tint_skin, hairline, hairline_inset, input_frame, inverse_fill, primary_button,
-    raised_button, raised_icon_button, render_logo, row_text, section_header,
-    section_header_with_action, select_menu_surface, setting_card, settings_breadcrumb,
-    soft_button, with_alpha,
+    GHOST_HOVER_ALPHA, KeyboardStopExt, SETTINGS_ROW_PADDING_Y, card_button, destructive_color,
+    ghost_icon_button, ghost_tint_skin, hairline, input_frame, inverse_fill, primary_button,
+    raised_button, raised_icon_button, row_text, section_header_with_action, select_menu_surface,
+    setting_card, settings_breadcrumb, soft_button, with_alpha,
 };
 use crate::settings::search::Block;
 use crate::settings::tabs::agents::{
     EnvRowInputs, collect_env, input_box, new_env_row, validate_env_values,
 };
+use crate::settings::tabs::space_accounts::{is_account_key, other_variable_count, same_key};
 use crate::ui_primitives::{
     AccessibleControlExt, BODY, BODY_EMPHASIS, LABEL_SM, ROW_RADIUS, TITLE, TooltipDelayExt,
     lerp_color, squircle_skin, text_tooltip,
@@ -53,7 +52,6 @@ const PICKER_TARGET: f32 = 24.;
 const PICKER_SWATCH: f32 = 16.;
 const ENV_NAME_WIDTH: f32 = 180.;
 const ENV_REMOVE_SIZE: f32 = 26.;
-const AGENT_LOGO: f32 = 18.;
 const WELCOME_MARK: f32 = 36.;
 const WELCOME_MARK_RING: f32 = 3.;
 const WELCOME_MARK_OVERLAP: f32 = 12.;
@@ -62,12 +60,16 @@ const PRESET_MARK: f32 = 14.;
 const PRESET_PADDING_X: f32 = 12.;
 const SECRET_MASK: &str = "••••••••";
 const SPACES_INTRO: &str =
-    "Group workspaces by context, each with its own terminal environment if you need one.";
+    "Group workspaces by context, each with its own agent accounts and terminal environment.";
 const WELCOME_TITLE: &str = "Keep your contexts apart";
 const WELCOME_BODY: &str = "A space groups workspaces, such as work or personal projects, and can \
-     give their terminals a separate agent account.";
+     sign their agents into a separate account.";
 const ENV_EMPTY_HINT: &str = "Every terminal of this space gets them, for example \
-     CLAUDE_CONFIG_DIR for a separate Claude account.";
+     AWS_PROFILE for a separate cloud profile.";
+const ENV_EDITOR_INTRO: &str = "Every terminal in this space gets these variables. ~ stands for \
+     your home folder, and $NAME reuses a variable from Paneflow's environment.";
+const ENV_NAME_EXAMPLE: &str = "AWS_PROFILE";
+const ENV_VALUE_EXAMPLE: &str = "work";
 const SPACE_PRESETS: [(&str, SpaceColor); 3] = [
     ("Work", SpaceColor::Blue),
     ("Personal", SpaceColor::Green),
@@ -149,29 +151,32 @@ pub(crate) fn env_row_hint(
     (expanded != value).then_some((expanded, HintTone::Preview))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SpaceWarning {
+    pub(crate) text: String,
+    pub(crate) turn_off: Option<&'static str>,
+}
+
 pub(crate) fn space_env_warnings(
     env: &BTreeMap<String, String>,
     inherited: impl Fn(&str) -> bool,
-) -> Vec<String> {
-    if env.is_empty() {
-        return Vec::new();
-    }
-    let mut warnings = Vec::new();
-    let shadowing = crate::space_env::shadowing_credentials(env, inherited);
-    match shadowing.as_slice() {
-        [] => {}
-        [key] => warnings.push(format!(
-            "{key} is set in Paneflow's environment and takes precedence over this space's accounts. Redefine it here to override it."
-        )),
-        keys => warnings.push(format!(
-            "{} are set in Paneflow's environment and take precedence over this space's accounts. Redefine them here to override them.",
-            keys.join(", ")
-        )),
-    }
+) -> Vec<SpaceWarning> {
+    let mut warnings: Vec<SpaceWarning> = crate::space_env::shadowing_credentials(env, inherited)
+        .into_iter()
+        .map(|(key, tool)| SpaceWarning {
+            text: format!(
+                "{key} is set in Paneflow's environment, so {tool} uses it instead of this space's account."
+            ),
+            turn_off: Some(key),
+        })
+        .collect();
     warnings.extend(
-        env.keys()
-            .filter(|key| crate::space_env::stores_secret(key))
-            .map(|key| format!("{key}: {}", crate::space_env::PLAIN_TEXT_WARNING)),
+        env.iter()
+            .filter(|(key, value)| !value.trim().is_empty() && crate::space_env::stores_secret(key))
+            .map(|(key, _)| SpaceWarning {
+                text: format!("{key}: {}", crate::space_env::PLAIN_TEXT_WARNING),
+                turn_off: None,
+            }),
     );
     warnings
 }
@@ -599,7 +604,12 @@ impl PaneFlowApp {
         .detach();
     }
 
-    fn retry_space_integration(&mut self, id: &SpaceId, slug: &str, cx: &mut Context<Self>) {
+    pub(crate) fn retry_space_integration(
+        &mut self,
+        id: &SpaceId,
+        slug: &str,
+        cx: &mut Context<Self>,
+    ) {
         if self.space_integrations.busy.is_some() {
             return;
         }
@@ -626,7 +636,7 @@ impl PaneFlowApp {
         .detach();
     }
 
-    fn open_space_env_editor(&mut self, id: &SpaceId, cx: &mut Context<Self>) {
+    fn open_space_env_editor(&mut self, id: &SpaceId, window: &mut Window, cx: &mut Context<Self>) {
         let env = self
             .cached_config
             .space(id)
@@ -634,17 +644,21 @@ impl PaneFlowApp {
             .unwrap_or_default();
         let mut rows: Vec<EnvRowInputs> = env
             .iter()
-            .map(|(key, value)| new_env_row(key, value, cx))
+            .filter(|(key, _)| !is_account_key(key))
+            .map(|(key, value)| space_env_row(key, value, cx))
             .collect();
         if rows.is_empty() {
-            rows.push(new_env_row("", "", cx));
+            rows.push(space_env_row("", "", cx));
         }
+        let first = rows[0].key.read(cx).focus_handle.clone();
         self.space_env_editor = Some(SpaceEnvEditor {
             id: id.clone(),
             rows,
             error: None,
         });
         self.space_delete_armed = None;
+        self.space_account_menu = None;
+        window.focus(&first, cx);
         cx.notify();
     }
 
@@ -658,7 +672,7 @@ impl PaneFlowApp {
             .iter()
             .map(|row| (row.key.read(cx).value(), row.value.read(cx).value()))
             .collect();
-        let env = match validated_space_env(&rows, dirs::home_dir().as_deref()) {
+        let typed = match validated_space_env(&rows, dirs::home_dir().as_deref()) {
             Ok(env) => env,
             Err(message) => {
                 if let Some(editor) = self.space_env_editor.as_mut() {
@@ -670,9 +684,12 @@ impl PaneFlowApp {
         };
         self.space_env_editor = None;
         let mut spaces = self.cached_config.spaces.clone();
-        if let Some(space) = spaces.iter_mut().find(|space| space.id == id)
-            && space.env != env
-        {
+        let Some(space) = spaces.iter_mut().find(|space| space.id == id) else {
+            cx.notify();
+            return;
+        };
+        let env = with_account_keys(&space.env, typed);
+        if space.env != env {
             space.env = env;
             self.persist_spaces(spaces, cx);
             self.mirror_integrations_into_space(&id, cx);
@@ -797,6 +814,7 @@ impl PaneFlowApp {
     pub(crate) fn close_space_detail(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.space_detail = None;
         self.space_delete_armed = None;
+        self.space_account_menu = None;
         self.space_env_editor = None;
         self.space_name_editor = None;
         self.space_avatar_import.error = None;
@@ -810,7 +828,10 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.space_env_editor.take().is_some() || self.space_delete_armed.take().is_some() {
+        if self.space_account_menu.take().is_some()
+            || self.space_env_editor.take().is_some()
+            || self.space_delete_armed.take().is_some()
+        {
             cx.notify();
             return;
         }
@@ -873,13 +894,18 @@ impl PaneFlowApp {
         )
         .role(gpui::accesskit::Role::Button)
         .aria_label(format!("Open space {}", space.name))
+        .keyboard_stop(ROW_RADIUS)
         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
             this.open_space_detail(&id, window, cx);
         }))
         .child(space_summary(
             crate::app::sidebar::space_mark(space.color, space.avatar.as_deref(), ROW_MARK, ui),
             space.name.clone().into(),
-            space_meta_label(count, space.env.len()),
+            space_meta_label(
+                count,
+                &self.space_account_labels(space),
+                other_variable_count(&space.env),
+            ),
             ui,
         ))
         .children(self.render_space_status(space, ui))
@@ -907,7 +933,7 @@ impl PaneFlowApp {
             (
                 "icons/settings/cancel-circle.svg",
                 ui.vc_deleted,
-                "Agent setup failed".to_string(),
+                "Hooks not added".to_string(),
                 ui.vc_deleted,
             )
         } else {
@@ -953,12 +979,12 @@ impl PaneFlowApp {
         let count = self.space_workspace_count(Some(&space.id));
         let mut block = Block::new("Spaces")
             .gap(SECTION_GAP)
-            .child(self.render_space_identity(space, ui, cx))
-            .child(self.render_space_env_section(space, ui, cx));
-        if let Some(integrations) = self.render_space_integrations(space, ui, cx) {
-            block = block.child(integrations);
+            .child(self.render_space_identity(space, ui, cx));
+        if let Some(accounts) = self.render_space_accounts(space, ui, cx) {
+            block = block.child(accounts);
         }
         block
+            .child(self.render_space_env_section(space, ui, cx))
             .child(self.render_space_delete(space, count, ui, cx))
             .finish()
     }
@@ -1050,6 +1076,7 @@ impl PaneFlowApp {
             .cursor(CursorStyle::PointingHand)
             .role(gpui::accesskit::Role::Button)
             .aria_label(format!("{action} for space {}", space.name))
+            .opaque_keyboard_stop(px(IDENTITY_MARK / 2.))
             .delayed_tooltip(text_tooltip(action))
             .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 this.choose_space_avatar(&id, cx);
@@ -1231,6 +1258,7 @@ impl PaneFlowApp {
                     })
                     .role(gpui::accesskit::Role::RadioButton)
                     .aria_label(label)
+                    .keyboard_stop(px(PICKER_TARGET / 2.))
                     .aria_toggled(if selected {
                         gpui::accesskit::Toggled::True
                     } else {
@@ -1261,14 +1289,20 @@ impl PaneFlowApp {
             .space_env_editor
             .as_ref()
             .filter(|editor| editor.id == space.id);
-        let action = if editor.is_none() && !space.env.is_empty() {
+        let variables: BTreeMap<String, String> = space
+            .env
+            .iter()
+            .filter(|(key, _)| !is_account_key(key))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        let action = if editor.is_none() && !variables.is_empty() {
             let id = space.id.clone();
             soft_button(
                 SharedString::from(format!("space-env-edit-{}", space.id)),
                 "Edit",
                 ui,
-                cx.listener(move |this, _: &ClickEvent, _w, cx| {
-                    this.open_space_env_editor(&id, cx);
+                cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    this.open_space_env_editor(&id, window, cx);
                 }),
             )
             .into_any_element()
@@ -1280,7 +1314,7 @@ impl PaneFlowApp {
                 .p(px(CARD_PADDING_X))
                 .child(self.render_space_env_editor(editor, ui, cx))
                 .into_any_element(),
-            None if space.env.is_empty() => {
+            None if variables.is_empty() => {
                 let id = space.id.clone();
                 div()
                     .flex()
@@ -1298,14 +1332,14 @@ impl PaneFlowApp {
                             ui,
                         )
                         .on_click(cx.listener(
-                            move |this, _: &ClickEvent, _w, cx| {
-                                this.open_space_env_editor(&id, cx);
+                            move |this, _: &ClickEvent, window, cx| {
+                                this.open_space_env_editor(&id, window, cx);
                             },
                         )),
                     )
                     .into_any_element()
             }
-            None => render_env_list(&space.env, ui),
+            None => render_env_list(&variables, ui),
         };
         let warnings = if editor.is_none() {
             space_env_warnings(&space.env, crate::space_env::inherited_from_paneflow)
@@ -1326,9 +1360,9 @@ impl PaneFlowApp {
                         .pt(px(10.))
                         .px(px(2.))
                         .children(
-                            warnings
-                                .into_iter()
-                                .map(|warning| render_hint(warning, HintTone::Warning, ui)),
+                            warnings.into_iter().map(|warning| {
+                                self.render_space_warning(&space.id, warning, ui, cx)
+                            }),
                         ),
                 )
             })
@@ -1342,13 +1376,38 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let home = dirs::home_dir();
-        let mut rows = div().flex().flex_col().gap(px(6.)).w_full().child(
-            div().text_size(LABEL_SM).text_color(ui.muted).child(
-                "Set on every terminal of this space's workspaces, above terminal.env and \
-                     below agent profiles. A leading ~ is your home, and $NAME takes the value \
-                     from Paneflow's environment.",
-            ),
-        );
+        let column_label = |label: &'static str| {
+            div()
+                .text_size(LABEL_SM)
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .text_color(ui.muted)
+                .child(label)
+        };
+        let mut rows = div()
+            .flex()
+            .flex_col()
+            .gap(px(6.))
+            .w_full()
+            .child(
+                div()
+                    .text_size(LABEL_SM)
+                    .text_color(ui.muted)
+                    .child(ENV_EDITOR_INTRO),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap(px(6.))
+                    .pt(px(4.))
+                    .child(
+                        div()
+                            .w(px(ENV_NAME_WIDTH))
+                            .flex_none()
+                            .child(column_label("Name")),
+                    )
+                    .child(div().flex_1().min_w_0().child(column_label("Value"))),
+            );
         let removable = editor.rows.len() > 1;
         for (row_idx, row) in editor.rows.iter().enumerate() {
             let hint = env_row_hint(
@@ -1410,6 +1469,7 @@ impl PaneFlowApp {
                                         gpui::accesskit::Role::Button,
                                         "Remove variable",
                                     )
+                                    .keyboard_stop(px(7.))
                                     .on_click(cx.listener(
                                         move |this, _: &ClickEvent, _w, cx| {
                                             if let Some(editor) = this.space_env_editor.as_mut()
@@ -1447,7 +1507,7 @@ impl PaneFlowApp {
                     ui,
                 )
                 .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
-                    let row = new_env_row("", "", cx);
+                    let row = space_env_row("", "", cx);
                     if let Some(editor) = this.space_env_editor.as_mut() {
                         editor.rows.push(row);
                     }
@@ -1487,127 +1547,49 @@ impl PaneFlowApp {
             .into_any_element()
     }
 
-    fn render_space_integrations(
+    fn render_space_warning(
         &self,
-        space: &SpaceConfig,
+        space: &SpaceId,
+        warning: SpaceWarning,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let statuses = self
-            .space_integrations
-            .status
-            .get(&space.id)
-            .filter(|statuses| !statuses.is_empty())?;
-        let mut card = setting_card(ui).py(px(CARD_PADDING_Y));
-        for (index, status) in statuses.iter().enumerate() {
-            if index > 0 {
-                card = card.child(hairline_inset(ui));
-            }
-            let key = (space.id.clone(), status.slug.to_string());
-            let error = self.space_integrations.errors.get(&key);
-            let busy = self.space_integrations.busy.as_ref() == Some(&key);
-            let agent = TerminalAgent::for_this_platform()
-                .find(|agent| agent.runtime().slug == status.slug);
-            let trailing = if busy {
-                crate::ui_primitives::comet_spinner(px(14.), ui.muted)
-            } else if error.is_some() || status.state == IntegrationState::NotInstalled {
-                let id = space.id.clone();
-                let slug = status.slug;
+    ) -> AnyElement {
+        let hint = render_hint(warning.text, HintTone::Warning, ui);
+        let Some(key) = warning.turn_off else {
+            return hint;
+        };
+        let id = space.clone();
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(12.))
+            .child(div().flex_1().min_w_0().child(hint))
+            .child(
                 card_button(
-                    SharedString::from(format!("space-integration-retry-{}-{slug}", space.id)),
-                    if error.is_some() { "Retry" } else { "Install" },
+                    SharedString::from(format!("space-turn-off-{space}-{key}")),
+                    format!("Turn off {key} here"),
                     ui,
                 )
                 .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-                    this.retry_space_integration(&id, slug, cx);
-                }))
-                .into_any_element()
-            } else {
-                svg()
-                    .size(px(14.))
-                    .flex_none()
-                    .path("icons/settings/tick-02.svg")
-                    .text_color(ui.muted)
-                    .into_any_element()
-            };
-            card = card.child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(12.))
-                    .px(px(CARD_PADDING_X))
-                    .py(px(8.))
-                    .child(
-                        div()
-                            .flex_none()
-                            .size(px(AGENT_LOGO))
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .when_some(agent, |slot, agent| {
-                                slot.child(render_logo(
-                                    agent.icon_path(),
-                                    agent.icon_multicolor(),
-                                    px(AGENT_LOGO),
-                                    agent.accent().map(|c| rgb(c).into()).unwrap_or(ui.text),
-                                ))
-                            }),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap(px(2.))
-                            .child(
-                                div()
-                                    .truncate()
-                                    .text_size(BODY)
-                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                    .text_color(ui.text)
-                                    .child(status.label),
-                            )
-                            .child(
-                                div()
-                                    .truncate()
-                                    .text_size(LABEL_SM)
-                                    .text_color(if error.is_some() {
-                                        ui.vc_deleted
-                                    } else {
-                                        ui.muted
-                                    })
-                                    .child(format!(
-                                        "Hooks and MCP · {}",
-                                        integration_state_label(
-                                            busy,
-                                            error.is_some(),
-                                            status.state,
-                                        )
-                                    )),
-                            ),
-                    )
-                    .child(trailing),
-            );
-            if let Some(error) = error {
-                card = card.child(
-                    div()
-                        .pl(px(CARD_PADDING_X + AGENT_LOGO + 12.))
-                        .pr(px(CARD_PADDING_X))
-                        .pb(px(8.))
-                        .child(render_hint(error.clone(), HintTone::Error, ui)),
-                );
-            }
-        }
-        Some(
-            div()
-                .flex()
-                .flex_col()
-                .child(section_header(ui, "Agent setup"))
-                .child(card)
-                .into_any_element(),
-        )
+                    this.turn_off_inherited(&id, key, cx);
+                })),
+            )
+            .into_any_element()
+    }
+
+    fn turn_off_inherited(&mut self, id: &SpaceId, key: &'static str, cx: &mut Context<Self>) {
+        let mut spaces = self.cached_config.spaces.clone();
+        let Some(space) = spaces.iter_mut().find(|space| &space.id == id) else {
+            return;
+        };
+        space.env.insert(key.to_string(), String::new());
+        let name = space.name.clone();
+        self.persist_spaces(spaces, cx);
+        self.show_toast(
+            format!("New panes in {name} no longer see {key}. Open panes keep it."),
+            cx,
+        );
     }
 
     fn render_space_delete(
@@ -1668,6 +1650,7 @@ impl PaneFlowApp {
                 ui.vc_deleted,
             )
             .accessible_control(gpui::accesskit::Role::Button, "Delete space")
+            .keyboard_stop(ROW_RADIUS)
             .child("Delete")
             .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 this.space_delete_armed = Some(id.clone());
@@ -1839,6 +1822,7 @@ fn preset_chip(
             format!("Create a {label} space")
         },
     )
+    .keyboard_stop(ROW_RADIUS)
     .child(mark)
     .child(
         div()
@@ -1856,7 +1840,9 @@ fn render_env_list(env: &BTreeMap<String, String>, ui: crate::theme::UiColors) -
         if index > 0 {
             list = list.child(div().px(px(CARD_PADDING_X)).child(hairline(ui)));
         }
-        let shown = if crate::space_env::stores_secret(key) {
+        let shown = if value.is_empty() {
+            empty_value_label(key).to_string()
+        } else if crate::space_env::stores_secret(key) {
             SECRET_MASK.to_string()
         } else {
             value.clone()
@@ -1974,13 +1960,56 @@ fn workspace_count_label(count: usize, empty: &'static str) -> String {
     }
 }
 
-fn space_meta_label(workspaces: usize, variables: usize) -> String {
-    let workspaces = workspace_count_label(workspaces, "No workspaces");
+fn space_meta_label(workspaces: usize, accounts: &[String], variables: usize) -> String {
+    let mut parts = vec![workspace_count_label(workspaces, "No workspaces")];
+    parts.extend(accounts.iter().cloned());
     match variables {
-        0 => workspaces,
-        1 => format!("{workspaces} · 1 variable"),
-        n => format!("{workspaces} · {n} variables"),
+        0 => {}
+        1 => parts.push("1 variable".to_string()),
+        n => parts.push(format!("{n} variables")),
     }
+    parts.join(" · ")
+}
+
+fn empty_value_label(key: &str) -> &'static str {
+    let platform = crate::space_env::platform_key(key);
+    if crate::space_env::SHADOWING_CREDENTIALS
+        .iter()
+        .any(|(credential, _, _)| platform == *credential)
+    {
+        "Turned off"
+    } else {
+        "Empty"
+    }
+}
+
+fn with_account_keys(
+    current: &BTreeMap<String, String>,
+    typed: BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    let mut env: BTreeMap<String, String> = current
+        .iter()
+        .filter(|(key, _)| {
+            is_account_key(key) && !typed.keys().any(|typed_key| same_key(typed_key, key))
+        })
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    env.extend(typed);
+    env
+}
+
+fn space_env_row(key: &str, value: &str, cx: &mut Context<PaneFlowApp>) -> EnvRowInputs {
+    let row = new_env_row(key, value, cx);
+    let value_hint = if key.is_empty() {
+        ENV_VALUE_EXAMPLE
+    } else {
+        empty_value_label(key)
+    };
+    row.key
+        .update(cx, |input, cx| input.set_placeholder(ENV_NAME_EXAMPLE, cx));
+    row.value
+        .update(cx, |input, cx| input.set_placeholder(value_hint, cx));
+    row
 }
 
 fn warning_count_label(count: usize) -> String {
@@ -1988,21 +2017,6 @@ fn warning_count_label(count: usize) -> String {
         1 => "1 warning".to_string(),
         n => format!("{n} warnings"),
     }
-}
-
-fn integration_state_label(busy: bool, failed: bool, state: IntegrationState) -> String {
-    if busy {
-        return "Installing…".to_string();
-    }
-    if failed {
-        return "Failed".to_string();
-    }
-    let label = paneflow_mcp_install::state_label(state);
-    let mut chars = label.chars();
-    chars
-        .next()
-        .map(|first| first.to_uppercase().chain(chars).collect())
-        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -2137,15 +2151,28 @@ mod tests {
             ("CLAUDE_CONFIG_DIR".to_string(), "/work/.claude".to_string()),
             ("OPENAI_API_KEY".to_string(), "sk-work".to_string()),
         ]);
-        let warnings =
-            space_env_warnings(&env, |key| key == "GITHUB_TOKEN" || key == "OPENAI_API_KEY");
+        let warnings = space_env_warnings(&env, |key| {
+            key == "GITHUB_TOKEN" || key == "ANTHROPIC_API_KEY"
+        });
         assert_eq!(
             warnings,
             vec![
-                "GITHUB_TOKEN is set in Paneflow's environment and takes precedence over this space's accounts. Redefine it here to override it.".to_string(),
-                format!("OPENAI_API_KEY: {}", crate::space_env::PLAIN_TEXT_WARNING),
-            ]
+                SpaceWarning {
+                    text: "ANTHROPIC_API_KEY is set in Paneflow's environment, so Claude Code uses it instead of this space's account.".to_string(),
+                    turn_off: Some("ANTHROPIC_API_KEY"),
+                },
+                SpaceWarning {
+                    text: format!("OPENAI_API_KEY: {}", crate::space_env::PLAIN_TEXT_WARNING),
+                    turn_off: None,
+                },
+            ],
+            "GITHUB_TOKEN stays silent: this space sets no GitHub account"
         );
+        let turned_off = BTreeMap::from([
+            ("CLAUDE_CONFIG_DIR".to_string(), "/work/.claude".to_string()),
+            ("ANTHROPIC_API_KEY".to_string(), String::new()),
+        ]);
+        assert!(space_env_warnings(&turned_off, |key| key == "ANTHROPIC_API_KEY").is_empty());
         assert!(space_env_warnings(&BTreeMap::new(), |_| true).is_empty());
     }
 
@@ -2187,25 +2214,13 @@ mod tests {
 
     #[test]
     fn a_collapsed_space_summarizes_its_workspaces_and_variables() {
-        assert_eq!(space_meta_label(0, 0), "No workspaces");
-        assert_eq!(space_meta_label(1, 0), "1 workspace");
-        assert_eq!(space_meta_label(4, 1), "4 workspaces · 1 variable");
-        assert_eq!(space_meta_label(0, 3), "No workspaces · 3 variables");
-    }
-
-    #[test]
-    fn an_integration_state_reads_in_sentence_case() {
+        assert_eq!(space_meta_label(0, &[], 0), "No workspaces");
+        assert_eq!(space_meta_label(1, &[], 0), "1 workspace");
+        assert_eq!(space_meta_label(4, &[], 1), "4 workspaces · 1 variable");
+        assert_eq!(space_meta_label(0, &[], 3), "No workspaces · 3 variables");
         assert_eq!(
-            integration_state_label(false, false, IntegrationState::NotInstalled),
-            "Not installed"
-        );
-        assert_eq!(
-            integration_state_label(false, true, IntegrationState::Installed),
-            "Failed"
-        );
-        assert_eq!(
-            integration_state_label(true, true, IntegrationState::Installed),
-            "Installing…"
+            space_meta_label(2, &["pro@example.com".to_string()], 1),
+            "2 workspaces · pro@example.com · 1 variable"
         );
     }
 

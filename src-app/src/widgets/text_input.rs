@@ -146,7 +146,7 @@ impl TextInput {
         let content: SharedString = initial.into();
         let cursor = content.len();
         Self {
-            focus_handle: cx.focus_handle(),
+            focus_handle: cx.focus_handle().tab_stop(true),
             content,
             placeholder: placeholder.into(),
             accessible_name: None,

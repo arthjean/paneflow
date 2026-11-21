@@ -160,6 +160,10 @@ mod tests {
                 restore_conversations: Some(true),
                 claude_preassign_session_id: Some(false),
                 update_methods: BTreeMap::from([("codex".to_string(), "bun".to_string())]),
+                default_accounts: BTreeMap::from([(
+                    "claude-code".to_string(),
+                    "~/.claude-work".to_string(),
+                )]),
             }),
             usage: Some(UsageConfig {
                 plan_limits: Some(true),

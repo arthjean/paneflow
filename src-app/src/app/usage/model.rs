@@ -30,6 +30,7 @@ pub(crate) struct UsageInputs<'a> {
     pub(crate) plans: &'a [AccountPlan],
     pub(crate) agents: Option<&'a [String]>,
     pub(crate) active_space: Option<&'a str>,
+    pub(crate) defaults: &'a DefaultAccounts,
     pub(crate) home: Option<&'a Path>,
     pub(crate) now_ms: u64,
     pub(crate) utc_offset_secs: i32,
@@ -127,16 +128,17 @@ pub(crate) fn probe_key(account: &UsageAccount) -> (UsageAgent, String) {
 }
 
 pub(crate) fn agent_shown(agents: Option<&[String]>, agent: UsageAgent) -> bool {
-    agents.is_none_or(|agents| agents.iter().any(|slug| slug == agent.runtime_slug()))
+    agent.reports_usage()
+        && agents.is_none_or(|agents| agents.iter().any(|slug| slug == agent.runtime_slug()))
 }
 
 pub(crate) fn toggled_agents(agents: Option<&[String]>, agent: UsageAgent) -> Option<Vec<String>> {
-    let next: Vec<String> = UsageAgent::ALL
+    let next: Vec<String> = UsageAgent::METERED
         .into_iter()
         .filter(|candidate| agent_shown(agents, *candidate) != (*candidate == agent))
         .map(|candidate| candidate.runtime_slug().to_string())
         .collect();
-    (next.len() < UsageAgent::ALL.len()).then_some(next)
+    (next.len() < UsageAgent::METERED.len()).then_some(next)
 }
 
 pub(crate) struct StaleInputs<'a> {
@@ -197,37 +199,220 @@ pub(crate) fn usage_view(inputs: &UsageInputs<'_>) -> Option<UsageView> {
     })
 }
 
-fn ordered_rows<'a>(inputs: &UsageInputs<'a>) -> Vec<Row<'a>> {
-    let in_space = |account: &UsageAccount| {
-        inputs.active_space.is_some_and(|space| {
-            account
-                .origins
-                .iter()
-                .any(|origin| origin.kind == OriginKind::Space && origin.name == space)
+fn in_space(space: Option<&str>, account: &UsageAccount) -> bool {
+    space.is_some_and(|space| {
+        account
+            .origins
+            .iter()
+            .any(|origin| origin.kind == OriginKind::Space && origin.name == space)
+    })
+}
+
+pub(crate) type DefaultAccounts = [(UsageAgent, String)];
+
+fn in_use(
+    space_has_accounts: bool,
+    space: Option<&str>,
+    defaults: &DefaultAccounts,
+    account: &UsageAccount,
+) -> bool {
+    if space_has_accounts {
+        return in_space(space, account);
+    }
+    match defaults.iter().find(|(agent, _)| *agent == account.agent) {
+        Some((_, key)) => account_dir_key(&account.config_dir) == *key,
+        None => account
+            .origins
+            .iter()
+            .any(|origin| origin.kind == OriginKind::Default),
+    }
+}
+
+fn plan_for<'a>(
+    plans: &'a [AccountPlan],
+    agent: UsageAgent,
+    dir: &Path,
+) -> Option<&'a AccountPlan> {
+    let key = account_dir_key(dir);
+    plans.iter().find(|plan| {
+        plan.agent == agent.runtime_slug() && account_dir_key(Path::new(&plan.config_dir)) == key
+    })
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct AgentAccountRow {
+    pub(crate) key: String,
+    pub(crate) dir: std::path::PathBuf,
+    pub(crate) profile: Option<String>,
+    pub(crate) is_default: bool,
+    pub(crate) title: String,
+    pub(crate) detail: String,
+    pub(crate) source: Option<String>,
+    pub(crate) in_use: bool,
+    pub(crate) needs_sign_in: bool,
+    pub(crate) api_billing: bool,
+    pub(crate) meters: Vec<AccountMeter>,
+    pub(crate) resets: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct AccountMeter {
+    pub(crate) label: &'static str,
+    pub(crate) fraction: f64,
+    pub(crate) level: UsageLevel,
+    pub(crate) percent: String,
+}
+
+pub(crate) struct AgentAccountInputs<'a> {
+    pub(crate) inventory: &'a [InventoryEntry],
+    pub(crate) plans: &'a [AccountPlan],
+    pub(crate) attempts: &'a ProbeAttempts,
+    pub(crate) active_space: Option<&'a str>,
+    pub(crate) defaults: &'a DefaultAccounts,
+    pub(crate) now_ms: u64,
+    pub(crate) utc_offset_secs: i32,
+}
+
+pub(crate) fn agent_account_rows(
+    inputs: &AgentAccountInputs<'_>,
+    agent: UsageAgent,
+) -> Vec<AgentAccountRow> {
+    let accounts: Vec<&UsageAccount> = inputs
+        .inventory
+        .iter()
+        .map(|entry| &entry.account)
+        .filter(|account| account.agent == agent)
+        .collect();
+    let space_has_accounts = accounts
+        .iter()
+        .any(|account| in_space(inputs.active_space, account));
+    let now = inputs.now_ms / 1000;
+    let mut rows: Vec<AgentAccountRow> = accounts
+        .into_iter()
+        .map(|account| {
+            let plan = plan_for(inputs.plans, agent, &account.config_dir);
+            let email = plan
+                .and_then(|plan| plan.email.clone())
+                .or_else(|| account.label.contains('@').then(|| account.label.clone()));
+            let signed_in = email.is_some() || plan.is_some_and(|plan| plan.plan.is_some());
+            let (title, source) = match email {
+                Some(email) => {
+                    let source = origin_text(account, &email);
+                    (email, source)
+                }
+                None => (origin_names(account), None),
+            };
+            let checked = inputs.attempts.contains_key(&probe_key(account)) || plan.is_some();
+            let detail = if account.api_billing {
+                "Billed through an API key".to_string()
+            } else if let Some(name) = plan.and_then(|plan| plan.plan.clone()) {
+                name
+            } else if signed_in {
+                "Signed in".to_string()
+            } else if checked {
+                "Not signed in".to_string()
+            } else {
+                "Checking the account…".to_string()
+            };
+            let mut readings: Vec<WindowReading> = plan
+                .filter(|_| !account.api_billing)
+                .into_iter()
+                .flat_map(|plan| plan.primary.iter().chain(plan.secondary.iter()))
+                .map(|stored| stored.window().read(now))
+                .collect();
+            readings.sort_by_key(|reading| reading.label);
+            let resets = (!readings.is_empty()).then(|| {
+                readings
+                    .iter()
+                    .map(|reading| {
+                        format!(
+                            "{} resets {}",
+                            reading.label.as_str(),
+                            reset_text(reading.resets_at, now, inputs.utc_offset_secs)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+            });
+            AgentAccountRow {
+                key: account_dir_key(&account.config_dir),
+                dir: account.config_dir.clone(),
+                profile: account
+                    .origins
+                    .iter()
+                    .find(|origin| origin.kind == OriginKind::Profile)
+                    .map(|origin| origin.name.clone()),
+                is_default: account
+                    .origins
+                    .iter()
+                    .any(|origin| origin.kind == OriginKind::Default),
+                title,
+                detail,
+                source,
+                in_use: in_use(
+                    space_has_accounts,
+                    inputs.active_space,
+                    inputs.defaults,
+                    account,
+                ),
+                needs_sign_in: checked && !signed_in && !account.api_billing,
+                api_billing: account.api_billing,
+                meters: readings
+                    .iter()
+                    .map(|reading| AccountMeter {
+                        label: reading.label.as_str(),
+                        fraction: reading.fraction,
+                        level: reading.level,
+                        percent: percent_text(reading.fraction),
+                    })
+                    .collect(),
+                resets,
+            }
         })
-    };
+        .collect();
+    rows.sort_by_key(|row| !row.in_use);
+    rows
+}
+
+fn origin_text(account: &UsageAccount, title: &str) -> Option<String> {
+    let text = account
+        .origins
+        .iter()
+        .filter(|origin| origin.kind == OriginKind::Default || origin.name != title)
+        .map(|origin| match origin.kind {
+            OriginKind::Default => "Default".to_string(),
+            OriginKind::Profile => format!("Profile {}", origin.name),
+            OriginKind::Space => format!("Space {}", origin.name),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    (!text.is_empty()).then_some(text)
+}
+
+fn origin_names(account: &UsageAccount) -> String {
+    account
+        .origins
+        .iter()
+        .map(|origin| origin.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn ordered_rows<'a>(inputs: &UsageInputs<'a>) -> Vec<Row<'a>> {
     let shown = |agent: UsageAgent| agent_shown(inputs.agents, agent);
     let space_has_accounts = inputs
         .inventory
         .iter()
-        .any(|entry| shown(entry.account.agent) && in_space(&entry.account));
+        .any(|entry| shown(entry.account.agent) && in_space(inputs.active_space, &entry.account));
     let active = |account: &UsageAccount| {
-        if space_has_accounts {
-            in_space(account)
-        } else {
-            account
-                .origins
-                .iter()
-                .any(|origin| origin.kind == OriginKind::Default)
-        }
+        in_use(
+            space_has_accounts,
+            inputs.active_space,
+            inputs.defaults,
+            account,
+        )
     };
-    let plan_for = |agent: UsageAgent, dir: &Path| {
-        let key = account_dir_key(dir);
-        inputs.plans.iter().find(|plan| {
-            plan.agent == agent.runtime_slug()
-                && account_dir_key(Path::new(&plan.config_dir)) == key
-        })
-    };
+    let plan_for = |agent: UsageAgent, dir: &Path| plan_for(inputs.plans, agent, dir);
     let mut rows: Vec<Row<'a>> = inputs
         .inventory
         .iter()
@@ -309,6 +494,7 @@ fn build(row: Row<'_>, now: u64, offset: i32) -> Built {
         return message(match row.agent {
             UsageAgent::ClaudeCode => "No plan data yet. Send a message to Claude Code in a Paneflow pane to load your limits.".into(),
             UsageAgent::Codex => "No plan data yet. Finish a Codex turn in a Paneflow pane to load your limits.".into(),
+            UsageAgent::Grok => "Grok does not report plan limits outside its own interface.".into(),
         });
     }
     let rows = readings
@@ -506,12 +692,15 @@ mod tests {
             secondary: windows[1],
             received_at_ms: Some(received_ms),
             agent_version: None,
+            email: None,
+            plan: None,
             updated_at_ms: received_ms,
         }
     }
 
     fn view(inventory: &[InventoryEntry], plans: &[AccountPlan], space: Option<&str>) -> UsageView {
         usage_view(&UsageInputs {
+            defaults: &[],
             inventory,
             plans,
             agents: None,
@@ -546,6 +735,7 @@ mod tests {
     ) -> Option<UsageView> {
         let agents: Vec<String> = agents.iter().map(|slug| (*slug).to_string()).collect();
         usage_view(&UsageInputs {
+            defaults: &[],
             inventory,
             plans,
             agents: Some(&agents),
@@ -563,6 +753,149 @@ mod tests {
             "codex",
             &[(OriginKind::Default, "Default")],
         )
+    }
+
+    fn accounts_of(
+        inventory: &[InventoryEntry],
+        plans: &[AccountPlan],
+        attempts: &ProbeAttempts,
+        agent: UsageAgent,
+    ) -> Vec<AgentAccountRow> {
+        agent_account_rows(
+            &AgentAccountInputs {
+                inventory,
+                plans,
+                attempts,
+                active_space: None,
+                defaults: &[],
+                now_ms: NOW_MS,
+                utc_offset_secs: 0,
+            },
+            agent,
+        )
+    }
+
+    #[test]
+    fn test_an_agent_card_lists_each_signed_in_account_with_its_plan_and_meters() {
+        let work = account(
+            UsageAgent::Codex,
+            "/home/a/.codex-work",
+            "Work",
+            &[(OriginKind::Profile, "Work")],
+        );
+        let inventory = vec![entry(work), entry(codex_default()), entry(claude_default())];
+        let mut default_plan = plan(
+            UsageAgent::Codex,
+            "/home/a/.codex",
+            [
+                Some(window(12.0, SESSION, NOW_MS / 1000 + 3600)),
+                Some(window(85.0, WEEK, WEEK_RESET)),
+            ],
+            NOW_MS,
+        );
+        default_plan.email = Some("me@example.com".into());
+        default_plan.plan = Some("ChatGPT Plus".into());
+        let rows = accounts_of(
+            &inventory,
+            &[default_plan],
+            &ProbeAttempts::new(),
+            UsageAgent::Codex,
+        );
+        assert_eq!(rows.len(), 2, "the Claude account stays on its own card");
+        let default = &rows[0];
+        assert!(default.in_use, "the account in use leads the card");
+        assert_eq!(default.title, "me@example.com");
+        assert_eq!(default.detail, "ChatGPT Plus");
+        assert_eq!(default.source.as_deref(), Some("Default"));
+        let meters: Vec<_> = default
+            .meters
+            .iter()
+            .map(|meter| (meter.label, meter.percent.as_str(), meter.level))
+            .collect();
+        assert_eq!(
+            meters,
+            vec![
+                ("Session", "12%", UsageLevel::Normal),
+                ("Week", "85%", UsageLevel::Warn)
+            ]
+        );
+        let work = &rows[1];
+        assert!(!work.in_use);
+        assert_eq!(work.title, "Work");
+        assert_eq!(work.detail, "Checking the account…");
+        assert!(work.meters.is_empty());
+    }
+
+    #[test]
+    fn test_the_account_chosen_for_new_panes_takes_the_in_use_badge() {
+        let work = account(
+            UsageAgent::ClaudeCode,
+            "/home/a/.claude-work",
+            "Work",
+            &[(OriginKind::Profile, "Work")],
+        );
+        let inventory = vec![entry(claude_default()), entry(work.clone())];
+        let defaults = vec![(UsageAgent::ClaudeCode, account_dir_key(&work.config_dir))];
+        let rows = agent_account_rows(
+            &AgentAccountInputs {
+                inventory: &inventory,
+                plans: &[],
+                attempts: &ProbeAttempts::new(),
+                active_space: None,
+                defaults: &defaults,
+                now_ms: NOW_MS,
+                utc_offset_secs: 0,
+            },
+            UsageAgent::ClaudeCode,
+        );
+        assert_eq!(rows[0].title, "Work", "the account in use leads");
+        assert!(rows[0].in_use);
+        assert_eq!(rows[0].profile.as_deref(), Some("Work"));
+        assert!(!rows[0].is_default);
+        assert!(
+            !rows[1].in_use,
+            "the agent's own folder is no longer in use"
+        );
+        assert!(rows[1].is_default);
+    }
+
+    #[test]
+    fn test_an_account_checked_without_an_answer_says_how_to_sign_in() {
+        let inventory = vec![entry(codex_default())];
+        let attempts = ProbeAttempts::from([(probe_key(&codex_default()), NOW_MS)]);
+        let rows = accounts_of(&inventory, &[], &attempts, UsageAgent::Codex);
+        assert_eq!(rows[0].detail, "Not signed in");
+        assert!(rows[0].needs_sign_in);
+        let mut billed = codex_default();
+        billed.api_billing = true;
+        let rows = accounts_of(&[entry(billed)], &[], &attempts, UsageAgent::Codex);
+        assert_eq!(rows[0].detail, "Billed through an API key");
+        let rows = accounts_of(
+            &[entry(claude_default())],
+            &[],
+            &ProbeAttempts::new(),
+            UsageAgent::ClaudeCode,
+        );
+        assert_eq!(rows[0].title, "arthur@example.com");
+        assert_eq!(rows[0].source.as_deref(), Some("Default"));
+        assert_eq!(rows[0].detail, "Signed in");
+        let named_after_email = account(
+            UsageAgent::ClaudeCode,
+            "/home/a/.claude-2",
+            "second@example.com",
+            &[(OriginKind::Profile, "second@example.com")],
+        );
+        let rows = accounts_of(
+            &[entry(named_after_email)],
+            &[],
+            &ProbeAttempts::new(),
+            UsageAgent::ClaudeCode,
+        );
+        assert_eq!(rows[0].title, "second@example.com");
+        assert_eq!(
+            rows[0].source, None,
+            "a profile named after the email adds nothing"
+        );
     }
 
     #[test]
@@ -628,6 +961,7 @@ mod tests {
         )];
         let agents = ["claude-code".to_string()];
         let view = usage_view(&UsageInputs {
+            defaults: &[],
             inventory: &inventory,
             plans: &plans,
             agents: Some(&agents),
@@ -715,6 +1049,11 @@ mod tests {
         assert_eq!(
             toggled_agents(claude_only.as_deref(), UsageAgent::ClaudeCode),
             Some(Vec::new())
+        );
+        assert!(
+            !agent_shown(None, UsageAgent::Grok)
+                && !agent_shown(Some(&["grok".to_string()]), UsageAgent::Grok),
+            "an agent that reports no limits never reaches the usage views"
         );
         let stray = ["gemini".to_string(), "codex".to_string()];
         assert_eq!(
@@ -826,6 +1165,7 @@ mod tests {
     fn test_no_account_hides_the_capsule() {
         assert!(
             usage_view(&UsageInputs {
+                defaults: &[],
                 inventory: &[],
                 plans: &[],
                 agents: None,

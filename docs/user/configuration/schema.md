@@ -85,7 +85,7 @@ JetBrains IDEs, Helix, and other JSON Schema-aware editors:
 | `shortcuts` | object | `{}` | Hot reload | Maps keystrokes to action names. See [shortcuts and actions](/docs/keybindings). |
 | `terminal` | object/null | defaults below | Mixed | Namespaced terminal renderer and PTY settings. |
 | `commands` | array | `[]` | Settings/Run | Command palette entries and workspace templates. |
-| `agent_profiles` | array | `[]` | Hot reload | Custom launcher entries that run a built-in agent with extra environment variables and arguments, for example a second Claude Code account through `CLAUDE_CONFIG_DIR`. Settings > Agents > Profiles edits the same list. |
+| `agent_profiles` | array | `[]` | Hot reload | Custom launcher entries that run a built-in agent with extra environment variables and arguments, for example a second Claude Code account through `CLAUDE_CONFIG_DIR`. Settings > Agents edits the same list: **New preset** in an agent's settings adds an entry, and **Add account** writes the one that names an account's folder. |
 | `spaces` | array | `[]` | Hot reload | Named groups of workspaces, at most 9. The sidebar lists only the active space's workspaces. See [`spaces`](#spaces). |
 | `claude_code_bypass_permissions` | boolean/null | `false` | Next Claude launch | Adds `--permission-mode bypassPermissions` to the Claude Code launcher. High-risk opt-in. |
 | `ai_unrestricted` | boolean/null | `false` | Per IPC call | Allows trusted conductors to submit to peer panes without `PANEFLOW_IPC_SCRIPTING`. |
@@ -154,6 +154,7 @@ and macOS keep every agent below.
 | --- | --- | --- | --- |
 | `agents.restore_conversations` | boolean/null | `true` | When a pane's hosted session did not survive, for instance after a reboot, Paneflow opens a shell in the recorded folder and types the runtime's resume command for the conversation last started in that pane. Set to `false` to only reopen the shell. |
 | `agents.update_methods` | object | `{}` | How **Settings › Agents** updates each agent's CLI, keyed by runtime slug such as `claude-code` or `codex`. `auto` (or no entry) uses the tool that installed it; `self` runs the agent's own updater; `npm`, `bun`, `pnpm` and `yarn` install its npm package globally with that tool; `script` reruns its official installer, through PowerShell on Windows and curl elsewhere. Choosing a tool other than the one that installed the CLI installs a second copy, and the copy first on PATH is the one that runs. |
+| `agents.default_accounts` | object | `{}` | The account every new pane starts on, keyed by runtime slug (`claude-code`, `codex` or `grok`): a config directory, absolute or starting with `~`, passed to the pane as `CLAUDE_CONFIG_DIR`, `CODEX_HOME` or `GROK_HOME`. A space that sets its own directory wins, and open panes keep their account. An agent left out uses its own default directory. |
 | `agents.claude_preassign_session_id` | boolean/null | `false` | The Claude Code shim adds `--session-id <uuid>` to a fresh interactive `claude` launch, so Paneflow knows the conversation before any hook arrives. Read by panes started after the change. |
 
 ## `usage`
@@ -212,7 +213,7 @@ Delete drops the ref. A clean worktree leaves no snapshot.
 `agent_profiles` is a list. Each entry adds a launcher item that runs one of
 the built-in agents with extra environment variables and arguments. Profiles
 show up in the pane palette next to the built-in agents, and keep the base agent's status tracking, hooks, and sessions.
-Settings > Agents > Profiles edits the same list.
+Settings > Agents edits the same list: **New preset** in an agent's settings adds an entry, and **Add account** writes the one that names an account's folder.
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |

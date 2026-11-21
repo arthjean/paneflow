@@ -22,10 +22,13 @@ impl PaneFlowApp {
         self.workspace_template_detail_open = false;
         self.workspace_template_delete_armed = false;
         self.agent_profile_editor = None;
-        self.agent_detail = None;
+        self.agent_account_namer = None;
+        self.agent_settings_dialog = None;
+        self.agent_profile_menu = None;
         self.space_name_editor = None;
         self.space_delete_armed = None;
         self.space_detail = None;
+        self.space_account_menu = None;
         self.app_icon_picker.close();
         self.space_avatar_import.error = None;
         self.space_env_editor = None;
@@ -41,9 +44,12 @@ impl PaneFlowApp {
         if section == SettingsSection::Agents {
             self.probe_agent_versions(cx);
             self.refresh_integration_status(cx);
+            self.check_agent_accounts(cx);
         }
         if section == SettingsSection::Spaces {
             self.refresh_space_integration_status(cx);
+            self.refresh_integration_status(cx);
+            self.check_agent_accounts(cx);
         }
         if section == SettingsSection::Usage {
             self.open_usage_page(cx);
@@ -64,10 +70,13 @@ impl PaneFlowApp {
         self.workspace_template_detail_open = false;
         self.workspace_template_delete_armed = false;
         self.agent_profile_editor = None;
-        self.agent_detail = None;
+        self.agent_account_namer = None;
+        self.agent_settings_dialog = None;
+        self.agent_profile_menu = None;
         self.space_name_editor = None;
         self.space_delete_armed = None;
         self.space_detail = None;
+        self.space_account_menu = None;
         self.app_icon_picker.close();
         self.space_avatar_import.error = None;
         self.space_env_editor = None;
@@ -368,6 +377,19 @@ impl PaneFlowApp {
             cx.stop_propagation();
             return;
         }
+        if event.keystroke.key == "tab"
+            && !(modifiers.control || modifiers.alt || modifiers.platform)
+            && self.recording_shortcut.is_none()
+            && !self.font_dropdown_open
+        {
+            if modifiers.shift {
+                window.focus_prev(cx);
+            } else {
+                window.focus_next(cx);
+            }
+            cx.stop_propagation();
+            return;
+        }
         if self.font_dropdown_open {
             let key = event.keystroke.key.as_str();
             match key {
@@ -402,9 +424,8 @@ impl PaneFlowApp {
                 general_dropdown: self.general_dropdown.is_some(),
                 theme_preset_menu: self.theme_dropdown_open,
                 workspace_template_dropdown: self.workspace_template_dropdown.is_some(),
-                agent_profile_editor: self.agent_profile_editor.is_some(),
-                agent_detail: self.settings_section == Some(SettingsSection::Agents)
-                    && self.agent_detail_is_open(),
+                agent_profile_menu: self.agent_profile_menu.is_some(),
+                agent_dialog: self.agent_dialog_is_open(),
                 space_detail: self.settings_section == Some(SettingsSection::Spaces)
                     && self.space_detail.is_some(),
                 workspace_template_detail: self.settings_section
@@ -417,8 +438,8 @@ impl PaneFlowApp {
                 SettingsEscape::WorkspaceTemplateDropdown => {
                     self.workspace_template_dropdown = None;
                 }
-                SettingsEscape::AgentProfileEditor => self.close_agent_profile_editor(cx),
-                SettingsEscape::AgentDetail => self.step_back_from_agent_detail(window, cx),
+                SettingsEscape::AgentProfileMenu => self.close_agent_profile_menu(cx),
+                SettingsEscape::AgentDialog => self.dismiss_agent_dialog_layer(window, cx),
                 SettingsEscape::SpaceDetail => self.step_back_from_space_detail(window, cx),
                 SettingsEscape::WorkspaceTemplateDetail => {
                     self.step_back_from_workspace_template(window, cx);
@@ -644,8 +665,8 @@ struct SettingsOverlays {
     general_dropdown: bool,
     theme_preset_menu: bool,
     workspace_template_dropdown: bool,
-    agent_profile_editor: bool,
-    agent_detail: bool,
+    agent_profile_menu: bool,
+    agent_dialog: bool,
     space_detail: bool,
     workspace_template_detail: bool,
 }
@@ -656,8 +677,8 @@ enum SettingsEscape {
     GeneralDropdown,
     ThemePresetMenu,
     WorkspaceTemplateDropdown,
-    AgentProfileEditor,
-    AgentDetail,
+    AgentProfileMenu,
+    AgentDialog,
     SpaceDetail,
     WorkspaceTemplateDetail,
     CloseSettings,
@@ -672,10 +693,10 @@ fn settings_escape_target(open: SettingsOverlays) -> SettingsEscape {
         SettingsEscape::ThemePresetMenu
     } else if open.workspace_template_dropdown {
         SettingsEscape::WorkspaceTemplateDropdown
-    } else if open.agent_profile_editor {
-        SettingsEscape::AgentProfileEditor
-    } else if open.agent_detail {
-        SettingsEscape::AgentDetail
+    } else if open.agent_profile_menu {
+        SettingsEscape::AgentProfileMenu
+    } else if open.agent_dialog {
+        SettingsEscape::AgentDialog
     } else if open.space_detail {
         SettingsEscape::SpaceDetail
     } else if open.workspace_template_detail {
@@ -831,22 +852,22 @@ mod tests {
             settings_escape_target(template_detail),
             SettingsEscape::WorkspaceTemplateDetail
         );
-        let agent_page = SettingsOverlays {
-            agent_detail: true,
+        let agent_dialog = SettingsOverlays {
+            agent_dialog: true,
             ..SettingsOverlays::default()
         };
         assert_eq!(
-            settings_escape_target(agent_page),
-            SettingsEscape::AgentDetail
+            settings_escape_target(agent_dialog),
+            SettingsEscape::AgentDialog
         );
-        let profile_on_agent_page = SettingsOverlays {
-            agent_profile_editor: true,
-            agent_detail: true,
+        let profile_menu_on_agents = SettingsOverlays {
+            agent_profile_menu: true,
+            agent_dialog: true,
             ..SettingsOverlays::default()
         };
         assert_eq!(
-            settings_escape_target(profile_on_agent_page),
-            SettingsEscape::AgentProfileEditor
+            settings_escape_target(profile_menu_on_agents),
+            SettingsEscape::AgentProfileMenu
         );
         let agent_menu_over_template = SettingsOverlays {
             workspace_template_dropdown: true,

@@ -1,6 +1,7 @@
 pub mod backfill;
 pub mod codex;
 pub mod ledger;
+pub mod login;
 pub mod plans;
 pub mod probe;
 pub mod tokens;
@@ -135,9 +136,11 @@ impl Usage {
                     .and_then(Value::as_u64)
                     .unwrap_or(now_ms),
                 agent_version: None,
+                identity: None,
             },
             None | Some(Value::Null) => PlanUpdate::NoLimitsReported {
                 agent_version: None,
+                identity: None,
             },
             Some(_) => return false,
         };
@@ -221,6 +224,7 @@ impl Usage {
                 limits: reading.limits,
                 observed_at_ms: reading.observed_at_ms,
                 agent_version: None,
+                identity: None,
             },
             None => PlanUpdate::NoCodexData,
         };
@@ -260,14 +264,27 @@ impl Usage {
             ProbeOutcome::Limits {
                 limits,
                 agent_version,
+                identity,
             } => PlanUpdate::Limits {
                 limits,
                 observed_at_ms: now_ms,
                 agent_version,
+                identity,
             },
-            ProbeOutcome::NoLimitsReported { agent_version } => {
-                PlanUpdate::NoLimitsReported { agent_version }
-            }
+            ProbeOutcome::NoLimitsReported {
+                agent_version,
+                identity,
+            } => PlanUpdate::NoLimitsReported {
+                agent_version,
+                identity,
+            },
+            ProbeOutcome::IdentityOnly {
+                agent_version,
+                identity,
+            } => PlanUpdate::Identity {
+                agent_version,
+                identity,
+            },
         };
         self.plans.update(agent, dir, update, now_ms)
     }
