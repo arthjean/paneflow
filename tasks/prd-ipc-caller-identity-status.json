@@ -1,0 +1,492 @@
+{
+  "prd": {
+    "file": "tasks/prd-ipc-caller-identity.md",
+    "title": "Caller identity, per-pane grants and sandboxed agent panes for Paneflow's local IPC",
+    "created_at": "2026-11-21",
+    "status": "READY"
+  },
+  "epics": [
+    {
+      "id": "EP-001",
+      "title": "Know who is calling",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 7,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-002",
+      "title": "One authorization point",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 8,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-003",
+      "title": "Grants a pane holds",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 5,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-004",
+      "title": "Sandboxed agent panes",
+      "status": "TODO",
+      "priority": "P2",
+      "stories_total": 8,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-005",
+      "title": "Real-hardware validation",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 5,
+      "stories_done": 0
+    }
+  ],
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Read a peer identity on Linux",
+      "epic": "EP-001",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-002",
+      "title": "Read a peer identity on macOS",
+      "epic": "EP-001",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-003",
+      "title": "Read a peer identity on Windows",
+      "epic": "EP-001",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-004",
+      "title": "Decide pane membership on Linux and macOS",
+      "epic": "EP-001",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-001",
+        "US-002"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-005",
+      "title": "Contain each pane in a Job Object on Windows",
+      "epic": "EP-001",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-003"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-006",
+      "title": "Serve `peer.classify` from the host",
+      "epic": "EP-001",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-004",
+        "US-005"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-007",
+      "title": "Give every connection a principal and answer `system.whoami`",
+      "epic": "EP-001",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-006"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-008",
+      "title": "Declare the audience and scope rule per method",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-007"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-009",
+      "title": "Evaluate one `authorize` function",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-008"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-010",
+      "title": "Move the switches into `paneflow.json`",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-009"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-011",
+      "title": "Authorize at the worker's dispatch",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-010"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-012",
+      "title": "Let the worker decide a live sweep",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-011"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-013",
+      "title": "Authorize at the host's dispatch and close the write path",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-010"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-014",
+      "title": "Authorize at the window's dispatch",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-010"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-015",
+      "title": "Document the threat model and the migration",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-011",
+        "US-012",
+        "US-013",
+        "US-014"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-016",
+      "title": "Hold grants in the worker",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-009"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-017",
+      "title": "Apply grants in the host and the window",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-016"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-018",
+      "title": "Ask the human for a grant",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-016"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-019",
+      "title": "Grant from configuration per agent profile",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-016"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-020",
+      "title": "Delegate and revoke",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-017",
+        "US-018"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-021",
+      "title": "Give each sandboxed pane its own host and worker endpoints",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P2",
+      "blocked_by": [
+        "US-007"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-022",
+      "title": "Give each sandboxed pane its own window endpoint",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P2",
+      "blocked_by": [
+        "US-021"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-023",
+      "title": "Prove bubblewrap on the Linux targets",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P2",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-024",
+      "title": "Run a Linux pane under bubblewrap",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P2",
+      "blocked_by": [
+        "US-022",
+        "US-023"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-025",
+      "title": "Add Landlock scoping inside the Linux sandbox",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P2",
+      "blocked_by": [
+        "US-024"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-026",
+      "title": "Run a macOS pane under a Seatbelt profile",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P2",
+      "blocked_by": [
+        "US-022"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-027",
+      "title": "Run a Windows pane with a restricted token",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P2",
+      "blocked_by": [
+        "US-022"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-028",
+      "title": "Show sandbox state and refuse silent downgrades",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P2",
+      "blocked_by": [
+        "US-024",
+        "US-026",
+        "US-027",
+        "US-032",
+        "US-033"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-029",
+      "title": "Validate layer 1 on macOS hardware",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-007",
+        "US-013",
+        "US-014"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-030",
+      "title": "Validate layer 1 on Windows hardware",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-007",
+        "US-013",
+        "US-014"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-031",
+      "title": "Exercise the Linux kernel matrix",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-007"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-032",
+      "title": "Validate the macOS sandbox on hardware",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P2",
+      "blocked_by": [
+        "US-026"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-033",
+      "title": "Validate the Windows sandbox on hardware",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P2",
+      "blocked_by": [
+        "US-027"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    }
+  ]
+}
