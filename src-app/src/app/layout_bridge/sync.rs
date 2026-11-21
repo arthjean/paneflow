@@ -97,6 +97,20 @@ impl LayoutSync {
         self.link = Some(link);
     }
 
+    pub(crate) fn launch_route(&self) -> Option<crate::terminal::host_link::LaunchRoute> {
+        if self.phase != Phase::Live {
+            return None;
+        }
+        self.link.as_ref().map(LayoutLink::launch_route)
+    }
+
+    pub(crate) fn sweeper(&self) -> Option<super::client::Sweeper> {
+        if self.phase != Phase::Live {
+            return None;
+        }
+        self.link.as_ref().map(LayoutLink::sweeper)
+    }
+
     fn push(&mut self, request: Request) -> Option<u64> {
         let link = self.link.as_ref()?;
         self.seq += 1;
@@ -315,6 +329,9 @@ impl PaneFlowApp {
                 if startup {
                     self.layout.sync.adopt_seq = None;
                     self.layout.sync.phase = Phase::Live;
+                    if self.owned_sessions_sweep_waits() {
+                        self.refresh_owned_sessions(cx);
+                    }
                 }
                 if accepted {
                     self.layout.sync.acked_revision = revision;
@@ -453,6 +470,7 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn reconcile_layout(&mut self, view: Snapshot, cx: &mut Context<Self>) {
+        let focused_before = model_focus(self.layout.model.state());
         self.layout.model.restore(view);
         self.project_layout(cx);
         let missing: Vec<(SurfaceId, Option<paneflow_config::schema::SessionId>)> = self
@@ -478,8 +496,21 @@ impl PaneFlowApp {
             self.project_layout(cx);
         }
         self.layout.prune();
+        let focused_after = model_focus(self.layout.model.state());
+        if focused_after != focused_before
+            && let Some(pane) = focused_after.and_then(|(_, pane)| self.layout.pane(pane))
+        {
+            self.pending_pane_focus = Some(pane);
+        }
         cx.notify();
     }
+}
+
+fn model_focus(
+    state: &paneflow_layout::State,
+) -> Option<(paneflow_layout::WorkspaceId, paneflow_layout::PaneId)> {
+    let ws = state.workspaces.get(state.active_workspace)?;
+    Some((ws.id, ws.active_tab()?.focused?))
 }
 
 #[cfg(test)]

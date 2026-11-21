@@ -2,7 +2,7 @@ pub(crate) mod git;
 mod ports;
 pub mod surface_naming;
 mod tab;
-pub mod worktree;
+pub use paneflow_git::worktree;
 
 pub use git::{
     GitDiffStats, GitLocation, detect_branch, find_git_dir, resolve_repo_root,

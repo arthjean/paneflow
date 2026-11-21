@@ -1,7 +1,4 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use paneflow_config::schema::PaneFlowConfig;
 use paneflow_ipc_client::IpcTransport;
@@ -14,10 +11,6 @@ use crate::workspace::worktree;
 
 pub(super) const DEFAULT_PORT_BASE: u16 = 3000;
 const PORT_STRIDE: u16 = 10;
-const DEFAULT_SETUP_TIMEOUT: Duration = Duration::from_secs(300);
-const SETUP_STDOUT_CAP: u64 = 8 * 1024 * 1024;
-const SETUP_STDERR_TAIL_BYTES: usize = 64 * 1024;
-const SETUP_STDERR_TAIL_LINES: usize = 20;
 
 pub fn up(client: &impl IpcTransport, file: &str, dry_run: bool) -> Result<i32, CliError> {
     let src = std::fs::read_to_string(file)
@@ -42,21 +35,19 @@ pub fn up(client: &impl IpcTransport, file: &str, dry_run: bool) -> Result<i32, 
     for (idx, pane) in spec.panes.iter().enumerate() {
         let command = resolve_command(idx, pane, &config)?;
         let env = substitute_env(pane.env.as_ref(), offsets[idx]);
-        let plan = &worktree_plans[idx];
-        let cwd = match plan {
-            Some(p) => Some(p.path.to_string_lossy().into_owned()),
-            None => pane.cwd.clone(),
-        };
-        panes.push(json!({
-            "cwd": cwd,
+        let mut pane_params = json!({
+            "cwd": pane.cwd,
             "command": command,
             "prompt": pane.prompt,
             "focus": pane.focus,
             "env": env,
             "name": pane.name,
             "profile": if pane.agent.is_some() { "agent" } else { "normal" },
-            "managed_worktree": plan.as_ref().map(|p| p.managed_json()),
-        }));
+        });
+        if let Some(request) = worktree_request(pane) {
+            pane_params["worktree"] = worktree_request_json(&request);
+        }
+        panes.push(pane_params);
     }
 
     let params = json!({
@@ -67,7 +58,18 @@ pub fn up(client: &impl IpcTransport, file: &str, dry_run: bool) -> Result<i32, 
     });
 
     if dry_run {
-        super::print_json(&params)?;
+        let mut preview = params;
+        for (pane, plan) in preview["panes"]
+            .as_array_mut()
+            .into_iter()
+            .flatten()
+            .zip(&worktree_plans)
+        {
+            if let Some(plan) = plan {
+                pane["worktree_plan"] = managed_json(plan);
+            }
+        }
+        super::print_json(&preview)?;
         return Ok(EXIT_OK);
     }
 
@@ -75,33 +77,28 @@ pub fn up(client: &impl IpcTransport, file: &str, dry_run: bool) -> Result<i32, 
         ensure_orchestration_gate(client)?;
     }
 
-    let mut created_worktrees: Vec<&WorktreePlan> = Vec::new();
-    for plan in worktree_plans.iter().flatten() {
-        if let Err(err) = execute_worktree_plan(plan) {
-            rollback_created_worktrees(&created_worktrees);
-            return Err(err);
-        }
-        if plan.creates_worktree() {
-            created_worktrees.push(plan);
+    let result = client
+        .call("workspace.up", params)
+        .map_err(CliError::runtime)?;
+    let result = super::reject_legacy_error(result)?;
+    for notice in result["notices"].as_array().into_iter().flatten() {
+        if let Some(notice) = notice.as_str() {
+            eprintln!("{notice}");
         }
     }
-
-    let result = match client.call("workspace.up", params) {
-        Ok(result) => result,
-        Err(e) => {
-            rollback_created_worktrees(&created_worktrees);
-            return Err(CliError::runtime(e));
-        }
-    };
-    let result = match super::reject_legacy_error(result) {
-        Ok(result) => result,
-        Err(err) => {
-            rollback_created_worktrees(&created_worktrees);
-            return Err(err);
-        }
-    };
     super::print_json(&result)?;
     Ok(EXIT_OK)
+}
+
+pub(super) fn worktree_request_json(request: &paneflow_git::worktree_plan::Request) -> Value {
+    json!({
+        "branch": request.branch,
+        "from": request.base,
+        "copy_env": request.copy_env,
+        "setup": request.setup,
+        "setup_timeout_secs": request.setup_timeout_secs,
+        "teardown": request.teardown,
+    })
 }
 
 fn check_space(config: &PaneFlowConfig, space: Option<&str>) -> Result<(), CliError> {
@@ -119,6 +116,7 @@ fn panes_need_orchestration(panes: &[PaneSpec]) -> bool {
 
 fn pane_needs_orchestration(pane: &PaneSpec) -> bool {
     pane.agent.is_some()
+        || (pane.worktree.is_some() && pane.setup.as_deref().is_some_and(|value| !value.is_empty()))
         || pane
             .command
             .as_deref()
@@ -145,351 +143,55 @@ fn ensure_orchestration_gate(client: &impl IpcTransport) -> Result<(), CliError>
     }
 }
 
-#[derive(Debug)]
-pub(super) struct WorktreePlan {
-    pane_idx: usize,
-    repo_root: PathBuf,
-    pub(super) path: PathBuf,
-    branch: String,
-    create: Option<bool>,
-    base: Option<String>,
-    copy_env: bool,
-    setup: Option<String>,
-    setup_timeout: Duration,
-    teardown: String,
-}
-
-impl WorktreePlan {
-    pub(super) fn creates_worktree(&self) -> bool {
-        self.create.is_some()
-    }
-
-    pub(super) fn managed_json(&self) -> serde_json::Value {
-        json!({
-            "path": self.path.to_string_lossy(),
-            "repo_root": self.repo_root.to_string_lossy(),
-            "branch": self.branch,
-            "teardown": self.teardown,
-            "action": if self.creates_worktree() { "create" } else { "reuse" },
-        })
-    }
-}
+pub(super) use paneflow_git::worktree_plan::Plan as WorktreePlan;
 
 pub(super) fn plan_worktree(idx: usize, pane: &PaneSpec) -> Result<Option<WorktreePlan>, CliError> {
-    let Some(branch) = pane.worktree.as_deref() else {
+    let Some(request) = worktree_request(pane) else {
         return Ok(None);
     };
-    let cwd = expand_tilde(pane.cwd.as_deref().unwrap_or_default());
-    let git_dir = crate::workspace::find_git_dir(&cwd).ok_or_else(|| {
-        CliError::runtime(format!(
-            "pane {idx}: cwd '{cwd}' is not inside a git repository (required by `worktree`)"
-        ))
-    })?;
-    let (repo_root, _) = crate::workspace::resolve_repo_root(&git_dir);
-    let repo_root = repo_root.ok_or_else(|| {
-        CliError::runtime(format!(
-            "pane {idx}: cannot resolve the repository root from '{cwd}'"
-        ))
-    })?;
-    let legacy_path = worktree::worktree_dir(&repo_root, branch);
-    let hashed_path = worktree::worktree_dir_hashed(&repo_root, branch);
-    let mut path = legacy_path.clone();
-
-    let entries = worktree::list_worktrees(&repo_root)
-        .map_err(|e| CliError::runtime(format!("pane {idx}: {e}")))?;
-    let mut create: Option<bool> = Some(!worktree::branch_exists(&repo_root, branch));
-    for entry in &entries {
-        if entry.branch.as_deref() == Some(branch) {
-            if worktree::is_owned_worktree(&repo_root, &entry.path) {
-                path = entry.path.clone();
-                create = None;
-            } else {
-                return Err(CliError::runtime(format!(
-                    "pane {idx}: branch '{branch}' already checked out at {}",
-                    entry.path.display()
-                )));
-            }
-        }
-    }
-    if create.is_some()
-        && entries
-            .iter()
-            .any(|entry| entry.path == legacy_path && entry.branch.as_deref() != Some(branch))
-    {
-        path = hashed_path;
-    }
-    validate_worktree_target(idx, &mut path, &repo_root, branch, &entries, &mut create)?;
-    if create.is_some() && path.exists() {
-        return Err(CliError::runtime(format!(
-            "pane {idx}: {} exists but is not a registered worktree; remove it first",
-            path.display()
-        )));
-    }
-
-    Ok(Some(WorktreePlan {
-        pane_idx: idx,
-        repo_root,
-        path,
-        branch: branch.to_string(),
-        create,
-        base: pane.from.clone(),
-        copy_env: pane.copy_env.unwrap_or(true),
-        setup: pane.setup.clone(),
-        setup_timeout: Duration::from_secs(
-            pane.setup_timeout_secs
-                .unwrap_or(DEFAULT_SETUP_TIMEOUT.as_secs()),
-        ),
-        teardown: pane
-            .worktree_teardown
-            .clone()
-            .unwrap_or_else(|| "auto".to_string()),
-    }))
+    paneflow_git::worktree_plan::plan(idx, &request)
+        .map(Some)
+        .map_err(CliError::runtime)
 }
 
-fn validate_worktree_target(
-    idx: usize,
-    path: &mut PathBuf,
-    repo_root: &Path,
-    branch: &str,
-    entries: &[worktree::WorktreeEntry],
-    create: &mut Option<bool>,
-) -> Result<(), CliError> {
-    for entry in entries {
-        if entry.path != *path {
-            continue;
-        }
-        if entry.branch.as_deref() == Some(branch) {
-            *path = entry.path.clone();
-            *create = None;
-            return Ok(());
-        }
-        return Err(CliError::runtime(format!(
-            "pane {idx}: {} exists but holds another branch ({}); \
-             remove it or pick another worktree branch",
-            path.display(),
-            entry.branch.as_deref().unwrap_or("detached")
-        )));
-    }
-    if !worktree::is_paneflow_worktree_dir(repo_root, branch, path) {
-        return Err(CliError::runtime(format!(
-            "pane {idx}: planned worktree path {} is outside Paneflow's worktree dirs",
-            path.display()
-        )));
-    }
-    Ok(())
+pub(super) fn worktree_request(pane: &PaneSpec) -> Option<paneflow_git::worktree_plan::Request> {
+    Some(paneflow_git::worktree_plan::Request {
+        branch: pane.worktree.clone()?,
+        cwd: pane.cwd.clone(),
+        base: pane.from.clone(),
+        copy_env: pane.copy_env,
+        setup: pane.setup.clone(),
+        setup_timeout_secs: pane.setup_timeout_secs,
+        teardown: pane.worktree_teardown.clone(),
+    })
+}
+
+pub(super) fn managed_json(plan: &WorktreePlan) -> Value {
+    json!({
+        "path": plan.path.to_string_lossy(),
+        "repo_root": plan.repo_root.to_string_lossy(),
+        "branch": plan.branch,
+        "teardown": plan.teardown,
+        "action": if plan.creates_worktree() { "create" } else { "reuse" },
+    })
 }
 
 pub(super) fn check_worktree_conflicts(plans: &mut [Option<WorktreePlan>]) -> Result<(), CliError> {
-    let mut groups: HashMap<PathBuf, Vec<usize>> = HashMap::new();
-    for (idx, plan) in plans.iter().enumerate() {
-        if let Some(plan) = plan {
-            groups.entry(plan.path.clone()).or_default().push(idx);
-        }
-    }
-
-    for indices in groups.values().filter(|indices| indices.len() > 1) {
-        let mut branches: HashMap<String, usize> = HashMap::new();
-        for &idx in indices {
-            let plan = plans[idx].as_ref().expect("group contains plan index");
-            if let Some(&first) = branches.get(&plan.branch) {
-                return Err(CliError::runtime(format!(
-                    "pane {} and pane {} both target worktree '{}' ({}) - \
-                     a branch can only be checked out in one worktree",
-                    first,
-                    plan.pane_idx,
-                    plan.branch,
-                    plan.path.display()
-                )));
-            }
-            branches.insert(plan.branch.clone(), plan.pane_idx);
-        }
-
-        let keep = indices
-            .iter()
-            .copied()
-            .find(|&idx| {
-                plans[idx]
-                    .as_ref()
-                    .is_some_and(|plan| plan.create.is_none())
-            })
-            .unwrap_or(indices[0]);
-        for &idx in indices {
-            if idx == keep {
-                continue;
-            }
-            let plan = plans[idx].as_mut().expect("group contains plan index");
-            let hashed = worktree::worktree_dir_hashed(&plan.repo_root, &plan.branch);
-            if plan.path == hashed {
-                continue;
-            }
-            plan.path = hashed;
-            let entries = worktree::list_worktrees(&plan.repo_root)
-                .map_err(|e| CliError::runtime(format!("pane {}: {e}", plan.pane_idx)))?;
-            let mut create = plan.create;
-            validate_worktree_target(
-                plan.pane_idx,
-                &mut plan.path,
-                &plan.repo_root,
-                &plan.branch,
-                &entries,
-                &mut create,
-            )?;
-            plan.create = create;
-            if plan.create.is_some() && plan.path.exists() {
-                return Err(CliError::runtime(format!(
-                    "pane {}: {} exists but is not a registered worktree; remove it first",
-                    plan.pane_idx,
-                    plan.path.display()
-                )));
-            }
-        }
-    }
-
-    let mut seen: HashMap<&PathBuf, usize> = HashMap::new();
-    for plan in plans.iter().flatten() {
-        if let Some(&first) = seen.get(&plan.path) {
-            return Err(CliError::runtime(format!(
-                "pane {} and pane {} both target worktree '{}' ({}) - \
-                 a branch can only be checked out in one worktree",
-                first,
-                plan.pane_idx,
-                plan.branch,
-                plan.path.display()
-            )));
-        }
-        seen.insert(&plan.path, plan.pane_idx);
-    }
-    Ok(())
+    paneflow_git::worktree_plan::resolve_conflicts(plans).map_err(CliError::runtime)
 }
 
 pub(super) fn execute_worktree_plan(plan: &WorktreePlan) -> Result<(), CliError> {
-    let Some(create_branch) = plan.create else {
-        return Ok(());
-    };
-    worktree::add_worktree(
-        &plan.repo_root,
-        &plan.path,
-        &plan.branch,
-        create_branch,
-        plan.base.as_deref(),
-    )
-    .map_err(|e| CliError::runtime(format!("pane {}: {e}", plan.pane_idx)))?;
-
-    if plan.copy_env {
-        let outcome = worktree::copy_include_files(&plan.repo_root, &plan.path);
-        if !outcome.copied.is_empty() {
-            eprintln!(
-                "pane {}: copied {} into {}",
-                plan.pane_idx,
-                outcome.copied.join(", "),
-                plan.path.display()
-            );
-        }
-        for failure in outcome.failures {
-            eprintln!("pane {}: {failure}", plan.pane_idx);
-        }
-    }
-
-    if let Some(setup) = plan.setup.as_deref().filter(|s| !s.is_empty())
-        && let Err(reason) = run_setup(setup, &plan.path, plan.setup_timeout)
-    {
-        eprintln!(
-            "pane {}: setup failed in {} ({reason}) - agent started anyway",
-            plan.pane_idx,
-            plan.path.display()
-        );
+    let notices = paneflow_git::worktree_plan::execute(plan).map_err(CliError::runtime)?;
+    for notice in notices {
+        eprintln!("{notice}");
     }
     Ok(())
 }
 
-fn setup_command(setup: &str) -> std::process::Command {
-    #[cfg(unix)]
-    let mut command = std::process::Command::new("sh");
-    #[cfg(unix)]
-    command.arg("-c");
-    #[cfg(windows)]
-    let mut command = std::process::Command::new("cmd");
-    #[cfg(windows)]
-    command.arg("/C");
-    command.arg(setup);
-    command
-}
-
-fn run_setup(setup: &str, cwd: &Path, timeout: Duration) -> Result<(), String> {
-    let mut command = setup_command(setup);
-    command.current_dir(cwd);
-    let tail = Arc::new(Mutex::new(Vec::new()));
-    let sink = tail.clone();
-    let result = paneflow_process::run_with_timeout_tapping_stderr(
-        command,
-        timeout,
-        SETUP_STDOUT_CAP,
-        move |chunk| {
-            if let Ok(mut tail) = sink.lock() {
-                tail.extend_from_slice(chunk);
-                let excess = tail.len().saturating_sub(SETUP_STDERR_TAIL_BYTES);
-                tail.drain(..excess);
-            }
-        },
-    );
-    match result {
-        Ok(out) if out.status.success() => Ok(()),
-        Ok(out) => Err(format!("exit {}", out.status.code().unwrap_or(-1))),
-        Err(paneflow_process::ProcError::Timeout) => {
-            let last_lines = tail
-                .lock()
-                .map(|tail| last_stderr_lines(&tail, SETUP_STDERR_TAIL_LINES))
-                .unwrap_or_default();
-            let mut reason = format!("killed after its {}s timeout", timeout.as_secs());
-            if !last_lines.is_empty() {
-                reason.push_str("; last stderr lines:\n");
-                reason.push_str(&last_lines);
-            }
-            Err(reason)
-        }
-        Err(error) => Err(error.to_string()),
-    }
-}
-
-fn last_stderr_lines(stderr: &[u8], count: usize) -> String {
-    let text = String::from_utf8_lossy(stderr);
-    let lines: Vec<&str> = text
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .collect();
-    lines[lines.len().saturating_sub(count)..].join("\n")
-}
-
 pub(super) fn rollback_created_worktrees(plans: &[&WorktreePlan]) {
-    for plan in plans.iter().rev() {
-        if !plan.creates_worktree() {
-            continue;
-        }
-        if let Err(e) = worktree::remove_worktree(&plan.repo_root, &plan.path) {
-            eprintln!(
-                "pane {}: could not roll back worktree {} ({e})",
-                plan.pane_idx,
-                plan.path.display()
-            );
-        }
+    for notice in paneflow_git::worktree_plan::rollback(plans) {
+        eprintln!("{notice}");
     }
-}
-
-fn expand_tilde(raw: &str) -> String {
-    if raw == "~" {
-        if let Some(home) = dirs::home_dir() {
-            return home.to_string_lossy().into_owned();
-        }
-    } else if let Some(rest) = raw.strip_prefix("~/")
-        && let Some(home) = dirs::home_dir()
-    {
-        return home.join(rest).to_string_lossy().into_owned();
-    } else if let Some(rest) = raw.strip_prefix("~\\")
-        && let Some(home) = dirs::home_dir()
-    {
-        return home.join(rest).to_string_lossy().into_owned();
-    }
-    raw.to_string()
 }
 
 pub(super) fn validate_env_tokens(panes: &[PaneSpec]) -> Result<Vec<bool>, CliError> {
@@ -641,7 +343,6 @@ fn resolve_agent(name: &str) -> Option<TerminalAgent> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::git_fixture as fixture;
 
     #[test]
     fn resolve_agent_accepts_aliases() {
@@ -788,103 +489,6 @@ mod tests {
         );
     }
 
-    fn dummy_plan(idx: usize, path: &str, branch: &str) -> WorktreePlan {
-        WorktreePlan {
-            pane_idx: idx,
-            repo_root: PathBuf::from("/r"),
-            path: PathBuf::from(path),
-            branch: branch.to_string(),
-            create: Some(true),
-            base: None,
-            copy_env: true,
-            setup: None,
-            setup_timeout: Duration::from_secs(1),
-            teardown: "auto".to_string(),
-        }
-    }
-
-    #[test]
-    fn duplicate_worktree_paths_are_an_atomic_validation_error() {
-        let mut plans = vec![
-            Some(dummy_plan(0, "/r.worktrees/feat-x", "feat/x")),
-            None,
-            Some(dummy_plan(2, "/r.worktrees/feat-x", "feat/x")),
-        ];
-        let err = check_worktree_conflicts(&mut plans).unwrap_err();
-        assert_eq!(err.code, crate::cli::EXIT_RUNTIME);
-        assert!(
-            err.message.contains("pane 0") && err.message.contains("pane 2"),
-            "both panes cited: {}",
-            err.message
-        );
-
-        let mut distinct = vec![
-            Some(dummy_plan(0, "/r.worktrees/feat-x", "feat/x")),
-            Some(dummy_plan(1, "/r.worktrees/feat-y", "feat/y")),
-        ];
-        assert!(check_worktree_conflicts(&mut distinct).is_ok());
-    }
-
-    #[test]
-    fn slug_collision_branches_move_to_hashed_fallback() {
-        let _root =
-            worktree::test_support::scoped_root(PathBuf::from("/home/a/paneflow-worktrees"));
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let repo_root = tmp.path().join("repo");
-        std::fs::create_dir(&repo_root).expect("repo dir");
-        fixture::init(&repo_root);
-
-        let branch_a = "feat/a b";
-        let branch_b = "feat/a-b";
-        let legacy = worktree::worktree_dir(&repo_root, branch_a);
-        assert_eq!(legacy, worktree::worktree_dir(&repo_root, branch_b));
-        let hashed_b = worktree::worktree_dir_hashed(&repo_root, branch_b);
-
-        let mut plans = vec![
-            Some(WorktreePlan {
-                pane_idx: 0,
-                repo_root: repo_root.clone(),
-                path: legacy.clone(),
-                branch: branch_a.to_string(),
-                create: Some(true),
-                base: None,
-                copy_env: true,
-                setup: None,
-                setup_timeout: Duration::from_secs(1),
-                teardown: "auto".to_string(),
-            }),
-            Some(WorktreePlan {
-                pane_idx: 1,
-                repo_root: repo_root.clone(),
-                path: legacy.clone(),
-                branch: branch_b.to_string(),
-                create: Some(true),
-                base: None,
-                copy_env: true,
-                setup: None,
-                setup_timeout: Duration::from_secs(1),
-                teardown: "auto".to_string(),
-            }),
-        ];
-
-        check_worktree_conflicts(&mut plans).expect("slug collision resolves");
-        assert_eq!(plans[0].as_ref().unwrap().path, legacy);
-        assert_eq!(plans[1].as_ref().unwrap().path, hashed_b);
-    }
-
-    #[test]
-    fn expand_tilde_expands_home_prefix_only() {
-        let home = dirs::home_dir()
-            .expect("home")
-            .to_string_lossy()
-            .into_owned();
-        assert_eq!(expand_tilde("~"), home);
-        assert!(expand_tilde("~/dev").starts_with(&home));
-        assert!(expand_tilde("~\\dev").starts_with(&home));
-        assert_eq!(expand_tilde("/abs/path"), "/abs/path");
-        assert_eq!(expand_tilde("rel/~nothome"), "rel/~nothome");
-    }
-
     #[test]
     fn resolve_command_rejects_unknown_agent() {
         let cfg = PaneFlowConfig::default();
@@ -899,69 +503,6 @@ mod tests {
         let cfg = PaneFlowConfig::default();
         let resolved = resolve_command(0, &pane(None, Some("cargo watch")), &cfg).expect("ok");
         assert_eq!(resolved.as_deref(), Some("cargo watch"));
-    }
-
-    #[cfg(unix)]
-    const LOUD_SETUP: &str =
-        "head -c 1048576 /dev/zero | tr '\\0' x >&2; echo done > setup-finished";
-    #[cfg(windows)]
-    const LOUD_SETUP: &str = "powershell -NoProfile -NonInteractive -Command \
-         \"[Console]::Error.Write('x' * 1048576)\" & echo done> setup-finished";
-
-    #[cfg(unix)]
-    const HANGING_SETUP: &str = "for i in $(seq 1 30); do echo line$i >&2; done; sleep 30";
-    #[cfg(windows)]
-    const HANGING_SETUP: &str = "(for /L %i in (1,1,30) do @echo line%i 1>&2) & \
-         powershell -NoProfile -NonInteractive -Command Start-Sleep 30";
-
-    #[test]
-    fn a_setup_that_floods_stderr_still_runs_to_completion() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let repo = tmp.path().join("repo");
-        std::fs::create_dir_all(&repo).expect("repo dir");
-        fixture::init(&repo);
-        std::fs::write(repo.join("README.md"), "init\n").expect("readme");
-        fixture::run(&repo, &["add", "README.md"]);
-        fixture::run(
-            &repo,
-            &[
-                "-c",
-                "user.email=paneflow@example.com",
-                "-c",
-                "user.name=Paneflow",
-                "commit",
-                "-q",
-                "-m",
-                "init",
-            ],
-        );
-        let mut plan = dummy_plan(0, "", "feat/loud");
-        plan.repo_root = repo;
-        plan.path = tmp.path().join("checkout");
-        plan.copy_env = false;
-        plan.setup = Some(LOUD_SETUP.to_string());
-        plan.setup_timeout = Duration::from_secs(60);
-
-        execute_worktree_plan(&plan).expect("worktree created");
-
-        assert!(
-            plan.path.join("setup-finished").exists(),
-            "1 MiB of stderr must not kill the setup before it finishes"
-        );
-    }
-
-    #[test]
-    fn a_setup_past_its_timeout_is_killed_and_reports_its_last_stderr_lines() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let reason = run_setup(HANGING_SETUP, tmp.path(), Duration::from_secs(3))
-            .expect_err("a hanging setup must be killed");
-        assert!(reason.contains("3s timeout"), "got: {reason}");
-        let (_, tail) = reason
-            .split_once("last stderr lines:\n")
-            .unwrap_or_else(|| panic!("no stderr tail in: {reason}"));
-        let lines: Vec<&str> = tail.lines().map(str::trim).collect();
-        let expected: Vec<String> = (11..=30).map(|i| format!("line{i}")).collect();
-        assert_eq!(lines, expected);
     }
 
     struct RecordingTransport(std::cell::RefCell<Vec<(String, Value)>>);

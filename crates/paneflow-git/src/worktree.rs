@@ -4,15 +4,13 @@ use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 use std::time::{Duration, SystemTime};
 
-use crate::git_command::{GitProfile, git};
+use crate::command::{GitProfile, git};
 
 const GIT_DEADLINE: Duration = Duration::from_secs(10);
 const ADD_DEADLINE: Duration = Duration::from_secs(120);
 const STDOUT_CAP: u64 = 256 * 1024;
-const OWNER_MARKER_FILE: &str = "paneflow-owner";
 const REMOVE_ATTEMPTS: usize = 6;
 const REMOVE_RETRY_DELAY: Duration = Duration::from_millis(250);
-const LEGACY_OWNER_MARKER_FILE: &str = ".paneflow-worktree";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TeardownPolicy {
@@ -36,73 +34,6 @@ pub struct ManagedWorktree {
     pub repo_root: PathBuf,
     pub branch: String,
     pub teardown: TeardownPolicy,
-}
-
-pub fn worktree_git_dir(worktree_path: &Path) -> Option<PathBuf> {
-    let dot_git = worktree_path.join(".git");
-    if !dot_git.is_file() {
-        return None;
-    }
-    let contents = std::fs::read_to_string(&dot_git).ok()?;
-    let target = contents.lines().next()?.strip_prefix("gitdir:")?.trim();
-    if target.is_empty() {
-        return None;
-    }
-    let git_dir = PathBuf::from(target);
-    Some(if git_dir.is_absolute() {
-        git_dir
-    } else {
-        worktree_path.join(git_dir)
-    })
-}
-
-pub fn owner_marker_path(worktree_path: &Path) -> Option<PathBuf> {
-    worktree_git_dir(worktree_path).map(|dir| dir.join(OWNER_MARKER_FILE))
-}
-
-pub fn legacy_owner_marker_path(worktree_path: &Path) -> PathBuf {
-    worktree_path.join(LEGACY_OWNER_MARKER_FILE)
-}
-
-pub fn has_owner_marker(worktree_path: &Path) -> bool {
-    owner_marker_path(worktree_path).is_some_and(|marker| marker.is_file())
-        || legacy_owner_marker_path(worktree_path).is_file()
-}
-
-pub fn migrate_owner_marker(worktree_path: &Path) -> bool {
-    let legacy = legacy_owner_marker_path(worktree_path);
-    if !legacy.is_file() {
-        return false;
-    }
-    let Some(marker) = owner_marker_path(worktree_path) else {
-        return false;
-    };
-    if !marker.is_file() {
-        let Ok(contents) = std::fs::read(&legacy) else {
-            return false;
-        };
-        if let Err(e) = std::fs::write(&marker, contents) {
-            log::warn!(
-                "owner marker: cannot move {} to {}: {e}",
-                legacy.display(),
-                marker.display()
-            );
-            return false;
-        }
-    }
-    match std::fs::remove_file(&legacy) {
-        Ok(()) => {
-            log::info!(
-                "owner marker moved out of the checkout: {}",
-                marker.display()
-            );
-            true
-        }
-        Err(e) => {
-            log::warn!("owner marker: cannot remove {}: {e}", legacy.display());
-            false
-        }
-    }
 }
 
 pub fn migrate_owner_markers(entries: &[WorktreeEntry]) {
@@ -133,39 +64,16 @@ pub fn managed_worktree_from_record(
     branch_raw: &str,
     teardown_raw: &str,
 ) -> Option<ManagedWorktree> {
-    let path = PathBuf::from(path_raw);
-    let repo_root = PathBuf::from(repo_root_raw);
-    if !path.is_absolute() || !repo_root.is_absolute() {
-        log::warn!("managed worktree: dropping record with non-absolute path");
-        return None;
-    }
-    let branch = branch_raw.trim();
-    if branch.is_empty() || branch_slug(branch).is_empty() {
-        log::warn!("managed worktree: dropping record with invalid branch");
-        return None;
-    }
-    migrate_owner_marker(&path);
-    if !is_owned_worktree(&repo_root, &path) {
-        log::warn!(
-            "managed worktree: dropping record that is not a Paneflow worktree of {}: {}",
-            repo_root.display(),
-            path.display()
-        );
-        return None;
-    }
-    let teardown = match teardown_raw {
-        "auto" => TeardownPolicy::Auto,
-        "keep" => TeardownPolicy::Keep,
-        other => {
-            log::warn!("managed worktree: unknown teardown policy {other:?}; keeping");
-            TeardownPolicy::Keep
-        }
-    };
+    let record = record(path_raw, repo_root_raw, branch_raw, teardown_raw)?;
     Some(ManagedWorktree {
-        path,
-        repo_root,
-        branch: branch.to_string(),
-        teardown,
+        path: record.path,
+        repo_root: record.repo_root,
+        branch: record.branch,
+        teardown: if record.teardown == "auto" {
+            TeardownPolicy::Auto
+        } else {
+            TeardownPolicy::Keep
+        },
     })
 }
 
@@ -188,21 +96,6 @@ pub fn checkout_label(branch: Option<&str>, path: &Path, repo_root: &Path) -> St
     }
     name.map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default()
-}
-
-pub fn branch_slug(branch: &str) -> String {
-    let slug: String = branch
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
-                c
-            } else {
-                '-'
-            }
-        })
-        .collect();
-    slug.trim_matches(|c: char| c == '-' || c == '.')
-        .to_string()
 }
 
 fn branch_slug_or_default(branch: &str) -> String {
@@ -324,36 +217,6 @@ pub fn worktree_dir_hashed(repo_root: &Path, branch: &str) -> PathBuf {
     worktrees_parent(repo_root).join(format!("{slug}-{}", branch_hash_suffix(branch)))
 }
 
-fn repo_git_dir(repo_root: &Path) -> Option<PathBuf> {
-    let dot_git = repo_root.join(".git");
-    if dot_git.is_dir() {
-        return Some(dot_git);
-    }
-    worktree_git_dir(repo_root)
-}
-
-fn path_starts_with(path: &Path, prefix: &Path) -> bool {
-    if path.starts_with(prefix) {
-        return true;
-    }
-    let (Ok(path), Ok(prefix)) = (std::fs::canonicalize(path), std::fs::canonicalize(prefix))
-    else {
-        return false;
-    };
-    path.starts_with(prefix)
-}
-
-pub fn is_owned_worktree(repo_root: &Path, worktree_path: &Path) -> bool {
-    let Some(admin_dir) = repo_git_dir(repo_root).map(|dir| dir.join("worktrees")) else {
-        return false;
-    };
-    let Some(git_dir) = worktree_git_dir(worktree_path) else {
-        return false;
-    };
-    path_starts_with(&git_dir, &admin_dir)
-        && owner_marker_path(worktree_path).is_some_and(|marker| marker.is_file())
-}
-
 pub fn has_paneflow_worktree_shape(repo_root: &Path, branch: &str, path: &Path) -> bool {
     if !path.is_absolute() {
         return false;
@@ -447,7 +310,7 @@ pub fn snapshot_worktree(repo_root: &Path, worktree_path: &Path) -> Result<Snaps
     let mut add = git(GitProfile::UserAction, ["add", "-A", "--", "."]);
     add.current_dir(worktree_path)
         .env("GIT_INDEX_FILE", &index_s);
-    let out = crate::git_command::run(add, ADD_DEADLINE, STDOUT_CAP)
+    let out = crate::command::run(add, ADD_DEADLINE, STDOUT_CAP)
         .map_err(|e| format!("git add -A failed: {e}"))?;
     if !out.status.success() {
         let _ = std::fs::remove_file(&index);
@@ -460,7 +323,7 @@ pub fn snapshot_worktree(repo_root: &Path, worktree_path: &Path) -> Result<Snaps
     write_tree
         .current_dir(worktree_path)
         .env("GIT_INDEX_FILE", &index_s);
-    let tree = crate::git_command::run(write_tree, ADD_DEADLINE, STDOUT_CAP)
+    let tree = crate::command::run(write_tree, ADD_DEADLINE, STDOUT_CAP)
         .map_err(|e| format!("git write-tree failed: {e}"))
         .and_then(|out| {
             if out.status.success() {
@@ -758,7 +621,7 @@ fn git_in(
 ) -> Result<String, String> {
     let mut cmd = git(profile, args);
     cmd.current_dir(repo);
-    let out = crate::git_command::run(cmd, deadline, STDOUT_CAP)
+    let out = crate::command::run(cmd, deadline, STDOUT_CAP)
         .map_err(|e| format!("git {} failed: {e}", args.join(" ")))?;
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
@@ -1095,7 +958,7 @@ pub fn is_clean(worktree_path: &Path) -> Result<bool, String> {
             worktree_path.display()
         )
     };
-    match crate::git_command::run(cmd, GIT_DEADLINE, STDOUT_CAP) {
+    match crate::command::run(cmd, GIT_DEADLINE, STDOUT_CAP) {
         Ok(out) if out.status.success() => Ok(out.stdout.is_empty()),
         Ok(out) => Err(failed(
             String::from_utf8_lossy(&out.stderr)
@@ -1358,14 +1221,20 @@ pub fn teardown_all(worktrees: Vec<ManagedWorktree>) -> Vec<String> {
     kept
 }
 
-#[cfg(test)]
-pub(crate) mod test_support {
+#[cfg(any(test, feature = "test-support"))]
+#[allow(
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    reason = "test fixtures fail the test that calls them"
+)]
+pub mod test_support {
     use std::path::PathBuf;
     use std::sync::{Mutex, MutexGuard};
 
     static ROOT_LOCK: Mutex<()> = Mutex::new(());
 
-    pub(crate) struct RootGuard {
+    pub struct RootGuard {
         _lock: MutexGuard<'static, ()>,
     }
 
@@ -1375,17 +1244,182 @@ pub(crate) mod test_support {
         }
     }
 
-    pub(crate) fn scoped_root(dir: PathBuf) -> RootGuard {
+    pub fn scoped_root(dir: PathBuf) -> RootGuard {
         let lock = ROOT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         super::set_worktrees_root(Some(dir));
         RootGuard { _lock: lock }
     }
 }
 
+const OWNER_MARKER_FILE: &str = "paneflow-owner";
+const LEGACY_OWNER_MARKER_FILE: &str = ".paneflow-worktree";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Record {
+    pub path: PathBuf,
+    pub repo_root: PathBuf,
+    pub branch: String,
+    pub teardown: &'static str,
+}
+
+pub fn worktree_git_dir(worktree_path: &Path) -> Option<PathBuf> {
+    let dot_git = worktree_path.join(".git");
+    if !dot_git.is_file() {
+        return None;
+    }
+    let contents = std::fs::read_to_string(&dot_git).ok()?;
+    let target = contents.lines().next()?.strip_prefix("gitdir:")?.trim();
+    if target.is_empty() {
+        return None;
+    }
+    let git_dir = PathBuf::from(target);
+    Some(if git_dir.is_absolute() {
+        git_dir
+    } else {
+        worktree_path.join(git_dir)
+    })
+}
+
+pub fn owner_marker_path(worktree_path: &Path) -> Option<PathBuf> {
+    worktree_git_dir(worktree_path).map(|dir| dir.join(OWNER_MARKER_FILE))
+}
+
+pub fn legacy_owner_marker_path(worktree_path: &Path) -> PathBuf {
+    worktree_path.join(LEGACY_OWNER_MARKER_FILE)
+}
+
+pub fn has_owner_marker(worktree_path: &Path) -> bool {
+    owner_marker_path(worktree_path).is_some_and(|marker| marker.is_file())
+        || legacy_owner_marker_path(worktree_path).is_file()
+}
+
+pub fn migrate_owner_marker(worktree_path: &Path) -> bool {
+    let legacy = legacy_owner_marker_path(worktree_path);
+    if !legacy.is_file() {
+        return false;
+    }
+    let Some(marker) = owner_marker_path(worktree_path) else {
+        return false;
+    };
+    if !marker.is_file() {
+        let Ok(contents) = std::fs::read(&legacy) else {
+            return false;
+        };
+        if let Err(e) = std::fs::write(&marker, contents) {
+            log::warn!(
+                "owner marker: cannot move {} to {}: {e}",
+                legacy.display(),
+                marker.display()
+            );
+            return false;
+        }
+    }
+    match std::fs::remove_file(&legacy) {
+        Ok(()) => {
+            log::info!(
+                "owner marker moved out of the checkout: {}",
+                marker.display()
+            );
+            true
+        }
+        Err(e) => {
+            log::warn!("owner marker: cannot remove {}: {e}", legacy.display());
+            false
+        }
+    }
+}
+
+pub fn branch_slug(branch: &str) -> String {
+    let slug: String = branch
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    slug.trim_matches(|c: char| c == '-' || c == '.')
+        .to_string()
+}
+
+pub fn repo_git_dir(repo_root: &Path) -> Option<PathBuf> {
+    let dot_git = repo_root.join(".git");
+    if dot_git.is_dir() {
+        return Some(dot_git);
+    }
+    worktree_git_dir(repo_root)
+}
+
+pub fn path_starts_with(path: &Path, prefix: &Path) -> bool {
+    if path.starts_with(prefix) {
+        return true;
+    }
+    let (Ok(path), Ok(prefix)) = (std::fs::canonicalize(path), std::fs::canonicalize(prefix))
+    else {
+        return false;
+    };
+    path.starts_with(prefix)
+}
+
+pub fn is_owned_worktree(repo_root: &Path, worktree_path: &Path) -> bool {
+    let Some(admin_dir) = repo_git_dir(repo_root).map(|dir| dir.join("worktrees")) else {
+        return false;
+    };
+    let Some(git_dir) = worktree_git_dir(worktree_path) else {
+        return false;
+    };
+    path_starts_with(&git_dir, &admin_dir)
+        && owner_marker_path(worktree_path).is_some_and(|marker| marker.is_file())
+}
+
+pub fn record(
+    path_raw: &str,
+    repo_root_raw: &str,
+    branch_raw: &str,
+    teardown_raw: &str,
+) -> Option<Record> {
+    let path = PathBuf::from(path_raw);
+    let repo_root = PathBuf::from(repo_root_raw);
+    if !path.is_absolute() || !repo_root.is_absolute() {
+        log::warn!("managed worktree: dropping record with non-absolute path");
+        return None;
+    }
+    let branch = branch_raw.trim();
+    if branch.is_empty() || branch_slug(branch).is_empty() {
+        log::warn!("managed worktree: dropping record with invalid branch");
+        return None;
+    }
+    migrate_owner_marker(&path);
+    if !is_owned_worktree(&repo_root, &path) {
+        log::warn!(
+            "managed worktree: dropping record that is not a Paneflow worktree of {}: {}",
+            repo_root.display(),
+            path.display()
+        );
+        return None;
+    }
+    let teardown = match teardown_raw {
+        "auto" => "auto",
+        "keep" => "keep",
+        other => {
+            log::warn!("managed worktree: unknown teardown policy {other:?}; keeping");
+            "keep"
+        }
+    };
+    Some(Record {
+        path,
+        repo_root,
+        branch: branch.to_string(),
+        teardown,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::git_fixture as fixture;
+    use crate::fixture;
 
     fn managed(path: &str) -> ManagedWorktree {
         ManagedWorktree {
@@ -2676,5 +2710,77 @@ mod tests {
             checkout_label(Some(""), Path::new("/wt/hotfix-42"), repo),
             "hotfix-42"
         );
+    }
+
+    fn worktree_of(repo: &Path, name: &str, marked: bool) -> PathBuf {
+        let admin = repo.join(".git").join("worktrees").join(name);
+        std::fs::create_dir_all(&admin).unwrap();
+        let path = repo.parent().unwrap().join(format!("wt-{name}"));
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::write(path.join(".git"), format!("gitdir: {}\n", admin.display())).unwrap();
+        if marked {
+            std::fs::write(admin.join(OWNER_MARKER_FILE), "owner=paneflow\n").unwrap();
+        }
+        path
+    }
+
+    #[test]
+    fn only_a_marked_worktree_of_the_repository_is_a_record() {
+        let root = tempfile::tempdir().unwrap();
+        let repo = root.path().join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        let owned = worktree_of(&repo, "feat", true);
+        let foreign = worktree_of(&repo, "other", false);
+        let found = record(
+            owned.to_str().unwrap(),
+            repo.to_str().unwrap(),
+            " feat ",
+            "bogus",
+        )
+        .expect("a Paneflow worktree");
+        assert_eq!(found.branch, "feat");
+        assert_eq!(found.teardown, "keep");
+        assert_eq!(
+            record(
+                foreign.to_str().unwrap(),
+                repo.to_str().unwrap(),
+                "other",
+                "auto"
+            ),
+            None
+        );
+        assert_eq!(
+            record("relative", repo.to_str().unwrap(), "feat", "auto"),
+            None
+        );
+        assert_eq!(
+            record(
+                owned.to_str().unwrap(),
+                repo.to_str().unwrap(),
+                "///",
+                "auto"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn a_legacy_marker_in_the_checkout_moves_to_the_git_dir() {
+        let root = tempfile::tempdir().unwrap();
+        let repo = root.path().join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        let path = worktree_of(&repo, "old", false);
+        std::fs::write(path.join(LEGACY_OWNER_MARKER_FILE), "owner=paneflow\n").unwrap();
+        assert!(
+            record(
+                path.to_str().unwrap(),
+                repo.to_str().unwrap(),
+                "old",
+                "auto"
+            )
+            .is_some()
+        );
+        assert!(!path.join(LEGACY_OWNER_MARKER_FILE).exists());
+        assert!(has_owner_marker(&path));
     }
 }

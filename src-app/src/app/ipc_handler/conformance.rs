@@ -585,7 +585,10 @@ fn system_describe_answers_over_the_real_endpoint() {
             method["result"]["$schema"],
             paneflow_api::schema::META_SCHEMA
         );
-        let served = method["owner"] == "window";
+        let served = method["owner"] == "window"
+            || method["name"]
+                .as_str()
+                .is_some_and(|name| paneflow_api::methods::WINDOW_ANSWERS_TOO.contains(&name));
         assert_eq!(method["callable"], served, "{}", method["name"]);
     }
 

@@ -1,17 +1,13 @@
 use std::path::Path;
 
-pub(crate) fn expand_env_value<F>(
-    value: &str,
-    home: Option<&Path>,
-    lookup: F,
-) -> Result<String, String>
+pub fn expand_env_value<F>(value: &str, home: Option<&Path>, lookup: F) -> Result<String, String>
 where
     F: Fn(&str) -> Option<String>,
 {
     expand_placeholders(&expand_leading_home(value, home), &lookup)
 }
 
-pub(crate) fn expand_with_process_env(value: &str, home: Option<&Path>) -> Result<String, String> {
+pub fn expand_with_process_env(value: &str, home: Option<&Path>) -> Result<String, String> {
     expand_env_value(value, home, |name| std::env::var(name).ok())
 }
 

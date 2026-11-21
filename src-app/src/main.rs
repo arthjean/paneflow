@@ -32,15 +32,18 @@ mod config_snapshot;
 mod config_writer;
 mod diff;
 mod editor;
-mod env_expand;
+use paneflow_launch::env_expand;
 mod external_open;
 mod file_icons;
 mod fonts;
 mod frame_policy;
 mod fs_probe;
-mod git_command;
+use paneflow_git::command as git_command;
 #[cfg(test)]
-mod git_fixture;
+#[path = "git_command_tests.rs"]
+mod git_command_tests;
+#[cfg(test)]
+use paneflow_git::fixture as git_fixture;
 mod host_bootstrap;
 mod ipc;
 mod ipc_events;

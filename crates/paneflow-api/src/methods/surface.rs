@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     EnvMap, HOST_FALLBACK, ManagedWorktreeSpec, NO_FALLBACK, NoParams, SpaceRef, SurfaceProfile,
-    WINDOW, WriteScope,
+    WINDOW, WorktreeRequestSpec, WriteScope,
 };
 use crate::descriptor::{Gate, Reply};
 
@@ -273,6 +273,10 @@ pub struct SplitParams {
     #[schemars(description = "Alias of label")]
     pub name: Option<String>,
     pub managed_worktree: Option<ManagedWorktreeSpec>,
+    #[schemars(
+        description = "Create or reuse a Paneflow worktree for the new pane, which then starts in it; exclusive with managed_worktree"
+    )]
+    pub worktree: Option<WorktreeRequestSpec>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -417,7 +421,7 @@ method! {
     Rename {
         name: "surface.rename",
         summary: "Give a surface a custom name, or clear it.",
-        owner: WINDOW,
+        owner: crate::descriptor::Owner::Worker,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
         reply: Reply::Ready,
@@ -432,7 +436,7 @@ method! {
     Focus {
         name: "surface.focus",
         summary: "Reveal a surface and give it the keyboard focus.",
-        owner: WINDOW,
+        owner: crate::descriptor::Owner::Worker,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
         reply: Reply::Ready,
@@ -490,7 +494,7 @@ method! {
     Split {
         name: "surface.split",
         summary: "Split the pane holding a surface and start a terminal in the new pane.",
-        owner: WINDOW,
+        owner: crate::descriptor::Owner::Worker,
         fallback: NO_FALLBACK,
         gate: Gate::OrchestrationWhenSpawning,
         reply: Reply::Async,

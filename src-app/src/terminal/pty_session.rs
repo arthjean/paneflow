@@ -15,7 +15,6 @@ use super::ghostty_session::{
 use super::host_link::{HostLinkState, HostedAttachment, HostedSession};
 use super::marks::SharedMarkRing;
 use super::service_detector::{ServiceInfo, detect_framework, parse_service_line};
-use super::shell::{resolve_shell_for_spawn, setup_shell_integration};
 use super::types::{
     Content, GridLineText, GridMetrics, HyperlinkZone, Line, Modes, MouseShape, Point,
     SelectionGeometry, SelectionKind, ShellQuoting, TerminalWindowSize,
@@ -28,9 +27,6 @@ use paneflow_host::InputOrigin;
 pub(crate) use paneflow_host::env::INHERITED_AGENT_SESSION_ENV;
 #[cfg(test)]
 pub(super) use paneflow_host::env::inherited_env_keys_to_strip;
-use paneflow_host::env::{
-    is_forbidden_child_env_key, is_inherited_agent_session_env_key, is_valid_env_name,
-};
 #[cfg(all(test, windows))]
 pub(super) use paneflow_host::process::{
     WINDOWS_PROCESS_TREE_TERMINATION_BUDGET, terminate_windows_process_tree,
@@ -43,7 +39,6 @@ mod spawn_env;
 
 pub use diagnostics::*;
 pub(crate) use session_backend::*;
-pub(crate) use spawn_env::PROTECTED_ENV_KEYS;
 pub(super) use spawn_env::*;
 
 #[cfg(test)]

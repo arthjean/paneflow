@@ -292,7 +292,9 @@ impl<'a> Rig<'a> {
         for request in self.host.take() {
             if matches!(
                 request,
-                HostRequest::Create { .. } | HostRequest::Reattach { .. }
+                HostRequest::Create { .. }
+                    | HostRequest::Launch { .. }
+                    | HostRequest::Reattach { .. }
             ) && self.name_of(request.session()).is_none()
             {
                 let name = ((b'a' + self.names.len() as u8 % 26) as char).to_string();
@@ -542,6 +544,7 @@ impl<'a> Rig<'a> {
                 let name = self.named(request.session());
                 match request {
                     HostRequest::Create { .. } => format!("create {name}"),
+                    HostRequest::Launch { .. } => format!("launch {name}"),
                     HostRequest::Reattach { .. } => format!("reattach {name}"),
                     HostRequest::Hold { .. } => format!("hold {name}"),
                     HostRequest::Stop { .. } => format!("stop {name}"),

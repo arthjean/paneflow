@@ -10,7 +10,7 @@ use super::Rig;
 use crate::PaneFlowApp;
 use crate::{ClosePane, SplitVertically};
 
-pub(super) const PINS: usize = 7;
+pub(super) const PINS: usize = 11;
 
 const PATIENCE: Duration = Duration::from_secs(60);
 
@@ -25,11 +25,63 @@ fn home() -> PathBuf {
     home
 }
 
-struct Running(Option<paneflow_serve::worker::RunningWorker>);
+type Created = std::sync::Arc<std::sync::Mutex<Vec<paneflow_host::CreateSession>>>;
+
+#[derive(Clone, Default)]
+struct RecordingStarter(Created);
+
+struct RecordingLink(Created);
+
+impl paneflow_serve::launcher::SessionStarter for RecordingStarter {
+    fn connect(
+        &self,
+    ) -> Result<Box<dyn paneflow_serve::launcher::SessionLink>, paneflow_serve::launcher::LaunchError>
+    {
+        Ok(Box::new(RecordingLink(self.0.clone())))
+    }
+}
+
+impl paneflow_serve::launcher::SessionLink for RecordingLink {
+    fn exists(
+        &mut self,
+        session: &paneflow_config::schema::SessionId,
+    ) -> Result<bool, paneflow_serve::launcher::LaunchError> {
+        Ok(self
+            .0
+            .lock()
+            .expect("the record")
+            .iter()
+            .any(|created| created.session.as_ref() == Some(session)))
+    }
+
+    fn create(
+        &mut self,
+        request: &paneflow_host::CreateSession,
+    ) -> Result<(), paneflow_serve::launcher::LaunchError> {
+        self.0.lock().expect("the record").push(request.clone());
+        Ok(())
+    }
+}
+
+struct Running(Option<paneflow_serve::worker::RunningWorker>, Created);
 
 impl Running {
     fn open(home: &Path) -> Self {
-        Self(Some(paneflow_serve::open(home).expect("a worker")))
+        let starter = RecordingStarter::default();
+        let created = starter.0.clone();
+        let worker = paneflow_serve::open_with(
+            home,
+            paneflow_serve::Launching {
+                support: paneflow_serve::launcher::LaunchSupport::default(),
+                starter: Some(std::sync::Arc::new(starter)),
+            },
+        )
+        .expect("a worker");
+        Self(Some(worker), created)
+    }
+
+    fn created(&self) -> Vec<paneflow_host::CreateSession> {
+        self.1.lock().expect("the record").clone()
     }
 
     fn stop(mut self) {
@@ -191,6 +243,161 @@ fn pin_an_attached_window_sends_every_gesture_and_the_worker_holds_the_same_layo
             .iter()
             .all(|request| !request.starts_with("stop")),
         "an attached window leaves stops to the worker"
+    );
+    finish(&mut rig, worker, &home);
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_a_keyboard_split_in_an_attached_window_is_started_by_the_worker(cx: &mut TestAppContext) {
+    let home = home();
+    let mut rig = Rig::mount(cx);
+    rig.workspace("alpha");
+    assert_eq!(
+        rig.requests(),
+        ["create a"],
+        "a window alone starts its own terminals"
+    );
+    let worker = Running::open(&home);
+    attach(&mut rig);
+    assert_converged(&mut rig, &home);
+
+    rig.focus("a");
+    split(&mut rig);
+    assert_eq!(rig.shape(0, 0), "V(0.500 a, 0.500 b)");
+    assert_eq!(
+        rig.requests(),
+        ["launch b"],
+        "the attached window asks the worker and creates nothing itself"
+    );
+    let pane = rig.pane("b");
+    let (surface, session) = rig
+        .cx
+        .update(|_, cx| {
+            pane.read(cx).active_terminal_opt().map(|view| {
+                let view = view.read(cx);
+                (view.surface_id(), view.terminal.session_id.clone())
+            })
+        })
+        .expect("b holds a terminal");
+    let deadline = Instant::now() + PATIENCE;
+    while worker.created().is_empty() {
+        assert!(Instant::now() < deadline, "the worker never started b");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let created = worker.created();
+    assert_eq!(created.len(), 1, "exactly one creator for b");
+    assert_eq!(created[0].session.as_ref(), Some(&session));
+    let variables = &created[0].env;
+    assert_eq!(
+        variables.get("PANEFLOW_SURFACE_ID"),
+        Some(&surface.to_string())
+    );
+    assert_converged(&mut rig, &home);
+    finish(&mut rig, worker, &home);
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_a_focus_sent_to_the_worker_moves_the_keyboard_focus_of_the_attached_window(
+    cx: &mut TestAppContext,
+) {
+    let home = home();
+    let mut rig = Rig::mount(cx);
+    rig.workspace("alpha");
+    rig.focus("a");
+    split(&mut rig);
+    let worker = Running::open(&home);
+    attach(&mut rig);
+    assert_converged(&mut rig, &home);
+    rig.focus("b");
+    assert_eq!(rig.focused().as_deref(), Some("b"));
+    let a = rig.surface_id("a");
+
+    let focused: Value = control(&home)
+        .request("surface.focus", json!({"surface_id": a}))
+        .expect("the worker focuses a");
+    assert_eq!(focused["focused"], true, "{focused}");
+    let deadline = Instant::now() + PATIENCE;
+    while rig.focused().as_deref() != Some("a") {
+        rig.act(|app, _, cx| app.process_layout_client(cx));
+        rig.requests();
+        assert!(
+            Instant::now() < deadline,
+            "the window never moved the keyboard focus to a"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_converged(&mut rig, &home);
+    finish(&mut rig, worker, &home);
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_a_window_opened_after_a_headless_up_draws_it_and_attaches_the_worker_sessions(
+    cx: &mut TestAppContext,
+) {
+    let home = home();
+    let worker = Running::open(&home);
+    let cwd = tempfile::tempdir().expect("a pane directory");
+    let opened: Value = control(&home)
+        .request(
+            "workspace.up",
+            json!({"name": "headless", "panes": [{"cwd": cwd.path()}, {"cwd": cwd.path()}]}),
+        )
+        .expect("the worker opens the workspace with no window");
+    assert_eq!(opened["panes"], 2, "{opened}");
+    let created: Vec<paneflow_config::schema::SessionId> = worker
+        .created()
+        .into_iter()
+        .filter_map(|request| request.session)
+        .collect();
+    assert_eq!(created.len(), 2, "the worker started both terminals");
+    let revision = worker_view(&home).revision;
+    let deadline = Instant::now() + PATIENCE;
+    while file_revision(&home) != Some(revision) {
+        assert!(
+            Instant::now() < deadline,
+            "the worker never wrote its layout"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let text =
+        std::fs::read_to_string(paneflow_home::session_path_in(&home)).expect("the session file");
+    let state: paneflow_config::schema::SessionState =
+        serde_json::from_str(&text).expect("a session file");
+
+    let view = worker_view(&home);
+    let session_of_surface = |id: u64| {
+        view.state
+            .surface(paneflow_layout::SurfaceId(id))
+            .and_then(|known| known.definition.session.clone())
+            .expect("a bound surface")
+    };
+    let names = vec![
+        (
+            session_of_surface(opened["surface_ids"][0].as_u64().expect("an id")),
+            "a".to_string(),
+        ),
+        (
+            session_of_surface(opened["surface_ids"][1].as_u64().expect("an id")),
+            "b".to_string(),
+        ),
+    ];
+    let mut rig = Rig::mount_restored(cx, &state, names);
+    attach(&mut rig);
+    assert_converged(&mut rig, &home);
+    assert_eq!(rig.workspaces(), ["*headless"]);
+    assert_eq!(rig.shape(0, 0), "V(0.500 a, 0.500 b)");
+    let mut drawn = vec![rig.session_of("a"), rig.session_of("b")];
+    drawn.sort();
+    let mut expected = created;
+    expected.sort();
+    assert_eq!(drawn, expected, "the window attached the worker's sessions");
+    assert_eq!(
+        worker.created().len(),
+        2,
+        "nobody created a session when the window opened"
     );
     finish(&mut rig, worker, &home);
 }
@@ -390,7 +597,86 @@ fn pin_a_lease_used_up_while_the_worker_is_away_refuses_a_split_with_its_toast(
             crate::layout::MAX_PANES
         )]
     );
-    finish(&mut rig, Running(None), &home);
+    finish(&mut rig, Running(None, Created::default()), &home);
+}
+
+fn worker_sessions(home: &Path) -> Vec<Option<paneflow_config::schema::SessionId>> {
+    worker_view(home)
+        .state
+        .workspaces
+        .iter()
+        .flat_map(|ws| ws.tabs.iter())
+        .filter_map(|tab| tab.root.as_ref())
+        .flat_map(paneflow_layout::Node::panes)
+        .flat_map(|pane| pane.surfaces.iter())
+        .map(|surface| surface.definition.session.clone())
+        .collect()
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_stopping_everything_keeps_the_worker_layout_with_its_panes_and_no_session(
+    cx: &mut TestAppContext,
+) {
+    let home = home();
+    let mut rig = Rig::mount(cx);
+    rig.workspace("alpha");
+    rig.focus("a");
+    split(&mut rig);
+    let worker = Running::open(&home);
+    attach(&mut rig);
+    assert_converged(&mut rig, &home);
+    assert_eq!(worker_sessions(&home).len(), 2);
+    let quit = std::rc::Rc::new(std::cell::Cell::new(false));
+    let done = quit.clone();
+    rig.act(|app, _, cx| app.save_stopped_session_before_exit(cx, move |_, _| done.set(true)));
+    pump(&mut rig, "the stopping quit", |_| quit.get());
+    assert_eq!(
+        worker_sessions(&home),
+        vec![None, None],
+        "the worker keeps both panes and forgets their sessions"
+    );
+    let revision = worker_view(&home).revision;
+    let deadline = Instant::now() + PATIENCE;
+    while file_revision(&home) != Some(revision) {
+        assert!(
+            Instant::now() < deadline,
+            "the worker never wrote the stopped layout"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let text =
+        std::fs::read_to_string(paneflow_home::session_path_in(&home)).expect("the session file");
+    let state: paneflow_config::schema::SessionState =
+        serde_json::from_str(&text).expect("a session file");
+    fn walk<'a>(
+        node: &'a paneflow_config::schema::LayoutNode,
+        found: &mut Vec<&'a paneflow_config::schema::SurfaceDefinition>,
+    ) {
+        match node {
+            paneflow_config::schema::LayoutNode::Pane { surfaces } => found.extend(surfaces),
+            paneflow_config::schema::LayoutNode::Split { children, .. } => {
+                for child in children {
+                    walk(child, found);
+                }
+            }
+        }
+    }
+    let mut written = Vec::new();
+    for layout in state
+        .workspaces
+        .iter()
+        .flat_map(|ws| ws.tabs.iter())
+        .filter_map(|tab| tab.layout.as_ref())
+    {
+        walk(layout, &mut written);
+    }
+    assert_eq!(written.len(), 2, "the file keeps both panes");
+    assert!(
+        written.iter().all(|surface| surface.session.is_none()),
+        "the next start opens a fresh shell per pane"
+    );
+    finish(&mut rig, worker, &home);
 }
 
 #[gpui::test]
@@ -408,6 +694,10 @@ fn pin_quitting_leaves_the_last_model_on_disk_whoever_writes_it(cx: &mut TestApp
     let done = quit.clone();
     rig.act(|app, _, cx| app.save_session_before_exit(cx, move |_, _| done.set(true)));
     pump(&mut rig, "the attached quit", |_| quit.get());
+    assert!(
+        worker_sessions(&home).iter().all(Option::is_some),
+        "quitting keeps every terminal bound in the worker's layout"
+    );
     worker.stop();
     assert_eq!(
         file_revision(&home),
@@ -426,5 +716,5 @@ fn pin_quitting_leaves_the_last_model_on_disk_whoever_writes_it(cx: &mut TestApp
         quit.get()
     });
     assert_eq!(file_revision(&home), Some(away_revision));
-    finish(&mut rig, Running(None), &home);
+    finish(&mut rig, Running(None, Created::default()), &home);
 }

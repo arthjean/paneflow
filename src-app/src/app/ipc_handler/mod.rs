@@ -36,6 +36,7 @@ mod surface_methods;
 mod tmux_compat;
 mod transcript;
 mod workspace_methods;
+mod worktree_requests;
 
 use gates::*;
 pub(crate) use jsonrpc::*;

@@ -16,6 +16,10 @@ use paneflow_config::schema::{
 use paneflow_ipc_client::host_control::HostControl;
 use serde_json::{Value, json};
 
+mod common;
+
+use common::open_starting_terminals;
+
 const REPLY_WAIT: Duration = Duration::from_secs(30);
 const SETTLE: Duration = Duration::from_secs(15);
 
@@ -445,7 +449,7 @@ fn a_window_of_an_earlier_build_owns_the_layout_and_the_worker_reloads_its_file_
 fn a_lease_is_a_contiguous_block_and_only_its_unused_ids_create_elements() {
     let home = tempfile::tempdir().unwrap();
     write_session(home.path(), &session_file("alpha", 3));
-    let worker = paneflow_serve::open(home.path()).unwrap();
+    let worker = open_starting_terminals(home.path());
     let endpoint = endpoint(home.path());
     let mut client = Client::connect(&endpoint);
     let first = client.ok("layout.lease_ids", json!({}));
@@ -500,7 +504,7 @@ fn a_lease_is_a_contiguous_block_and_only_its_unused_ids_create_elements() {
     let persisted = read_session(home.path()).unwrap();
     let next = persisted.next_layout_id.unwrap();
     assert!(next >= second["end"].as_u64().unwrap(), "{next}");
-    let restarted = paneflow_serve::open(home.path()).unwrap();
+    let restarted = open_starting_terminals(home.path());
     let mut client = Client::connect(&paneflow_home::serve_endpoint_path(home.path()));
     let after = client.ok("layout.lease_ids", json!({}));
     assert!(

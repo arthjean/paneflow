@@ -3,86 +3,10 @@ use paneflow_config::schema::{LayoutNode, TabTitleSource};
 
 use crate::layout::LayoutTree;
 use crate::pane::Pane;
+pub use paneflow_launch::cwd::{CONFINE_TIMEOUT, SpawnCwd};
 
 pub fn next_tab_id() -> u64 {
     crate::layout_ids::allocate()
-}
-
-pub const CONFINE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
-
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct SpawnCwd {
-    pub cwd: Option<std::path::PathBuf>,
-    pub confine_to: Option<std::path::PathBuf>,
-    pub fallback: Option<std::path::PathBuf>,
-}
-
-impl SpawnCwd {
-    pub fn within(
-        worktree: Option<&std::path::Path>,
-        inherited: Option<std::path::PathBuf>,
-    ) -> Self {
-        match worktree {
-            None => Self {
-                cwd: inherited,
-                ..Self::default()
-            },
-            Some(worktree) => Self {
-                cwd: Some(inherited.unwrap_or_else(|| worktree.to_path_buf())),
-                confine_to: Some(worktree.to_path_buf()),
-                fallback: None,
-            },
-        }
-    }
-
-    pub fn needs_resolving(&self) -> bool {
-        self.confine_to.is_some() || self.fallback.is_some()
-    }
-
-    pub fn resolve(self, timeout: std::time::Duration) -> Option<std::path::PathBuf> {
-        self.resolve_with(timeout, is_inside_checkout, std::path::Path::is_dir)
-    }
-
-    fn resolve_with(
-        self,
-        timeout: std::time::Duration,
-        inside: fn(&std::path::Path, &std::path::Path) -> bool,
-        is_dir: fn(&std::path::Path) -> bool,
-    ) -> Option<std::path::PathBuf> {
-        match (self.cwd, self.confine_to, self.fallback) {
-            (None, Some(worktree), _) => Some(worktree),
-            (Some(cwd), Some(worktree), _) => {
-                let root = worktree.clone();
-                let kept = crate::fs_probe::run_bounded(timeout, move || {
-                    inside(&cwd, &root).then_some(cwd)
-                });
-                Some(kept.flatten().unwrap_or(worktree))
-            }
-            (Some(cwd), None, Some(fallback)) => {
-                let kept =
-                    crate::fs_probe::run_bounded(timeout, move || is_dir(&cwd).then_some(cwd));
-                Some(kept.flatten().unwrap_or(fallback))
-            }
-            (None, None, fallback) => fallback,
-            (cwd, None, None) => cwd,
-        }
-    }
-}
-
-fn is_inside_checkout(cwd: &std::path::Path, checkout: &std::path::Path) -> bool {
-    if cwd
-        .components()
-        .any(|component| component == std::path::Component::ParentDir)
-    {
-        return false;
-    }
-    let canonical = |path: &std::path::Path| {
-        std::fs::canonicalize(path).map(crate::runtime_paths::strip_verbatim_prefix)
-    };
-    match (canonical(cwd), canonical(checkout)) {
-        (Ok(cwd), Ok(checkout)) => cwd.starts_with(checkout),
-        _ => false,
-    }
 }
 
 pub struct Tab {
@@ -464,26 +388,6 @@ mod tests {
     }
 
     #[test]
-    fn a_confinement_that_cannot_resolve_in_time_falls_back_to_the_worktree() {
-        let spawn = SpawnCwd {
-            cwd: Some(std::path::PathBuf::from("/mnt/dead/wt/src")),
-            confine_to: Some(std::path::PathBuf::from("/mnt/dead/wt")),
-            fallback: None,
-        };
-        let started = std::time::Instant::now();
-        let cwd = spawn.resolve_with(
-            std::time::Duration::from_millis(50),
-            |_, _| {
-                std::thread::sleep(std::time::Duration::from_secs(30));
-                true
-            },
-            std::path::Path::is_dir,
-        );
-        assert_eq!(cwd, Some(std::path::PathBuf::from("/mnt/dead/wt")));
-        assert!(started.elapsed() < std::time::Duration::from_secs(2));
-    }
-
-    #[test]
     fn a_bound_tab_hands_its_confinement_to_the_spawn_instead_of_resolving_it() {
         let tab = Tab::restored(
             "wt",
@@ -499,36 +403,6 @@ mod tests {
                 fallback: None,
             }
         );
-    }
-
-    #[test]
-    fn a_missing_restored_cwd_falls_back_off_the_render_thread() {
-        let tmp = tempfile::tempdir().unwrap();
-        let fallback = tmp.path().join("workspace");
-        std::fs::create_dir_all(&fallback).unwrap();
-        let spawn = |cwd: std::path::PathBuf| SpawnCwd {
-            cwd: Some(cwd),
-            confine_to: None,
-            fallback: Some(fallback.clone()),
-        };
-        assert_eq!(
-            spawn(tmp.path().join("missing")).resolve(CONFINE_TIMEOUT),
-            Some(fallback.clone()),
-            "a surface cwd that is gone falls back to the workspace folder"
-        );
-        assert_eq!(
-            spawn(tmp.path().to_path_buf()).resolve(CONFINE_TIMEOUT),
-            Some(tmp.path().to_path_buf())
-        );
-        let stuck = spawn(tmp.path().to_path_buf()).resolve_with(
-            std::time::Duration::from_millis(50),
-            |_, _| true,
-            |_| {
-                std::thread::sleep(std::time::Duration::from_secs(30));
-                true
-            },
-        );
-        assert_eq!(stuck, Some(fallback));
     }
 
     #[test]

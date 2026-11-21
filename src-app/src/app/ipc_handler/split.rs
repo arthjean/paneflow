@@ -332,7 +332,20 @@ impl PaneFlowApp {
                 ));
             }
         };
-        if pane_spec_requires_orchestration(params) && !orchestration_allowed {
+        let worktree_request = super::worktree_requests::parse(params.get("worktree"), spec.cwd)?;
+        if worktree_request.is_some()
+            && params
+                .get("managed_worktree")
+                .is_some_and(|value| !value.is_null())
+        {
+            return Err(JsonRpcError::invalid_params(
+                "worktree and managed_worktree are exclusive",
+            ));
+        }
+        let setup_runs = worktree_request
+            .as_ref()
+            .is_some_and(super::worktree_requests::runs_setup);
+        if (setup_runs || pane_spec_requires_orchestration(params)) && !orchestration_allowed {
             return Err(spawn_gate_refusal(
                 &paneflow_api::methods::surface::Split::SPEC,
             ));
@@ -344,7 +357,7 @@ impl PaneFlowApp {
             .iter()
             .find(|ws| ws.id == anchor.workspace_id)
             .ok_or_else(|| JsonRpcError::invalid_params("No active workspace"))?;
-        if managed_worktree.is_none() {
+        if managed_worktree.is_none() && worktree_request.is_none() {
             check_split_target(ws, &SplitTarget::Tab(anchor.tab_id), anchor.pane.as_ref())?;
         }
         let probe = SplitProbe {
@@ -369,12 +382,42 @@ impl PaneFlowApp {
             managed_worktree,
         };
         Ok(cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
-            let decision = match resolve_split(probe).await {
-                Ok(decision) => decision,
+            let mut probe = probe;
+            let mut launch = launch;
+            let prepared = match smol::unblock(move || {
+                super::worktree_requests::prepare(vec![worktree_request])
+            })
+            .await
+            {
+                Ok(prepared) => prepared,
                 Err(error) => return error.into_value(),
             };
-            this.update(cx, |app, cx| app.finish_split(anchor, decision, launch, cx))
-                .unwrap_or_else(|_| app_shutting_down())
+            let super::worktree_requests::Prepared {
+                mut worktrees,
+                created,
+                notices,
+            } = prepared;
+            if let Some((plan, managed)) = worktrees.pop().flatten() {
+                probe.cwd = Some(plan.path.to_string_lossy().into_owned());
+                probe.worktree = Some(plan.path.clone());
+                launch.managed_worktree = Some(managed);
+            }
+            let decision = match resolve_split(probe).await {
+                Ok(decision) => decision,
+                Err(error) => {
+                    smol::unblock(move || super::worktree_requests::rollback(created)).await;
+                    return error.into_value();
+                }
+            };
+            let mut reply = this
+                .update(cx, |app, cx| app.finish_split(anchor, decision, launch, cx))
+                .unwrap_or_else(|_| app_shutting_down());
+            if super::worktree_requests::failed(&reply) {
+                smol::unblock(move || super::worktree_requests::rollback(created)).await;
+            } else if !notices.is_empty() {
+                reply["notices"] = serde_json::json!(notices);
+            }
+            reply
         }))
     }
 

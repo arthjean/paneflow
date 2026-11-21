@@ -130,7 +130,7 @@ fn dry_run_plan(plan: &FlowPlan, runs: &[UnitRun]) -> Value {
                         "command": r.command,
                         "prompt": s.pane.prompt,
                         "env": s.pane.env,
-                        "worktree": r.worktree.as_ref().map(|w| w.managed_json()),
+                        "worktree": r.worktree.as_ref().map(up_cmd::managed_json),
                     }),
                 ),
                 UnitAction::Send { target, text } => {
@@ -349,7 +349,7 @@ impl<T: IpcTransport> Engine<'_, T> {
                 "focus": s.pane.focus,
                 "env": s.pane.env,
                 "name": s.name,
-                "managed_worktree": r.worktree.as_ref().map(|w| w.managed_json()),
+                "managed_worktree": r.worktree.as_ref().map(up_cmd::managed_json),
             }));
         }
 
@@ -669,7 +669,7 @@ impl<T: IpcTransport> Engine<'_, T> {
                     "prompt": if r.unit.submit { None } else { s.pane.prompt.clone() },
                     "env": s.pane.env,
                     "name": s.name,
-                    "managed_worktree": r.worktree.as_ref().map(|w| w.managed_json()),
+                    "managed_worktree": r.worktree.as_ref().map(up_cmd::managed_json),
                 });
                 match self.client.call("surface.split", params) {
                     Ok(result) => {

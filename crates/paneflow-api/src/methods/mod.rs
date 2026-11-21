@@ -114,7 +114,45 @@ pub struct ManagedWorktreeSpec {
     pub teardown: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WorktreeRequestSpec {
+    #[schemars(
+        description = "Branch to check out in a Paneflow worktree of the repository that holds cwd; the branch is created when it does not exist, and a worktree Paneflow already owns for it is reused"
+    )]
+    pub branch: String,
+    #[schemars(description = "Commit or branch a new branch starts from")]
+    pub from: Option<String>,
+    #[schemars(
+        description = "Copy the files .worktreeinclude names into a new worktree",
+        extend("default" = true)
+    )]
+    pub copy_env: Option<bool>,
+    #[schemars(
+        description = "Shell command run once in a new worktree before its terminal starts; needs orchestration"
+    )]
+    pub setup: Option<String>,
+    #[schemars(description = "Seconds the setup may run", extend("default" = 300))]
+    pub setup_timeout_secs: Option<u64>,
+    #[schemars(
+        description = "auto removes the worktree with its workspace, keep leaves it",
+        extend("default" = "auto")
+    )]
+    pub teardown: Option<String>,
+}
+
 pub type EnvMap = BTreeMap<String, String>;
+
+pub const WINDOW_ANSWERS_TOO: [&str; 8] = [
+    "surface.split",
+    "surface.focus",
+    "surface.rename",
+    "workspace.create",
+    "workspace.up",
+    "workspace.select",
+    "workspace.close",
+    "workspace.restore_layout",
+];
 
 pub(crate) const WINDOW: Owner = Owner::Window;
 pub(crate) const HOST_FALLBACK: Option<Owner> = Some(Owner::Host);
@@ -230,6 +268,8 @@ pub fn worker_declarations() -> Vec<Descriptor> {
         Descriptor::of::<layout::LeaseIds>(),
         Descriptor::of::<layout::Apply>(),
         Descriptor::of::<layout::Adopt>(),
+        Descriptor::of::<layout::Launch>(),
+        Descriptor::of::<layout::Sweep>(),
     ]
 }
 

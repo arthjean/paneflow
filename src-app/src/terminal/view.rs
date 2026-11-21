@@ -368,6 +368,7 @@ pub struct TerminalView {
     exit_announced: bool,
     relaunch_pending: bool,
     recover_on_restore: bool,
+    worker_route: Option<crate::terminal::host_link::LaunchRoute>,
     conversation: conversation::Conversation,
 }
 
@@ -618,6 +619,7 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) -> Self {
         launch.surface_id = crate::layout_ids::surface_id_for_new_terminal();
+        let worker_route = crate::layout_ids::launch_route_for_new_terminal();
         #[cfg(test)]
         if cx.has_global::<DisplayOnlyTerminals>() {
             let mut terminal = TerminalState::new_display_only(24, 80);
@@ -628,17 +630,34 @@ impl TerminalView {
             if crate::app::fake_host::installed(cx) {
                 terminal.hosted = Some(crate::app::fake_host::hosted_session());
                 let session = terminal.session_id.clone();
+                let route = worker_route.filter(|_| intent == SessionIntent::Create);
                 crate::app::fake_host::record(
                     cx,
-                    match intent {
-                        SessionIntent::Reattach => {
-                            crate::app::fake_host::HostRequest::Reattach { session }
+                    match (intent, &route) {
+                        (SessionIntent::Reattach, _) => {
+                            crate::app::fake_host::HostRequest::Reattach {
+                                session: session.clone(),
+                            }
                         }
-                        SessionIntent::Create | SessionIntent::Restart { .. } => {
-                            crate::app::fake_host::HostRequest::Create { session }
+                        (SessionIntent::Create, Some(_)) => {
+                            crate::app::fake_host::HostRequest::Launch {
+                                session: session.clone(),
+                            }
+                        }
+                        (SessionIntent::Create | SessionIntent::Restart { .. }, _) => {
+                            crate::app::fake_host::HostRequest::Create {
+                                session: session.clone(),
+                            }
                         }
                     },
                 );
+                if let Some(route) = route {
+                    let params = serde_json::json!({
+                        "surface_id": launch.surface_id,
+                        "session": session.as_str(),
+                    });
+                    std::thread::spawn(move || route.launch(params));
+                }
             }
             return Self::from_terminal_state(launch, terminal, cx);
         }
@@ -656,6 +675,7 @@ impl TerminalView {
             terminal.session_id = session;
         }
         let mut view = Self::from_terminal_state(launch, terminal, cx);
+        view.worker_route = worker_route;
         view.begin_hosted_attach(intent, params, pending, cx);
         view
     }
@@ -815,6 +835,7 @@ impl TerminalView {
             exit_announced: false,
             relaunch_pending: false,
             recover_on_restore: false,
+            worker_route: None,
             conversation: conversation::Conversation::default(),
         }
     }

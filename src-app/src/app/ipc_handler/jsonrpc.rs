@@ -15,10 +15,18 @@ impl JsonRpcError {
     pub(crate) const RUNTIME_UNAVAILABLE: i32 = -32003;
     pub(crate) const CONFIRMATION_REQUIRED: i32 = -32005;
     pub(crate) const REQUEST_CANCELLED: i32 = -32800;
+    pub(crate) const INTERNAL: i32 = -32603;
 
     pub(crate) fn invalid_params(message: impl Into<String>) -> Self {
         Self {
             code: Self::INVALID_PARAMS,
+            message: message.into(),
+        }
+    }
+
+    pub(crate) fn internal(message: impl Into<String>) -> Self {
+        Self {
+            code: Self::INTERNAL,
             message: message.into(),
         }
     }

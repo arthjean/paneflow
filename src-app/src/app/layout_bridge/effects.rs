@@ -110,11 +110,14 @@ impl PaneFlowApp {
         let Some((_, app_ws)) = self.surface_workspace(surface) else {
             return;
         };
-        let built = crate::layout_ids::assigning_surface(surface.0, || {
-            match self.layout.staged_surfaces.remove(&surface) {
-                Some(spawner) => spawner(self, app_ws, cx),
-                None => self.default_layout_surface(surface, app_ws, cx),
-            }
+        let route = self.layout.sync.launch_route();
+        let built = crate::layout_ids::launching_through(route, || {
+            crate::layout_ids::assigning_surface(surface.0, || {
+                match self.layout.staged_surfaces.remove(&surface) {
+                    Some(spawner) => spawner(self, app_ws, cx),
+                    None => self.default_layout_surface(surface, app_ws, cx),
+                }
+            })
         });
         let session = match &built {
             PaneSurface::Terminal(view) => Some(view.read(cx).terminal.session_id.clone()),

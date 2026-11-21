@@ -69,6 +69,8 @@ ttf-parser = "0.25"
 
 # Internal crates
 paneflow-config = { path = "../crates/paneflow-config" }
+paneflow-git.workspace = true
+paneflow-launch.workspace = true
 paneflow-layout = { workspace = true }
 paneflow-home = { workspace = true }
 paneflow-agent-config = { workspace = true, features = ["config-io"] }
@@ -444,6 +446,7 @@ windows-sys = { version = "0.59", features = [
 ] }
 
 [dev-dependencies]
+paneflow-git = { workspace = true, features = ["test-support"] }
 # `profiler` gates `gpui::profiler::FrameTimingCollector`, which the
 # `layout::render` frame-pacing benchmark reads to measure dirty-to-draw
 # latency. Test-only: `cargo build` does not resolve dev-dependencies, so the

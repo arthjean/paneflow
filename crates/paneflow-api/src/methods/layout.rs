@@ -13,6 +13,8 @@ const WORKER: Owner = Owner::Worker;
 pub const ERR_LAYOUT_REFUSED: i64 = -32070;
 pub const WINDOW_OWNS_LAYOUT: &str = "window_owns_layout";
 pub const NOT_ATTACHED: &str = "not_attached";
+pub const LAUNCH_FAILED: &str = "launch_failed";
+pub const HOST_UNREACHABLE: &str = "host_unreachable";
 pub const LEASE_SIZE: u64 = 1_024;
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -136,6 +138,78 @@ pub struct Adopted {
     pub view: Option<LayoutSnapshot>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SweepParams {
+    #[serde(default)]
+    #[schemars(
+        description = "Also stop the live sessions this host started that nothing holds, as the first sweep after a restore does"
+    )]
+    pub live: bool,
+    #[serde(default)]
+    #[schemars(
+        description = "Sessions the client holds outside the layout, such as dock terminals, which the sweep must keep"
+    )]
+    pub keep: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Swept {
+    #[schemars(description = "Ended sessions whose record was removed")]
+    pub forgotten: Vec<String>,
+    #[schemars(description = "Live sessions that were stopped")]
+    pub stopped: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LaunchParams {
+    #[schemars(description = "The terminal surface to start")]
+    pub surface_id: u64,
+    #[schemars(description = "The session id the client chose for the new terminal")]
+    pub session: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "The working directory the client asks for")]
+    pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "A worktree the working directory must stay inside; a cwd outside it starts at the worktree"
+    )]
+    pub confine_to: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "The directory used when cwd no longer exists")]
+    pub fallback: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Variables for this terminal, above the global and space ones")]
+    pub env: Option<std::collections::BTreeMap<String, String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Initial width in cells; 120 when absent")]
+    pub cols: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Initial height in cells; 40 when absent")]
+    pub rows: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "The colors the terminal answers color queries with: {foreground, background, cursor, palette of 256 [r, g, b], dark}"
+    )]
+    pub appearance: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "The cell size in pixels: {width, height}")]
+    pub cell: Option<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Launched {
+    pub revision: u64,
+    pub events: Vec<PublishedEvent>,
+    #[schemars(
+        description = "Lines to show in the new terminal: a missing default_shell, a config directory that could not be created"
+    )]
+    pub notices: Vec<String>,
+}
+
 method! {
     ViewMethod {
         name: "layout.view",
@@ -203,5 +277,33 @@ method! {
         params: AdoptParams,
         result: Adopted,
         examples: [({"view": {"revision": 14, "state": {"version": 3, "workspaces": [], "active_workspace": 0, "active_space": null}}, "acknowledged": 12} => {"accepted": true, "revision": 14, "view": null})],
+    }
+}
+
+method! {
+    Launch {
+        name: "layout.launch",
+        summary: "Start the terminal of a surface for the attached layout client that created it: the worker builds the launch from its configuration and the layout and creates the session under the id the client chose, which the client binds with bind_session. The surface must have no session or this one. Fails with -32070 and data {reason}: not_attached, not_found, invalid, host_unreachable or launch_failed with the host's message.",
+        owner: WORKER,
+        fallback: NO_FALLBACK,
+        gate: Gate::Open,
+        reply: Reply::Ready,
+        params: LaunchParams,
+        result: Launched,
+        examples: [({"surface_id": 7, "session": "0190e4d2-7b2a-7c3d-8e4f-a1b2c3d4e5f6", "cwd": "/home/me/project"} => {"revision": 15, "events": [{"type": "layout.changed", "workspace_id": 1, "tab_id": 2, "data": {"revision": 15}}], "notices": []})],
+    }
+}
+
+method! {
+    Sweep {
+        name: "layout.sweep",
+        summary: "Remove the records of ended sessions that no surface of the layout, no undo hold and no pending launch names, and with live, also stop the live sessions this host started that nothing holds. The attached layout client calls it after it restores; the worker runs the host requests. Fails with -32070 and data {reason}: not_attached or host_unreachable.",
+        owner: WORKER,
+        fallback: NO_FALLBACK,
+        gate: Gate::Open,
+        reply: Reply::Ready,
+        params: SweepParams,
+        result: Swept,
+        examples: [({"live": true, "keep": []} => {"forgotten": ["0190e4d2-7b2a-7c3d-8e4f-a1b2c3d4e5f6"], "stopped": []})],
     }
 }

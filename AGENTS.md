@@ -146,12 +146,18 @@ the two you did.
   (`terminal/types.rs::alacritty_is_absent_from_the_app_crate`) fails if a
   second engine reappears.
 - **One git implementation: the `git` CLI.** Every git read and write spawns
-  the user's `git` through `src-app/src/git_command.rs`, and a background read
+  the user's `git` through `crates/paneflow-git/src/command.rs`, and a background read
   uses `GitProfile::Probe`. Do not add libgit2, gitoxide (`gix`) or a
   hand-written reader of git's on-disk formats: an in-process engine was built
   and withdrawn in November 2026 (tag `archive/gix-engine`) because a second
   implementation trails git. ARCHITECTURE.md, "Git goes through the git CLI",
   has the reasons and the Windows residual that the CLI keeps (#124).
+  The window, the worker and the CLI share that crate: the worktree record
+  checks (owner marker, admin directory) in `worktree.rs` and the
+  plan, create and roll back sequence in `worktree_plan.rs`. A `worktree`
+  request on `workspace.up` or `surface.split` is created by whichever process
+  serves the call, which removes every worktree it created when the layout
+  refuses the call; `paneflow up` only plans locally for `--dry-run`.
 - **The render thread never blocks.** No synchronous file I/O, git subprocess,
   or recursive directory walk on the GPUI main thread. Push that work through
   `smol::unblock` or the bootstrap path.

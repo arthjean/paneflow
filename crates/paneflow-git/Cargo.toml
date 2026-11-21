@@ -1,0 +1,30 @@
+[package]
+name = "paneflow-git"
+version.workspace = true
+edition = "2024"
+rust-version.workspace = true
+license.workspace = true
+description = "Paneflow's single git boundary: the git CLI builder, its probe isolation, repository discovery and managed worktrees, shared by the window and the worker"
+publish = false
+
+[features]
+test-support = ["dep:tempfile"]
+
+[dependencies]
+dirs.workspace = true
+log.workspace = true
+paneflow-home.workspace = true
+paneflow-process.workspace = true
+tempfile = { workspace = true, optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

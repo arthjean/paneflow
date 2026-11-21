@@ -5,20 +5,26 @@ use std::time::{Duration, Instant};
 
 use paneflow_api::methods::events::{EventIds, PublishedEvent};
 use paneflow_api::methods::layout::{
-    Adopted, AppliedOp, Attached, ERR_LAYOUT_REFUSED, LayoutSnapshot, Lease, NOT_ATTACHED, View,
+    Adopted, AppliedOp, Attached, ERR_LAYOUT_REFUSED, HOST_UNREACHABLE, LAUNCH_FAILED,
+    LaunchParams, Launched, LayoutSnapshot, Lease, NOT_ATTACHED, SweepParams, Swept, View,
     WINDOW_OWNS_LAYOUT,
 };
 use paneflow_config::schema::{SessionId, SessionState};
 use paneflow_layout::{
     Effect, Event, EventScope, IdBlock, IdSource, LEASE_BLOCK, Model, Op, OpError, Snapshot,
+    SurfaceId, SurfaceKind,
 };
 use serde_json::{Map, Value, json};
 
+use crate::launcher::{LaunchError, LaunchInputs, LaunchSupport, SessionLink, SessionStarter};
 use crate::registry::ServeError;
 
 pub const SAVE_DEBOUNCE: Duration = Duration::from_millis(150);
 pub const MAX_LAYOUT_FRAME_BYTES: usize = 16 * 1024 * 1024;
+use crate::sweep::{ListedRecord, layout_sessions, orphan_sweep};
+
 const WINDOW_PROBE: Duration = Duration::from_millis(200);
+const LAUNCH_BIND_GRACE: Duration = Duration::from_secs(120);
 const IDLE_WAKE: Duration = Duration::from_secs(5);
 const HOST_CLIENT: &str = "paneflow-serve-layout";
 const UNREADABLE_SUFFIX: &str = "unreadable";
@@ -61,6 +67,7 @@ struct Core {
     write_failure: Option<String>,
     logged_causes: HashSet<String>,
     host_work: VecDeque<HostWork>,
+    launching: HashMap<SessionId, Instant>,
     writes: u64,
     closed: bool,
 }
@@ -72,6 +79,14 @@ pub struct LayoutAuthority {
     epoch: String,
     core: Mutex<Core>,
     wake: Condvar,
+    support: LaunchSupport,
+    starter: Arc<dyn SessionStarter>,
+}
+
+pub struct ApplyOutcome {
+    pub applied: AppliedOp,
+    pub events: Vec<PublishedEvent>,
+    pub launch_error: Option<ServeError>,
 }
 
 fn refused(reason: &str, message: impl Into<String>) -> ServeError {
@@ -91,6 +106,50 @@ fn op_refused(error: OpError) -> ServeError {
 
 fn invalid_params(message: impl Into<String>) -> ServeError {
     ServeError::invalid_params(message)
+}
+
+fn launch_refused(error: &LaunchError) -> ServeError {
+    match error {
+        LaunchError::Unreachable(message) => refused(
+            HOST_UNREACHABLE,
+            format!("the terminal host is unreachable: {message}"),
+        ),
+        LaunchError::Refused(message) => refused(
+            LAUNCH_FAILED,
+            format!("the terminal host refused the session: {message}"),
+        ),
+    }
+}
+
+pub(crate) fn orchestration_refused(method: &str) -> ServeError {
+    ServeError {
+        code: crate::protocol::ERR_METHOD_NOT_FOUND,
+        message: format!(
+            "{method} orchestration disabled; set PANEFLOW_IPC_ORCHESTRATION=1 \
+             or PANEFLOW_IPC_SCRIPTING=1 to enable command, prompt, or env"
+        ),
+        data: None,
+    }
+}
+
+fn decode_param<T: serde::de::DeserializeOwned>(
+    value: Option<Value>,
+    what: &str,
+) -> Result<Option<T>, ServeError> {
+    value
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|error| invalid_params(format!("{what} is malformed: {error}")))
+}
+
+fn spawned_surfaces(effects: &[Effect]) -> Vec<SurfaceId> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Spawn { surface } => Some(*surface),
+            _ => None,
+        })
+        .collect()
 }
 
 pub fn published_events(
@@ -235,6 +294,23 @@ pub fn export_for_file(model: &Model) -> SessionState {
 
 impl LayoutAuthority {
     pub fn open(home: &Path, core_endpoint: PathBuf, epoch: String) -> Self {
+        let starter = crate::launcher::HostStarter::shared(core_endpoint.clone());
+        Self::open_with(
+            home,
+            core_endpoint,
+            epoch,
+            LaunchSupport::default(),
+            starter,
+        )
+    }
+
+    pub fn open_with(
+        home: &Path,
+        core_endpoint: PathBuf,
+        epoch: String,
+        support: LaunchSupport,
+        starter: Arc<dyn SessionStarter>,
+    ) -> Self {
         let path = paneflow_home::session_path_in(home);
         let (model, loaded) = model_from_file(&path);
         let aside_pending = matches!(loaded, Loaded::Unreadable(_));
@@ -259,10 +335,13 @@ impl LayoutAuthority {
                 write_failure: None,
                 logged_causes: HashSet::new(),
                 host_work: VecDeque::new(),
+                launching: HashMap::new(),
                 writes: 0,
                 closed: false,
             }),
             wake: Condvar::new(),
+            support,
+            starter,
         }
     }
 
@@ -424,13 +503,27 @@ impl LayoutAuthority {
         );
     }
 
+    pub fn current_state(&self) -> paneflow_layout::State {
+        let mut core = self.lock();
+        self.reload_if_rewritten_unattached(&mut core);
+        core.model.state().clone()
+    }
+
+    pub fn reserve_id(&self) -> u64 {
+        self.lock().model.reserve()
+    }
+
+    fn is_attached(&self, connection: ConnectionId) -> bool {
+        self.lock().attached.contains_key(&connection)
+    }
+
     pub fn apply(
         &self,
         connection: ConnectionId,
         op: Value,
         ids_from: Option<u64>,
         now_ms: u64,
-    ) -> Result<(AppliedOp, Vec<PublishedEvent>), ServeError> {
+    ) -> Result<ApplyOutcome, ServeError> {
         let op: Op = serde_json::from_value(op)
             .map_err(|error| invalid_params(format!("the op is not a layout op: {error}")))?;
         let attached = self.has_attached_window();
@@ -441,42 +534,176 @@ impl LayoutAuthority {
                 "a Paneflow window of an earlier build owns the layout; it is applied there until that window restarts",
             ));
         }
-        let mut core = self.lock();
-        self.reload_if_rewritten_unattached(&mut core);
-        let key = Self::client_key(&mut core, connection);
-        let blocks = core.leases.get(&key).cloned().unwrap_or_default();
-        let mut trial = core.model.clone();
-        for id in op.new_ids() {
-            let leased = blocks.iter().any(|block| block.contains(id));
-            if connection != ConnectionId::INTERNAL && !leased {
-                return Err(op_refused(OpError::Invalid));
-            }
-            if connection != ConnectionId::INTERNAL && !trial.reserve_exact(id) {
-                return Err(op_refused(OpError::Invalid));
-            }
-        }
-        let ids = match ids_from {
-            Some(at) if connection != ConnectionId::INTERNAL => {
-                let mirror = IdSource::leased(&blocks, at);
-                if mirror.is_overdrawn() {
+        let launches_here = connection == ConnectionId::INTERNAL || !self.is_attached(connection);
+        let mut link: Option<Box<dyn SessionLink>> = None;
+        let (applied, spawns, state) = loop {
+            let mut core = self.lock();
+            self.reload_if_rewritten_unattached(&mut core);
+            let key = Self::client_key(&mut core, connection);
+            let blocks = core.leases.get(&key).cloned().unwrap_or_default();
+            let mut trial = core.model.clone();
+            for id in op.new_ids() {
+                let leased = blocks.iter().any(|block| block.contains(id));
+                if connection != ConnectionId::INTERNAL && !leased {
                     return Err(op_refused(OpError::Invalid));
                 }
-                mirror
+                if connection != ConnectionId::INTERNAL && !trial.reserve_exact(id) {
+                    return Err(op_refused(OpError::Invalid));
+                }
             }
-            _ => trial.ids(),
+            let ids = match ids_from {
+                Some(at) if connection != ConnectionId::INTERNAL => {
+                    let mirror = IdSource::leased(&blocks, at);
+                    if mirror.is_overdrawn() {
+                        return Err(op_refused(OpError::Invalid));
+                    }
+                    mirror
+                }
+                _ => trial.ids(),
+            };
+            let applied = trial
+                .apply_with_ids(op.clone(), now_ms, &ids)
+                .map_err(op_refused)?;
+            if ids.is_overdrawn() {
+                return Err(op_refused(OpError::Invalid));
+            }
+            let spawns = if launches_here {
+                spawned_surfaces(&applied.effects)
+            } else {
+                Vec::new()
+            };
+            if !spawns.is_empty() {
+                let gated = connection != ConnectionId::INTERNAL
+                    && !crate::launcher::orchestration_enabled()
+                    && spawns.iter().any(|surface| {
+                        trial.state().surface(*surface).is_some_and(|known| {
+                            crate::launcher::surface_needs_orchestration(&known.definition)
+                        })
+                    });
+                if gated {
+                    return Err(orchestration_refused("layout.apply"));
+                }
+                if link.is_none() {
+                    drop(core);
+                    link = Some(
+                        self.starter
+                            .connect()
+                            .map_err(|error| launch_refused(&error))?,
+                    );
+                    continue;
+                }
+            }
+            core.model = trial;
+            for effect in &applied.effects {
+                Self::queue_effect(&mut core, effect);
+            }
+            Self::mark_dirty(&mut core);
+            let state = (!spawns.is_empty()).then(|| core.model.state().clone());
+            break (applied, spawns, state);
         };
-        let applied = trial.apply_with_ids(op, now_ms, &ids).map_err(op_refused)?;
-        if ids.is_overdrawn() {
-            return Err(op_refused(OpError::Invalid));
+        self.wake.notify_all();
+        let mut events = published_events(&applied.events, &applied.scopes, applied.revision);
+        let mut revision = applied.revision;
+        let mut launch_error = None;
+        if let (Some(state), Some(link)) = (state, link.as_mut()) {
+            for surface in spawns {
+                let Some(inputs) = crate::launcher::inputs_from_model(&state, surface) else {
+                    continue;
+                };
+                match self.start_session(
+                    link.as_mut(),
+                    &state,
+                    surface,
+                    SessionId::new(),
+                    inputs,
+                    true,
+                ) {
+                    Ok(started) => {
+                        revision = started.revision;
+                        events.extend(started.events);
+                    }
+                    Err(error) => launch_error = Some(error),
+                }
+            }
         }
-        core.model = trial;
-        let events = published_events(&applied.events, &applied.scopes, applied.revision);
+        Ok(ApplyOutcome {
+            applied: AppliedOp {
+                revision,
+                events: events.clone(),
+            },
+            events,
+            launch_error,
+        })
+    }
+
+    fn start_session(
+        &self,
+        link: &mut dyn SessionLink,
+        state: &paneflow_layout::State,
+        surface: SurfaceId,
+        session: SessionId,
+        inputs: LaunchInputs,
+        bind: bool,
+    ) -> Result<Launched, ServeError> {
+        let prepared = crate::launcher::prepare(
+            &self.home,
+            &self.support,
+            state,
+            surface,
+            session.clone(),
+            inputs,
+        )
+        .ok_or_else(|| op_refused(OpError::NotFound))?;
+        self.lock()
+            .launching
+            .insert(session.clone(), Instant::now());
+        let created = link
+            .exists(&session)
+            .and_then(|known| {
+                if known {
+                    Ok(())
+                } else {
+                    link.create(&prepared.request)
+                }
+            })
+            .map_err(|error| launch_refused(&error));
+        if let Err(error) = created {
+            self.lock().launching.remove(&session);
+            return Err(error);
+        }
+        if !bind {
+            return Ok(Launched {
+                revision: self.lock().model.revision(),
+                events: Vec::new(),
+                notices: prepared.notices,
+            });
+        }
+        let bound = self.apply_internal(Op::BindSession {
+            surface,
+            session: session.clone(),
+        });
+        self.lock().launching.remove(&session);
+        let (applied, events) = bound?;
+        Ok(Launched {
+            revision: applied.revision,
+            events,
+            notices: prepared.notices,
+        })
+    }
+
+    fn apply_internal(&self, op: Op) -> Result<(AppliedOp, Vec<PublishedEvent>), ServeError> {
+        let mut core = self.lock();
+        let applied = core
+            .model
+            .apply(op, crate::state::now_ms())
+            .map_err(op_refused)?;
         for effect in &applied.effects {
             Self::queue_effect(&mut core, effect);
         }
         Self::mark_dirty(&mut core);
         drop(core);
         self.wake.notify_all();
+        let events = published_events(&applied.events, &applied.scopes, applied.revision);
         Ok((
             AppliedOp {
                 revision: applied.revision,
@@ -484,6 +711,152 @@ impl LayoutAuthority {
             },
             events,
         ))
+    }
+
+    pub fn launch(
+        &self,
+        connection: ConnectionId,
+        params: LaunchParams,
+    ) -> Result<Launched, ServeError> {
+        if connection == ConnectionId::INTERNAL || !self.is_attached(connection) {
+            return Err(refused(
+                NOT_ATTACHED,
+                "layout.launch needs a connection attached with layout.attach",
+            ));
+        }
+        let carries_env = params.env.as_ref().is_some_and(|env| !env.is_empty());
+        if carries_env && !crate::launcher::orchestration_enabled() {
+            return Err(orchestration_refused("layout.launch"));
+        }
+        let session: SessionId = params
+            .session
+            .parse()
+            .map_err(|_| invalid_params("session is not a session id"))?;
+        let surface = SurfaceId(params.surface_id);
+        let state = self.lock().model.state().clone();
+        let startable = state.surface(surface).is_some_and(|known| {
+            known.kind() == SurfaceKind::Terminal
+                && known
+                    .definition
+                    .session
+                    .as_ref()
+                    .is_none_or(|bound| *bound == session)
+        });
+        if !startable {
+            return Err(op_refused(OpError::NotFound));
+        }
+        let inputs = LaunchInputs {
+            cwd: params.cwd.map(PathBuf::from),
+            confine_to: params.confine_to.map(PathBuf::from),
+            fallback: params.fallback.map(PathBuf::from),
+            env: params.env.map(|env| env.into_iter().collect()),
+            size: params
+                .cols
+                .zip(params.rows)
+                .map(|(cols, rows)| (usize::from(cols), usize::from(rows))),
+            appearance: decode_param(params.appearance, "appearance")?,
+            cell: decode_param(params.cell, "cell")?,
+        };
+        let mut link = self
+            .starter
+            .connect()
+            .map_err(|error| launch_refused(&error))?;
+        self.start_session(link.as_mut(), &state, surface, session, inputs, false)
+    }
+
+    pub fn sweep(
+        &self,
+        connection: ConnectionId,
+        params: SweepParams,
+    ) -> Result<Swept, ServeError> {
+        if connection == ConnectionId::INTERNAL || !self.is_attached(connection) {
+            return Err(refused(
+                NOT_ATTACHED,
+                "layout.sweep needs a connection attached with layout.attach",
+            ));
+        }
+        let hello = paneflow_host::protocol::ClientHello::control(HOST_CLIENT);
+        let mut client =
+            paneflow_host::HostClient::connect(&self.core_endpoint, &hello).map_err(|error| {
+                refused(
+                    HOST_UNREACHABLE,
+                    format!("the terminal host is unreachable: {error}"),
+                )
+            })?;
+        let rows = client.list(None).map_err(|error| {
+            refused(
+                HOST_UNREACHABLE,
+                format!("the terminal host did not list its sessions: {error}"),
+            )
+        })?;
+        let listed: Vec<ListedRecord> = rows
+            .into_iter()
+            .map(|row| ListedRecord {
+                session: row.session,
+                generation: row.generation,
+                owned: row.owned,
+                live: row.live,
+                lifecycle: row.lifecycle,
+            })
+            .collect();
+        let (held, sweep_live) = {
+            let mut core = self.lock();
+            let mut held = layout_sessions(core.model.state());
+            core.launching.retain(|session, started| {
+                !held.contains(session) && started.elapsed() < LAUNCH_BIND_GRACE
+            });
+            held.extend(core.launching.keys().cloned());
+            held.extend(core.model.undo_history().held_sessions());
+            let sweep_live = params.live && !matches!(core.loaded, Loaded::Unreadable(_));
+            (held, sweep_live)
+        };
+        let mut held = held;
+        held.extend(
+            params
+                .keep
+                .iter()
+                .filter_map(|raw| raw.parse::<SessionId>().ok()),
+        );
+        let sweep = orphan_sweep(&listed, &held, &HashSet::new(), sweep_live);
+        let mut swept = Swept::default();
+        for session in sweep.forget {
+            match client.remove(&session) {
+                Ok(()) => {
+                    log::info!(
+                        "paneflow-serve: ended session {session} had no surface left; record removed"
+                    );
+                    swept.forgotten.push(session.to_string());
+                }
+                Err(error) => {
+                    log::debug!("paneflow-serve: ended session {session} record kept: {error}")
+                }
+            }
+        }
+        if !sweep.stop.is_empty() {
+            log::info!(
+                "paneflow-serve: stopping {} live session(s) no surface holds after the restore",
+                sweep.stop.len()
+            );
+        }
+        for orphan in sweep.stop {
+            match client.stop(&orphan.session, Some(orphan.generation)) {
+                Ok(_) => {
+                    if let Err(error) = client.remove(&orphan.session) {
+                        log::debug!(
+                            "paneflow-serve: session {} stopped, its record stays: {error}",
+                            orphan.session
+                        );
+                    }
+                    swept.stopped.push(orphan.session.to_string());
+                }
+                Err(error) if error.is_session_gone() => {}
+                Err(error) => log::warn!(
+                    "paneflow-serve: cannot stop orphan session {}: {error}",
+                    orphan.session
+                ),
+            }
+        }
+        Ok(swept)
     }
 
     fn queue_effect(core: &mut Core, effect: &Effect) {

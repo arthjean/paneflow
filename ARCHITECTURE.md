@@ -984,7 +984,7 @@ desktop and `paneflow host start` keep `HostLifetime::OutlivesCaller`.
 | Event | Host | Sessions | Records |
 |---|---|---|---|
 | Quit keeping sessions (the default of the quit dialog), crash or `taskkill /F` | keeps running | keep running | unchanged |
-| Quit with no live session, or "Stop everything and quit" | `host.shutdown` once the stops are done | stopped one by one | removed once every stop is confirmed and saved; `session.json` then drops each terminal's `session` and `agent`, so the layout reopens with a new shell per pane |
+| Quit with no live session, or "Stop everything and quit" | `host.shutdown` once the stops are done | stopped one by one | removed once every stop is confirmed and saved; the window unbinds each terminal's `session` and `agent` in the worker's layout, which the worker writes to `session.json`, so the layout reopens with a new shell per pane |
 | Controller pipe or CLI connection closes | keeps running | keep running | unchanged |
 | Explicit `session.stop` | keeps running | that session's owned process tree is terminated within a 5 s budget, exit recorded | `lifecycle: exited` |
 | `paneflow host stop` with live sessions | refused, lists them | untouched | unchanged |
@@ -1263,16 +1263,22 @@ stop for a session whose stop is still in flight is dropped.
 
 The sidebar lists no hosted session: a session is reachable only through the
 view that holds it. The desktop keeps a reduced listing of `session.list`
-(owned live sessions, for the quit dialog and worktree teardown) and runs an
-orphan sweep on every listing. Every ended record (`Exited`, `Failed` or
-`Lost`, owned or left by a previous host) whose id no attached view and no
-undo window holds is removed with `session.remove`; a record that may still
-own a process (`Starting`, `Unverified`, a pending launch) is never touched.
-The first listing after a successful restore, and the first one after the
-user starts a new session from a failed restore, also stops and removes every
-owned live session no view holds. Both sweeps are suspended while a failed
-restore is unresolved, because the preserved `session.json` may still
-reference those records. Worktree teardown asks the host for the live session
+(owned live sessions, for the quit dialog and worktree teardown) and, after
+every listing, asks the worker for an orphan sweep with `layout.sweep`,
+passing the sessions it holds outside the layout (dock terminals, stops in
+flight) as `keep`. The worker runs the sweep against the host itself
+(`paneflow_serve::sweep`). Every ended record (`Exited`, `Failed` or `Lost`,
+owned or left by a previous host) whose id no surface of the layout, no undo
+hold, no pending `layout.launch` and no kept session names is removed with
+`session.remove`; a record that may still own a process (`Starting`,
+`Unverified`) is never touched. The first sweep after a successful restore,
+and the first one after the user starts a new session from a failed restore,
+is sent with `live`, and also stops and removes every owned live session
+nothing holds; a live request the worker cannot serve stays pending for the
+next listing. The desktop sends no sweep while a failed restore is
+unresolved, and the worker refuses the live part while its own
+`session.json` was unreadable, because the preserved file may still reference
+those records. With no worker attached, no sweep runs. Worktree teardown asks the host for the live session
 cwds first: a worktree that still contains a live session, attached or not,
 is kept; an unreachable host proceeds with the current rules; any other host
 error skips the teardown.
@@ -1325,7 +1331,7 @@ client side is what covers the first upgrade.
 ## Git goes through the git CLI
 
 Paneflow has one git implementation: the user's `git` binary. Every read and
-every write spawns it through `src-app/src/git_command.rs`, off the GPUI main
+every write spawns it through `crates/paneflow-git/src/command.rs`, off the GPUI main
 thread, so a repository behaves in Paneflow as it does in the user's terminal,
 whatever its layout (reftable references, SHA-256 objects, sparse checkouts,
 submodules) and whatever git ships next.
@@ -1339,6 +1345,13 @@ submodules) and whatever git ships next.
   filter drivers that the repository's own config declares. A probe therefore
   runs no program the repository configures, while a system or global driver
   such as git-lfs runs as it does for the user.
+- **One crate for the three processes.** `paneflow-git` holds the command
+  builder, its spawn counters, the per-directory subprocess environment and the
+  worktree code, so the window, the worker and the CLI spawn git the same way.
+  A `workspace.up` or `surface.split` pane with a `worktree` request has its
+  worktree planned, created and, when the layout refuses the call, removed
+  again by the process that serves the call; a `setup` command in the request
+  needs the orchestration gate, like any other command.
 - **Known residual on Windows (#124).** Git for Windows memory-maps a worktree
   file while it hashes it, and Windows refuses a truncating write
   (`CREATE_ALWAYS`, `TRUNCATE_EXISTING`) to a mapped file with OS error 1224.

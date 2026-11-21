@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     EnvMap, LayoutDocument, ManagedWorktreeSpec, NO_FALLBACK, NoParams, SpaceRef, SurfaceProfile,
-    WINDOW,
+    WINDOW, WorktreeRequestSpec,
 };
 use crate::descriptor::{Gate, Reply};
 
@@ -97,6 +97,10 @@ pub struct PaneSpec {
     #[schemars(description = "Alias of label")]
     pub name: Option<String>,
     pub managed_worktree: Option<ManagedWorktreeSpec>,
+    #[schemars(
+        description = "Create or reuse a Paneflow worktree for this pane, which then starts in it; exclusive with managed_worktree"
+    )]
+    pub worktree: Option<WorktreeRequestSpec>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -118,6 +122,11 @@ pub struct Opened {
     pub panes: usize,
     pub surface_ids: Vec<u64>,
     pub labels: Vec<Option<String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(
+        description = "What preparing the worktrees reported: files copied, a setup that failed"
+    )]
+    pub notices: Vec<String>,
 }
 
 method! {
@@ -168,7 +177,7 @@ method! {
     Create {
         name: "workspace.create",
         summary: "Open a workspace with one terminal, or with a layout document.",
-        owner: WINDOW,
+        owner: crate::descriptor::Owner::Worker,
         fallback: NO_FALLBACK,
         gate: Gate::OrchestrationWhenSpawning,
         reply: Reply::Async,
@@ -183,7 +192,7 @@ method! {
     Select {
         name: "workspace.select",
         summary: "Show the workspace at an index.",
-        owner: WINDOW,
+        owner: crate::descriptor::Owner::Worker,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
         reply: Reply::Ready,
@@ -198,7 +207,7 @@ method! {
     Close {
         name: "workspace.close",
         summary: "Close the workspace at an index; the last workspace cannot be closed.",
-        owner: WINDOW,
+        owner: crate::descriptor::Owner::Worker,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
         reply: Reply::Ready,
@@ -213,7 +222,7 @@ method! {
     RestoreLayout {
         name: "workspace.restore_layout",
         summary: "Conform the shown tab to a layout document, reusing its panes.",
-        owner: WINDOW,
+        owner: crate::descriptor::Owner::Worker,
         fallback: NO_FALLBACK,
         gate: Gate::OrchestrationWhenSpawning,
         reply: Reply::Ready,
@@ -231,7 +240,7 @@ method! {
     Up {
         name: "workspace.up",
         summary: "Open a workspace from pane specs, each with its own directory, command or prompt.",
-        owner: WINDOW,
+        owner: crate::descriptor::Owner::Worker,
         fallback: NO_FALLBACK,
         gate: Gate::OrchestrationWhenSpawning,
         reply: Reply::Async,

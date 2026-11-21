@@ -6,7 +6,7 @@ use std::sync::{Mutex, OnceLock, PoisonError};
 use std::time::{Duration, SystemTime};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum GitProfile {
+pub enum GitProfile {
     Probe,
     UserAction,
 }
@@ -66,7 +66,7 @@ const FILTER_QUERY_STDOUT_CAP: u64 = 64 * 1024;
 
 const EMPTY_HOOKS_DIR_NAME: &str = "git-empty-hooks";
 
-pub(crate) fn git<I, S>(profile: GitProfile, args: I) -> Command
+pub fn git<I, S>(profile: GitProfile, args: I) -> Command
 where
     I: IntoIterator<Item = S>,
     S: AsRef<OsStr>,
@@ -76,8 +76,8 @@ where
         command.env_remove(key);
     }
     command.env("GIT_TERMINAL_PROMPT", "0");
-    #[cfg(test)]
-    crate::git_fixture::isolate(&mut command);
+    #[cfg(any(test, feature = "test-support"))]
+    crate::fixture::isolate(&mut command);
     if profile == GitProfile::Probe {
         command.envs(PROBE_ENV.iter().copied());
         for setting in PROBE_CONFIG {
@@ -130,10 +130,10 @@ fn is_probe(command: &Command) -> bool {
         .any(|(key, value)| key == PROBE_ENV[0].0 && value == Some(OsStr::new(PROBE_ENV[0].1)))
 }
 
-pub(crate) fn record_spawn(command: &Command) {
+pub fn record_spawn(command: &Command) {
     let args: Vec<&OsStr> = command.get_args().collect();
     let subcommand = subcommand_index(&args).and_then(|index| args[index].to_str());
-    crate::work_counters::record_git_spawn(is_probe(command), subcommand);
+    crate::counters::record_spawn(is_probe(command), subcommand);
 }
 
 fn reads_the_worktree(command: &Command) -> bool {
@@ -355,11 +355,11 @@ fn filter_cache() -> &'static Mutex<HashMap<PathBuf, CachedFilters>> {
 }
 
 fn local_config_path(cwd: &Path) -> Option<PathBuf> {
-    let git_dir = crate::workspace::git::find_git_dir(cwd.to_str()?)?;
-    Some(crate::workspace::git::resolve_main_git_dir(&git_dir)?.join("config"))
+    let git_dir = crate::repo::find_git_dir(cwd.to_str()?)?;
+    Some(crate::repo::resolve_main_git_dir(&git_dir)?.join("config"))
 }
 
-fn cached_filter_drivers(cwd: &Path) -> Option<BTreeSet<String>> {
+pub fn cached_filter_drivers(cwd: &Path) -> Option<BTreeSet<String>> {
     let local_config = local_config_path(cwd)?;
     let cache = filter_cache()
         .lock()
@@ -413,35 +413,35 @@ fn remember_filter_drivers(
     );
 }
 
-pub(crate) fn run(
+pub fn run(
     mut command: Command,
     deadline: Duration,
     stdout_cap: u64,
 ) -> Result<paneflow_process::BoundedOutput, paneflow_process::ProcError> {
-    crate::space_env::apply_directory_env(&mut command);
+    crate::directory_env::apply(&mut command);
     neutralize_repository_filters(&mut command)?;
     record_spawn(&command);
     paneflow_process::run_with_timeout_keeping_stderr_tail(command, deadline, stdout_cap)
 }
 
-pub(crate) fn run_keeping_stdout_head(
+pub fn run_keeping_stdout_head(
     mut command: Command,
     deadline: Duration,
     stdout_cap: u64,
 ) -> Result<(paneflow_process::BoundedOutput, bool), paneflow_process::ProcError> {
-    crate::space_env::apply_directory_env(&mut command);
+    crate::directory_env::apply(&mut command);
     neutralize_repository_filters(&mut command)?;
     record_spawn(&command);
     paneflow_process::run_with_timeout_keeping_stdout_head(command, deadline, stdout_cap)
 }
 
-pub(crate) fn run_feeding_stdin_keeping_stdout_head(
+pub fn run_feeding_stdin_keeping_stdout_head(
     mut command: Command,
     stdin: Vec<u8>,
     deadline: Duration,
     stdout_cap: u64,
 ) -> Result<(paneflow_process::BoundedOutput, bool), paneflow_process::ProcError> {
-    crate::space_env::apply_directory_env(&mut command);
+    crate::directory_env::apply(&mut command);
     neutralize_repository_filters(&mut command)?;
     record_spawn(&command);
     paneflow_process::run_with_timeout_feeding_stdin_keeping_stdout_head(
@@ -449,7 +449,7 @@ pub(crate) fn run_feeding_stdin_keeping_stdout_head(
     )
 }
 
-pub(crate) fn empty_hooks_dir() -> &'static Path {
+pub fn empty_hooks_dir() -> &'static Path {
     static DIR: OnceLock<PathBuf> = OnceLock::new();
     DIR.get_or_init(|| {
         let dir = empty_hooks_dir_in(&empty_hooks_parent());
@@ -467,16 +467,16 @@ fn empty_hooks_dir_in(cache: &Path) -> PathBuf {
     cache.join(EMPTY_HOOKS_DIR_NAME)
 }
 
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-support")))]
 fn empty_hooks_parent() -> PathBuf {
     paneflow_home::cache_dir().unwrap_or_else(std::env::temp_dir)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 fn empty_hooks_parent() -> PathBuf {
-    crate::git_fixture::private_temp_root().join("cache")
+    crate::fixture::private_temp_root().join("cache")
 }
 
 #[cfg(test)]
-#[path = "git_command_tests.rs"]
+#[path = "command_tests.rs"]
 mod tests;

@@ -1,8 +1,6 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-pub(crate) fn implicit_launch_cwd() -> PathBuf {
-    resolve_implicit_launch_cwd(std::env::current_dir().ok(), dirs::home_dir())
-}
+pub(crate) use paneflow_launch::cwd::{implicit_launch_cwd, is_filesystem_root};
 
 pub(crate) fn title_for_cwd_or(cwd: &Path, fallback: impl Into<String>) -> String {
     cwd.file_name()
@@ -11,21 +9,10 @@ pub(crate) fn title_for_cwd_or(cwd: &Path, fallback: impl Into<String>) -> Strin
         .unwrap_or_else(|| fallback.into())
 }
 
-fn resolve_implicit_launch_cwd(current: Option<PathBuf>, home: Option<PathBuf>) -> PathBuf {
-    match current {
-        Some(current) if is_filesystem_root(&current) => home.unwrap_or(current),
-        Some(current) => current,
-        None => home.unwrap_or_else(|| PathBuf::from(std::path::MAIN_SEPARATOR.to_string())),
-    }
-}
-
-pub(crate) fn is_filesystem_root(path: &Path) -> bool {
-    path.has_root() && path.parent().is_none()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     fn platform_root() -> PathBuf {
         std::env::current_dir()
@@ -38,35 +25,6 @@ mod tests {
         let mut path = platform_root();
         path.push(name);
         path
-    }
-
-    #[test]
-    fn implicit_launch_cwd_uses_home_when_current_is_root() {
-        let root = platform_root();
-        let home = child_of_root("home");
-
-        assert_eq!(
-            resolve_implicit_launch_cwd(Some(root), Some(home.clone())),
-            home
-        );
-    }
-
-    #[test]
-    fn implicit_launch_cwd_keeps_non_root_current() {
-        let current = child_of_root("project");
-        let home = child_of_root("home");
-
-        assert_eq!(
-            resolve_implicit_launch_cwd(Some(current.clone()), Some(home)),
-            current
-        );
-    }
-
-    #[test]
-    fn implicit_launch_cwd_uses_home_when_current_is_missing() {
-        let home = child_of_root("home");
-
-        assert_eq!(resolve_implicit_launch_cwd(None, Some(home.clone())), home);
     }
 
     #[test]

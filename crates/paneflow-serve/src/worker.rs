@@ -99,7 +99,11 @@ impl RunningWorker {
     }
 }
 
-fn open_with_build_id(home: &Path, build_id: String) -> Result<RunningWorker, WorkerError> {
+fn open_with_build_id(
+    home: &Path,
+    build_id: String,
+    launching: Launching,
+) -> Result<RunningWorker, WorkerError> {
     std::fs::create_dir_all(paneflow_home::serve_dir_in(home))
         .map_err(|error| WorkerError::Storage(error.to_string()))?;
     let owner =
@@ -128,10 +132,15 @@ fn open_with_build_id(home: &Path, build_id: String) -> Result<RunningWorker, Wo
     let rebuilt = state.rebuild_from_home(home);
     log::info!("paneflow-serve: rebuilt {rebuilt} sessions from manifests and seeds");
     let epoch = crate::event_log::fresh_epoch(identity.pid, identity.started_at_ms);
-    let layout = Arc::new(crate::layout_authority::LayoutAuthority::open(
+    let starter = launching.starter.unwrap_or_else(|| {
+        crate::launcher::HostStarter::shared(paneflow_home::host_endpoint_path(home))
+    });
+    let layout = Arc::new(crate::layout_authority::LayoutAuthority::open_with(
         home,
         paneflow_home::host_endpoint_path(home),
         epoch.clone(),
+        launching.support,
+        starter,
     ));
     layout.start();
     let worker = Arc::new(Worker {
@@ -173,15 +182,25 @@ fn open_with_build_id(home: &Path, build_id: String) -> Result<RunningWorker, Wo
     Ok(running)
 }
 
+#[derive(Default)]
+pub struct Launching {
+    pub support: crate::launcher::LaunchSupport,
+    pub starter: Option<Arc<dyn crate::launcher::SessionStarter>>,
+}
+
 pub fn open(home: &Path) -> Result<RunningWorker, WorkerError> {
+    open_with(home, Launching::default())
+}
+
+pub fn open_with(home: &Path, launching: Launching) -> Result<RunningWorker, WorkerError> {
     static BUILD_ID: OnceLock<String> = OnceLock::new();
     if let Some(build_id) = BUILD_ID.get() {
-        return open_with_build_id(home, build_id.clone());
+        return open_with_build_id(home, build_id.clone(), launching);
     }
     let build_id = std::env::current_exe()
         .and_then(|executable| crate::protocol::executable_build_id(&executable))
         .map_err(|error| WorkerError::Storage(error.to_string()))?;
-    open_with_build_id(home, BUILD_ID.get_or_init(|| build_id).clone())
+    open_with_build_id(home, BUILD_ID.get_or_init(|| build_id).clone(), launching)
 }
 
 fn write_instance_record(worker: &Worker) {
@@ -264,7 +283,17 @@ fn remove_legacy_project_hooks(home: &Path) {
 }
 
 pub fn run(home: &Path) -> Result<(), WorkerError> {
-    let running = open(home)?;
+    run_with(home, crate::launcher::LaunchSupport::default())
+}
+
+pub fn run_with(home: &Path, support: crate::launcher::LaunchSupport) -> Result<(), WorkerError> {
+    let running = open_with(
+        home,
+        Launching {
+            support,
+            starter: None,
+        },
+    )?;
     let accounts =
         crate::usage::configured_accounts(home, paneflow_agent_config::home_dir().as_deref());
     running.worker().start_import(accounts, false);
@@ -607,7 +636,8 @@ mod tests {
 
     fn open_with_config(home: &Path, body: &str) -> RunningWorker {
         std::fs::write(home.join("paneflow.json"), body).expect("the config is written");
-        open_with_build_id(home, "test-build".to_string()).expect("the worker opens")
+        open_with_build_id(home, "test-build".to_string(), Launching::default())
+            .expect("the worker opens")
     }
 
     #[test]
@@ -677,7 +707,7 @@ mod tests {
         let expected = paneflow_home::serve_owner_lock_path_in(home.path());
         assert!(expected.ends_with("owner.lock"));
         assert!(matches!(
-            open_with_build_id(home.path(), "test-build".to_string()),
+            open_with_build_id(home.path(), "test-build".to_string(), Launching::default()),
             Err(WorkerError::AlreadyRunning(path)) if path == expected.display().to_string()
         ));
         first.stop();

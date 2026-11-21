@@ -8,8 +8,10 @@ members = [
     "crates/paneflow-config",
     "crates/paneflow-ipc-client",
     "crates/paneflow-ghostty-smoke",
+    "crates/paneflow-git",
     "crates/paneflow-home",
     "crates/paneflow-host",
+    "crates/paneflow-launch",
     "crates/paneflow-layout",
     "crates/paneflow-libghostty-sys",
     "crates/paneflow-mcp",
@@ -73,9 +75,11 @@ widestring = "1"
 paneflow-agent-config = { path = "crates/paneflow-agent-config", default-features = false }
 paneflow-api = { path = "crates/paneflow-api" }
 paneflow-config = { path = "crates/paneflow-config" }
+paneflow-git = { path = "crates/paneflow-git" }
 paneflow-home = { path = "crates/paneflow-home" }
 paneflow-host = { path = "crates/paneflow-host" }
 paneflow-ipc-client = { path = "crates/paneflow-ipc-client" }
+paneflow-launch = { path = "crates/paneflow-launch" }
 paneflow-layout = { path = "crates/paneflow-layout" }
 paneflow-mcp-install = { path = "crates/paneflow-mcp-install" }
 paneflow-minisign = { path = "crates/paneflow-minisign" }

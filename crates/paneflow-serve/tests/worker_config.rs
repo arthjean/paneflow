@@ -6,6 +6,8 @@ use std::time::{Duration, Instant};
 use paneflow_ipc_client::host_control::HostControl;
 use serde_json::{Value, json};
 
+mod common;
+
 const PATIENCE: Duration = Duration::from_secs(30);
 
 fn call(home: &Path, method: &str, params: Value) -> Result<Value, String> {
@@ -354,7 +356,7 @@ fn an_action_invoked_from_a_timer_or_a_handler_gets_that_origin_and_the_nesting_
          paneflow.on('pane.created', function() seen.event = paneflow.invoke('who') end)\n\
          paneflow.action{ name = 'seen', title = 'Seen', run = function() return seen end }",
     );
-    let worker = paneflow_serve::open(home.path()).unwrap();
+    let worker = common::open_starting_terminals(home.path());
     loaded(home.path());
     let deadline = Instant::now() + PATIENCE;
     let seen = loop {
@@ -383,7 +385,7 @@ fn handlers_run_in_the_worker_and_failing_timers_keep_running_and_are_counted() 
          paneflow.every(0.02, function() error('tick failed') end)\n\
          paneflow.action{ name = 'seen', title = 'Seen', run = function() return seen end }",
     );
-    let worker = paneflow_serve::open(home.path()).unwrap();
+    let worker = common::open_starting_terminals(home.path());
     let status = loaded(home.path());
     assert_eq!(status["handlers"], 1);
     assert_eq!(status["timers"], 1);
@@ -642,4 +644,38 @@ fn a_window_grant_rides_on_the_envelope_of_its_runs_writes_and_nowhere_else() {
         "a run without a grant sends none: {}",
         sent[0]
     );
+}
+
+#[test]
+fn an_init_lua_action_that_splits_is_served_inside_the_worker_with_no_window() {
+    let home = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    let cwd_lua = cwd.path().display().to_string().replace('\\', "\\\\");
+    write_init(
+        home.path(),
+        &format!(
+            "paneflow.action{{ name = 'pair', title = 'Pair', run = function()\n\
+               local up = paneflow.workspace.up{{ name = 'pair', panes = {{ {{ cwd = '{cwd_lua}' }} }} }}\n\
+               local split = paneflow.surface.split{{ surface_id = up.surface_ids[1], direction = 'vertical' }}\n\
+               return {{ first = up.surface_ids[1], second = split.surface_id, panes = split.panes }}\n\
+             end }}"
+        ),
+    );
+    let worker = common::open_starting_terminals(home.path());
+    let status = loaded(home.path());
+    assert_eq!(status["ok"], true, "{status}");
+    assert!(
+        paneflow_home::ipc_endpoint_path(home.path())
+            .metadata()
+            .is_err(),
+        "no window listens in this home"
+    );
+    let invoked = call(home.path(), "action.invoke", json!({"name": "pair"})).unwrap();
+    let result = &invoked["result"];
+    assert_eq!(result["panes"], 2, "{invoked}");
+    let second = result["second"].as_u64().unwrap();
+    let view = call(home.path(), "layout.view", json!({})).unwrap();
+    let text = view.to_string();
+    assert!(text.contains(&format!("\"id\":{second}")), "{text}");
+    worker.stop();
 }

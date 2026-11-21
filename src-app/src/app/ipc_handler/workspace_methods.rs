@@ -50,9 +50,26 @@ pub(crate) struct WorkspaceUpRequest {
     planned: Vec<PlannedPane>,
     managed_worktrees: Vec<crate::workspace::worktree::ManagedWorktree>,
     pane_worktrees: Vec<Option<String>>,
+    worktree_requests: Vec<Option<paneflow_git::worktree_plan::Request>>,
 }
 
 impl WorkspaceUpRequest {
+    fn prepare_worktrees(
+        mut self,
+    ) -> Result<(Self, super::worktree_requests::Prepared), JsonRpcError> {
+        let requests = std::mem::take(&mut self.worktree_requests);
+        let mut prepared = super::worktree_requests::prepare(requests)?;
+        for (i, slot) in prepared.worktrees.iter_mut().enumerate() {
+            let Some((plan, managed)) = slot.take() else {
+                continue;
+            };
+            self.planned[i].cwd = Some(plan.path.clone());
+            self.pane_worktrees[i] = Some(plan.path.to_string_lossy().into_owned());
+            self.managed_worktrees.push(managed);
+        }
+        Ok((self, prepared))
+    }
+
     fn resolve_cwds(mut self) -> Result<Self, JsonRpcError> {
         for (i, pane) in self.planned.iter_mut().enumerate() {
             if let Some(raw) = pane.cwd.take() {
@@ -89,7 +106,19 @@ pub(crate) fn workspace_up_request(
     let mut managed_worktrees: Vec<crate::workspace::worktree::ManagedWorktree> = Vec::new();
     let mut pane_worktrees: Vec<Option<String>> = Vec::with_capacity(pane_specs.len());
     let mut planned: Vec<PlannedPane> = Vec::with_capacity(pane_specs.len());
+    let mut worktree_requests = Vec::with_capacity(pane_specs.len());
     for (i, spec) in pane_specs.iter().enumerate() {
+        let request = super::worktree_requests::parse(
+            spec.get("worktree"),
+            spec.get("cwd").and_then(serde_json::Value::as_str),
+        )
+        .map_err(|err| JsonRpcError::invalid_params(format!("pane {i}: {}", err.message)))?;
+        if request.is_some() && spec.get("managed_worktree").is_some_and(|v| !v.is_null()) {
+            return Err(JsonRpcError::invalid_params(format!(
+                "pane {i}: worktree and managed_worktree are exclusive"
+            )));
+        }
+        worktree_requests.push(request);
         match parse_managed_worktree(spec.get("managed_worktree")) {
             Some(mw) => {
                 pane_worktrees.push(Some(mw.path.to_string_lossy().into_owned()));
@@ -97,12 +126,21 @@ pub(crate) fn workspace_up_request(
             }
             None => pane_worktrees.push(None),
         }
-        let plan = parse_workspace_pane_plan(spec)
+        let mut plan = parse_workspace_pane_plan(spec)
             .map_err(|err| JsonRpcError::invalid_params(format!("pane {i}: {}", err.message)))?;
+        if worktree_requests[i].is_some() {
+            plan.cwd = None;
+        }
         planned.push(plan);
     }
     let spec = paneflow_api::methods::workspace::Up::SPEC;
-    if pane_specs.iter().any(pane_spec_requires_orchestration) && !spawn_gate_open(&spec) {
+    let setup_runs = worktree_requests
+        .iter()
+        .flatten()
+        .any(super::worktree_requests::runs_setup);
+    if (setup_runs || pane_specs.iter().any(pane_spec_requires_orchestration))
+        && !spawn_gate_open(&spec)
+    {
         return Err(spawn_gate_refusal(&spec));
     }
     dedupe_planned_pane_labels(&mut planned);
@@ -113,6 +151,7 @@ pub(crate) fn workspace_up_request(
         planned,
         managed_worktrees,
         pane_worktrees,
+        worktree_requests,
     })
 }
 
@@ -328,14 +367,33 @@ impl PaneFlowApp {
             Err(error) => return IpcReply::Ready(error.into_value()),
         };
         IpcReply::Async(cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
+            let (request, prepared) = match smol::unblock(move || request.prepare_worktrees()).await
+            {
+                Ok(prepared) => prepared,
+                Err(error) => return error.into_value(),
+            };
+            let created = prepared.created;
             let request =
                 match probe_off_thread(PATH_PROBE_TIMEOUT, move || request.resolve_cwds()).await {
-                    None => return unresolved_path_error("a pane cwd").into_value(),
-                    Some(Err(error)) => return error.into_value(),
+                    None => {
+                        smol::unblock(move || super::worktree_requests::rollback(created)).await;
+                        return unresolved_path_error("a pane cwd").into_value();
+                    }
+                    Some(Err(error)) => {
+                        smol::unblock(move || super::worktree_requests::rollback(created)).await;
+                        return error.into_value();
+                    }
                     Some(Ok(request)) => request,
                 };
-            this.update(cx, |app, cx| app.finish_workspace_up(request, cx))
-                .unwrap_or_else(|_| app_shutting_down())
+            let mut reply = this
+                .update(cx, |app, cx| app.finish_workspace_up(request, cx))
+                .unwrap_or_else(|_| app_shutting_down());
+            if super::worktree_requests::failed(&reply) {
+                smol::unblock(move || super::worktree_requests::rollback(created)).await;
+            } else if !prepared.notices.is_empty() {
+                reply["notices"] = serde_json::json!(prepared.notices);
+            }
+            reply
         }))
     }
 
@@ -438,6 +496,7 @@ impl PaneFlowApp {
             planned,
             managed_worktrees,
             pane_worktrees,
+            worktree_requests: _,
         } = request;
         let preset = preset.as_str();
         let space = match self.target_space(space.as_deref()) {
@@ -1070,6 +1129,71 @@ mod tests {
             "workspace cwd must be safe for cmd.exe spawn, got: {resolved:?}"
         );
         assert!(resolved.is_dir());
+    }
+
+    #[test]
+    fn a_window_workspace_up_with_a_worktree_creates_it_off_the_ui_thread_and_starts_the_pane_in_it()
+     {
+        let tmp = tempfile::tempdir().unwrap();
+        let _root = crate::workspace::worktree::test_support::scoped_root(tmp.path().join("trees"));
+        let repo = tmp.path().join("repo");
+        crate::git_fixture::committed_repo(&repo, &[("README.md", "init\n")]);
+
+        let request = workspace_up_request(&serde_json::json!({"panes": [
+            {"cwd": repo, "worktree": {"branch": "feat/window", "copy_env": false}},
+            {"cwd": repo}
+        ]}))
+        .expect("a worktree request parses");
+        let (request, prepared) = request
+            .prepare_worktrees()
+            .expect("the worktree is created");
+
+        assert_eq!(prepared.created.len(), 1);
+        let path = prepared.created[0].path.clone();
+        assert!(path.join("README.md").is_file());
+        assert_eq!(request.planned[0].cwd.as_deref(), Some(path.as_path()));
+        assert_eq!(request.planned[1].cwd.as_deref(), Some(repo.as_path()));
+        assert_eq!(request.managed_worktrees.len(), 1);
+        assert_eq!(request.managed_worktrees[0].branch, "feat/window");
+        assert_eq!(
+            request.pane_worktrees[0].as_deref(),
+            Some(path.to_string_lossy().as_ref())
+        );
+
+        super::super::worktree_requests::rollback(prepared.created);
+        assert!(
+            !path.exists(),
+            "a rejected layout removes the worktree it created"
+        );
+    }
+
+    #[test]
+    fn a_window_workspace_up_refuses_a_worktree_setup_without_orchestration() {
+        if crate::app::ipc_handler::registry::spawn_gate_open(
+            &paneflow_api::methods::workspace::Up::SPEC,
+        ) {
+            return;
+        }
+        let refused = workspace_up_request(&serde_json::json!({"panes": [
+            {"cwd": "/tmp", "worktree": {"branch": "feat/x", "setup": "make"}}
+        ]}))
+        .err()
+        .expect("a setup runs a command");
+        assert!(
+            refused.message.contains("orchestration"),
+            "{}",
+            refused.message
+        );
+        let exclusive = workspace_up_request(&serde_json::json!({"panes": [
+            {"worktree": {"branch": "feat/x"}, "managed_worktree": {"path": "/tmp"}}
+        ]}))
+        .err()
+        .expect("the two forms are exclusive");
+        assert!(
+            exclusive.message.contains("exclusive"),
+            "{}",
+            exclusive.message
+        );
     }
 
     #[test]

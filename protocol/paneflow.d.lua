@@ -542,6 +542,30 @@ paneflow.layout.apply = function(params) end
 ---@return integer? code
 paneflow.layout.attach = function(params) end
 
+---@class paneflow.layout.launch.params
+---@field appearance? any The colors the terminal answers color queries with: {foreground, background, cursor, palette of 256 [r, g, b], dark}
+---@field cell? any The cell size in pixels: {width, height}
+---@field cols? integer Initial width in cells; 120 when absent
+---@field confine_to? string A worktree the working directory must stay inside; a cwd outside it starts at the worktree
+---@field cwd? string The working directory the client asks for
+---@field env? table<string, string> Variables for this terminal, above the global and space ones
+---@field fallback? string The directory used when cwd no longer exists
+---@field rows? integer Initial height in cells; 40 when absent
+---@field session string The session id the client chose for the new terminal
+---@field surface_id integer The terminal surface to start
+
+---@class paneflow.layout.launch.result
+---@field events table[]
+---@field notices string[]
+---@field revision integer
+
+---Start the terminal of a surface for the attached layout client that created it: the worker builds the launch from its configuration and the layout and creates the session under the id the client chose, which the client binds with bind_session. The surface must have no session or this one. Fails with -32070 and data {reason}: not_attached, not_found, invalid, host_unreachable or launch_failed with the host's message.
+---@param params paneflow.layout.launch.params
+---@return paneflow.layout.launch.result? result
+---@return string? message
+---@return integer? code
+paneflow.layout.launch = function(params) end
+
 ---@class paneflow.layout.lease_ids.params
 
 ---@class paneflow.layout.lease_ids.result
@@ -554,6 +578,21 @@ paneflow.layout.attach = function(params) end
 ---@return string? message
 ---@return integer? code
 paneflow.layout.lease_ids = function(params) end
+
+---@class paneflow.layout.sweep.params
+---@field keep? string[] Sessions the client holds outside the layout, such as dock terminals, which the sweep must keep
+---@field live? boolean Also stop the live sessions this host started that nothing holds, as the first sweep after a restore does
+
+---@class paneflow.layout.sweep.result
+---@field forgotten string[]
+---@field stopped string[]
+
+---Remove the records of ended sessions that no surface of the layout, no undo hold and no pending launch names, and with live, also stop the live sessions this host started that nothing holds. The attached layout client calls it after it restores; the worker runs the host requests. Fails with -32070 and data {reason}: not_attached or host_unreachable.
+---@param params paneflow.layout.sweep.params?
+---@return paneflow.layout.sweep.result? result
+---@return string? message
+---@return integer? code
+paneflow.layout.sweep = function(params) end
 
 ---@class paneflow.layout.view.params
 ---@field unless_revision? integer The revision the client holds; when it is still the worker's, view is null
@@ -821,6 +860,7 @@ paneflow.surface.send_text = function(params) end
 ---@field profile? "normal"|"agent"|"cached"
 ---@field prompt? string
 ---@field surface_id? integer Split the pane holding this surface; the shown tab's first pane when absent
+---@field worktree? table Create or reuse a Paneflow worktree for the new pane, which then starts in it; exclusive with managed_worktree
 
 ---@class paneflow.surface.split.result
 ---@field direction string
@@ -1158,6 +1198,7 @@ paneflow.workspace.select = function(params) end
 ---@class paneflow.workspace.up.result
 ---@field index integer
 ---@field labels string[]
+---@field notices? string[]
 ---@field panes integer
 ---@field surface_ids integer[]
 ---@field title string

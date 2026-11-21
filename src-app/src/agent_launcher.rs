@@ -460,11 +460,7 @@ impl AgentProfile {
     }
 }
 
-pub(crate) fn is_env_key(key: &str) -> bool {
-    !key.is_empty()
-        && !key.starts_with(|c: char| c.is_ascii_digit())
-        && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
+pub(crate) use paneflow_launch::space::is_env_key;
 
 fn expand_profile_value(
     key: &str,

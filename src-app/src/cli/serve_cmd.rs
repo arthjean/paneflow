@@ -57,7 +57,11 @@ fn run_worker(home: Option<PathBuf>) -> Result<i32, CliError> {
         Some(home) => home,
         None => resolve_home()?,
     };
-    match paneflow_serve::run(&home) {
+    let support = paneflow_serve::launcher::LaunchSupport {
+        helper_bin_dir: crate::ai_hooks::extract::ensure_binaries_extracted()
+            .map_err(|error| format!("{error:#}")),
+    };
+    match paneflow_serve::run_with(&home, support) {
         Ok(()) => Ok(EXIT_OK),
         Err(paneflow_serve::WorkerError::AlreadyRunning(lock)) => {
             eprintln!("paneflow serve: already running (owner lock {lock})");

@@ -4733,9 +4733,11 @@ dependencies = [
  "paneflow-agent-config",
  "paneflow-api",
  "paneflow-config",
+ "paneflow-git",
  "paneflow-home",
  "paneflow-host",
  "paneflow-ipc-client",
+ "paneflow-launch",
  "paneflow-layout",
  "paneflow-mcp-install",
  "paneflow-minisign",
@@ -4836,6 +4838,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "paneflow-git"
+version = "0.20.0"
+dependencies = [
+ "dirs",
+ "libc",
+ "log",
+ "paneflow-home",
+ "paneflow-process",
+ "tempfile",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "paneflow-home"
 version = "0.1.0"
 dependencies = [
@@ -4883,6 +4898,21 @@ dependencies = [
  "serde_json",
  "tempfile",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "paneflow-launch"
+version = "0.20.0"
+dependencies = [
+ "dirs",
+ "libc",
+ "log",
+ "paneflow-agent-config",
+ "paneflow-config",
+ "paneflow-host",
+ "serde_json",
+ "tempfile",
+ "which",
 ]
 
 [[package]]
@@ -4973,9 +5003,11 @@ dependencies = [
  "paneflow-agent-config",
  "paneflow-api",
  "paneflow-config",
+ "paneflow-git",
  "paneflow-home",
  "paneflow-host",
  "paneflow-ipc-client",
+ "paneflow-launch",
  "paneflow-layout",
  "paneflow-mcp-install",
  "paneflow-process",

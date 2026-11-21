@@ -25,6 +25,14 @@ impl ServeError {
         }
     }
 
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self {
+            code: ERR_INTERNAL,
+            message: message.into(),
+            data: None,
+        }
+    }
+
     pub fn method_not_found(method: &str) -> Self {
         Self {
             code: ERR_METHOD_NOT_FOUND,
@@ -144,6 +152,13 @@ impl RegistryBuilder {
     pub(crate) fn ready<M: Method>(self, handler: Handler<M::Params>) -> Self {
         self.push::<M>(
             Reply::Ready,
+            Serve::Ready(Self::ready_handler::<M>(handler)),
+        )
+    }
+
+    pub(crate) fn asynchronous<M: Method>(self, handler: Handler<M::Params>) -> Self {
+        self.push::<M>(
+            Reply::Async,
             Serve::Ready(Self::ready_handler::<M>(handler)),
         )
     }

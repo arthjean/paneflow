@@ -239,7 +239,12 @@ mod tests {
         }
         for method in paneflow_host::control::CONTROLLER_ONLY_METHODS {
             let spec = catalog.get(method).expect(method).spec;
-            assert_eq!(spec.owner, Owner::Window, "{method}");
+            let expected = if paneflow_api::methods::WINDOW_ANSWERS_TOO.contains(method) {
+                Owner::Worker
+            } else {
+                Owner::Window
+            };
+            assert_eq!(spec.owner, expected, "{method}");
             assert_eq!(spec.fallback, None, "{method}");
         }
     }

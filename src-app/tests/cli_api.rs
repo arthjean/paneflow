@@ -75,7 +75,12 @@ fn with_a_host_and_a_worker_the_api_verbs_route_each_method_to_its_owner() {
         "{lines}"
     );
     assert_eq!(
-        owner_of("surface.focus"),
+        owner_of("surface.focus").as_deref(),
+        Some("worker"),
+        "the worker serves the structural methods with no window: {lines}"
+    );
+    assert_eq!(
+        owner_of("client.dispatch_action"),
         None,
         "no window serves it: {lines}"
     );

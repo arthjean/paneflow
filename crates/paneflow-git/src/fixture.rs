@@ -3,7 +3,7 @@ use std::process::Command;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use crate::git_command::{GitProfile, git};
+use crate::command::{GitProfile, git};
 
 const FIXTURE_DEADLINE: Duration = Duration::from_secs(60);
 
@@ -24,7 +24,7 @@ const FIXTURE_IDENTITY: &[(&str, &str)] = &[
 
 const EMPTY_GLOBAL_CONFIG_NAME: &str = "paneflow-tests-empty-gitconfig";
 
-pub(crate) fn isolate(command: &mut Command) {
+pub fn isolate(command: &mut Command) {
     command
         .env("GIT_CONFIG_GLOBAL", empty_global_config())
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -32,7 +32,7 @@ pub(crate) fn isolate(command: &mut Command) {
         .env_remove("GIT_CONFIG_PARAMETERS");
 }
 
-pub(crate) fn command(cwd: &Path, args: &[&str]) -> Command {
+pub fn command(cwd: &Path, args: &[&str]) -> Command {
     let mut fixture_args: Vec<&str> = Vec::with_capacity(FIXTURE_CONFIG.len() * 2 + args.len());
     for setting in FIXTURE_CONFIG {
         fixture_args.push("-c");
@@ -47,16 +47,16 @@ pub(crate) fn command(cwd: &Path, args: &[&str]) -> Command {
     command
 }
 
-pub(crate) fn output(cwd: &Path, args: &[&str]) -> paneflow_process::BoundedOutput {
+pub fn output(cwd: &Path, args: &[&str]) -> paneflow_process::BoundedOutput {
     paneflow_process::run_with_timeout(command(cwd, args), FIXTURE_DEADLINE, FIXTURE_STDOUT_CAP)
         .unwrap_or_else(|error| panic!("git {args:?} in {} failed: {error}", cwd.display()))
 }
 
-pub(crate) fn git_succeeds(cwd: &Path, args: &[&str]) -> bool {
+pub fn git_succeeds(cwd: &Path, args: &[&str]) -> bool {
     output(cwd, args).status.success()
 }
 
-pub(crate) fn run(cwd: &Path, args: &[&str]) -> String {
+pub fn run(cwd: &Path, args: &[&str]) -> String {
     let out = output(cwd, args);
     assert!(
         out.status.success(),
@@ -68,11 +68,11 @@ pub(crate) fn run(cwd: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
-pub(crate) fn init(root: &Path) {
+pub fn init(root: &Path) {
     init_with(root, &[]);
 }
 
-pub(crate) fn init_with(root: &Path, extra_args: &[&str]) {
+pub fn init_with(root: &Path, extra_args: &[&str]) {
     std::fs::create_dir_all(root)
         .unwrap_or_else(|error| panic!("create {}: {error}", root.display()));
     let mut args = vec!["init", "-q"];
@@ -81,12 +81,12 @@ pub(crate) fn init_with(root: &Path, extra_args: &[&str]) {
     run(root, &["config", "core.autocrlf", "false"]);
 }
 
-pub(crate) fn commit_all(root: &Path, message: &str) {
+pub fn commit_all(root: &Path, message: &str) {
     run(root, &["add", "-A"]);
     run(root, &["commit", "-q", "--no-verify", "-m", message]);
 }
 
-pub(crate) fn committed_repo(root: &Path, files: &[(&str, &str)]) {
+pub fn committed_repo(root: &Path, files: &[(&str, &str)]) {
     init(root);
     for (name, content) in files {
         let path = root.join(name);
@@ -100,7 +100,7 @@ pub(crate) fn committed_repo(root: &Path, files: &[(&str, &str)]) {
     commit_all(root, "init");
 }
 
-pub(crate) fn private_temp_root() -> &'static Path {
+pub fn private_temp_root() -> &'static Path {
     static ROOT: OnceLock<tempfile::TempDir> = OnceLock::new();
     ROOT.get_or_init(|| {
         tempfile::TempDir::new()

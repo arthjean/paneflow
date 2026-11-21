@@ -433,7 +433,7 @@
       "gate_note": "A request that sets a command, a prompt or an env is refused with -32601 unless PANEFLOW_IPC_ORCHESTRATION=1 or PANEFLOW_IPC_SCRIPTING=1.",
       "in_capabilities": true,
       "name": "workspace.create",
-      "owner": "window",
+      "owner": "worker",
       "params": {
         "$defs": {
           "LayoutDocument": {
@@ -525,7 +525,7 @@
       "gate_note": null,
       "in_capabilities": true,
       "name": "workspace.select",
-      "owner": "window",
+      "owner": "worker",
       "params": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
@@ -578,7 +578,7 @@
       "gate_note": null,
       "in_capabilities": true,
       "name": "workspace.close",
-      "owner": "window",
+      "owner": "worker",
       "params": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
@@ -770,7 +770,7 @@
       "gate_note": "A request that sets a command, a prompt or an env is refused with -32601 unless PANEFLOW_IPC_ORCHESTRATION=1 or PANEFLOW_IPC_SCRIPTING=1.",
       "in_capabilities": true,
       "name": "workspace.restore_layout",
-      "owner": "window",
+      "owner": "worker",
       "params": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
@@ -843,7 +843,7 @@
       "gate_note": "A request that sets a command, a prompt or an env is refused with -32601 unless PANEFLOW_IPC_ORCHESTRATION=1 or PANEFLOW_IPC_SCRIPTING=1.",
       "in_capabilities": true,
       "name": "workspace.up",
-      "owner": "window",
+      "owner": "worker",
       "params": {
         "$defs": {
           "ManagedWorktreeSpec": {
@@ -942,6 +942,17 @@
                   "string",
                   "null"
                 ]
+              },
+              "worktree": {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/WorktreeRequestSpec"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Create or reuse a Paneflow worktree for this pane, which then starts in it; exclusive with managed_worktree"
               }
             },
             "type": "object"
@@ -953,6 +964,59 @@
               "cached"
             ],
             "type": "string"
+          },
+          "WorktreeRequestSpec": {
+            "additionalProperties": false,
+            "properties": {
+              "branch": {
+                "description": "Branch to check out in a Paneflow worktree of the repository that holds cwd; the branch is created when it does not exist, and a worktree Paneflow already owns for it is reused",
+                "type": "string"
+              },
+              "copy_env": {
+                "default": true,
+                "description": "Copy the files .worktreeinclude names into a new worktree",
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "from": {
+                "description": "Commit or branch a new branch starts from",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "setup": {
+                "description": "Shell command run once in a new worktree before its terminal starts; needs orchestration",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "setup_timeout_secs": {
+                "default": 300,
+                "description": "Seconds the setup may run",
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "teardown": {
+                "default": "auto",
+                "description": "auto removes the worktree with its workspace, keep leaves it",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "branch"
+            ],
+            "type": "object"
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1009,6 +1073,13 @@
                 "string",
                 "null"
               ]
+            },
+            "type": "array"
+          },
+          "notices": {
+            "description": "What preparing the worktrees reported: files copied, a setup that failed",
+            "items": {
+              "type": "string"
             },
             "type": "array"
           },
@@ -1513,7 +1584,7 @@
       "gate_note": null,
       "in_capabilities": true,
       "name": "surface.rename",
-      "owner": "window",
+      "owner": "worker",
       "params": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
@@ -1833,7 +1904,7 @@
       "gate_note": "A request that sets a command, a prompt or an env is refused with -32601 unless PANEFLOW_IPC_ORCHESTRATION=1 or PANEFLOW_IPC_SCRIPTING=1.",
       "in_capabilities": true,
       "name": "surface.split",
-      "owner": "window",
+      "owner": "worker",
       "params": {
         "$defs": {
           "ManagedWorktreeSpec": {
@@ -1879,6 +1950,59 @@
               "cached"
             ],
             "type": "string"
+          },
+          "WorktreeRequestSpec": {
+            "additionalProperties": false,
+            "properties": {
+              "branch": {
+                "description": "Branch to check out in a Paneflow worktree of the repository that holds cwd; the branch is created when it does not exist, and a worktree Paneflow already owns for it is reused",
+                "type": "string"
+              },
+              "copy_env": {
+                "default": true,
+                "description": "Copy the files .worktreeinclude names into a new worktree",
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "from": {
+                "description": "Commit or branch a new branch starts from",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "setup": {
+                "description": "Shell command run once in a new worktree before its terminal starts; needs orchestration",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "setup_timeout_secs": {
+                "default": 300,
+                "description": "Seconds the setup may run",
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "teardown": {
+                "default": "auto",
+                "description": "auto removes the worktree with its workspace, keep leaves it",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "branch"
+            ],
+            "type": "object"
           }
         },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1955,6 +2079,17 @@
               "integer",
               "null"
             ]
+          },
+          "worktree": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WorktreeRequestSpec"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Create or reuse a Paneflow worktree for the new pane, which then starts in it; exclusive with managed_worktree"
           }
         },
         "required": [
@@ -2016,7 +2151,7 @@
       "gate_note": null,
       "in_capabilities": true,
       "name": "surface.focus",
-      "owner": "window",
+      "owner": "worker",
       "params": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
@@ -5697,6 +5832,281 @@
       },
       "stream": false,
       "summary": "Hand the worker a client's model after an outage. The worker takes it when its own revision is not greater than the revision it last acknowledged to the client, and otherwise returns its own view."
+    },
+    {
+      "examples": [
+        {
+          "params": {
+            "cwd": "/home/me/project",
+            "session": "0190e4d2-7b2a-7c3d-8e4f-a1b2c3d4e5f6",
+            "surface_id": 7
+          },
+          "result": {
+            "events": [
+              {
+                "data": {
+                  "revision": 15
+                },
+                "tab_id": 2,
+                "type": "layout.changed",
+                "workspace_id": 1
+              }
+            ],
+            "notices": [],
+            "revision": 15
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "none",
+      "gate_note": null,
+      "in_capabilities": false,
+      "name": "layout.launch",
+      "owner": "worker",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "appearance": {
+            "description": "The colors the terminal answers color queries with: {foreground, background, cursor, palette of 256 [r, g, b], dark}"
+          },
+          "cell": {
+            "description": "The cell size in pixels: {width, height}"
+          },
+          "cols": {
+            "description": "Initial width in cells; 120 when absent",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "confine_to": {
+            "description": "A worktree the working directory must stay inside; a cwd outside it starts at the worktree",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "cwd": {
+            "description": "The working directory the client asks for",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Variables for this terminal, above the global and space ones",
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "fallback": {
+            "description": "The directory used when cwd no longer exists",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rows": {
+            "description": "Initial height in cells; 40 when absent",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "session": {
+            "description": "The session id the client chose for the new terminal",
+            "type": "string"
+          },
+          "surface_id": {
+            "description": "The terminal surface to start",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "surface_id",
+          "session"
+        ],
+        "title": "LaunchParams",
+        "type": "object"
+      },
+      "reply": "ready",
+      "result": {
+        "$defs": {
+          "PublishedEvent": {
+            "properties": {
+              "data": {
+                "additionalProperties": true,
+                "default": {},
+                "type": "object"
+              },
+              "pane_id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "session": {
+                "description": "The terminal session id the host assigned",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "surface_id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "tab_id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "type": {
+                "description": "A layout event type: workspace.*, tab.*, pane.*, surface.* or layout.*",
+                "type": "string"
+              },
+              "workspace_id": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "type",
+              "data"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/$defs/PublishedEvent"
+            },
+            "type": "array"
+          },
+          "notices": {
+            "description": "Lines to show in the new terminal: a missing default_shell, a config directory that could not be created",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision",
+          "events",
+          "notices"
+        ],
+        "title": "Launched",
+        "type": "object"
+      },
+      "stream": false,
+      "summary": "Start the terminal of a surface for the attached layout client that created it: the worker builds the launch from its configuration and the layout and creates the session under the id the client chose, which the client binds with bind_session. The surface must have no session or this one. Fails with -32070 and data {reason}: not_attached, not_found, invalid, host_unreachable or launch_failed with the host's message."
+    },
+    {
+      "examples": [
+        {
+          "params": {
+            "keep": [],
+            "live": true
+          },
+          "result": {
+            "forgotten": [
+              "0190e4d2-7b2a-7c3d-8e4f-a1b2c3d4e5f6"
+            ],
+            "stopped": []
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "none",
+      "gate_note": null,
+      "in_capabilities": false,
+      "name": "layout.sweep",
+      "owner": "worker",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "keep": {
+            "default": [],
+            "description": "Sessions the client holds outside the layout, such as dock terminals, which the sweep must keep",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "live": {
+            "default": false,
+            "description": "Also stop the live sessions this host started that nothing holds, as the first sweep after a restore does",
+            "type": "boolean"
+          }
+        },
+        "title": "SweepParams",
+        "type": "object"
+      },
+      "reply": "ready",
+      "result": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "forgotten": {
+            "description": "Ended sessions whose record was removed",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "stopped": {
+            "description": "Live sessions that were stopped",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "forgotten",
+          "stopped"
+        ],
+        "title": "Swept",
+        "type": "object"
+      },
+      "stream": false,
+      "summary": "Remove the records of ended sessions that no surface of the layout, no undo hold and no pending launch names, and with live, also stop the live sessions this host started that nothing holds. The attached layout client calls it after it restores; the worker runs the host requests. Fails with -32070 and data {reason}: not_attached or host_unreachable."
     }
   ]
 }

@@ -10,6 +10,7 @@ mod do_cmd;
 mod events_cmd;
 mod flow_cmd;
 mod flow_spec;
+mod headless;
 mod host_cmd;
 mod read_cmds;
 pub(crate) mod router;
@@ -696,15 +697,71 @@ impl CliTransport {
     }
 }
 
+fn worker_owned(method: &str) -> bool {
+    paneflow_api::catalog().ok().is_some_and(|catalog| {
+        catalog
+            .get(method)
+            .is_some_and(|descriptor| descriptor.spec.owner == paneflow_api::Owner::Worker)
+    })
+}
+
+fn worker_lacks(error: &str, method: &str) -> bool {
+    error.ends_with(&format!("method not handled by the worker: {method}"))
+}
+
+fn worker_call(method: &str, params: Value) -> Result<Value, String> {
+    use paneflow_ipc_client::host_control::{HostControl, REQUEST_DEADLINE};
+    let home = paneflow_home::paneflow_home()
+        .ok_or("cannot resolve the Paneflow state home; set PANEFLOW_HOME")?;
+    let endpoint = paneflow_home::serve_endpoint_path(&home);
+    let unreachable = |reason: String| {
+        format!("{method} is served by the Paneflow worker, which is not reachable: {reason}")
+    };
+    if HostControl::open(&endpoint, CLIENT_NAME, REQUEST_DEADLINE).is_err() {
+        let controller = std::env::current_exe().map_err(|error| {
+            unreachable(format!("cannot locate the paneflow executable: {error}"))
+        })?;
+        paneflow_serve::ensure_worker_running(&home, &controller)
+            .map_err(|error| unreachable(error.to_string()))?;
+    }
+    let mut control = HostControl::open(&endpoint, CLIENT_NAME, REQUEST_DEADLINE)
+        .map_err(|error| unreachable(format!("{} ({error:?})", endpoint.display())))?;
+    control.request_with_deadline(
+        method,
+        params,
+        paneflow_api::methods::config::reply_deadline(method, REQUEST_DEADLINE),
+    )
+}
+
 impl IpcTransport for CliTransport {
     fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+        if worker_owned(method) {
+            let answer = match (worker_call(method, params.clone()), self) {
+                (Err(error), Self::Controller(client)) if worker_lacks(&error, method) => {
+                    client.call(method, params)
+                }
+                (answer, _) => answer,
+            };
+            return answer.map(|result| worker_state::with_worker_state(method, result));
+        }
         match self {
             Self::Controller(client) => client
                 .call(method, params)
                 .map(|result| worker_state::with_worker_state(method, result)),
-            Self::Host(transport) => transport
-                .call(method, params)
-                .map(|result| worker_state::with_worker_state(method, result)),
+            Self::Host(transport) => {
+                let layout = headless::current_worker_layout();
+                let params = match &layout {
+                    Some(layout) => headless::name_sessions(params, layout),
+                    None => params,
+                };
+                transport
+                    .call(method, params)
+                    .map(|result| match (&layout, method) {
+                        (Some(layout), "surface.list") => headless::with_layout_ids(result, layout),
+                        _ => result,
+                    })
+                    .map(|result| worker_state::with_worker_state(method, result))
+            }
         }
     }
 }
@@ -872,6 +929,23 @@ pub(super) fn reject_legacy_error(result: Value) -> Result<Value, CliError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_worker_that_lacks_the_method_sends_the_call_to_the_window() {
+        assert!(worker_lacks(
+            "paneflow error -32601: method not handled by the worker: surface.split",
+            "surface.split"
+        ));
+        assert!(!worker_lacks(
+            "paneflow error -32601: method not handled by the worker: surface.split",
+            "workspace.up"
+        ));
+        assert!(!worker_lacks(
+            "paneflow error -32601: surface.split orchestration disabled; set PANEFLOW_IPC_ORCHESTRATION=1 \
+             or PANEFLOW_IPC_SCRIPTING=1 to enable command, prompt, or env",
+            "surface.split"
+        ));
+    }
 
     #[test]
     fn global_help_lists_every_verb() {

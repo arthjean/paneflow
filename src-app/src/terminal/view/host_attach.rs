@@ -110,6 +110,14 @@ impl TerminalView {
                     width: size.cell_width,
                     height: size.cell_height,
                 }),
+            route: (intent == SessionIntent::Create)
+                .then(|| self.worker_route.clone())
+                .flatten()
+                .map(|launcher| host_link::WorkerRoute {
+                    launcher,
+                    surface_id: self.launch.surface_id,
+                    user_env: self.launch.user_env.clone(),
+                }),
         };
         let spawn_rule = crate::workspace::SpawnCwd {
             cwd: None,

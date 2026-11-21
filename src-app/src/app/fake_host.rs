@@ -10,6 +10,9 @@ pub(crate) enum HostRequest {
     Create {
         session: SessionId,
     },
+    Launch {
+        session: SessionId,
+    },
     Reattach {
         session: SessionId,
     },
@@ -29,6 +32,7 @@ impl HostRequest {
     pub(crate) fn session(&self) -> &SessionId {
         match self {
             Self::Create { session }
+            | Self::Launch { session }
             | Self::Reattach { session }
             | Self::Hold { session }
             | Self::Stop { session }

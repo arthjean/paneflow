@@ -719,7 +719,9 @@ fn reply(wire: &mut Wire, id: &Value, answer: Result<Value, ServeError>) -> Flow
 }
 
 pub(crate) fn register_methods(builder: RegistryBuilder) -> RegistryBuilder {
-    use paneflow_api::methods::{config, events, layout, prompt, system, worker};
+    use paneflow_api::methods::{
+        config, events, layout, prompt, surface, system, worker, workspace,
+    };
 
     builder
         .ready::<worker::Hello>(|worker, _| Ok(worker.identity_value()))
@@ -775,14 +777,33 @@ pub(crate) fn register_methods(builder: RegistryBuilder) -> RegistryBuilder {
             worker.layout.lease(call.connection).and_then(to_value)
         })
         .ready::<layout::Apply>(|worker, call| {
-            let (applied, events) = worker.layout.apply(
+            let outcome = worker.layout.apply(
                 call.connection,
                 serde_json::Value::Object(call.params.op.0),
                 call.params.ids_from,
                 crate::state::now_ms(),
             )?;
-            worker.append_layout_events(events);
-            to_value(applied)
+            worker.append_layout_events(outcome.events);
+            match outcome.launch_error {
+                Some(error) => Err(error),
+                None => to_value(outcome.applied),
+            }
+        })
+        .asynchronous::<surface::Split>(crate::structural::surface_split)
+        .ready::<surface::Rename>(crate::structural::surface_rename)
+        .ready::<surface::Focus>(crate::structural::surface_focus)
+        .asynchronous::<workspace::Create>(crate::structural::workspace_create)
+        .asynchronous::<workspace::Up>(crate::structural::workspace_up)
+        .ready::<workspace::Select>(crate::structural::workspace_select)
+        .ready::<workspace::Close>(crate::structural::workspace_close)
+        .ready::<workspace::RestoreLayout>(crate::structural::workspace_restore_layout)
+        .ready::<layout::Launch>(|worker, call| {
+            let launched = worker.layout.launch(call.connection, call.params)?;
+            worker.append_layout_events(launched.events.clone());
+            to_value(launched)
+        })
+        .ready::<layout::Sweep>(|worker, call| {
+            to_value(worker.layout.sweep(call.connection, call.params)?)
         })
         .ready::<layout::Adopt>(|worker, call| {
             let (adopted, events) =

@@ -352,10 +352,23 @@ mod tests {
         let registry = built.expect("every registration matches its declaration");
         let catalog = paneflow_api::catalog().expect("catalog");
         let window: Vec<&str> = catalog
-            .owned_by(Owner::Window)
-            .map(Descriptor::name)
+            .names()
+            .into_iter()
+            .filter(|name| {
+                catalog
+                    .get(name)
+                    .is_some_and(|descriptor| descriptor.spec.owner == Owner::Window)
+                    || paneflow_api::methods::WINDOW_ANSWERS_TOO.contains(name)
+            })
             .collect();
         assert_eq!(registry.method_names(), window);
+        for name in paneflow_api::methods::WINDOW_ANSWERS_TOO {
+            assert_eq!(
+                catalog.get(name).map(|descriptor| descriptor.spec.owner),
+                Some(Owner::Worker),
+                "{name} is owned by the worker and still answered by the window"
+            );
+        }
     }
 
     #[test]

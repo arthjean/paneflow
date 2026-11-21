@@ -9,6 +9,7 @@ use paneflow_layout::{IdBlock, Snapshot};
 use serde_json::{Value, json};
 
 use crate::app::wake::AppWake;
+use crate::terminal::host_link::{LaunchRoute, WorkerLaunchAnswer, WorkerLauncher};
 
 pub(crate) const WINDOW_CLIENT: &str = "window";
 const CONTROL_CLIENT: &str = "paneflow-window-layout";
@@ -19,6 +20,7 @@ const EVENT_SLICE: Duration = Duration::from_millis(500);
 const PROBE_EVERY: Duration = Duration::from_millis(250);
 const PROBE_READ: Duration = Duration::from_millis(1);
 const KEEPALIVE: Duration = Duration::from_secs(2);
+const LAUNCH_WAIT: Duration = Duration::from_secs(30);
 const LAYOUT_EVENTS: [&str; 15] = [
     "workspace.created",
     "workspace.closed",
@@ -54,6 +56,38 @@ pub(crate) enum Request {
     View {
         unless_revision: Option<u64>,
     },
+    Launch {
+        params: Value,
+        reply: LaunchReply,
+    },
+    Sweep {
+        params: Value,
+        reply: SweepReply,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SweepReply(std::sync::mpsc::SyncSender<Option<Value>>);
+
+impl PartialEq for SweepReply {
+    fn eq(&self, _: &Self) -> bool {
+        false
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct LaunchReply(std::sync::mpsc::SyncSender<WorkerLaunchAnswer>);
+
+impl PartialEq for LaunchReply {
+    fn eq(&self, _: &Self) -> bool {
+        false
+    }
+}
+
+impl LaunchReply {
+    fn answer(self, answer: WorkerLaunchAnswer) {
+        let _ = self.0.send(answer);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -108,6 +142,7 @@ struct Outbox {
     queue: VecDeque<Outgoing>,
     generation: u64,
     closed: bool,
+    attached: bool,
 }
 
 #[derive(Default)]
@@ -193,6 +228,102 @@ impl LayoutLink {
 
     pub(crate) fn try_recv(&self) -> Option<Incoming> {
         self.incoming.try_recv().ok()
+    }
+
+    pub(crate) fn launch_route(&self) -> LaunchRoute {
+        Arc::new(ClientLauncher {
+            shared: Arc::clone(&self.shared),
+        })
+    }
+
+    pub(crate) fn sweeper(&self) -> Sweeper {
+        Sweeper {
+            shared: Arc::clone(&self.shared),
+        }
+    }
+}
+
+pub(crate) struct Sweeper {
+    shared: Arc<Shared>,
+}
+
+impl Sweeper {
+    pub(crate) fn sweep(&self, params: Value) -> Option<Value> {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        {
+            let mut outbox = self.shared.lock();
+            if outbox.closed || !outbox.attached {
+                return None;
+            }
+            let generation = outbox.generation;
+            outbox.queue.push_back(Outgoing {
+                generation,
+                seq: 0,
+                request: Request::Sweep {
+                    params,
+                    reply: SweepReply(tx),
+                },
+            });
+        }
+        self.shared.ready.notify_all();
+        rx.recv_timeout(LAUNCH_WAIT).ok().flatten()
+    }
+}
+
+struct ClientLauncher {
+    shared: Arc<Shared>,
+}
+
+impl WorkerLauncher for ClientLauncher {
+    fn launch(&self, params: Value) -> WorkerLaunchAnswer {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        {
+            let mut outbox = self.shared.lock();
+            if outbox.closed || !outbox.attached {
+                return WorkerLaunchAnswer::Unavailable;
+            }
+            let generation = outbox.generation;
+            outbox.queue.push_back(Outgoing {
+                generation,
+                seq: 0,
+                request: Request::Launch {
+                    params,
+                    reply: LaunchReply(tx),
+                },
+            });
+        }
+        self.shared.ready.notify_all();
+        rx.recv_timeout(LAUNCH_WAIT)
+            .unwrap_or(WorkerLaunchAnswer::Unknown)
+    }
+}
+
+fn launch_answer(answer: Result<Answer, String>) -> (WorkerLaunchAnswer, bool) {
+    match answer {
+        Ok(Answer::Result(_)) => (WorkerLaunchAnswer::Launched, true),
+        Ok(Answer::Error(error)) => {
+            let reason = error["data"]["reason"].as_str().unwrap_or_default();
+            let fatal = matches!(
+                reason,
+                paneflow_api::methods::layout::LAUNCH_FAILED
+                    | paneflow_api::methods::layout::HOST_UNREACHABLE
+            );
+            let answer = if fatal {
+                WorkerLaunchAnswer::Failed(
+                    error["message"]
+                        .as_str()
+                        .unwrap_or("the worker could not start the terminal")
+                        .to_string(),
+                )
+            } else {
+                WorkerLaunchAnswer::Unavailable
+            };
+            (answer, true)
+        }
+        Err(error) => {
+            log::debug!("paneflow: layout.launch failed: {error}");
+            (WorkerLaunchAnswer::Unknown, false)
+        }
     }
 }
 
@@ -302,6 +433,7 @@ fn serve(shared: &Shared, endpoint: &Path, inbox: &Inbox) {
             let mut outbox = shared.lock();
             outbox.generation += 1;
             outbox.queue.clear();
+            outbox.attached = true;
             outbox.generation
         };
         was_connected = true;
@@ -309,7 +441,13 @@ fn serve(shared: &Shared, endpoint: &Path, inbox: &Inbox) {
         if !inbox.send(Incoming::Attached { generation, epoch }) {
             return;
         }
-        if !drain(shared, &mut control, generation, inbox) {
+        let open = drain(shared, &mut control, generation, inbox);
+        {
+            let mut outbox = shared.lock();
+            outbox.attached = false;
+            outbox.queue.clear();
+        }
+        if !open {
             return;
         }
         if !inbox.send(Incoming::Disconnected) {
@@ -478,6 +616,32 @@ fn drain(shared: &Shared, control: &mut HostControl, generation: u64, inbox: &In
                 }
                 Ok(Answer::Error(_)) | Err(_) => return true,
             },
+            Request::Launch { params, reply } => {
+                let (answer, connected) = launch_answer(call(control, "layout.launch", params));
+                reply.answer(answer);
+                if !connected {
+                    return true;
+                }
+                continue;
+            }
+            Request::Sweep { params, reply } => {
+                let (swept, connected) = match call(control, "layout.sweep", params) {
+                    Ok(Answer::Result(swept)) => (Some(swept), true),
+                    Ok(Answer::Error(error)) => {
+                        log::debug!("paneflow: layout.sweep was refused: {error}");
+                        (None, true)
+                    }
+                    Err(error) => {
+                        log::debug!("paneflow: layout.sweep failed: {error}");
+                        (None, false)
+                    }
+                };
+                let _ = reply.0.send(swept);
+                if !connected {
+                    return true;
+                }
+                continue;
+            }
         };
         if !inbox.send(incoming) {
             return false;
