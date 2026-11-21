@@ -95,6 +95,15 @@ run_step status-line env PANEFLOW_GATE_STATUS_LINE_OUT="$out/status-line.json" \
   the_status_line_relay_exits_zero_when_the_host_is_down_or_silent \
   -- --exact --nocapture
 
+echo "== worker"
+if ! PANEFLOW_BENCH_OUT="$out/worker.json" \
+  cargo test --profile gates --locked -p paneflow-app --test worker_round_trip \
+  worker_round_trip_benchmark -- --ignored --exact --nocapture --test-threads=1 \
+  >"$out/worker.log" 2>&1; then
+  echo "::warning::the worker suite recorded no result; it gates nothing. See $out/worker.log"
+fi
+tail -n 3 "$out/worker.log"
+
 cargo build --profile gates --locked -p paneflow-app -p paneflow-host
 harness=$(cargo test --profile gates --locked -p paneflow-host --test persistent_baseline --no-run --message-format=json \
   | grep -o '"executable":"[^"]*persistent_baseline-[^"]*"' | tail -n 1 | sed 's/^"executable":"//; s/"$//')
