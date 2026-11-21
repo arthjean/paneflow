@@ -246,11 +246,14 @@ fn pin_a_split_the_worker_refuses_shows_the_split_toast_and_adopts_the_worker_vi
         keep_undo: true,
     })
     .expect("the op encodes");
-    control(&home)
-        .request("layout.apply", json!({"op": op}))
-        .expect("the worker closes b");
     rig.focus("b");
-    split(&mut rig);
+    pump(&mut rig, "the window settling before the race", settled);
+    rig.act(|app, window, cx| {
+        control(&home)
+            .request("layout.apply", json!({"op": op}))
+            .expect("the worker closes b");
+        app.handle_split_v(&SplitVertically, window, cx);
+    });
     pump(&mut rig, "the refusal reaching the window", |app| {
         app.toast
             .iter()
