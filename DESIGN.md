@@ -1582,9 +1582,17 @@ first result of a query. A query
 that matches nothing centers a 20 px keyboard glyph over one 12 px muted line
 that quotes it, 48 px below the field, with no card; a lone complete chord
 that nothing uses reads `Nothing uses {keys}` over `It is free to assign.` at
-0.7 of that ink. The scrollbar of the
-list sits at the panel edge, as in the panes and the docks, and the last
-section keeps 32 px below it.
+0.7 of that ink. The list shows no scrollbar, like
+every Settings page, and the last section keeps 32 px below it. A wheel
+notch glides
+instead of jumping: it moves the list's destination by GPUI's 60 px (three
+20 px lines), and the list closes on it exponentially with a 60 ms time
+constant, so successive notches pile up on the destination and the list
+settles within a pixel about 250 ms after the last one. A touchpad or a
+touchscreen moves the list with the fingers at once, and the keyboard cursor
+glides its row into view the same way. Every other Settings page scrolls
+the same way, without a scrollbar or its gutter. With Reduce motion every one
+of them lands at once (`src-app/src/widgets/smooth_scroll.rs`).
 
 The Agents page (`src-app/src/settings/tabs/agents.rs`) follows the same list
 and drill-in grammar for the agents found on PATH. The heading is followed by

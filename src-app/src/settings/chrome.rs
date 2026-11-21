@@ -1,14 +1,12 @@
 use gpui::{
     AnyElement, ClickEvent, Context, FontWeight, InteractiveElement, IntoElement, KeyDownEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Point, SharedString, Styled,
-    Window, div, prelude::*, px, svg,
+    MouseButton, ParentElement, SharedString, Styled, Window, div, prelude::*, px, svg,
 };
 
 use crate::keybindings::ShortcutEntry;
 use crate::settings::search;
 use crate::settings::tabs::shortcuts::any_shortcut_matches;
 use crate::ui_primitives::squircle_skin;
-use crate::widgets::scrollbar;
 use crate::{PaneFlowApp, SettingsSection};
 
 pub(crate) const SETTINGS_NAV_WIDTH: f32 = 300.;
@@ -521,7 +519,7 @@ impl PaneFlowApp {
             .child(body)
             .into_any_element();
 
-        shell.child(self.render_settings_scroll(column, cx))
+        shell.child(self.render_settings_scroll(column, window))
     }
 
     pub(crate) fn settings_reading_column(&self) -> gpui::Div {
@@ -544,11 +542,8 @@ pub(crate) fn settings_column() -> gpui::Div {
 }
 
 impl PaneFlowApp {
-    fn render_settings_scroll(
-        &self,
-        content: AnyElement,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render_settings_scroll(&self, content: AnyElement, window: &Window) -> impl IntoElement {
+        self.settings_glide.settle(&self.settings_scroll, window);
         let inner = div()
             .id("settings-content")
             .absolute()
@@ -557,7 +552,6 @@ impl PaneFlowApp {
             .bottom_0()
             .left_0()
             .min_h_0()
-            .pr(scrollbar::SCROLLBAR_GUTTER)
             .overflow_y_scroll()
             .track_scroll(&self.settings_scroll)
             .flex()
@@ -570,27 +564,6 @@ impl PaneFlowApp {
                     .child(content),
             );
 
-        let bar = scrollbar::render(
-            &self.settings_scroll,
-            crate::theme::ui_colors(),
-            None,
-            "settings-scrollbar-track",
-            "settings-scrollbar-thumb",
-            cx.listener(|this, ev: &MouseDownEvent, _, cx| {
-                if let Some(off) =
-                    scrollbar::track_click_offset(&this.settings_scroll, ev.position.y)
-                {
-                    this.settings_scroll.set_offset(Point::new(px(0.), px(off)));
-                    cx.notify();
-                }
-            }),
-            cx.listener(|this, ev: &MouseDownEvent, _, cx| {
-                this.settings_drag =
-                    Some(scrollbar::begin_drag(&this.settings_scroll, ev.position.y));
-                cx.stop_propagation();
-            }),
-        );
-
         div()
             .id("settings-content-wrapper")
             .relative()
@@ -598,26 +571,11 @@ impl PaneFlowApp {
             .flex()
             .flex_col()
             .min_h_0()
-            .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| {
-                if let Some(drag) = this.settings_drag
-                    && let Some(off) =
-                        scrollbar::drag_offset(&this.settings_scroll, &drag, ev.position.y)
-                {
-                    this.settings_scroll.set_offset(Point::new(px(0.), px(off)));
-                    cx.notify();
-                }
-            }))
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    let drag = this.settings_drag.take();
-                    if scrollbar::end_drag(&this.settings_scroll, drag) {
-                        cx.notify();
-                    }
-                }),
-            )
             .child(inner)
-            .when_some(bar, |d, sb| d.child(sb))
+            .child(
+                self.settings_glide
+                    .wheel_layer(self.settings_scroll.clone()),
+            )
     }
 
     pub(crate) fn follow_settings_search(&mut self, cx: &mut Context<Self>) {

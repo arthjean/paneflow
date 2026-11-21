@@ -13,8 +13,6 @@ pub trait ScrollableHandle {
     fn max_offset(&self) -> Point<Pixels>;
     fn offset(&self) -> Point<Pixels>;
     fn set_offset(&self, offset: Point<Pixels>);
-    fn drag_started(&self) {}
-    fn drag_ended(&self) {}
 }
 
 impl ScrollableHandle for ScrollHandle {
@@ -51,14 +49,6 @@ impl ScrollableHandle for ListState {
     fn set_offset(&self, offset: Point<Pixels>) {
         self.set_offset_from_scrollbar(offset);
     }
-
-    fn drag_started(&self) {
-        self.scrollbar_drag_started();
-    }
-
-    fn drag_ended(&self) {
-        self.scrollbar_drag_ended();
-    }
 }
 
 pub const SCROLLBAR_WIDTH: Pixels = px(6.);
@@ -73,19 +63,9 @@ pub struct ScrollDragState {
 }
 
 pub fn begin_drag<H: ScrollableHandle>(handle: &H, mouse_y: Pixels) -> ScrollDragState {
-    handle.drag_started();
     ScrollDragState {
         start_mouse_y: mouse_y,
         start_offset_y: handle.offset().y,
-    }
-}
-
-pub fn end_drag<H: ScrollableHandle>(handle: &H, drag: Option<ScrollDragState>) -> bool {
-    if drag.is_some() {
-        handle.drag_ended();
-        true
-    } else {
-        false
     }
 }
 

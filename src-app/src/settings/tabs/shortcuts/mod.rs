@@ -3,9 +3,8 @@ mod motion;
 
 use gpui::{
     AnyElement, App, ClickEvent, Context, Div, FontWeight, Hsla, InteractiveElement, IntoElement,
-    ListAlignment, ListOffset, ListState, MouseButton, MouseDownEvent, MouseMoveEvent,
-    ParentElement, Pixels, Point, SharedString, Stateful, StatefulInteractiveElement, Styled,
-    Window, div, list, prelude::*, px, svg,
+    ListAlignment, ListOffset, ListState, MouseButton, ParentElement, Pixels, SharedString,
+    Stateful, StatefulInteractiveElement, Styled, Window, div, list, prelude::*, px, svg,
 };
 
 use crate::keybindings::{ShortcutEntry, ShortcutGroup};
@@ -20,7 +19,6 @@ use crate::ui_primitives::{
     AccessibleControlExt, BODY, FOCUS_BLUE, FilterFieldShape, FilterFieldStyle, LABEL_SM,
     ROW_RADIUS, TooltipDelayExt, filter_field, highlight_ranges, squircle_skin, text_tooltip,
 };
-use crate::widgets::scrollbar::{self, ScrollableHandle as _};
 use crate::{PaneFlowApp, config_writer, keybindings};
 
 pub(crate) use filter::{ShortcutFilter, ShortcutSection};
@@ -236,6 +234,7 @@ impl PaneFlowApp {
             motion.sections().len()
         };
         self.shortcut_list.reset(len);
+        self.shortcut_scroll.content_replaced();
 
         if len > 0 && len == previous_len {
             self.shortcut_list.scroll_to(previous_top);
@@ -252,6 +251,7 @@ impl PaneFlowApp {
         if len != self.shortcut_list.item_count() {
             let top = self.shortcut_list.logical_scroll_top();
             self.shortcut_list.reset(len);
+            self.shortcut_scroll.content_replaced();
             if top.item_ix < len {
                 self.shortcut_list.scroll_to(top);
             }
@@ -477,6 +477,12 @@ impl PaneFlowApp {
     }
 
     fn reveal_shortcut_row(&self, group_ix: usize, position: usize) {
+        self.shortcut_scroll.ease(&self.shortcut_list, || {
+            self.jump_to_shortcut_row(group_ix, position);
+        });
+    }
+
+    fn jump_to_shortcut_row(&self, group_ix: usize, position: usize) {
         let Some(group) = self
             .shortcut_motion
             .borrow()
@@ -683,6 +689,7 @@ impl PaneFlowApp {
     ) -> AnyElement {
         let ui = crate::theme::ui_colors();
         self.settle_shortcut_motion(window);
+        self.shortcut_scroll.settle(&self.shortcut_list, window);
         let body = if self.shortcut_motion.borrow().sections().is_empty() {
             self.render_shortcut_empty_state(ui, cx)
         } else {
@@ -805,65 +812,22 @@ impl PaneFlowApp {
         )
         .size_full();
 
-        let bar = scrollbar::render(
-            &self.shortcut_list,
-            ui,
-            None,
-            "shortcut-scrollbar-track",
-            "shortcut-scrollbar-thumb",
-            cx.listener(|this, ev: &MouseDownEvent, _, cx| {
-                if let Some(off) = scrollbar::track_click_offset(&this.shortcut_list, ev.position.y)
-                {
-                    this.shortcut_list.set_offset(Point::new(px(0.), px(off)));
-                    cx.notify();
-                }
-            }),
-            cx.listener(|this, ev: &MouseDownEvent, _, cx| {
-                this.shortcut_drag =
-                    Some(scrollbar::begin_drag(&this.shortcut_list, ev.position.y));
-                cx.stop_propagation();
-            }),
-        );
-
         div()
             .flex_1()
             .min_h_0()
             .flex()
             .flex_col()
-            .child(self.shortcut_list_region(rows, bar, cx))
+            .child(self.shortcut_list_region(rows))
             .into_any_element()
     }
 
-    fn shortcut_list_region(
-        &self,
-        rows: gpui::List,
-        bar: Option<AnyElement>,
-        cx: &mut Context<Self>,
-    ) -> Div {
+    fn shortcut_list_region(&self, rows: gpui::List) -> Div {
         div()
             .relative()
             .flex_1()
             .min_h_0()
-            .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| {
-                if let Some(drag) = this.shortcut_drag
-                    && let Some(off) =
-                        scrollbar::drag_offset(&this.shortcut_list, &drag, ev.position.y)
-                {
-                    this.shortcut_list.set_offset(Point::new(px(0.), px(off)));
-                    cx.notify();
-                }
-            }))
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|this, _, _, cx| {
-                    let drag = this.shortcut_drag.take();
-                    if scrollbar::end_drag(&this.shortcut_list, drag) {
-                        cx.notify();
-                    }
-                }),
-            )
             .child(rows)
-            .when_some(bar, |d, sb| d.child(sb))
+            .child(self.shortcut_scroll.wheel_layer(self.shortcut_list.clone()))
     }
 
     fn render_shortcut_row(
@@ -1194,7 +1158,6 @@ fn shortcut_card(ui: crate::theme::UiColors, rows: Vec<(f32, AnyElement)>, amoun
 fn list_column(inner: impl IntoElement) -> Div {
     div()
         .w_full()
-        .pr(scrollbar::SCROLLBAR_GUTTER)
         .flex()
         .flex_col()
         .items_start()
@@ -1374,10 +1337,10 @@ mod tests {
             item.size.width, viewport,
             "a list item that does not span the list is shrink-wrapping its content"
         );
-        let expected = px(PROBE_WIDTH) - scrollbar::SCROLLBAR_GUTTER - SETTINGS_COLUMN_PADDING * 2.;
+        let expected = px(PROBE_WIDTH) - SETTINGS_COLUMN_PADDING * 2.;
         assert_eq!(
             section.size.width, expected,
-            "the section must sit in the reading column, clear of the scrollbar gutter"
+            "the section must sit in the reading column, as wide as on every other Settings page"
         );
         assert_eq!(section.origin.x, SETTINGS_COLUMN_PADDING);
     }

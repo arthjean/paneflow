@@ -123,7 +123,7 @@ impl PaneFlowApp {
 
     pub(crate) fn reset_settings_scroll(&mut self) {
         self.settings_scroll = ScrollHandle::new();
-        self.settings_drag = None;
+        self.settings_glide.content_replaced();
     }
 
     fn clear_settings_search(&mut self, cx: &mut Context<Self>) {
