@@ -33,10 +33,10 @@
     {
       "id": "EP-004",
       "title": "macOS uses the untinted system blur",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 2,
-      "stories_done": 0
+      "stories_done": 2
     },
     {
       "id": "EP-005",
@@ -170,26 +170,26 @@
       "id": "US-009",
       "title": "Replace the Sidebar material with GPUI's `Blurred`",
       "epic": "EP-004",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-005"
       ],
       "started_at": "2026-11-21",
-      "completed_at": null,
+      "completed_at": "2026-11-21",
       "reviewed_at": "2026-11-21"
     },
     {
       "id": "US-010",
       "title": "The fullscreen rule on macOS",
       "epic": "EP-004",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-009"
       ],
       "started_at": "2026-11-21",
-      "completed_at": null,
+      "completed_at": "2026-11-21",
       "reviewed_at": "2026-11-21"
     },
     {

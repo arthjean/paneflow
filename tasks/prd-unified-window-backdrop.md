@@ -312,7 +312,7 @@ Blended asks the compositor for blur by itself, and the probe's answer drives th
 
 macOS Blended becomes the same veil over a blur as the other platforms. The `cfg(target_os = "macos")` code of this epic cannot run on the Linux development host: it is reviewed by inspection and compiled by the macOS CI legs. Every check on a real Mac, visual passes included, belongs to EP-007.
 
-**Definition of Done:** `src-app/src/window_chrome/macos_backdrop.rs` no longer exists, the macOS CI legs (`macOS aarch64 smoke build` and `macOS aarch64 render smoke (visual)`) pass, and the fullscreen rule is covered by a platform-neutral unit test.
+**Definition of Done:** `src-app/src/window_chrome/macos_backdrop.rs` no longer exists, the macOS CI legs (`macOS aarch64 smoke build` and `macOS aarch64 render smoke (visual)`) pass, and the fullscreen rule is covered by a platform-neutral unit test. Met 2026-11-21 on `5033a596`: both macOS legs green, as were every other `run_tests` job; the Windows leg had first failed on `db685ad1` because the fullscreen test read the runner's Windows build, fixed in that commit.
 
 #### US-009: Replace the Sidebar material with GPUI's `Blurred`
 **Description:** As a macOS user, I want Blended to blur the desktop behind the whole window so that Paneflow looks the same as on the other platforms.
