@@ -134,8 +134,12 @@ mod tests {
         let mut applied = AppliedAppearance::default();
         let mut sync = |cx: &mut gpui::VisualTestContext| {
             cx.update(|window, _| {
-                let backdrop =
-                    crate::window_chrome::backdrop_for(BackgroundStyle::Blended, window, true);
+                let backdrop = crate::window_chrome::backdrop_for(
+                    BackgroundStyle::Blended,
+                    window,
+                    true,
+                    true,
+                );
                 applied.sync(window, backdrop);
                 (backdrop.is_blended(), applied)
             })

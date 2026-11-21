@@ -25,18 +25,24 @@ pub(crate) fn style_backdrop(
     style: paneflow_config::schema::BackgroundStyle,
     window: &gpui::Window,
 ) -> veil::Backdrop {
-    backdrop_for(style, window, FULLSCREEN_DROPS_SURFACE_ALPHA)
+    backdrop_for(
+        style,
+        window,
+        FULLSCREEN_DROPS_SURFACE_ALPHA,
+        system_backdrop_available(),
+    )
 }
 
 fn backdrop_for(
     style: paneflow_config::schema::BackgroundStyle,
     window: &gpui::Window,
     fullscreen_drops_alpha: bool,
+    system_backdrop_available: bool,
 ) -> veil::Backdrop {
     let surface_has_alpha = surface_alpha_for(
         fullscreen_drops_alpha,
         window.is_fullscreen(),
-        system_backdrop_available(),
+        system_backdrop_available,
     );
     veil::Backdrop::new(style, surface_has_alpha, blur_support(window))
 }
