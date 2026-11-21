@@ -25,6 +25,7 @@ use crate::ui_primitives::{TooltipDelayExt, text_tooltip};
 use crate::widgets::text_input::TextInput;
 
 use crate::settings::kit::{self, Ink, MeterTone, Size, Text, Tone};
+use crate::settings::private_text;
 
 const INPUT_HEIGHT: f32 = 28.;
 const MENU_WIDTH: f32 = 232.;
@@ -284,10 +285,27 @@ impl PaneFlowApp {
             );
         }
         controls = controls.children(account_meters(tag, account, ink));
+        let mut text = account_text(account, ink);
+        if private_text::is_private(&account.title) {
+            let key = account.key.clone();
+            text = text.drawn_as(
+                private_text::private_text(
+                    &account.key,
+                    &account.title,
+                    &self.private_reveals,
+                    ink.primary,
+                    ink.accent,
+                )
+                .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                    this.private_reveals.toggle(&key);
+                    cx.notify();
+                })),
+            );
+        }
         kit::row(
             ink,
             Some(kit::avatar(&account.title)),
-            account_text(account, ink),
+            text,
             Some(controls.into_any_element()),
         )
         .into_any_element()
@@ -1282,6 +1300,13 @@ mod tests {
                     Some(kit::avatar(&account.title)),
                     account_text(&account, ink),
                     account_meters("claude", &account, ink),
+                ))
+                .child(private_text::private_text(
+                    &account.key,
+                    &account.title,
+                    &private_text::Reveals::default(),
+                    ink.primary,
+                    ink.accent,
                 ))
                 .child(kit::button(
                     "agent-account-sign-in",

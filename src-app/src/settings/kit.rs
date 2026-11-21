@@ -310,6 +310,7 @@ pub(crate) fn page_description(ink: Ink, text: &'static str) -> Div {
 pub(crate) struct Text {
     label: SharedString,
     label_ink: Option<Hsla>,
+    label_element: Option<AnyElement>,
     badge: Option<AnyElement>,
     lines: Vec<AnyElement>,
 }
@@ -319,6 +320,7 @@ impl Text {
         Self {
             label: label.into(),
             label_ink: None,
+            label_element: None,
             badge: None,
             lines: Vec::new(),
         }
@@ -326,6 +328,11 @@ impl Text {
 
     pub(crate) fn danger(mut self, ink: Ink) -> Self {
         self.label_ink = Some(ink.danger);
+        self
+    }
+
+    pub(crate) fn drawn_as(mut self, label: impl IntoElement) -> Self {
+        self.label_element = Some(label.into_any_element());
         self
     }
 
@@ -367,7 +374,11 @@ impl Text {
                             .line_height(px(LINE_MD))
                             .font_weight(gpui::FontWeight::MEDIUM)
                             .text_color(self.label_ink.unwrap_or(ink.primary))
-                            .child(highlight_matches(self.label.to_string(), &query())),
+                            .child(match self.label_element {
+                                Some(label) => label,
+                                None => highlight_matches(self.label.to_string(), &query())
+                                    .into_any_element(),
+                            }),
                     )
                     .children(self.badge),
             )

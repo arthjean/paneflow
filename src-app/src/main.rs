@@ -266,6 +266,7 @@ struct PaneFlowApp {
     agent_settings_dialog: Option<crate::agent_launcher::TerminalAgent>,
     agent_profile_menu: Option<crate::settings::tabs::agents::AgentProfileMenu>,
     worktree_snapshot_delete_armed: Option<String>,
+    private_reveals: crate::settings::private_text::Reveals,
     agent_account_adding: Option<crate::agent_launcher::TerminalAgent>,
     agent_sign_in: Option<crate::settings::tabs::agents::AgentSignIn>,
     space_account_menu: Option<(

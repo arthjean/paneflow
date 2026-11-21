@@ -1615,6 +1615,14 @@ PATH, a welcome card says `No coding agent on your PATH` at 14 Semibold over
 one 12 px muted sentence and the same strip, centered. Profiles whose agent is
 not installed, or that cannot be read, are listed under `Other launch presets`, and
 their editor keeps the base agent select. `Permissions` closes the page.
+An account named by its email shows the address hidden
+(`settings/private_text.rs`): a stand-in of the same length, its letters
+drawn from a hash of the address and its `@ . - _ +` kept in place, blurred
+by 32 copies on a 4 px Vogel disk at 0.08 each, so the real address is never
+painted while hidden. A click, Enter or Space shows that one address and
+another hides it, unpersisted; the change blurs or sharpens the real text over
+180 ms with a cubic ease-out (at once under reduced motion) before the
+stand-in takes its place.
 
 Clicking an agent opens its page under an `Agents › {name}` breadcrumb, and
 Escape closes the profile editor or the update method select, then returns to
