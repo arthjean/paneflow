@@ -6,6 +6,7 @@
 | Version | Date | Author | Summary |
 |---------|------|--------|---------|
 | 1.0 | 2026-11-19 | Arthur Jean | Initial PRD, from the exploration of 2026-11-19 (Rex documentation, eleven code maps of Paneflow, an mlua probe) and a second research pass the same day (routing, layout mutations, worker and approval broker, palette and events, mlua and schemars, agent client timeouts). One typed registry, a plain-data layout model, a gap-free event log, Lua scripts and `init.lua`, prompts, the layout authority in the worker, headless layout, agent prompts and actions, Windows validation. 10 epics, 75 stories. |
+| 1.1 | 2026-11-21 | Arthur Jean | EP-006 review: US-047 gains a criterion for the gesture grant, which lets an action started from a key or the palette type into the window with the write gate closed, while every other caller stays gated. |
 
 ## Problem Statement
 
@@ -946,18 +947,18 @@ An action or a script stops, asks the user for a line of text or a choice, and c
 **Paneflow sites:** `crates/paneflow-host/src/agent_write.rs:22-28,73-132,183-366` (the pattern, not modified); `crates/paneflow-serve/src/server.rs:38-46,664-700`.
 
 **Acceptance Criteria:**
-- [ ] Given `prompt.request` with `kind` (`input` or `pick`), `title`, the fields of FR-10 and `wait_ms`, when an answer arrives within `wait_ms`, then it returns `{status: "answered", answer}`
-- [ ] Given `wait_ms` elapsing with the prompt still open, when `prompt.request` returns, then it returns `{status: "pending", id}`, and `prompt.wait { id, wait_ms }` continues waiting on that id with the same three outcomes
-- [ ] Given a prompt that ends without an answer, when the asker's call returns, then `status` is the reason: `cancelled`, `timeout`, `no_client`, `unsupported`, `busy` or `failed`
-- [ ] Given `prompt.follow` with the kinds the client can show, when it is called, then the stream sends the pending prompts, then `requested` frames (id, spec, origin, remaining time) and `ended` frames (id, reason)
-- [ ] Given `prompt.reply { id, answer }` or `prompt.reply { id, cancel: true }`, when it is the first for that id, then the asker receives the answer or `cancelled` and every follower receives `ended`; a second reply for the same id is refused with `not_pending`
-- [ ] Given no follower able to show the kind, when a prompt is requested, then the status is `no_client` (no follower at all) or `unsupported` (followers exist, none shows this kind), and nothing is queued
-- [ ] Given every follower disconnecting while a prompt is pending, when the last one leaves, then the asker receives `no_client`
-- [ ] Given `timeout` seconds (default 300, at most 3,600) passing with no reply, when it expires, then the asker receives `timeout` and followers receive `ended`
-- [ ] Given 16 prompts already pending, when another is requested, then its status is `busy`
-- [ ] Given a `pick` request with more than 2,000 items, two items with the same `id`, a missing `title`, or `allow_other` together with `multiple`, when it is requested, then it is refused with `-32602` naming the field
-- [ ] Given a worker shutdown, when prompts are pending, then each asker receives `failed` with a detail saying the worker stopped
-- [ ] The broker holds its state in memory only, takes the current time as an input in tests, and adds no method to the host
+- [x] Given `prompt.request` with `kind` (`input` or `pick`), `title`, the fields of FR-10 and `wait_ms`, when an answer arrives within `wait_ms`, then it returns `{status: "answered", answer}`
+- [x] Given `wait_ms` elapsing with the prompt still open, when `prompt.request` returns, then it returns `{status: "pending", id}`, and `prompt.wait { id, wait_ms }` continues waiting on that id with the same three outcomes
+- [x] Given a prompt that ends without an answer, when the asker's call returns, then `status` is the reason: `cancelled`, `timeout`, `no_client`, `unsupported`, `busy` or `failed`
+- [x] Given `prompt.follow` with the kinds the client can show, when it is called, then the stream sends the pending prompts, then `requested` frames (id, spec, origin, remaining time) and `ended` frames (id, reason)
+- [x] Given `prompt.reply { id, answer }` or `prompt.reply { id, cancel: true }`, when it is the first for that id, then the asker receives the answer or `cancelled` and every follower receives `ended`; a second reply for the same id is refused with `not_pending`
+- [x] Given no follower able to show the kind, when a prompt is requested, then the status is `no_client` (no follower at all) or `unsupported` (followers exist, none shows this kind), and nothing is queued
+- [x] Given every follower disconnecting while a prompt is pending, when the last one leaves, then the asker receives `no_client`
+- [x] Given `timeout` seconds (default 300, at most 3,600) passing with no reply, when it expires, then the asker receives `timeout` and followers receive `ended`
+- [x] Given 16 prompts already pending, when another is requested, then its status is `busy`
+- [x] Given a `pick` request with more than 2,000 items, two items with the same `id`, a missing `title`, or `allow_other` together with `multiple`, when it is requested, then it is refused with `-32602` naming the field
+- [x] Given a worker shutdown, when prompts are pending, then each asker receives `failed` with a detail saying the worker stopped
+- [x] The broker holds its state in memory only, takes the current time as an input in tests, and adds no method to the host
 
 #### US-045: The text prompt in the window
 **Description:** As a user, I want a question from an action to appear as a text field in the palette so that I answer it where I already type commands.
@@ -969,14 +970,14 @@ An action or a script stops, asks the user for a line of text or a choice, and c
 **Paneflow sites:** `src-app/src/ui_primitives/quick_pick.rs:13-103`; `src-app/src/widgets/text_input.rs`; `src-app/src/app/branch_prompt.rs:9-100`; `src-app/src/app/command_palette/mod.rs:73-92,388-398`.
 
 **Acceptance Criteria:**
-- [ ] Given a window attached, when it starts, then a background thread follows `prompt.follow` and reconnects as the write-approval follower does
-- [ ] Given an `input` prompt, when it is next in the order of FR-11, then the palette shell opens with `title`, a field holding `value` with `placeholder`, and one row labelled `confirm`, or `Use "<typed text>"` when `confirm` is absent
-- [ ] Given Enter, when it is pressed, then the typed text is sent unchanged (spaces and an empty string included) and the prompt closes
-- [ ] Given Escape or a click outside, when it happens, then `cancel` is sent and the prompt closes
-- [ ] Given an `ended` frame for the shown prompt, when it arrives, then the prompt closes without sending anything, and the next prompt in the order of FR-11 is shown
-- [ ] Given the command palette already open, when a prompt arrives, then the prompt waits until the palette closes, and the palette is never replaced under the user's hands
-- [ ] Given the prompt's origin, when it is shown, then one line under the title names it: the action's title, the script's file name, or the agent and its pane
-- [ ] The prompt is built from the existing palette shell, row and text-input primitives and adds no new color or radius token
+- [x] Given a window attached, when it starts, then a background thread follows `prompt.follow` and reconnects as the write-approval follower does
+- [x] Given an `input` prompt, when it is next in the order of FR-11, then the palette shell opens with `title`, a field holding `value` with `placeholder`, and one row labelled `confirm`, or `Use "<typed text>"` when `confirm` is absent
+- [x] Given Enter, when it is pressed, then the typed text is sent unchanged (spaces and an empty string included) and the prompt closes
+- [x] Given Escape or a click outside, when it happens, then `cancel` is sent and the prompt closes
+- [x] Given an `ended` frame for the shown prompt, when it arrives, then the prompt closes without sending anything, and the next prompt in the order of FR-11 is shown
+- [x] Given the command palette already open, when a prompt arrives, then the prompt waits until the palette closes, and the palette is never replaced under the user's hands
+- [x] Given the prompt's origin, when it is shown, then one line under the title names it: the action's title, the script's file name, or the agent and its pane
+- [x] The prompt is built from the existing palette shell, row and text-input primitives and adds no new color or radius token
 
 #### US-046: The choice prompt in the window
 **Description:** As a user, I want to pick one or several items from a list so that an action can ask me which project, branch or file.
@@ -988,14 +989,14 @@ An action or a script stops, asks the user for a line of text or a choice, and c
 **Rex reference:** page "Custom UI", sections "Asking for a Choice", "Icons", "Choosing Several Items", "Accepting Typed Text".
 
 **Acceptance Criteria:**
-- [ ] Given a `pick` prompt, when it is shown, then each item shows `title` (default `id`), `subtitle`, `icon` and `detail`, in the given order, and typing filters them with the palette's matching and highlighting
-- [ ] Given an item that is a plain string, when it is shown, then its `id` and `title` are that string
-- [ ] Given Enter on an item, when `multiple` is false, then that item's `id` is sent
-- [ ] Given `multiple = true`, when the user toggles items and confirms, then the ids are sent in the order of `items`, items with `selected = true` start ticked, the count of ticked items shows beside `confirm`, and confirming with none ticked sends an empty list
-- [ ] Given `allow_other = true`, when the user confirms text that matches no item, then `{ text = "<typed>" }` is sent
-- [ ] Given `icon`, when it is one of `document`, `folder`, `branch`, `terminal`, `code`, `server`, `database`, `package`, `globe`, `link`, `person`, `tag`, `clock`, `star`, `gear`, `plus`, then the matching Paneflow icon is drawn; any other name draws no icon and logs one warning
-- [ ] Given an empty `items`, when the prompt is shown, then the list shows the palette's empty state and Escape cancels
-- [ ] Given 2,000 items, when the prompt opens and the user types, then filtering runs off the render thread as the file finder's does
+- [x] Given a `pick` prompt, when it is shown, then each item shows `title` (default `id`), `subtitle`, `icon` and `detail`, in the given order, and typing filters them with the palette's matching and highlighting
+- [x] Given an item that is a plain string, when it is shown, then its `id` and `title` are that string
+- [x] Given Enter on an item, when `multiple` is false, then that item's `id` is sent
+- [x] Given `multiple = true`, when the user toggles items and confirms, then the ids are sent in the order of `items`, items with `selected = true` start ticked, the count of ticked items shows beside `confirm`, and confirming with none ticked sends an empty list
+- [x] Given `allow_other = true`, when the user confirms text that matches no item, then `{ text = "<typed>" }` is sent
+- [x] Given `icon`, when it is one of `document`, `folder`, `branch`, `terminal`, `code`, `server`, `database`, `package`, `globe`, `link`, `person`, `tag`, `clock`, `star`, `gear`, `plus`, then the matching Paneflow icon is drawn; any other name draws no icon and logs one warning
+- [x] Given an empty `items`, when the prompt is shown, then the list shows the palette's empty state and Escape cancels
+- [x] Given 2,000 items, when the prompt opens and the user types, then filtering runs off the render thread as the file finder's does
 
 #### US-047: `paneflow.ui.input` and `paneflow.ui.pick`
 **Description:** As a script author, I want to ask a question from Lua and get the answer as a return value so that actions can be interactive.
@@ -1005,14 +1006,15 @@ An action or a script stops, asks the user for a line of text or a choice, and c
 **Dependencies:** Blocked by US-044, US-037, US-041, US-045
 
 **Acceptance Criteria:**
-- [ ] Given `paneflow.ui.input{ title, placeholder, value, confirm, timeout }`, when the user answers, then it returns the text; given `paneflow.ui.pick{ ..., items, multiple, allow_other }`, then it returns the id, the list of ids, or `{ text = ... }`
-- [ ] Given no answer, when the call returns, then it returns `nil`, a reason among `cancelled`, `timeout`, `no_client`, `unsupported`, `busy`, `failed`, and a detail string only for `failed`
-- [ ] Given a mistake in the call (missing `title`, duplicate ids), when it is made, then it raises an error
-- [ ] Given a prompt open from one action, when another action is invoked or a timer comes due, then it runs, and the waiting action's 30 s limit does not advance
-- [ ] Given a call made under `pcall`, inside a function called by the action, inside a handler, a timer or a `paneflow do` script, when it runs, then it works
-- [ ] Given a call made at the top level of `init.lua` during load, when it runs, then it returns `nil` and `failed` without asking anyone
-- [ ] Given a call made inside a `table.sort` comparator or a coroutine the script created, when it runs, then it raises the error of US-033
-- [ ] Given this action bound to a key, when the key is pressed and "fix/login" is typed, then `git switch -c fix/login` followed by Enter is sent to the focused terminal: the action calls `paneflow.ui.input{ title = "New branch", value = "feature/" }` and then `paneflow.surface.send_text{ text = "git switch -c " .. name, submit = true }`
+- [x] Given `paneflow.ui.input{ title, placeholder, value, confirm, timeout }`, when the user answers, then it returns the text; given `paneflow.ui.pick{ ..., items, multiple, allow_other }`, then it returns the id, the list of ids, or `{ text = ... }`
+- [x] Given no answer, when the call returns, then it returns `nil`, a reason among `cancelled`, `timeout`, `no_client`, `unsupported`, `busy`, `failed`, and a detail string only for `failed`
+- [x] Given a mistake in the call (missing `title`, duplicate ids), when it is made, then it raises an error
+- [x] Given a prompt open from one action, when another action is invoked or a timer comes due, then it runs, and the waiting action's 30 s limit does not advance
+- [x] Given a call made under `pcall`, inside a function called by the action, inside a handler, a timer or a `paneflow do` script, when it runs, then it works
+- [x] Given a call made at the top level of `init.lua` during load, when it runs, then it returns `nil` and `failed` without asking anyone
+- [x] Given a call made inside a `table.sort` comparator or a coroutine the script created, when it runs, then it raises the error of US-033
+- [x] Given the write gate closed (`PANEFLOW_IPC_SCRIPTING` unset, `ai_unrestricted` false), when the window runs an action from a key or the palette, then the action's writes to that window pass with a grant the window minted for that run only; the same action run from the CLI, an agent, a timer or a handler, or a request that only claims a `key` or `palette` origin, stays refused with `-32601` (decided with Arthur on 2026-11-21 during the EP-006 review)
+- [x] Given this action bound to a key, when the key is pressed and "fix/login" is typed, then `git switch -c fix/login` followed by Enter is sent to the focused terminal: the action calls `paneflow.ui.input{ title = "New branch", value = "feature/" }` and then `paneflow.surface.send_text{ text = "git switch -c " .. name, submit = true }`
 
 #### US-048: Several clients, one answer
 **Description:** As the maintainer, I want the multi-client behavior proven without a second app so that a future client can rely on it.
@@ -1022,13 +1024,13 @@ An action or a script stops, asks the user for a line of text or a choice, and c
 **Dependencies:** Blocked by US-044
 
 **Acceptance Criteria:**
-- [ ] Given `protocol/prompt-conformance-v1.json`, when it is read, then it lists the cases below, and a listed case with no runner fails the suite
-- [ ] Given two followers and one prompt, when the first replies, then the asker gets the answer, the second receives `ended` with reason `answered`, and a late reply from the second is refused with `not_pending`
-- [ ] Given two followers, when one cancels, then the asker gets `cancelled` and the other receives `ended`
-- [ ] Given one follower that supports `input` only and a `pick` request, when it is requested, then the status is `unsupported`
-- [ ] Given a follower that disconnects while another stays, when it leaves, then the prompt stays pending
-- [ ] Given three prompts requested in order, when a follower connects afterwards, then it receives the three as pending, oldest first
-- [ ] The runner uses two plain protocol clients against a real worker on a per-process endpoint and needs no display
+- [x] Given `protocol/prompt-conformance-v1.json`, when it is read, then it lists the cases below, and a listed case with no runner fails the suite
+- [x] Given two followers and one prompt, when the first replies, then the asker gets the answer, the second receives `ended` with reason `answered`, and a late reply from the second is refused with `not_pending`
+- [x] Given two followers, when one cancels, then the asker gets `cancelled` and the other receives `ended`
+- [x] Given one follower that supports `input` only and a `pick` request, when it is requested, then the status is `unsupported`
+- [x] Given a follower that disconnects while another stays, when it leaves, then the prompt stays pending
+- [x] Given three prompts requested in order, when a follower connects afterwards, then it receives the three as pending, oldest first
+- [x] The runner uses two plain protocol clients against a real worker on a per-process endpoint and needs no display
 
 #### US-049: Pending prompts in the attention queue
 **Description:** As a user with many panes, I want a waiting question to show where I already look for things that need me so that I do not miss it.
@@ -1040,11 +1042,11 @@ An action or a script stops, asks the user for a line of text or a choice, and c
 **Paneflow sites:** `src-app/src/app/attention.rs:94-137`; `src-app/src/app/write_approvals.rs:40-62`.
 
 **Acceptance Criteria:**
-- [ ] Given a pending prompt whose origin names a surface, when the attention items are computed, then one item is placed on that surface and its workspace, with its waiting time, as pending write approvals are
-- [ ] Given that item, when the user activates it, then the prompt is shown, even when another prompt is older
-- [ ] Given a prompt with no surface (a script outside a pane), when the items are computed, then no item is created and the prompt is shown directly
-- [ ] Given the prompt ending for any reason, when the next computation runs, then the item is gone
-- [ ] Given no pending prompt, when the attention items are computed, then the list equals today's
+- [x] Given a pending prompt whose origin names a surface, when the attention items are computed, then one item is placed on that surface and its workspace, with its waiting time, as pending write approvals are
+- [x] Given that item, when the user activates it, then the prompt is shown, even when another prompt is older
+- [x] Given a prompt with no surface (a script outside a pane), when the items are computed, then no item is created and the prompt is shown directly
+- [x] Given the prompt ending for any reason, when the next computation runs, then the item is gone
+- [x] Given no pending prompt, when the attention items are computed, then the list equals today's
 
 ---
 

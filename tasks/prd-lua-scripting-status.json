@@ -49,10 +49,10 @@
     {
       "id": "EP-006",
       "title": "Prompts any client can answer",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 6,
-      "stories_done": 0
+      "stories_done": 6
     },
     {
       "id": "EP-007",
@@ -662,46 +662,46 @@
       "id": "US-044",
       "title": "The prompt broker",
       "epic": "EP-006",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-021"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-21",
+      "completed_at": "2026-11-21",
+      "reviewed_at": "2026-11-21"
     },
     {
       "id": "US-045",
       "title": "The text prompt in the window",
       "epic": "EP-006",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-044"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-21",
+      "completed_at": "2026-11-21",
+      "reviewed_at": "2026-11-21"
     },
     {
       "id": "US-046",
       "title": "The choice prompt in the window",
       "epic": "EP-006",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-045"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-21",
+      "completed_at": "2026-11-21",
+      "reviewed_at": "2026-11-21"
     },
     {
       "id": "US-047",
       "title": "`paneflow.ui.input` and `paneflow.ui.pick`",
       "epic": "EP-006",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-044",
@@ -709,35 +709,35 @@
         "US-041",
         "US-045"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-21",
+      "completed_at": "2026-11-21",
+      "reviewed_at": "2026-11-21"
     },
     {
       "id": "US-048",
       "title": "Several clients, one answer",
       "epic": "EP-006",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-044"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-21",
+      "completed_at": "2026-11-21",
+      "reviewed_at": "2026-11-21"
     },
     {
       "id": "US-049",
       "title": "Pending prompts in the attention queue",
       "epic": "EP-006",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-045"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-21",
+      "completed_at": "2026-11-21",
+      "reviewed_at": "2026-11-21"
     },
     {
       "id": "US-050",
