@@ -242,7 +242,7 @@ impl PaneFlowApp {
                 paneflow_layout::PaneId(self.layout.model.reserve()),
             )
         });
-        if let Err(OpError::PaneLimit) = self.apply_layout_op(
+        match self.apply_layout_op(
             Op::MoveSurface {
                 surface,
                 target,
@@ -250,7 +250,16 @@ impl PaneFlowApp {
             },
             cx,
         ) {
-            self.show_toast(format!("Maximum pane count reached ({MAX_PANES})"), cx);
+            Err(OpError::PaneLimit) => {
+                self.show_toast(format!("Maximum pane count reached ({MAX_PANES})"), cx);
+            }
+            Err(OpError::SurfaceLimit) => {
+                self.show_toast(
+                    format!("Maximum tab count reached ({})", crate::pane::MAX_PANE_TABS),
+                    cx,
+                );
+            }
+            _ => {}
         }
     }
 

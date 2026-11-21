@@ -13,7 +13,7 @@ use crate::{
     SplitHorizontally, SplitVertically, ToggleZoom,
 };
 
-pub(super) const PINS: usize = 25;
+pub(super) const PINS: usize = 26;
 
 fn split_v(rig: &mut Rig<'_>) {
     rig.act(|app, window, cx| app.handle_split_v(&SplitVertically, window, cx));
@@ -145,6 +145,40 @@ fn pin_dropping_a_surface_joins_the_target_pane_or_splits_it(cx: &mut TestAppCon
     assert_eq!(rig.shape(0, 0), "V(0.500 a, 0.500 H(0.500 b, 0.500 c))");
     assert_eq!(rig.focused().as_deref(), Some("c"));
     assert_eq!(rig.requests(), Vec::<String>::new());
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_a_surface_dropped_on_a_full_pane_is_refused_with_the_tab_limit_toast(
+    cx: &mut TestAppContext,
+) {
+    let mut rig = Rig::mount(cx);
+    rig.workspace("alpha");
+    rig.focus("a");
+    split_v(&mut rig);
+    for _ in 1..crate::pane::MAX_PANE_TABS {
+        rig.emit("b", PaneEvent::NewTab);
+    }
+    let full = rig.shape(0, 0);
+    rig.toasts();
+    let source = rig.pane_id("a");
+    let surface = rig.drag_surface_id("a");
+    rig.emit(
+        "b",
+        PaneEvent::DropSurfaceMove {
+            source_pane_id: source,
+            surface_id: surface,
+            edge: None,
+        },
+    );
+    assert_eq!(rig.shape(0, 0), full);
+    assert_eq!(
+        rig.toasts(),
+        [format!(
+            "Maximum tab count reached ({})",
+            crate::pane::MAX_PANE_TABS
+        )]
+    );
 }
 
 #[gpui::test]
