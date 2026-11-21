@@ -1185,11 +1185,11 @@ The worker creates terminal sessions itself, then serves the structural layout m
 **Paneflow sites:** `src-app/src/terminal/pty_session/spawn_env.rs`; `src-app/src/terminal/host_link.rs`; `src-app/src/agent_launcher.rs`; `src-app/src/app/ipc_handler/split.rs:37-46`; `crates/paneflow-host/src/env.rs:31-43`.
 
 **Acceptance Criteria:**
-- [ ] Given the section "Session launch inventory" added to this PRD by this story, when it is read, then it lists every input of a session creation (shell, working directory, environment, each `PANE_CONTEXT_ENV` variable, shell integration, launch profile, agent command, prompt, initial size, managed worktree) with where it is computed today, `file:line`
-- [ ] Given each input, when the section is read, then it says whether it depends on GPUI, on window state, on configuration, or on nothing
-- [ ] Given an input that depends on window state with no equivalent in the worker, when the section is read, then it proposes where the value comes from in a headless start and names the user-visible difference, if any
-- [ ] Given the section, when US-059 starts, then its scope is the list of functions the section names, and anything the section marks as blocking makes US-059 BLOCKED rather than improvised
-- [ ] No production code changes in this story
+- [x] Given the section "Session launch inventory" added to this PRD by this story, when it is read, then it lists every input of a session creation (shell, working directory, environment, each `PANE_CONTEXT_ENV` variable, shell integration, launch profile, agent command, prompt, initial size, managed worktree) with where it is computed today, `file:line`
+- [x] Given each input, when the section is read, then it says whether it depends on GPUI, on window state, on configuration, or on nothing
+- [x] Given an input that depends on window state with no equivalent in the worker, when the section is read, then it proposes where the value comes from in a headless start and names the user-visible difference, if any
+- [x] Given the section, when US-059 starts, then its scope is the list of functions the section names, and anything the section marks as blocking makes US-059 BLOCKED rather than improvised
+- [x] No production code changes in this story
 
 #### US-059: Extract session launch into a shared crate
 **Description:** As the maintainer, I want session launch in a crate the worker can link so that both processes start terminals the same way.
@@ -1199,11 +1199,11 @@ The worker creates terminal sessions itself, then serves the structural layout m
 **Dependencies:** Blocked by US-058
 
 **Acceptance Criteria:**
-- [ ] Given the new crate `crates/paneflow-launch`, when its dependencies are listed, then it depends on neither `gpui` nor `src-app`
-- [ ] Given the window, when it creates a terminal session, then it builds the request through `paneflow-launch`, and the request sent to the host is byte-identical to the one built before the story for the same inputs (asserted on a set of recorded cases: shell, agent with prompt, managed worktree, custom environment)
-- [ ] Given an input the worker cannot know (the pane's size in cells), when the request is built without it, then the documented default is used
-- [ ] Given an environment key that the host strips or refuses, when it is passed, then the behavior is unchanged
-- [ ] The existing tests of `spawn_env.rs` and `host_link.rs` pass, moved with the code they test
+- [x] Given the new crate `crates/paneflow-launch`, when its dependencies are listed, then it depends on neither `gpui` nor `src-app`
+- [x] Given the window, when it creates a terminal session, then it builds the request through `paneflow-launch`, and the request sent to the host is byte-identical to the one built before the story for the same inputs (asserted on a set of recorded cases: shell, agent with prompt, managed worktree, custom environment)
+- [x] Given an input the worker cannot know (the pane's size in cells), when the request is built without it, then the documented default is used
+- [x] Given an environment key that the host strips or refuses, when it is passed, then the behavior is unchanged
+- [x] The existing tests of `spawn_env.rs` and `host_link.rs` pass, moved with the code they test
 
 #### US-060: The worker starts terminals
 **Description:** As a script author, I want a pane created by a script to get its terminal even when no window is open.
@@ -1213,13 +1213,13 @@ The worker creates terminal sessions itself, then serves the structural layout m
 **Dependencies:** Blocked by US-059
 
 **Acceptance Criteria:**
-- [ ] Given a surface with no session after an op, when the worker handles the op's spawn effect, then the worker creates the session through the host's existing `session.create` and applies the bind-session op
-- [ ] Given a window attached, when a pane is created from the keyboard, then the worker creates the session and the window only attaches to it, so exactly one process creates sessions
-- [ ] Given the pane's size unknown at creation, when a window later attaches, then it sends the real size with the host's existing `session.resize`
-- [ ] Given a `session.create` that fails, when the host refuses, then the surface stays in the layout with no session and shows the pane's existing launch-failure state, and the op's caller receives the host's message
-- [ ] Given the host unreachable, when a creating op arrives, then it is refused with the host's connection error and the model is unchanged
-- [ ] Given a pane created headless, when its environment is read inside the terminal, then `PANEFLOW_SURFACE_ID` equals its surface id
-- [ ] The host crate is not modified
+- [x] Given a surface with no session after an op, when the worker handles the op's spawn effect, then the worker creates the session through the host's existing `session.create` and applies the bind-session op
+- [x] Given a window attached, when a pane is created from the keyboard, then the worker creates the session and the window only attaches to it, so exactly one process creates sessions
+- [x] Given the pane's size unknown at creation, when a window later attaches, then it sends the real size with the host's existing `session.resize`
+- [x] Given a `session.create` that fails, when the host refuses, then the surface stays in the layout with no session and shows the pane's existing launch-failure state, and the op's caller receives the host's message
+- [x] Given the host unreachable, when a creating op arrives, then it is refused with the host's connection error and the model is unchanged
+- [x] Given a pane created headless, when its environment is read inside the terminal, then `PANEFLOW_SURFACE_ID` equals its surface id
+- [x] The host crate is not modified
 
 #### US-056: Effects and structural methods move to the worker
 **Description:** As a script author, I want layout methods answered by the process that owns the layout so that a change made from the CLI and one made from the keyboard follow the same path.
@@ -1232,12 +1232,14 @@ The worker creates terminal sessions itself, then serves the structural layout m
 
 **Acceptance Criteria:**
 - [x] Given hold, stop and rehome effects, when an op requests them, then the worker performs them through the host's existing `session.stop` and `session.workspace` methods, and the 5 s hold of undo close is timed by the worker
-- [ ] Given `surface.split`, `surface.focus`, `surface.rename`, `workspace.create`, `workspace.up`, `workspace.select`, `workspace.close` and `workspace.restore_layout`, when the registry is listed, then their owner is `worker`, and their parameters and results are unchanged
-- [ ] Given a raw JSON-RPC client that sends one of these methods to the window's socket, when the window receives it, then the window answers with the same shape as before by submitting ops, and the US-001 cases pass unchanged
-- [ ] Given one of these methods sent to the worker, when it creates a pane, then the worker translates it into layout ops, starts the terminal through `paneflow-launch` as US-060 does, and the reply waits for the binding as the `Async` reply does today; an attached window only attaches to the new session
-- [ ] Given `workspace.up` with a managed worktree, when the worker serves it, then the worktree is created through the git CLI boundary of `src-app/src/git_command.rs`, moved unchanged into a GPU-free crate that both processes link, and no second git implementation exists; `AGENTS.md` names the new location
-- [ ] Given `surface.focus` or `workspace.select` sent to the worker while a window is attached, when the window receives the new view, then it gives the keyboard focus to the pane the model focuses, as the window method does today
+- [x] Given `surface.split`, `surface.focus`, `surface.rename`, `workspace.create`, `workspace.up`, `workspace.select`, `workspace.close` and `workspace.restore_layout`, when the registry is listed, then their owner is `worker`, and their parameters and results are unchanged
+- [x] Given a raw JSON-RPC client that sends one of these methods to the window's socket, when the window receives it, then the window answers with the same shape as before by submitting ops, and the US-001 cases pass unchanged
+- [x] Given one of these methods sent to the worker, when it creates a pane, then the worker translates it into layout ops, starts the terminal through `paneflow-launch` as US-060 does, and the reply waits for the binding as the `Async` reply does today; an attached window only attaches to the new session
+- [x] Given `workspace.up` with a managed worktree, when the worker serves it, then the worktree is created through the git CLI boundary of `src-app/src/git_command.rs`, moved unchanged into a GPU-free crate that both processes link, and no second git implementation exists; `AGENTS.md` names the new location
+  - Delivered (EP-008 implementation): `git_command.rs` moved to `crates/paneflow-git/src/command.rs`, changed only in visibility, import paths and the test-isolation `cfg` (a `test-support` feature lets the dependents' tests isolate git the same way). The crate also holds the worktree code and `worktree_plan.rs`, the plan, create and roll back sequence that `paneflow up` ran in the CLI. A pane of `workspace.up` (and the new pane of `surface.split`) takes a `worktree` request (`branch`, `from`, `copy_env`, `setup`, `setup_timeout_secs`, `teardown`), exclusive with `managed_worktree`; the process that serves the call creates the worktree, removes every worktree it created when the layout refuses the call, and refuses a `setup` without the orchestration gate. `paneflow up` sends the request and plans locally only for `--dry-run`. `managed_worktree` stays for a worktree created elsewhere. `AGENTS.md` and `ARCHITECTURE.md` name the new location.
+- [x] Given `surface.focus` or `workspace.select` sent to the worker while a window is attached, when the window receives the new view, then it gives the keyboard focus to the pane the model focuses, as the window method does today
 - [x] Given the read methods that need terminal content (`surface.read`, `surface.search`), when the registry is listed, then their owner is unchanged
+  - Review fixes (2026-11-21): a host refusal after the layout took a worktree pane no longer removes that worktree (the structural methods keep every worktree once the model commits, finish their remaining ops, then return the host's message; `worker_worktrees::a_host_refusal_after_the_layout_took_the_worktree_keeps_the_worktree_it_points_at`); a `worktree.from` that starts with `-` is refused before git runs (`worktree_plan::tests::a_base_that_reads_as_a_git_option_is_refused_before_git_runs`); the CLI sends a worker-owned method to the window when the worker is of a build that lacks it.
 - [x] The host crate is not modified
 
 #### US-057: Events, actions and documents follow the new owner
@@ -1249,7 +1251,7 @@ The worker creates terminal sessions itself, then serves the structural layout m
 
 **Acceptance Criteria:**
 - [x] Given a model op applied in the worker, when it returns events, then the worker appends them to the log itself, and `events.publish` and the window-side queue of US-024 are deleted
-- [ ] Given an action in `init.lua` that calls a structural method, when it runs, then the call is served inside the worker with no socket round trip
+- [x] Given an action in `init.lua` that calls a structural method, when it runs, then the call is served inside the worker with no socket round trip
 - [x] Given `ARCHITECTURE.md`, when it is read, then the worker section, the session persistence section and the thread model describe the worker as the layout authority, the id leases, the adopt rule and the fallback write, and no sentence describes the window as the owner of the layout
 - [x] Given `CHANGELOG.md`, when it is read, then it has an entry for the file split of US-055 and for ids that are now stable
 - [x] Given the legacy `events.subscribe` on the window's socket, when it is used, then its frames and types are unchanged
@@ -1265,12 +1267,12 @@ The worker creates terminal sessions itself, then serves the structural layout m
 **Paneflow sites:** `src-app/src/cli/control_cmds.rs:25-64`, `up_cmd.rs:89-135`, `flow_cmd.rs:74-674`; `crates/paneflow-host/src/control.rs:532-535`.
 
 **Acceptance Criteria:**
-- [ ] Given a worker and a host running and no window, when `paneflow up`, `paneflow new`, `paneflow split`, `paneflow select` and `paneflow focus` run, then each succeeds with the result shape it has with a window
-- [ ] Given `paneflow ls` and `paneflow status` with no window, when they run, then they list the surfaces of the worker's layout with their ids
-- [ ] Given `paneflow read` and `paneflow search` with no window, when they run, then they are served by the host as today
-- [ ] Given a method that needs a window (`client.dispatch_action`, a prompt with no follower), when it is called with no window, then it fails with its existing "no window" reason
-- [ ] Given no worker running, when a layout verb runs, then the CLI starts the worker as `paneflow sessions` does today, or fails with the existing message when it cannot
-- [ ] Given `PANEFLOW_IPC_ORCHESTRATION` unset, when a headless method carries a command, a prompt or an environment, then it is refused as it is with a window
+- [x] Given a worker and a host running and no window, when `paneflow up`, `paneflow new`, `paneflow split`, `paneflow select` and `paneflow focus` run, then each succeeds with the result shape it has with a window
+- [x] Given `paneflow ls` and `paneflow status` with no window, when they run, then they list the surfaces of the worker's layout with their ids
+- [x] Given `paneflow read` and `paneflow search` with no window, when they run, then they are served by the host as today
+- [x] Given a method that needs a window (`client.dispatch_action`, a prompt with no follower), when it is called with no window, then it fails with its existing "no window" reason
+- [x] Given no worker running, when a layout verb runs, then the CLI starts the worker as `paneflow sessions` does today, or fails with the existing message when it cannot
+- [x] Given `PANEFLOW_IPC_ORCHESTRATION` unset, when a headless method carries a command, a prompt or an environment, then it is refused as it is with a window
 
 #### US-062: A window attaches to a layout it did not build
 **Description:** As a user, I want to open the app and find the layout a script prepared, with its terminals running.
@@ -1282,11 +1284,13 @@ The worker creates terminal sessions itself, then serves the structural layout m
 **Paneflow sites:** `src-app/src/app/hosted_sessions.rs:68-89`; `src-app/src/app/session.rs:662-665`.
 
 **Acceptance Criteria:**
-- [ ] Given a layout created with no window, when the window starts, then it draws every workspace, tab and pane of the view and attaches each terminal with its scrollback
-- [ ] Given a terminal started headless at the default size, when the window attaches, then it is resized to its pane before the first frame that shows it
-- [ ] Given a session of the host that no surface of the layout names, when the orphan sweep runs, then it runs in the worker with the rules of `orphan_sweep`, and the window no longer runs it
-- [ ] Given a surface whose session the host reports lost or exited, when the window attaches, then the pane restores as it does today (a fresh shell in its directory, or the agent's resume offer)
-- [ ] Given two windows started against the same home, when the second starts, then the existing single-instance refusal applies
+- [x] Given a layout created with no window, when the window starts, then it draws every workspace, tab and pane of the view and attaches each terminal with its scrollback
+- [x] Given a terminal started headless at the default size, when the window attaches, then it is resized to its pane before the first frame that shows it
+  - Review (2026-11-21), manual proof observed on Linux Wayland (window under Xwayland, debug build, tagged home): `paneflow up` with no window started the pane at 40 rows by 120 columns, and `paneflow split` and `paneflow ls` answered with no window. The window opened on that layout; 40 window captures taken about 55 ms apart from the moment it mapped show the pane blank with its cursor for two captures, then the program's output at the pane's own size (36 columns), never the 120-column content. The pane received `SIGWINCH` 120 ms after the window mapped, and the window created no session (the host still listed exactly the two the worker started). macOS and Windows not observed.
+- [x] Given a session of the host that no surface of the layout names, when the orphan sweep runs, then it runs in the worker with the rules of `orphan_sweep`, and the window no longer runs it
+  - Review fix (2026-11-21): a session the worker starts leaves its in-flight set once bound or refused, and an unbound one after a grace, so a session a later layout drops is swept (`worker_sweep::a_session_the_worker_started_is_swept_once_a_rewritten_layout_drops_it`).
+- [x] Given a surface whose session the host reports lost or exited, when the window attaches, then the pane restores as it does today (a fresh shell in its directory, or the agent's resume offer)
+- [x] Given two windows started against the same home, when the second starts, then the existing single-instance refusal applies
 
 #### US-063: Quitting keeps its meaning
 **Description:** As a user, I want the quit dialog's choices to do what they do today so that the background layout never surprises me.
@@ -1298,12 +1302,13 @@ The worker creates terminal sessions itself, then serves the structural layout m
 **Paneflow sites:** `ARCHITECTURE.md:852-866`; `src-app/src/app/quit_dialog.rs:496,527`.
 
 **Acceptance Criteria:**
-- [ ] Given "quit keeping sessions", when the window exits, then the worker keeps the layout, the terminals keep running, and reopening shows the same layout
-- [ ] Given "stop everything and quit", when it is confirmed, then every session is stopped through the worker, the layout keeps its panes with no session, and the next start opens a fresh shell per pane as today
-- [ ] Given a stop that cannot be confirmed, when it happens, then the window stays open with the existing Retry, Keep running and quit, and Cancel choices
-- [ ] Given held sessions in the undo history, when the window quits, then they are released as today
-- [ ] Given a quit with no live session, when the window exits, then the host is shut down as today and the worker's lifetime rules are unchanged
-- [ ] `ARCHITECTURE.md`'s host lifetime table is updated where the actor changed and nowhere else
+- [x] Given "quit keeping sessions", when the window exits, then the worker keeps the layout, the terminals keep running, and reopening shows the same layout
+- [x] Given "stop everything and quit", when it is confirmed, then every session is stopped through the worker, the layout keeps its panes with no session, and the next start opens a fresh shell per pane as today
+  - Scope correction accepted (EP-008 implementation): the window still sends each `session.stop` and the final `host.shutdown` straight to the host, because the quit dialog needs each stop confirmed or unresolved to offer Retry, and "processes do not forward" rules out a relay through the worker. The worker owns the layout side: the window unbinds every terminal in the worker layout, and the worker writes it, so the panes stay with no session (pin `pin_stopping_everything_keeps_the_worker_layout_with_its_panes_and_no_session`). A quit cut between the confirmed stops and the unbind leaves the worker layout bound to sessions the host no longer records; the next start still opens a fresh shell per pane (`terminal::host_link::tests::a_quit_cut_between_the_stops_and_the_unbind_restores_a_fresh_shell_per_pane`).
+- [x] Given a stop that cannot be confirmed, when it happens, then the window stays open with the existing Retry, Keep running and quit, and Cancel choices
+- [x] Given held sessions in the undo history, when the window quits, then they are released as today
+- [x] Given a quit with no live session, when the window exits, then the host is shut down as today and the worker's lifetime rules are unchanged
+- [x] `ARCHITECTURE.md`'s host lifetime table is updated where the actor changed and nowhere else
 
 ---
 
@@ -1594,6 +1599,50 @@ Completed by US-007 on 2026-11-20 from the code at `a5d8a705`. Every path is und
 ### Operations that a test cannot drive without a display
 
 A pointer drag (pane, surface or agent session drop, divider drag) and a detached window need a real window and pointer. Their model ops are pinned through the event the drop emits (`PaneEvent::DropPaneMove`, `DropSurfaceMove`, `DropSessionSplit`) and through the model's own tests; the gesture itself is on the US-020 checklist.
+
+## Session Launch Inventory
+
+Written by US-058 on 2026-11-21 from the code at `a5c1552e`. Paths are under `src-app/src/` unless they name a crate. Every window path that creates a terminal goes through one constructor, `TerminalView::open` (`terminal/view.rs:615-660`), reached from 14 production sites (splits, new tabs and workspaces, templates, IPC `surface.split` and `workspace.up`, the diff dock, restore, the layout effects of `app/layout_bridge/effects.rs:105-215`). `open` allocates the surface id, resolves the spawn parameters, then `begin_hosted_attach` (`terminal/view/host_attach.rs:85-240`) resolves the working directory off the main thread and calls `host_link::resolve` (`terminal/host_link.rs:547-660`), which connects to the host (starting it when absent), inspects the session id, and sends `session.create` built by `create_request` (`terminal/host_link.rs:510-529`). The host then adds its own variables (`crates/paneflow-host/src/host/spawn_env.rs:70-145`).
+
+"Depends on" uses four values: **GPUI** (needs a GPUI context or entity), **window** (state only the running window holds), **config** (`paneflow.json` through `paneflow_config::loader`), **none** (the process environment, the home, or constants).
+
+| Input | Computed at | Depends on | Headless source | User-visible difference |
+|---|---|---|---|---|
+| Shell | `resolve_shell_for_spawn` `terminal/shell.rs:217-234`, called at `terminal/pty_session/spawn_env.rs:367`; the window's quoting rule `ShellQuoting::for_shell` (`terminal/types.rs:11-37`) at `spawn_env.rs:374` | config (`default_shell`) | same function | none |
+| Shell notice (missing `default_shell`) | `terminal/shell.rs:227-231`, pushed to the pane at `terminal/view.rs:652` | config | returned with the request; the worker logs it and the window shows it when it attaches | the notice line appears once the window attaches, not at launch |
+| Shell integration (OSC 7 scripts, `ZDOTDIR`, `--rcfile`, fish and PowerShell init, WSL bootstrap) | `setup_shell_integration` `terminal/shell.rs:572-700`, directory `runtime_paths.rs:68-74`, called at `spawn_env.rs:378-382` | config (`shell_integration`) + none (the home's `shell/` directory) | same function with the home's directory | none |
+| Working directory | requested cwd, else `launch_cwd::implicit_launch_cwd` (`launch_cwd.rs:3-20`) at `spawn_env.rs:401` | none (the process's cwd and home) | the model: the surface's `cwd`, else the tab's worktree, else the workspace's `cwd` (`crates/paneflow-layout/src/model.rs:128-171`) | none for a cwd the op names; the implicit fallback is the worker's cwd, which `paneflow serve run` sets to the directory it was started from |
+| Confinement to a tab's worktree, fallback directory | `SpawnCwd` `workspace/tab.rs:14-60`, resolved off-thread with `CONFINE_TIMEOUT` at `terminal/view/host_attach.rs:114-138` | none (filesystem probes) | `SpawnCwd::within(tab.worktree, cwd)` from the model | none |
+| Initial size (cols, rows) | `HostedLaunch.initial_size`, default `(120, 40)` at `spawn_env.rs:402` | window (the pane's size is known only after layout) | the documented default `(120, 40)`; the window sends `session.resize` when it attaches (US-060) | a program started headless sees 120 by 40 until a window attaches |
+| Cell size in pixels | `recorded_window_size` at `terminal/view/host_attach.rs:106-112` | GPUI (font metrics) | omitted (the field is optional) | none: the window sends it with its first resize |
+| Appearance (foreground, background, cursor, 256-color palette, dark flag) | `current_host_appearance` `terminal/ghostty_session/mod.rs:1346-1375`, from `theme::active_theme` | GPUI (the active theme follows the system appearance) | omitted (the field is optional); the attaching window pushes it with the existing `session.appearance` call | a program that queries colors (OSC 10/11) before a window attaches gets the host's defaults |
+| Global terminal env (`terminal.env`) | `spawn_env.rs:375` | config | same | none |
+| Space env (the workspace's space) | `space_env::workspace_env` `space_env.rs:157-165` at `terminal/view.rs:647`, through the window registry `workspace::workspace_space` (`workspace/mod.rs:173-179`) | config + window (the id-to-space registry) | the model's `Workspace.space` (`crates/paneflow-layout/src/model.rs:165`) with `space_env::space_env` | none |
+| Space config directories (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `GH_CONFIG_DIR`) created before launch | `space_env::config_dirs` `space_env.rs:289-300`, created at `terminal/view/host_attach.rs:129` | config | same functions | none |
+| Per-surface env (`SurfaceLaunch.env`, IPC `env`, tmux team) | `HostedLaunch.user_env`, layered at `spawn_env.rs:376` with `space_env::layered_env` (`space_env.rs:327-342`) | none (the request) | the op's surface definition `env` (`crates/paneflow-config/src/schema/layout.rs:337`) | none |
+| `PANEFLOW_WORKSPACE_ID` | `spawn_env.rs:214-216` | window (the app workspace id), which equals the model's `WorkspaceId` since US-019 (`workspace/mod.rs:26-39`, `app/layout_bridge/project.rs:29-39`) | the model's workspace id | none |
+| `PANEFLOW_SURFACE_ID` | `layout_ids::surface_id_for_new_terminal` (`layout_ids.rs:32-34`) at `terminal/view.rs:620`, inserted at `spawn_env.rs:217` | window (the id source) | the model's surface id | none |
+| `PANEFLOW_SOCKET_PATH` | `runtime_paths::socket_path` (`runtime_paths.rs:14-29`) at `spawn_env.rs:218-220` | none (the home and `PANEFLOW_SOCKET_PATH`) | `paneflow_home::ipc_endpoint_in` with the worker's environment | none: the worker inherits the variables of the process that started it |
+| `PANEFLOW_BIN_DIR` and `PATH` (helper binaries first) | `ai_hooks::extract::ensure_binaries_extracted` (`ai_hooks/extract.rs:55-104`) at `spawn_env.rs:61-65,77-133`; the binaries are embedded in the `paneflow` binary | none (the cache directory of the home; the packaged `bin/` on Windows) | the worker is the `paneflow` binary started as `serve run`, so `src-app/src/cli/serve_cmd.rs:55-60` passes the extracted directory to the worker | none |
+| `PANEFLOW_HOOK_LOG` | `spawn_env.rs:222-227` | none (process env) | same | none |
+| `TERM`, `TERM_PROGRAM`, `TERM_PROGRAM_VERSION`, `COLORTERM`, `SHLVL`, `LANG` default | `spawn_env.rs:229-238,262-264` (the host overwrites the first five, `crates/paneflow-host/src/host/spawn_env.rs:107-115`) | none | same | none |
+| Filtered keys (invalid names, loader variables, agent markers, protected keys) | `spawn_env.rs:243-266`, through `paneflow_host::env` | none | same | none |
+| Claude session id preassignment flag | `spawn_env.rs:390-397` | config (`agents`) | same | none |
+| WSL `WSLENV` forwarding | `spawn_env.rs:135-205,398-400` | none | same | none |
+| `PANEFLOW_SESSION_ID`, `PANEFLOW_SESSION_DIR`, `PANEFLOW_WORKSPACE_UUID`, `PANEFLOW_HOST_ENDPOINT`, `PANEFLOW_RUNTIME_GENERATION`, `PANEFLOW_HOME` | set by the host (`crates/paneflow-host/src/host/spawn_env.rs:117-140`) | none | unchanged: the host sets them | none |
+| `PANEFLOW_AI_TOOL`, `PANEFLOW_AI_PID` | set by the shim when an agent starts (`crates/paneflow-shim/src/main.rs:172`) | none | unchanged | none |
+| Session id | `SessionId::new()` at `terminal/pty_session.rs:470` | none | `SessionId::new()` in the worker | none |
+| Durable workspace id sent with the request | `workspace::durable_workspace_id` (`workspace/mod.rs:151-157`) at `terminal/view/host_attach.rs:103` | window (a registry) | the model's `WorkspaceExtras.durable_id` | none |
+| Launch profile (`TerminalSurfaceProfile`) | `HostedLaunch.profile`, used only for the window mirror's scrollback (`terminal/view/host_attach.rs:119-123`) | config | not part of the host request | none |
+| Agent command | `TerminalAgent::launch_command` and `AgentProfile::launch_command` (`agent_launcher.rs:174-176,440-447`), wrapped by `shell::clear_then` (`terminal/shell.rs:505-524`); typed into the shell after it settles by `schedule_launch_command` (`app/ipc_handler/workspace_methods.rs:585-640`), declared with `declare_agent_from_command` (`terminal/view.rs:1003-1007`) | config + window (the settle test reads the mirror's `output_generation`) | the worker types the command with the host's `session.input` once the host's output stops changing (polled through the existing host calls), and stores it in the surface definition `command` so the attaching window declares the agent | none |
+| Prompt prefill | `schedule_prompt_prefill` (`app/ipc_handler/workspace_methods.rs:551-583`) with the same settle test, floors `UP_PREFILL_*` (`workspace_methods.rs:3-13`) | window (settle test) | as the agent command | none |
+| Managed worktree | created through the git CLI in `workspace/worktree.rs:1040-1080` by `git_command::run` (`git_command.rs`), registered on the workspace with `parse_managed_worktree` (`app/ipc_handler/workspace_methods.rs:236-245`) | none (git CLI) | the same functions once `git_command.rs` and its four dependencies (`git_fixture`, `work_counters`, `workspace::git::find_git_dir`, `space_env::apply_directory_env`) move into a GPUI-free crate (US-056) | none |
+| Host connection, host start when absent | `host_link::connect_or_start` (`terminal/host_link.rs:89-116`) with `paneflow_host::ensure_host_running` | none | the worker's host endpoint, `ensure_host_running` with the worker's own binary as controller | none |
+| Workspace reassignment of an existing session | `terminal/host_link.rs:621-629` | none | the worker's existing rehome effect (`crates/paneflow-serve/src/layout_authority.rs:489-507`) | none |
+
+**Nothing in this table blocks US-059.** Three inputs exist only in the window (size, cell size, appearance) and all three are optional in the host request; the window already owns the calls that set them on a live session (`session.resize`, `session.appearance`). Two inputs come from window registries (space, durable workspace id) whose values the layout model already carries. The helper binaries are reachable because the worker is the same executable.
+
+**Scope of US-059**, the functions that move into `crates/paneflow-launch` with their tests: `assemble_pty_env`, `inject_ai_hook_env`, `prepend_bin_dir_to_path`, `reassert_paneflow_bin_dir_first`, `needs_default_lang`, the WSL helpers and `resolve_spawn_launch_in` from `terminal/pty_session/spawn_env.rs`; `resolve_shell_for_spawn`, `setup_shell_integration` and the script constants they write from `terminal/shell.rs`; `space_env::{space_env, resolve_env, layered_env, config_dirs, ensure_dir, ensure_config_dirs, platform_key}`; `launch_cwd::implicit_launch_cwd`; `SpawnCwd` and its resolution; `create_request` from `terminal/host_link.rs`. The window keeps the GPUI inputs (size, cell, appearance), the id source, the attach state machine and `ShellQuoting::for_shell` (in `terminal/types.rs`, a file this PRD does not modify, and not part of the host request), and passes the helper and shell-integration directories in as values.
 
 ## Functional Requirements
 

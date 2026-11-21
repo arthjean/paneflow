@@ -65,10 +65,10 @@
     {
       "id": "EP-008",
       "title": "Layout with no window",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 8,
-      "stories_done": 0
+      "stories_done": 8
     },
     {
       "id": "EP-009",
@@ -822,60 +822,60 @@
       "id": "US-058",
       "title": "Inventory session launch",
       "epic": "EP-008",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-053",
         "US-055"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-21",
+      "completed_at": "2026-11-21",
+      "reviewed_at": "2026-11-21"
     },
     {
       "id": "US-059",
       "title": "Extract session launch into a shared crate",
       "epic": "EP-008",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-058"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-21",
+      "completed_at": "2026-11-21",
+      "reviewed_at": "2026-11-21"
     },
     {
       "id": "US-060",
       "title": "The worker starts terminals",
       "epic": "EP-008",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-059"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-21",
+      "completed_at": "2026-11-21",
+      "reviewed_at": "2026-11-21"
     },
     {
       "id": "US-056",
       "title": "Effects and structural methods move to the worker",
       "epic": "EP-008",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-060"
       ],
       "started_at": "2026-11-21",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-21",
+      "reviewed_at": "2026-11-21"
     },
     {
       "id": "US-057",
       "title": "Events, actions and documents follow the new owner",
       "epic": "EP-008",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-056",
@@ -883,48 +883,48 @@
         "US-024"
       ],
       "started_at": "2026-11-21",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-21",
+      "reviewed_at": "2026-11-21"
     },
     {
       "id": "US-061",
       "title": "Layout methods answer with no window",
       "epic": "EP-008",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-056"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-21",
+      "completed_at": "2026-11-21",
+      "reviewed_at": "2026-11-21"
     },
     {
       "id": "US-062",
       "title": "A window attaches to a layout it did not build",
       "epic": "EP-008",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-060"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-21",
+      "completed_at": "2026-11-21",
+      "reviewed_at": "2026-11-21"
     },
     {
       "id": "US-063",
       "title": "Quitting keeps its meaning",
       "epic": "EP-008",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-061",
         "US-062"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-21",
+      "completed_at": "2026-11-21",
+      "reviewed_at": "2026-11-21"
     },
     {
       "id": "US-064",
