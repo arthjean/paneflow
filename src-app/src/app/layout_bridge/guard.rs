@@ -20,7 +20,10 @@ fn rust_sources(root: &Path) -> Vec<(String, String)> {
                 .unwrap()
                 .to_string_lossy()
                 .replace('\\', "/");
-            sources.push((rel, std::fs::read_to_string(&path).unwrap()));
+            let text = std::fs::read_to_string(&path)
+                .unwrap()
+                .replace("\r\n", "\n");
+            sources.push((rel, text));
         }
     }
     sources
