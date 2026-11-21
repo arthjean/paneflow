@@ -238,6 +238,15 @@ impl PlanStore {
         self.settle(index, &before)
     }
 
+    pub fn forget_missing_dirs(&mut self) -> bool {
+        let held = self.accounts.len();
+        self.accounts
+            .retain(|account| Path::new(&account.config_dir).is_dir());
+        let forgot = self.accounts.len() != held;
+        self.dirty |= forgot;
+        forgot
+    }
+
     fn evict_stalest_beyond(&mut self, keep: usize) {
         while self.accounts.len() > keep {
             let Some(stalest) = self

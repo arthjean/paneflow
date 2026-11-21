@@ -93,6 +93,7 @@ impl Worker {
             self.lock_usage()
                 .expire_turns(&running, &in_turn, crate::state::now_ms());
         }
+        self.lock_usage().forget_removed_accounts();
         let live_codex = self.running_codex_dirs();
         let claimed = self.lock_usage().claim_codex_reads(
             live_codex,
@@ -114,6 +115,7 @@ impl Worker {
                 .filter(|(agent, _)| *agent == UsageAgent::Codex)
                 .map(|(_, dir)| dir.clone()),
         );
+        self.lock_usage().forget_removed_accounts();
         let held = self.lock_usage().codex_dirs();
         dirs.extend(held);
         let claimed = self.lock_usage().claim_codex_reads(

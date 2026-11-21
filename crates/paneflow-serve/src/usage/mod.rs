@@ -219,6 +219,9 @@ impl Usage {
     }
 
     pub fn record_codex(&mut self, dir: &Path, reading: Option<CodexReading>, now_ms: u64) -> bool {
+        if !dir.is_dir() {
+            return false;
+        }
         let update = match reading {
             Some(reading) => PlanUpdate::Limits {
                 limits: reading.limits,
@@ -229,6 +232,10 @@ impl Usage {
             None => PlanUpdate::NoCodexData,
         };
         self.plans.update(UsageAgent::Codex, dir, update, now_ms)
+    }
+
+    pub fn forget_removed_accounts(&mut self) -> bool {
+        self.plans.forget_missing_dirs()
     }
 
     pub fn claim_probes(
@@ -260,6 +267,9 @@ impl Usage {
         outcome: ProbeOutcome,
         now_ms: u64,
     ) -> bool {
+        if !dir.is_dir() {
+            return false;
+        }
         let update = match outcome {
             ProbeOutcome::Limits {
                 limits,
@@ -543,6 +553,64 @@ mod tests {
             "{accounts:?}"
         );
         assert!(accounts.iter().all(|(_, dir)| dir.is_dir()));
+    }
+
+    #[test]
+    fn an_account_whose_folder_was_removed_leaves_the_plans_and_is_not_recorded_again() {
+        let home = tempfile::tempdir().unwrap();
+        let now_ms = 1_793_481_752_042;
+        let mut usage = Usage::open(home.path(), now_ms);
+        let kept = home.path().join(".codex");
+        let canceled_codex = home.path().join(".codex-3");
+        let canceled_claude = home.path().join(".claude-4");
+        for dir in [&kept, &canceled_codex, &canceled_claude] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        let no_limits = || ProbeOutcome::NoLimitsReported {
+            agent_version: None,
+            identity: None,
+        };
+        usage.record_codex(&kept, None, now_ms);
+        usage.record_codex(&canceled_codex, None, now_ms);
+        usage.record_probe(
+            UsageAgent::ClaudeCode,
+            &canceled_claude,
+            no_limits(),
+            now_ms,
+        );
+        assert!(
+            !usage.forget_removed_accounts(),
+            "every folder is still there"
+        );
+        assert_eq!(usage.plans().accounts().len(), 3);
+
+        std::fs::remove_dir_all(&canceled_codex).unwrap();
+        std::fs::remove_dir_all(&canceled_claude).unwrap();
+        assert!(usage.forget_removed_accounts());
+        let held: Vec<&str> = usage
+            .plans()
+            .accounts()
+            .iter()
+            .map(|account| account.config_dir.as_str())
+            .collect();
+        assert_eq!(held, [kept.display().to_string()]);
+        assert!(usage.codex_dirs().iter().all(|dir| dir.is_dir()));
+
+        assert!(!usage.record_codex(&canceled_codex, None, now_ms));
+        assert!(!usage.record_probe(
+            UsageAgent::ClaudeCode,
+            &canceled_claude,
+            no_limits(),
+            now_ms
+        ));
+        assert_eq!(
+            usage.plans().accounts().len(),
+            1,
+            "a read that ends after the folder is gone records nothing"
+        );
+        usage.flush(Instant::now(), true);
+        let reloaded = Usage::open(home.path(), now_ms);
+        assert_eq!(reloaded.plans().accounts().len(), 1);
     }
 
     #[test]
