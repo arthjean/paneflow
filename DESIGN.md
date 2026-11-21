@@ -1544,7 +1544,13 @@ before a chord within a larger one, then the palette's ranks), the matched
 characters of each action and section name and the matched chord in its
 recorder take the semibold `filter_match_color`, the first row carries the
 keyboard cursor, and the note reads `Showing {n} of {total} shortcuts. Press
-Enter to change the selected one.` Armed, the toggle empties the field, its
+Enter to change the selected one.` As the query changes, the rows and
+sections that leave fold to nothing in place and fade while the ones that
+arrive unfold from nothing, over 180 ms with a cubic ease-out, the motion of
+the sidebar filter and of the Settings search (`TRANSITION_SECONDS`); the
+hairline between two rows follows the smaller of them, the gap above a section
+follows it, and a new query reverses every row from where it stands. With
+Reduce motion the list changes at once. Armed, the toggle empties the field, its
 placeholder reads `Press the keys to look up…` and the note
 `Press the keys to see what they do. Escape cancels.`; the next chord fills
 the field and disarms it. A printable key pressed anywhere on the page starts

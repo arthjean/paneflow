@@ -9,7 +9,7 @@ use crate::SettingsSection;
 use crate::settings::components::{hairline, setting_card};
 use crate::theme::UiColors;
 
-const TRANSITION_SECONDS: f32 = 0.18;
+pub(crate) const TRANSITION_SECONDS: f32 = 0.18;
 
 pub(crate) struct SettingCopy {
     pub title: &'static str,

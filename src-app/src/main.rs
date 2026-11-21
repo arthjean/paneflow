@@ -291,6 +291,7 @@ struct PaneFlowApp {
     shortcut_key_search: bool,
     shortcut_filter: crate::settings::tabs::shortcuts::ShortcutFilter,
     shortcut_rows: Vec<crate::settings::tabs::shortcuts::ShortcutSection>,
+    shortcut_motion: std::cell::RefCell<crate::settings::tabs::shortcuts::ShortcutMotion>,
     shortcut_cursor: Option<crate::settings::tabs::shortcuts::ShortcutCursor>,
     shortcut_list: gpui::ListState,
     shortcut_drag: Option<crate::widgets::scrollbar::ScrollDragState>,

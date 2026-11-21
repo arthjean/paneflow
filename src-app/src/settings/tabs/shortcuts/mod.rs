@@ -1,4 +1,5 @@
 mod filter;
+mod motion;
 
 use gpui::{
     AnyElement, App, ClickEvent, Context, Div, FontWeight, Hsla, InteractiveElement, IntoElement,
@@ -23,6 +24,7 @@ use crate::widgets::scrollbar::{self, ScrollableHandle as _};
 use crate::{PaneFlowApp, config_writer, keybindings};
 
 pub(crate) use filter::{ShortcutFilter, ShortcutSection};
+pub(crate) use motion::ShortcutMotion;
 
 const SECTION_GAP: Pixels = px(24.);
 const LIST_BOTTOM: Pixels = px(32.);
@@ -213,12 +215,26 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn rebuild_shortcut_rows(&mut self, cx: &mut Context<Self>) {
-        let previous_len = self.shortcut_rows.len();
+        self.refresh_shortcut_rows(false, cx);
+    }
+
+    fn refresh_shortcut_rows(&mut self, animate: bool, cx: &mut Context<Self>) {
+        let previous_len = self.shortcut_list.item_count();
         let previous_top = self.shortcut_list.logical_scroll_top();
 
         self.shortcut_filter = ShortcutFilter::parse(&self.shortcut_search_text(cx));
         self.shortcut_rows = self.shortcut_filter.sections(&self.effective_shortcuts);
-        let len = self.shortcut_rows.len();
+        let entries = &self.effective_shortcuts;
+        let len = {
+            let mut motion = self.shortcut_motion.borrow_mut();
+            motion.retarget(
+                &self.shortcut_rows,
+                |index| entries.get(index).map_or("", |entry| entry.action_name),
+                std::time::Instant::now(),
+                animate && !crate::ui_primitives::reduce_motion(),
+            );
+            motion.sections().len()
+        };
         self.shortcut_list.reset(len);
 
         if len > 0 && len == previous_len {
@@ -226,8 +242,29 @@ impl PaneFlowApp {
         }
     }
 
+    fn settle_shortcut_motion(&self, window: &Window) {
+        let (was_animating, animating, len) = {
+            let mut motion = self.shortcut_motion.borrow_mut();
+            let was_animating = motion.is_animating();
+            let animating = motion.sample(std::time::Instant::now());
+            (was_animating, animating, motion.sections().len())
+        };
+        if len != self.shortcut_list.item_count() {
+            let top = self.shortcut_list.logical_scroll_top();
+            self.shortcut_list.reset(len);
+            if top.item_ix < len {
+                self.shortcut_list.scroll_to(top);
+            }
+        } else if was_animating {
+            self.shortcut_list.remeasure();
+        }
+        if animating {
+            window.request_animation_frame();
+        }
+    }
+
     pub(crate) fn shortcut_search_changed(&mut self, cx: &mut Context<Self>) {
-        self.rebuild_shortcut_rows(cx);
+        self.refresh_shortcut_rows(true, cx);
         self.shortcut_list.scroll_to(ListOffset::default());
         self.shortcut_cursor = if self.shortcut_filter.is_empty() {
             None
@@ -374,19 +411,20 @@ impl PaneFlowApp {
     }
 
     fn visible_shortcut_order(&self) -> Vec<(usize, usize, &'static str)> {
-        self.shortcut_rows
+        self.shortcut_motion
+            .borrow()
+            .sections()
             .iter()
             .enumerate()
+            .filter(|(_, section)| section.is_target())
             .flat_map(|(group_ix, section)| {
                 section
-                    .hits
+                    .rows
                     .iter()
                     .enumerate()
-                    .filter_map(move |(position, hit)| {
-                        self.effective_shortcuts
-                            .get(hit.index)
-                            .map(|entry| (group_ix, position, entry.action_name))
-                    })
+                    .filter(|(_, row)| row.is_target())
+                    .map(move |(position, row)| (group_ix, position, row.key))
+                    .collect::<Vec<_>>()
             })
             .collect()
     }
@@ -440,7 +478,9 @@ impl PaneFlowApp {
 
     fn reveal_shortcut_row(&self, group_ix: usize, position: usize) {
         let Some(group) = self
-            .shortcut_rows
+            .shortcut_motion
+            .borrow()
+            .sections()
             .get(group_ix)
             .map(|section| section.group)
         else {
@@ -642,7 +682,8 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let ui = crate::theme::ui_colors();
-        let body = if self.shortcut_rows.is_empty() {
+        self.settle_shortcut_motion(window);
+        let body = if self.shortcut_motion.borrow().sections().is_empty() {
             self.render_shortcut_empty_state(ui, cx)
         } else {
             self.render_shortcut_list(ui, cx)
@@ -729,23 +770,34 @@ impl PaneFlowApp {
         let rows = list(
             self.shortcut_list.clone(),
             cx.processor(move |this, index: usize, _window, cx| {
-                let Some(section) = this.shortcut_rows.get(index).cloned() else {
-                    return gpui::Empty.into_any_element();
+                let (section, above, last) = {
+                    let motion = this.shortcut_motion.borrow();
+                    let sections = motion.sections();
+                    let Some(section) = sections.get(index).cloned() else {
+                        return gpui::Empty.into_any_element();
+                    };
+                    let above = sections[..index]
+                        .iter()
+                        .map(|earlier| earlier.amount)
+                        .fold(0., f32::max);
+                    (section, above, index + 1 == sections.len())
                 };
-                let last = index + 1 == this.shortcut_rows.len();
                 let words: Vec<&str> = this.shortcut_filter.words().collect();
                 let title = filter::word_ranges(section.group.label(), &words);
                 let rows = section
-                    .hits
+                    .rows
                     .iter()
-                    .map(|hit| this.render_shortcut_row(ui, hit, cx))
+                    .map(|row| (row.amount, this.render_shortcut_row(ui, &row.hit, cx)))
                     .collect();
                 list_column(shortcut_section(
                     ui,
                     section.group,
                     &title,
                     rows,
-                    index == 0,
+                    SectionMotion {
+                        gap: SECTION_GAP * section.amount.min(above),
+                        amount: section.amount,
+                    },
                     last,
                 ))
                 .into_any_element()
@@ -1050,15 +1102,45 @@ fn shortcut_row(
         .child(control)
 }
 
+#[derive(Clone, Copy)]
+struct SectionMotion {
+    gap: Pixels,
+    amount: f32,
+}
+
+#[cfg(test)]
+impl SectionMotion {
+    fn at_rest(first: bool) -> Self {
+        Self {
+            gap: section_top_gap(first),
+            amount: 1.,
+        }
+    }
+}
+
+fn folded(element: impl IntoElement, height: Pixels, amount: f32, fade: bool) -> Div {
+    div()
+        .flex_none()
+        .w_full()
+        .overflow_hidden()
+        .when(amount < 1., |wrapper| {
+            wrapper
+                .h(height * amount)
+                .when(fade, |wrapper| wrapper.opacity(amount))
+        })
+        .child(element)
+}
+
 fn shortcut_section(
     ui: crate::theme::UiColors,
     group: ShortcutGroup,
     title: &[std::ops::Range<usize>],
-    rows: Vec<AnyElement>,
-    first: bool,
+    rows: Vec<(f32, AnyElement)>,
+    motion: SectionMotion,
     last: bool,
 ) -> Div {
     let header = div()
+        .flex_none()
         .h(section_header_height(group))
         .pb(SECTION_TITLE_GAP)
         .flex()
@@ -1083,20 +1165,28 @@ fn shortcut_section(
                 .child(hint)
         }));
 
+    let amount = motion.amount;
     div()
-        .pt(section_top_gap(first))
+        .pt(motion.gap)
         .when(last, |d| d.pb(LIST_BOTTOM))
-        .child(header)
-        .child(shortcut_card(ui, rows))
+        .when(amount < 1., |section| section.opacity(amount))
+        .child(folded(header, section_header_height(group), amount, false))
+        .child(shortcut_card(ui, rows, amount))
 }
 
-fn shortcut_card(ui: crate::theme::UiColors, rows: Vec<AnyElement>) -> Div {
-    let mut card = setting_card(ui).py(px(CARD_PADDING_Y));
-    for (position, row) in rows.into_iter().enumerate() {
-        if position > 0 {
-            card = card.child(hairline(ui));
+fn shortcut_card(ui: crate::theme::UiColors, rows: Vec<(f32, AnyElement)>, amount: f32) -> Div {
+    let fade_rows = amount >= 1.;
+    let mut card = setting_card(ui)
+        .pt(px(CARD_PADDING_Y) * amount)
+        .pb(px(CARD_PADDING_Y) * amount);
+    let mut above: Option<f32> = None;
+    for (row_amount, row) in rows {
+        if let Some(above) = above {
+            let rule = above.min(row_amount);
+            card = card.child(folded(hairline(ui), RULE, rule, fade_rows));
         }
-        card = card.child(row);
+        card = card.child(folded(row, ROW_HEIGHT, row_amount, fade_rows));
+        above = Some(row_amount);
     }
     card
 }
@@ -1213,7 +1303,7 @@ mod tests {
                 let group = PROBE_GROUPS[index];
                 let rows = (0..3)
                     .map(|row| {
-                        shortcut_row(
+                        let element = shortcut_row(
                             index * 10 + row,
                             format!("action {row}"),
                             &[],
@@ -1228,12 +1318,20 @@ mod tests {
                             ),
                         )
                         .debug_selector(move || format!("probe-row-{index}-{row}"))
-                        .into_any_element()
+                        .into_any_element();
+                        (1., element)
                     })
                     .collect();
                 list_column(
-                    shortcut_section(ui, group, &[], rows, index == 0, false)
-                        .debug_selector(move || format!("probe-section-{index}")),
+                    shortcut_section(
+                        ui,
+                        group,
+                        &[],
+                        rows,
+                        SectionMotion::at_rest(index == 0),
+                        false,
+                    )
+                    .debug_selector(move || format!("probe-section-{index}")),
                 )
                 .debug_selector(move || format!("probe-item-{index}"))
                 .into_any_element()

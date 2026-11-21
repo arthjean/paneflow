@@ -370,6 +370,7 @@ impl PaneFlowApp {
             shortcut_key_search: false,
             shortcut_filter: Default::default(),
             shortcut_rows: Vec::new(),
+            shortcut_motion: Default::default(),
             shortcut_cursor: None,
             shortcut_list: crate::settings::tabs::shortcuts::new_shortcut_list_state(),
             shortcut_drag: None,
