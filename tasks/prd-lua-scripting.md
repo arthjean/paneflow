@@ -1232,12 +1232,14 @@ The worker creates terminal sessions itself, then serves the structural layout m
 
 **Acceptance Criteria:**
 - [x] Given hold, stop and rehome effects, when an op requests them, then the worker performs them through the host's existing `session.stop` and `session.workspace` methods, and the 5 s hold of undo close is timed by the worker
-- [ ] Given `surface.split`, `surface.focus`, `surface.rename`, `workspace.create`, `workspace.up`, `workspace.select`, `workspace.close` and `workspace.restore_layout`, when the registry is listed, then their owner is `worker`, and their parameters and results are unchanged
-- [ ] Given a raw JSON-RPC client that sends one of these methods to the window's socket, when the window receives it, then the window answers with the same shape as before by submitting ops, and the US-001 cases pass unchanged
-- [ ] Given one of these methods sent to the worker, when it creates a pane, then the worker translates it into layout ops, starts the terminal through `paneflow-launch` as US-060 does, and the reply waits for the binding as the `Async` reply does today; an attached window only attaches to the new session
-- [ ] Given `workspace.up` with a managed worktree, when the worker serves it, then the worktree is created through the git CLI boundary of `src-app/src/git_command.rs`, moved unchanged into a GPU-free crate that both processes link, and no second git implementation exists; `AGENTS.md` names the new location
-- [ ] Given `surface.focus` or `workspace.select` sent to the worker while a window is attached, when the window receives the new view, then it gives the keyboard focus to the pane the model focuses, as the window method does today
+- [x] Given `surface.split`, `surface.focus`, `surface.rename`, `workspace.create`, `workspace.up`, `workspace.select`, `workspace.close` and `workspace.restore_layout`, when the registry is listed, then their owner is `worker`, and their parameters and results are unchanged
+- [x] Given a raw JSON-RPC client that sends one of these methods to the window's socket, when the window receives it, then the window answers with the same shape as before by submitting ops, and the US-001 cases pass unchanged
+- [x] Given one of these methods sent to the worker, when it creates a pane, then the worker translates it into layout ops, starts the terminal through `paneflow-launch` as US-060 does, and the reply waits for the binding as the `Async` reply does today; an attached window only attaches to the new session
+- [x] Given `workspace.up` with a managed worktree, when the worker serves it, then the worktree is created through the git CLI boundary of `src-app/src/git_command.rs`, moved unchanged into a GPU-free crate that both processes link, and no second git implementation exists; `AGENTS.md` names the new location
+  - Delivered (EP-008 implementation): `git_command.rs` moved to `crates/paneflow-git/src/command.rs`, changed only in visibility, import paths and the test-isolation `cfg` (a `test-support` feature lets the dependents' tests isolate git the same way). The crate also holds the worktree code and `worktree_plan.rs`, the plan, create and roll back sequence that `paneflow up` ran in the CLI. A pane of `workspace.up` (and the new pane of `surface.split`) takes a `worktree` request (`branch`, `from`, `copy_env`, `setup`, `setup_timeout_secs`, `teardown`), exclusive with `managed_worktree`; the process that serves the call creates the worktree, removes every worktree it created when the layout refuses the call, and refuses a `setup` without the orchestration gate. `paneflow up` sends the request and plans locally only for `--dry-run`. `managed_worktree` stays for a worktree created elsewhere. `AGENTS.md` and `ARCHITECTURE.md` name the new location.
+- [x] Given `surface.focus` or `workspace.select` sent to the worker while a window is attached, when the window receives the new view, then it gives the keyboard focus to the pane the model focuses, as the window method does today
 - [x] Given the read methods that need terminal content (`surface.read`, `surface.search`), when the registry is listed, then their owner is unchanged
+  - Review fixes (2026-11-21): a host refusal after the layout took a worktree pane no longer removes that worktree (the structural methods keep every worktree once the model commits, finish their remaining ops, then return the host's message; `worker_worktrees::a_host_refusal_after_the_layout_took_the_worktree_keeps_the_worktree_it_points_at`); a `worktree.from` that starts with `-` is refused before git runs (`worktree_plan::tests::a_base_that_reads_as_a_git_option_is_refused_before_git_runs`); the CLI sends a worker-owned method to the window when the worker is of a build that lacks it.
 - [x] The host crate is not modified
 
 #### US-057: Events, actions and documents follow the new owner
@@ -1249,7 +1251,7 @@ The worker creates terminal sessions itself, then serves the structural layout m
 
 **Acceptance Criteria:**
 - [x] Given a model op applied in the worker, when it returns events, then the worker appends them to the log itself, and `events.publish` and the window-side queue of US-024 are deleted
-- [ ] Given an action in `init.lua` that calls a structural method, when it runs, then the call is served inside the worker with no socket round trip
+- [x] Given an action in `init.lua` that calls a structural method, when it runs, then the call is served inside the worker with no socket round trip
 - [x] Given `ARCHITECTURE.md`, when it is read, then the worker section, the session persistence section and the thread model describe the worker as the layout authority, the id leases, the adopt rule and the fallback write, and no sentence describes the window as the owner of the layout
 - [x] Given `CHANGELOG.md`, when it is read, then it has an entry for the file split of US-055 and for ids that are now stable
 - [x] Given the legacy `events.subscribe` on the window's socket, when it is used, then its frames and types are unchanged
@@ -1265,12 +1267,12 @@ The worker creates terminal sessions itself, then serves the structural layout m
 **Paneflow sites:** `src-app/src/cli/control_cmds.rs:25-64`, `up_cmd.rs:89-135`, `flow_cmd.rs:74-674`; `crates/paneflow-host/src/control.rs:532-535`.
 
 **Acceptance Criteria:**
-- [ ] Given a worker and a host running and no window, when `paneflow up`, `paneflow new`, `paneflow split`, `paneflow select` and `paneflow focus` run, then each succeeds with the result shape it has with a window
-- [ ] Given `paneflow ls` and `paneflow status` with no window, when they run, then they list the surfaces of the worker's layout with their ids
-- [ ] Given `paneflow read` and `paneflow search` with no window, when they run, then they are served by the host as today
-- [ ] Given a method that needs a window (`client.dispatch_action`, a prompt with no follower), when it is called with no window, then it fails with its existing "no window" reason
-- [ ] Given no worker running, when a layout verb runs, then the CLI starts the worker as `paneflow sessions` does today, or fails with the existing message when it cannot
-- [ ] Given `PANEFLOW_IPC_ORCHESTRATION` unset, when a headless method carries a command, a prompt or an environment, then it is refused as it is with a window
+- [x] Given a worker and a host running and no window, when `paneflow up`, `paneflow new`, `paneflow split`, `paneflow select` and `paneflow focus` run, then each succeeds with the result shape it has with a window
+- [x] Given `paneflow ls` and `paneflow status` with no window, when they run, then they list the surfaces of the worker's layout with their ids
+- [x] Given `paneflow read` and `paneflow search` with no window, when they run, then they are served by the host as today
+- [x] Given a method that needs a window (`client.dispatch_action`, a prompt with no follower), when it is called with no window, then it fails with its existing "no window" reason
+- [x] Given no worker running, when a layout verb runs, then the CLI starts the worker as `paneflow sessions` does today, or fails with the existing message when it cannot
+- [x] Given `PANEFLOW_IPC_ORCHESTRATION` unset, when a headless method carries a command, a prompt or an environment, then it is refused as it is with a window
 
 #### US-062: A window attaches to a layout it did not build
 **Description:** As a user, I want to open the app and find the layout a script prepared, with its terminals running.
@@ -1282,11 +1284,13 @@ The worker creates terminal sessions itself, then serves the structural layout m
 **Paneflow sites:** `src-app/src/app/hosted_sessions.rs:68-89`; `src-app/src/app/session.rs:662-665`.
 
 **Acceptance Criteria:**
-- [ ] Given a layout created with no window, when the window starts, then it draws every workspace, tab and pane of the view and attaches each terminal with its scrollback
-- [ ] Given a terminal started headless at the default size, when the window attaches, then it is resized to its pane before the first frame that shows it
-- [ ] Given a session of the host that no surface of the layout names, when the orphan sweep runs, then it runs in the worker with the rules of `orphan_sweep`, and the window no longer runs it
-- [ ] Given a surface whose session the host reports lost or exited, when the window attaches, then the pane restores as it does today (a fresh shell in its directory, or the agent's resume offer)
-- [ ] Given two windows started against the same home, when the second starts, then the existing single-instance refusal applies
+- [x] Given a layout created with no window, when the window starts, then it draws every workspace, tab and pane of the view and attaches each terminal with its scrollback
+- [x] Given a terminal started headless at the default size, when the window attaches, then it is resized to its pane before the first frame that shows it
+  - Review (2026-11-21), manual proof observed on Linux Wayland (window under Xwayland, debug build, tagged home): `paneflow up` with no window started the pane at 40 rows by 120 columns, and `paneflow split` and `paneflow ls` answered with no window. The window opened on that layout; 40 window captures taken about 55 ms apart from the moment it mapped show the pane blank with its cursor for two captures, then the program's output at the pane's own size (36 columns), never the 120-column content. The pane received `SIGWINCH` 120 ms after the window mapped, and the window created no session (the host still listed exactly the two the worker started). macOS and Windows not observed.
+- [x] Given a session of the host that no surface of the layout names, when the orphan sweep runs, then it runs in the worker with the rules of `orphan_sweep`, and the window no longer runs it
+  - Review fix (2026-11-21): a session the worker starts leaves its in-flight set once bound or refused, and an unbound one after a grace, so a session a later layout drops is swept (`worker_sweep::a_session_the_worker_started_is_swept_once_a_rewritten_layout_drops_it`).
+- [x] Given a surface whose session the host reports lost or exited, when the window attaches, then the pane restores as it does today (a fresh shell in its directory, or the agent's resume offer)
+- [x] Given two windows started against the same home, when the second starts, then the existing single-instance refusal applies
 
 #### US-063: Quitting keeps its meaning
 **Description:** As a user, I want the quit dialog's choices to do what they do today so that the background layout never surprises me.
@@ -1298,12 +1302,13 @@ The worker creates terminal sessions itself, then serves the structural layout m
 **Paneflow sites:** `ARCHITECTURE.md:852-866`; `src-app/src/app/quit_dialog.rs:496,527`.
 
 **Acceptance Criteria:**
-- [ ] Given "quit keeping sessions", when the window exits, then the worker keeps the layout, the terminals keep running, and reopening shows the same layout
-- [ ] Given "stop everything and quit", when it is confirmed, then every session is stopped through the worker, the layout keeps its panes with no session, and the next start opens a fresh shell per pane as today
-- [ ] Given a stop that cannot be confirmed, when it happens, then the window stays open with the existing Retry, Keep running and quit, and Cancel choices
-- [ ] Given held sessions in the undo history, when the window quits, then they are released as today
-- [ ] Given a quit with no live session, when the window exits, then the host is shut down as today and the worker's lifetime rules are unchanged
-- [ ] `ARCHITECTURE.md`'s host lifetime table is updated where the actor changed and nowhere else
+- [x] Given "quit keeping sessions", when the window exits, then the worker keeps the layout, the terminals keep running, and reopening shows the same layout
+- [x] Given "stop everything and quit", when it is confirmed, then every session is stopped through the worker, the layout keeps its panes with no session, and the next start opens a fresh shell per pane as today
+  - Scope correction accepted (EP-008 implementation): the window still sends each `session.stop` and the final `host.shutdown` straight to the host, because the quit dialog needs each stop confirmed or unresolved to offer Retry, and "processes do not forward" rules out a relay through the worker. The worker owns the layout side: the window unbinds every terminal in the worker layout, and the worker writes it, so the panes stay with no session (pin `pin_stopping_everything_keeps_the_worker_layout_with_its_panes_and_no_session`). A quit cut between the confirmed stops and the unbind leaves the worker layout bound to sessions the host no longer records; the next start still opens a fresh shell per pane (`terminal::host_link::tests::a_quit_cut_between_the_stops_and_the_unbind_restores_a_fresh_shell_per_pane`).
+- [x] Given a stop that cannot be confirmed, when it happens, then the window stays open with the existing Retry, Keep running and quit, and Cancel choices
+- [x] Given held sessions in the undo history, when the window quits, then they are released as today
+- [x] Given a quit with no live session, when the window exits, then the host is shut down as today and the worker's lifetime rules are unchanged
+- [x] `ARCHITECTURE.md`'s host lifetime table is updated where the actor changed and nowhere else
 
 ---
 
