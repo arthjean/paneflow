@@ -556,15 +556,20 @@ impl FakeWindow {
                     std::thread::sleep(Duration::from_millis(5));
                     continue;
                 };
-                stream.set_nonblocking(false).unwrap();
-                stream
-                    .set_read_timeout(Some(Duration::from_secs(2)))
-                    .unwrap();
+                if stream.set_nonblocking(false).is_err()
+                    || stream
+                        .set_read_timeout(Some(Duration::from_secs(2)))
+                        .is_err()
+                {
+                    continue;
+                }
                 let mut line = String::new();
                 if BufReader::new(&stream).read_line(&mut line).unwrap_or(0) == 0 {
                     continue;
                 }
-                let request: Value = serde_json::from_str(&line).unwrap();
+                let Ok(request) = serde_json::from_str::<Value>(&line) else {
+                    continue;
+                };
                 let reply = json!({"jsonrpc": "2.0", "id": request["id"], "result": {"bytes": 2}});
                 seen.lock().unwrap().push(request);
                 let _ = (&stream).write_all(format!("{reply}\n").as_bytes());
