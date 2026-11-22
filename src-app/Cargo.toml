@@ -258,19 +258,8 @@ paneflow-minisign.workspace = true
 ropey = { version = "1.6", default-features = false, features = ["simd"] }
 memchr = "2.8"
 
-# US-022 (prd-files-experience): the lexical highlighting prototype that runs
-# `@pierre/highlights` 0.5.1 (`highlights.wasm`) beside tree-sitter in the
-# editor bench. Off by default and compiled only into the bench's test build
-# (`code/lexer_prototype.rs` is `cfg(all(test, feature))`), so no release
-# binary and none of the capped helpers ever link it. `cranelift` compiles the
-# module once; `unicode-ident` answers its two host calls (XID_Start and
-# XID_Continue) and is already in the graph through proc-macro2.
-wasmtime = { version = "50.0.2", default-features = false, features = ["runtime", "cranelift", "std"], optional = true }
-unicode-ident = { version = "1", optional = true }
-
 [features]
 default = []
-lexer-prototype = ["dep:wasmtime", "dep:unicode-ident"]
 
 # Linux: enable Wayland + X11 display backends for gpui_platform
 [target.'cfg(target_os = "linux")'.dependencies]

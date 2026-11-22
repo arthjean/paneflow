@@ -385,6 +385,88 @@ pub(crate) fn json_token_ranges(line: &str, wanted: usize) -> Vec<Range<usize>> 
     ranges
 }
 
+pub(crate) fn lexer_fixture(name: &str) -> String {
+    match name {
+        "rs" => rust_source(HIGHLIGHTED_RUST_BYTES),
+        "md" => markdown_source(64_000),
+        "ts" => include_str!("../../../../../scripts/generate-file-icons.ts").to_owned(),
+        "py" => PYTHON_FIXTURE.to_owned(),
+        "html" => HTML_FIXTURE.to_owned(),
+        _ => String::new(),
+    }
+}
+
+const PYTHON_FIXTURE: &str = r#"import json
+from dataclasses import dataclass, field
+from typing import Optional
+
+
+@dataclass
+class Session:
+    """A saved terminal session.
+
+    The id is stable across restarts.
+    """
+
+    id: str
+    title: Optional[str] = None
+    panes: list[int] = field(default_factory=list)
+
+    def label(self) -> str:
+        if self.title is None:
+            return f"session {self.id}"
+        return self.title.strip()
+
+
+def load(path: str) -> list[Session]:
+    with open(path, encoding="utf-8") as handle:
+        raw = json.load(handle)
+    sessions = []
+    for entry in raw.get("sessions", []):
+        sessions.append(Session(id=entry["id"], title=entry.get("title")))
+    return sorted(sessions, key=lambda s: s.id)
+
+
+class Registry(dict):
+    MAX = 64
+
+    @staticmethod
+    def key(value: int) -> str:
+        return hex(value & 0xFFFF)
+
+    async def refresh(self, client) -> None:
+        async for item in client.stream():
+            self[self.key(item.id)] = item
+        print(r"raw \d+ string", b"bytes", 3.14, True, None)
+"#;
+
+const HTML_FIXTURE: &str = r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Paneflow</title>
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; }
+    .pane > .title { color: #e6e6e6; padding: 4px 8px; }
+  </style>
+</head>
+<body class="dark">
+  <!-- the main grid -->
+  <main id="grid" data-columns="2">
+    <section class="pane"><h1 class="title">Agent</h1></section>
+    <a href="https://paneflow.dev/docs" target="_blank">Docs &amp; guides</a>
+  </main>
+  <script type="module">
+    const grid = document.getElementById("grid");
+    for (let i = 0; i < 4; i += 1) {
+      grid.dataset.columns = String(i % 2 === 0 ? 2 : 3);
+    }
+    console.log(`ready ${grid.id}`);
+  </script>
+</body>
+</html>
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;

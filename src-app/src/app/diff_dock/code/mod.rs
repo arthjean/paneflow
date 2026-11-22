@@ -7,10 +7,10 @@ pub(crate) mod document;
 pub(crate) mod edit;
 pub(crate) mod element;
 pub(crate) mod highlight;
-#[cfg(all(test, feature = "lexer-prototype"))]
+#[cfg(test)]
 mod lexer_compare;
-#[cfg(all(test, feature = "lexer-prototype"))]
-mod lexer_prototype;
+#[cfg(test)]
+mod lexer_parity;
 pub(crate) mod load;
 pub(crate) mod markers;
 mod minimap;

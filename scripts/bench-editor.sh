@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/bench-editor.sh [--set-baseline | --lexer-prototype] [--help]
+Usage: scripts/bench-editor.sh [--set-baseline] [--help]
 
 Runs the paneflow-editor-bench suite under the release profile and writes
 bench/results/editor-<stamp>-<sha>.json, then prints a Markdown table between
@@ -16,11 +16,8 @@ Options:
                   0.90, because a contended run inflates every timing it would
                   freeze.
   --lexer-prototype
-                  Build with the lexer-prototype feature and add the cases that
-                  run the highlights.wasm engine of @pierre/highlights 0.5.1
-                  beside tree-sitter. Needs PANEFLOW_HIGHLIGHTS_WASM. Never
-                  combined with --set-baseline: the baseline stays the build
-                  that ships.
+                  Retired: the lexer metrics are part of the default suite, so
+                  this flag exits with an error.
   --help          Print this message and exit.
 
 Environment:
@@ -35,14 +32,12 @@ Environment:
   PANEFLOW_BENCH_STAMP       UTC stamp the result records.
   PANEFLOW_BENCH_ALLOW_DEBUG Allow a debug-profile run, which the suite refuses.
   PANEFLOW_BENCH_SKIP_SHAPE  Skip the platform shaping probe.
-  PANEFLOW_HIGHLIGHTS_WASM   Path to highlights.wasm, read by --lexer-prototype.
 USAGE
 }
 
 cd "$(dirname "$0")/.."
 
 mode="run"
-features=()
 for arg in "$@"; do
   case "$arg" in
     --help | -h)
@@ -53,7 +48,8 @@ for arg in "$@"; do
       mode="set-baseline"
       ;;
     --lexer-prototype)
-      features=(--features lexer-prototype)
+      echo "--lexer-prototype is retired: the lexer metrics are part of the default suite, run scripts/bench-editor.sh without it" >&2
+      exit 2
       ;;
     *)
       usage >&2
@@ -61,10 +57,6 @@ for arg in "$@"; do
       ;;
   esac
 done
-if [ "$mode" = "set-baseline" ] && [ "${#features[@]}" -gt 0 ]; then
-  echo "--lexer-prototype measures a build that never ships: record the baseline without it" >&2
-  exit 2
-fi
 
 sha=$(git rev-parse --short=12 HEAD)
 dirty=false
@@ -86,7 +78,7 @@ export PANEFLOW_BENCH_DIRTY="$dirty"
 export PANEFLOW_BENCH_STAMP="$stamp"
 export PANEFLOW_BENCH_BASELINE_DIR="$root/bench/baselines"
 
-cargo test --release --locked -p paneflow-app --bin paneflow ${features[@]+"${features[@]}"} \
+cargo test --release --locked -p paneflow-app --bin paneflow \
   app::diff_dock::code::perf_bench::editor_pipeline_benchmark \
   -- --ignored --exact --nocapture --test-threads=1
 

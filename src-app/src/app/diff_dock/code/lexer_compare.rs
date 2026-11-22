@@ -5,8 +5,9 @@ use std::ops::Range;
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{Parser, QueryCursor};
 
-use super::bench_corpus::{HIGHLIGHTED_RUST_BYTES, markdown_source, rust_source};
-use super::lexer_prototype::{LexerPrototype, TOKEN_NAMES, language_id, token_name};
+use super::bench_corpus::lexer_fixture as fixture;
+use paneflow_highlights::{LexDocument, language_for_key, token_types};
+
 use crate::diff::{DiffSyntax, Grammar, grammar_for_ext, markdown_inline_grammar};
 
 const ROLES: &[(&str, &[&str])] = &[
@@ -113,36 +114,15 @@ fn tree_sitter_roles(ext: &str, text: &str) -> Option<Vec<&'static str>> {
     Some(first_wins(&raw, text.len()))
 }
 
-fn utf16_to_byte(line: &str, units: usize) -> usize {
-    let mut seen = 0usize;
-    for (byte, ch) in line.char_indices() {
-        if seen >= units {
-            return byte;
-        }
-        seen += ch.len_utf16();
-    }
-    line.len()
-}
-
-fn line_starts(text: &str) -> Vec<usize> {
-    std::iter::once(0)
-        .chain(text.match_indices('\n').map(|(at, _)| at + 1))
-        .collect()
-}
-
-fn lexer_roles(engine: &LexerPrototype, language: &str, text: &str) -> Vec<&'static str> {
-    let mut doc = engine
-        .document(text, language_id(language))
-        .expect("a lexed document");
+fn lexer_roles(language: &str, text: &str) -> Vec<&'static str> {
+    let language = language_for_key(language).expect("a lexer language");
+    let doc = LexDocument::lex(text, language).expect("a lexed document");
     let mut out = vec![NONE; text.len()];
-    for (line, start) in line_starts(text).into_iter().enumerate() {
-        let end = text[start..].find('\n').map_or(text.len(), |at| start + at);
-        let slice = &text[start..end];
-        for token in doc.line_tokens(line) {
-            let from = start + utf16_to_byte(slice, token.range.start);
-            let to = start + utf16_to_byte(slice, token.range.end);
-            let class = role(token_name(token.category)).unwrap_or(NONE);
-            out[from..to].fill(class);
+    for line in 0..doc.line_count() {
+        let start = doc.line_start(line).expect("a line");
+        for token in doc.line_tokens(line).expect("line tokens") {
+            let class = role(token.id.name()).unwrap_or(NONE);
+            out[start + token.range.start..start + token.range.end].fill(class);
         }
     }
     out
@@ -451,92 +431,10 @@ fn summarize(roles: &[&'static str], range: Range<usize>) -> String {
     seen.join(" + ")
 }
 
-fn fixture(name: &str) -> String {
-    match name {
-        "rs" => rust_source(HIGHLIGHTED_RUST_BYTES),
-        "md" => markdown_source(64_000),
-        "ts" => include_str!("../../../../../scripts/generate-file-icons.ts").to_owned(),
-        "py" => PYTHON_FIXTURE.to_owned(),
-        "html" => HTML_FIXTURE.to_owned(),
-        _ => String::new(),
-    }
-}
-
-const PYTHON_FIXTURE: &str = r#"import json
-from dataclasses import dataclass, field
-from typing import Optional
-
-
-@dataclass
-class Session:
-    """A saved terminal session.
-
-    The id is stable across restarts.
-    """
-
-    id: str
-    title: Optional[str] = None
-    panes: list[int] = field(default_factory=list)
-
-    def label(self) -> str:
-        if self.title is None:
-            return f"session {self.id}"
-        return self.title.strip()
-
-
-def load(path: str) -> list[Session]:
-    with open(path, encoding="utf-8") as handle:
-        raw = json.load(handle)
-    sessions = []
-    for entry in raw.get("sessions", []):
-        sessions.append(Session(id=entry["id"], title=entry.get("title")))
-    return sorted(sessions, key=lambda s: s.id)
-
-
-class Registry(dict):
-    MAX = 64
-
-    @staticmethod
-    def key(value: int) -> str:
-        return hex(value & 0xFFFF)
-
-    async def refresh(self, client) -> None:
-        async for item in client.stream():
-            self[self.key(item.id)] = item
-        print(r"raw \d+ string", b"bytes", 3.14, True, None)
-"#;
-
-const HTML_FIXTURE: &str = r#"<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>Paneflow</title>
-  <style>
-    body { margin: 0; font-family: system-ui, sans-serif; }
-    .pane > .title { color: #e6e6e6; padding: 4px 8px; }
-  </style>
-</head>
-<body class="dark">
-  <!-- the main grid -->
-  <main id="grid" data-columns="2">
-    <section class="pane"><h1 class="title">Agent</h1></section>
-    <a href="https://paneflow.dev/docs" target="_blank">Docs &amp; guides</a>
-  </main>
-  <script type="module">
-    const grid = document.getElementById("grid");
-    for (let i = 0; i < 4; i += 1) {
-      grid.dataset.columns = String(i % 2 === 0 ? 2 : 3);
-    }
-    console.log(`ready ${grid.id}`);
-  </script>
-</body>
-</html>
-"#;
-
 #[test]
 fn every_role_label_matches_the_editor_palette() {
     let syntax = DiffSyntax::from_theme(&crate::theme::paneflow_dark());
-    let mut names: Vec<&str> = TOKEN_NAMES.to_vec();
+    let mut names: Vec<&str> = token_types().to_vec();
     for ext in ["rs", "ts", "py", "md", "html", "json", "css", "go"] {
         if let Some(grammar) = grammar_for_ext(ext) {
             names.extend(grammar.query.capture_names());
@@ -552,9 +450,8 @@ fn every_role_label_matches_the_editor_palette() {
 }
 
 #[test]
-#[ignore = "lexer correctness report: PANEFLOW_HIGHLIGHTS_WASM=... cargo test -p paneflow-app --features lexer-prototype --bin paneflow app::diff_dock::code::lexer_compare::lexer_correctness_report -- --ignored --exact --nocapture"]
+#[ignore = "lexer correctness report: cargo test -p paneflow-app --bin paneflow app::diff_dock::code::lexer_compare::lexer_correctness_report -- --ignored --exact --nocapture"]
 fn lexer_correctness_report() {
-    let engine = LexerPrototype::from_env().expect("PANEFLOW_HIGHLIGHTS_WASM");
     let mut out = String::from("## Lexer correctness report\n");
     let files: [(&str, &'static str, &str); 5] = [
         ("rs", "Rust, the 300 KB bench corpus", "rs"),
@@ -566,7 +463,7 @@ fn lexer_correctness_report() {
     for (ext, label, language) in files {
         let text = fixture(ext);
         let tree = tree_sitter_roles(ext, &text).expect("a tree-sitter grammar");
-        let lexed = lexer_roles(&engine, language, &text);
+        let lexed = lexer_roles(language, &text);
         render(&compare(label, &tree, &lexed, &text), &mut out);
     }
     let _ = writeln!(
@@ -576,7 +473,7 @@ fn lexer_correctness_report() {
     for probe in PROBES {
         let range = locate(probe.text, probe.needle, probe.occurrence);
         let tree = tree_sitter_roles(probe.language, probe.text).expect("a grammar");
-        let lexed = lexer_roles(&engine, probe.language, probe.text);
+        let lexed = lexer_roles(probe.language, probe.text);
         let _ = writeln!(
             out,
             "| {} | {} | `{}` | {} | {} |",
