@@ -4626,6 +4626,7 @@ dependencies = [
  "open",
  "paneflow-agent-config",
  "paneflow-config",
+ "paneflow-highlights",
  "paneflow-home",
  "paneflow-host",
  "paneflow-ipc-client",
@@ -4725,6 +4726,16 @@ dependencies = [
  "libc",
  "paneflow-terminal-ghostty",
  "portable-pty",
+]
+
+[[package]]
+name = "paneflow-highlights"
+version = "0.20.0"
+dependencies = [
+ "cc",
+ "sha2 0.10.9",
+ "thiserror 2.0.20",
+ "unicode-ident",
 ]
 
 [[package]]

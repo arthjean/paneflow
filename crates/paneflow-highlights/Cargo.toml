@@ -1,0 +1,25 @@
+[package]
+name = "paneflow-highlights"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+description = "Pierre's @pierre/highlights lexers, translated to C by wasm2c and compiled natively, behind a safe live-tokenizer API"
+build = "build.rs"
+links = "paneflow_highlights"
+
+[dependencies]
+thiserror = { workspace = true }
+unicode-ident = "1"
+
+[dev-dependencies]
+sha2 = "0.10"
+
+[build-dependencies]
+cc = "1"
+
+[lints]
+workspace = true

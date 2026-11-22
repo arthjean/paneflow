@@ -36,6 +36,7 @@ focused library crates:
 | `paneflow-process` | `crates/paneflow-process/` | Bounded external-process execution (wall-clock deadline + stdout cap) shared across crates |
 | `paneflow-acp` | `crates/paneflow-acp/` | Legacy Claude/Codex identity enum plus the `CLAUDECODE` environment scrub |
 | `paneflow-colrv1` | `crates/paneflow-colrv1/` | COLRv1 color-glyph rasterizer (skrifa paint graph onto tiny-skia, gradients interpolated in linear light) called by the vendored `vendor/gpui_wgpu` Linux text system, whose swash backend reads only COLRv0 and CBDT emoji |
+| `paneflow-highlights` | `crates/paneflow-highlights/` | Pierre's 152 lexers (`@pierre/highlights`) translated to C by wasm2c, compiled by `cc` with bounds-checked memory and no signal handlers, behind a safe live-tokenizer API with byte ranges; layer 1 of the editor's highlighting |
 | `paneflow-telemetry` | `crates/paneflow-telemetry/` | Opt-in telemetry plumbing (no event leaves the machine unless consent resolves to `true`) |
 
 `src-app` is the default workspace member, so bare `cargo run` starts the
@@ -164,6 +165,39 @@ shipped query, vendored or taken from a grammar crate, carries a predicate the
 tree-sitter runtime does not evaluate, since such a predicate never filters and
 the query colors wrongly without an error. Its one named exception is the
 `#has-ancestor?` of Zed's C++ query, which Zed ignores as well.
+
+### Layer 1: the native lexers
+
+`crates/paneflow-highlights` vendors the wasm2c translation of
+`@pierre/highlights` 0.5.2, the wasm2c runtime of WABT 1.0.42 and SIMDe's
+amalgamated `wasm/simd128.h` under `c/`, with their licenses and `c/NOTICE`.
+`scripts/sync-pierre-highlights.sh` (or `.ps1`) writes every one of those files
+and `src/tables.rs` from inputs pinned in `c/MANIFEST.toml`: the npm tarball is
+checked against its `sha512` integrity, the WASM, the WABT archive, the SIMDe
+archive and both license texts against SHA-256 values, and a `WASM2C` binary
+must report 1.0.42. `--check` (`-Check`) regenerates into a scratch directory
+and names every file that differs or is missing; nothing is written until every
+input verified. A crate test rehashes the vendored files against the manifest
+without the network. Token and language ids are an ABI that moves between
+Pierre releases, so `tables.rs` is only ever generated, and a test reads the
+WASM's own token-name table from the lexer's memory and fails when the count or
+a name differs.
+
+`build.rs` compiles the C with `-std=c11` (`/std:c11` on MSVC),
+`WASM_RT_USE_MMAP=0`, `WASM_RT_MEMCHECK_BOUNDS_CHECK=1` and
+`WASM_RT_SKIP_SIGNAL_RECOVERY=1`, so memory is plain `malloc`, every access is
+bounds-checked and no signal handler is installed, and it refuses any target
+outside the four shipping ones. Each `Lexer` owns one heap instance. The C shim
+(`c/shim/`) calls `WASM_RT_SETJMP` in every entry point that runs lexer code, so
+a trap returns `LexError::Trap` and poisons that instance instead of unwinding
+through Rust; the two host imports are Rust `extern "C"` functions reached
+through function pointers, which never call back into the shim, so a `longjmp`
+never crosses a Rust frame. Each instance's linear memory is capped at
+`MAX_MEMORY_BYTES` (8 x the 10 MiB editor cap) through its `max_pages`, and a
+staging that would pass it is refused before memory grows. `LexDocument`
+takes edits as document byte ranges, converts them to the lexer's UTF-16
+columns and returns tokens as byte ranges. Its lines follow the lexer, which
+also breaks on a lone `\r`, unlike the editor's ropey (`\n` only).
 
 ## Files tree
 

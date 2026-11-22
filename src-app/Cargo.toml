@@ -452,6 +452,9 @@ gpui = { git = "https://github.com/zed-industries/zed", rev = "703b5ac3f4ffe1e87
 # exercises a real verify round-trip (happy path + tampered/wrong-key/no-key
 # negatives) without baking a private key into the repo.
 minisign = "0.9.1"
+# Layer 1 of the editor's highlighting: Pierre's lexers compiled natively. The
+# parity and oracle tests drive it until the editor links it (EP-003).
+paneflow-highlights = { workspace = true }
 # The in-process PTY runtime in `terminal/ghostty_session.rs` is compiled for
 # tests only: the Ghostty stress gates and the terminal perf bench drive it.
 # Every shipped pane attaches to a `paneflow-host` session instead, so the

@@ -367,4 +367,39 @@ mod tests {
     fn cursor_light_uses_neutral_roles() {
         assert_neutral_roles(crate::theme::cursor_light());
     }
+
+    const UNCOLORED_LEXER_TOKENS: &[&str] = &[
+        "none",
+        "diff.minus",
+        "diff.plus",
+        "embedded",
+        "predictive",
+        "primary",
+        "selector",
+        "text.jsx",
+        "enum",
+        "hint",
+        "markup.strikethrough",
+        "variant",
+        "background",
+        "foreground",
+    ];
+
+    #[test]
+    fn every_lexer_token_type_gets_a_palette_color_or_is_listed_as_uncolored() {
+        let syn = DiffSyntax::from_theme(&paneflow_dark());
+        for name in paneflow_highlights::token_types() {
+            assert_eq!(
+                syn.color_for_capture(name).is_none(),
+                UNCOLORED_LEXER_TOKENS.contains(name),
+                "lexer token type {name}"
+            );
+        }
+        for name in UNCOLORED_LEXER_TOKENS {
+            assert!(
+                paneflow_highlights::token_types().contains(name),
+                "{name} is listed as uncolored but is not a lexer token type"
+            );
+        }
+    }
 }
