@@ -80,6 +80,14 @@
     },
     {
       "id": "EP-010",
+      "title": "Agent prompts only the user can answer",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 5,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-011",
       "title": "Windows validation and release readiness",
       "status": "TODO",
       "priority": "P0",
@@ -1023,15 +1031,12 @@
     },
     {
       "id": "US-071",
-      "title": "Windows: scripts, events and commands",
+      "title": "An answer token per prompt",
       "epic": "EP-010",
       "status": "TODO",
       "priority": "P0",
       "blocked_by": [
-        "US-005",
-        "US-031",
-        "US-032",
-        "US-033"
+        "US-068"
       ],
       "started_at": null,
       "completed_at": null,
@@ -1039,14 +1044,12 @@
     },
     {
       "id": "US-072",
-      "title": "Windows: configuration, keys and prompts",
+      "title": "Recognize an agent by the process that calls",
       "epic": "EP-010",
       "status": "TODO",
       "priority": "P0",
       "blocked_by": [
-        "US-047",
-        "US-046",
-        "US-043"
+        "US-069"
       ],
       "started_at": null,
       "completed_at": null,
@@ -1054,13 +1057,13 @@
     },
     {
       "id": "US-073",
-      "title": "Windows: layout authority, headless and agents",
+      "title": "A permission prompt shows the whole input",
       "epic": "EP-010",
       "status": "TODO",
       "priority": "P0",
       "blocked_by": [
-        "US-055",
-        "US-057"
+        "US-068",
+        "US-066"
       ],
       "started_at": null,
       "completed_at": null,
@@ -1068,7 +1071,21 @@
     },
     {
       "id": "US-074",
-      "title": "Fix what Windows found",
+      "title": "Run and prompt handles nobody can guess",
+      "epic": "EP-010",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-069",
+        "US-065"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-075",
+      "title": "Prove an agent cannot approve itself",
       "epic": "EP-010",
       "status": "TODO",
       "priority": "P0",
@@ -1082,13 +1099,74 @@
       "reviewed_at": null
     },
     {
-      "id": "US-075",
-      "title": "Release records",
-      "epic": "EP-010",
+      "id": "US-076",
+      "title": "Windows: scripts, events and commands",
+      "epic": "EP-011",
       "status": "TODO",
       "priority": "P0",
       "blocked_by": [
-        "US-074"
+        "US-005",
+        "US-031",
+        "US-032",
+        "US-033"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-077",
+      "title": "Windows: configuration, keys and prompts",
+      "epic": "EP-011",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-047",
+        "US-046",
+        "US-043"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-078",
+      "title": "Windows: layout authority, headless and agents",
+      "epic": "EP-011",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-055",
+        "US-057",
+        "US-075"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-079",
+      "title": "Fix what Windows found",
+      "epic": "EP-011",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-076",
+        "US-077",
+        "US-078"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-080",
+      "title": "Release records",
+      "epic": "EP-011",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-079"
       ],
       "started_at": null,
       "completed_at": null,
