@@ -348,7 +348,7 @@ mod tests {
             .owned_by(Owner::Worker)
             .map(Descriptor::name)
             .collect();
-        expected.push("system.describe");
+        expected.extend(["system.describe", "system.whoami"]);
         let mut served = registry.method_names();
         served.sort_unstable();
         expected.sort_unstable();

@@ -19,6 +19,7 @@ use crate::control::{ConnectionAliases, ControlError};
 use crate::host::{CellSize, CreateSession, HostError, SessionAppearance, SessionHost};
 use crate::manifest::now_ms;
 use crate::owner_watch::OwnerWatch;
+use crate::peer::{ClassifiedBy, METHOD_PEER_CLASSIFY};
 use crate::protocol::{
     self, ClientHello, DATA_CHUNK_RAW_BYTES, ERR_BUSY, ERR_CHECKPOINT_TOO_LARGE, ERR_DEADLINE,
     ERR_ENGINE_REQUIRED, ERR_FRAME_TOO_LARGE, ERR_GENERATION_MISMATCH, ERR_HANDSHAKE_REQUIRED,
@@ -30,7 +31,13 @@ use crate::protocol::{
     result_envelope,
 };
 use crate::runtime::RuntimeError;
+use paneflow_api::Principal;
+use paneflow_api::methods::host::PeerClassifyParams;
 use paneflow_ipc_client::line_wire::{LineRead, Wire};
+use paneflow_peer::{Membership, PeerRead};
+
+const METHOD_WHOAMI: &str =
+    <paneflow_api::methods::system::WhoAmI as paneflow_api::Method>::SPEC.name;
 
 const CONTROL_CONNECTIONS_PER_PANE: usize = 2;
 const PANES_A_HEAVY_WORKSPACE_ATTACHES: usize = 48;
@@ -438,6 +445,9 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
     let mut greeted = false;
     let mut attaches = false;
     let mut client = String::new();
+    let mut principal = Principal::Unverified {
+        reason: "no request has been read yet".into(),
+    };
     let mut aliases = ConnectionAliases::default();
     loop {
         if shutdown.load(Ordering::Acquire) {
@@ -519,6 +529,7 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
                 Ok((identity, hello)) => {
                     greeted = true;
                     attaches = hello.attaches();
+                    principal = classify_connection(&host, &wire, &hello);
                     client = hello.client;
                     if wire.write_json(&result_envelope(&id, identity)).is_err() {
                         return;
@@ -532,6 +543,18 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
             continue;
         }
         let flow = match method {
+            METHOD_WHOAMI => match wire.write_json(&result_envelope(&id, principal.whoami_value()))
+            {
+                Ok(()) => Flow::Continue,
+                Err(_) => Flow::Close,
+            },
+            METHOD_PEER_CLASSIFY => {
+                let envelope = classify_for(&host, &principal, &id, &params);
+                match wire.write_json(&envelope) {
+                    Ok(()) => Flow::Continue,
+                    Err(_) => Flow::Close,
+                }
+            }
             "session.attach" | "session.output" if !attaches => {
                 let written = wire.write_json(&error_envelope(
                     &id,
@@ -707,6 +730,46 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
             return;
         }
     }
+}
+
+fn classify_connection(host: &SessionHost, wire: &Wire, hello: &ClientHello) -> Principal {
+    let started = std::time::Instant::now();
+    let read = crate::peer::read_wire_peer(wire);
+    let membership = match &read {
+        PeerRead::Identified(identity) => host.classify_peer(identity.pid(), identity.started_at()),
+        PeerRead::Unverified { reason } => Membership::Unverified {
+            reason: reason.clone(),
+        },
+    };
+    let principal = crate::peer::host_principal(membership, hello);
+    crate::peer::log_classification(
+        "host",
+        &read,
+        &principal,
+        ClassifiedBy::Local,
+        started.elapsed(),
+    );
+    principal
+}
+
+fn classify_for(host: &SessionHost, caller: &Principal, id: &Value, params: &Value) -> Value {
+    if caller.is_pane() {
+        let (code, message, data) = caller.refusal(METHOD_PEER_CLASSIFY);
+        return error_envelope(id, code, message, Some(data));
+    }
+    let asked: PeerClassifyParams = match serde_json::from_value(params.clone()) {
+        Ok(asked) => asked,
+        Err(error) => {
+            return error_envelope(
+                id,
+                ERR_INVALID_PARAMS,
+                format!("invalid peer.classify params: {error}"),
+                None,
+            );
+        }
+    };
+    let membership = host.classify_peer(asked.pid, asked.started_at);
+    result_envelope(id, to_value(&crate::peer::membership_reply(&membership)))
 }
 
 fn wake_accept_loop(endpoint: &Path) {

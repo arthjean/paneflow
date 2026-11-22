@@ -661,7 +661,7 @@ fn the_api_cli_routes_each_method_to_the_window_or_the_worker_that_owns_it() {
         "the window does not serve it"
     );
 
-    let listed = call_value(&catalog, &endpoints, "surface.list", &[], None).expect("listed");
+    let listed = call_value(&catalog, &endpoints, "surface.list", &[], None, None).expect("listed");
     let surface = listed["surfaces"][0]["surface_id"]
         .as_u64()
         .expect("a surface");
@@ -675,10 +675,11 @@ fn the_api_cli_routes_each_method_to_the_window_or_the_worker_that_owns_it() {
             "fenced=false".into(),
         ],
         None,
+        None,
     )
     .expect("read through the window");
     assert_eq!(read["lines"], 1);
-    let status = call_value(&catalog, &endpoints, "worker.status", &[], None)
+    let status = call_value(&catalog, &endpoints, "worker.status", &[], None, None)
         .expect("worker.status goes to the worker");
     assert_eq!(status["pid"], std::process::id());
 
@@ -688,12 +689,13 @@ fn the_api_cli_routes_each_method_to_the_window_or_the_worker_that_owns_it() {
         "surface.read",
         &["lines=many".into()],
         None,
+        None,
     )
     .expect_err("the schema refuses the pair");
     assert!(refused.message.contains("'lines'"), "{}", refused.message);
 
     worker.stop();
-    let unreachable = call_value(&catalog, &endpoints, "worker.status", &[], None)
+    let unreachable = call_value(&catalog, &endpoints, "worker.status", &[], None, None)
         .expect_err("the worker is gone");
     assert!(
         unreachable.message.contains("worker.status"),

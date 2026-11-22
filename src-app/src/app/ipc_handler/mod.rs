@@ -238,6 +238,7 @@ fn register_methods(builder: RegistryBuilder) -> RegistryBuilder {
             app.client_dispatch_action_reply(call.params.name, cx)
         })
         .inline::<system::Describe>(|call| registry().describe(call.params.method.as_deref()))
+        .inline_for_caller::<system::WhoAmI>(paneflow_api::Principal::whoami_value)
 }
 
 impl PaneFlowApp {

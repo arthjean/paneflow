@@ -161,6 +161,12 @@ fn open_with_build_id(
         config: Arc::new(crate::config_runtime::ConfigRuntime::new(home)),
         prompts: crate::prompts::PromptBroker::default(),
         layout,
+        classifier: paneflow_host::peer::PeerClassifier::new(
+            Some(paneflow_home::host_endpoint_path(home)),
+            Some(home.to_path_buf()),
+            "paneflow-serve-classify",
+        ),
+        principals: Mutex::new(Default::default()),
     });
     let server = ServerHandle::spawn(Arc::clone(&worker), endpoint.clone()).map_err(|source| {
         WorkerError::Endpoint {

@@ -4741,6 +4741,7 @@ dependencies = [
  "paneflow-layout",
  "paneflow-mcp-install",
  "paneflow-minisign",
+ "paneflow-peer",
  "paneflow-process",
  "paneflow-script",
  "paneflow-serve",
@@ -4871,10 +4872,12 @@ dependencies = [
  "log",
  "minisign",
  "paneflow-agent-config",
+ "paneflow-api",
  "paneflow-config",
  "paneflow-home",
  "paneflow-ipc-client",
  "paneflow-minisign",
+ "paneflow-peer",
  "paneflow-terminal-ghostty",
  "portable-pty",
  "serde",
@@ -4967,6 +4970,15 @@ version = "0.1.0"
 dependencies = [
  "minisign",
  "minisign-verify",
+]
+
+[[package]]
+name = "paneflow-peer"
+version = "0.20.0"
+dependencies = [
+ "libc",
+ "tempfile",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

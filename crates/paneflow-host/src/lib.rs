@@ -21,6 +21,7 @@ pub mod host;
 pub mod maintenance;
 pub mod manifest;
 pub mod owner_watch;
+pub mod peer;
 pub mod persistence;
 pub mod process;
 mod process_listing;

@@ -17,6 +17,7 @@ members = [
     "crates/paneflow-mcp",
     "crates/paneflow-mcp-install",
     "crates/paneflow-minisign",
+    "crates/paneflow-peer",
     "crates/paneflow-process",
     "crates/paneflow-script",
     "crates/paneflow-serve",
@@ -78,6 +79,7 @@ paneflow-config = { path = "crates/paneflow-config" }
 paneflow-git = { path = "crates/paneflow-git" }
 paneflow-home = { path = "crates/paneflow-home" }
 paneflow-host = { path = "crates/paneflow-host" }
+paneflow-peer = { path = "crates/paneflow-peer" }
 paneflow-ipc-client = { path = "crates/paneflow-ipc-client" }
 paneflow-launch = { path = "crates/paneflow-launch" }
 paneflow-layout = { path = "crates/paneflow-layout" }

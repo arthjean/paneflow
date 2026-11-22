@@ -1,4 +1,4 @@
-use clap::Subcommand;
+use clap::{Subcommand, ValueEnum};
 use paneflow_api::{Catalog, Owner};
 use paneflow_ipc_client::host_control::{ControlTarget, HostTransport};
 use paneflow_ipc_client::{IpcClient, IpcTransport};
@@ -36,6 +36,13 @@ pub(super) enum ApiCommand {
             help = "Raw JSON params object, or @path to read one from a file"
         )]
         args: Option<String>,
+        #[arg(
+            long,
+            value_enum,
+            value_name = "PROCESS",
+            help = "Send the call to this process instead of the method's owner, for a method every process answers such as system.whoami"
+        )]
+        on: Option<Process>,
     },
     #[command(
         about = "Print a Lua language server definition file for paneflow do scripts, from the registry linked into this binary",
@@ -46,6 +53,13 @@ pub(super) enum ApiCommand {
         about = "Print a Markdown reference of every method, from the registry linked into this binary"
     )]
     Docs,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub(crate) enum Process {
+    Window,
+    Worker,
+    Host,
 }
 
 enum Source {
@@ -472,6 +486,7 @@ pub(crate) fn call_value(
     method: &str,
     pairs: &[String],
     args: Option<&str>,
+    on: Option<Process>,
 ) -> Result<Value, CliError> {
     let descriptor = catalog
         .get(method)
@@ -485,7 +500,10 @@ pub(crate) fn call_value(
     let params = build_params(&schema, pairs, args)?;
     paneflow_api::schema::validate(&schema, &params)
         .map_err(|violation| CliError::runtime(violation.message))?;
-    let endpoint: Endpoint = router::route(catalog, endpoints, method)?;
+    let endpoint: Endpoint = match on {
+        Some(process) => router::route_to(endpoints, process)?,
+        None => router::route(catalog, endpoints, method)?,
+    };
     router::send(catalog, &endpoint, method, params)
 }
 
@@ -494,8 +512,16 @@ fn call(
     method: &str,
     pairs: &[String],
     args: Option<&str>,
+    on: Option<Process>,
 ) -> Result<i32, CliError> {
-    let result = call_value(catalog, &Endpoints::from_environment(), method, pairs, args)?;
+    let result = call_value(
+        catalog,
+        &Endpoints::from_environment(),
+        method,
+        pairs,
+        args,
+        on,
+    )?;
     println!(
         "{}",
         serde_json::to_string_pretty(&result).unwrap_or_default()
@@ -512,7 +538,8 @@ pub(super) fn run(command: ApiCommand) -> Result<i32, CliError> {
             method,
             pairs,
             args,
-        } => call(&catalog, &method, &pairs, args.as_deref()),
+            on,
+        } => call(&catalog, &method, &pairs, args.as_deref(), on),
         ApiCommand::Stubs => {
             print!(
                 "{}",

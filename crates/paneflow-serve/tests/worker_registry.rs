@@ -105,3 +105,33 @@ fn a_mistyped_parameter_and_an_unknown_method_are_refused_with_their_codes() {
     assert!(still_open["result"]["pid"].as_u64().is_some());
     worker.stop();
 }
+
+#[test]
+fn a_caller_outside_every_pane_is_external_until_it_attaches_as_the_window() {
+    let home = tempfile::tempdir().unwrap();
+    let worker = paneflow_serve::open(home.path()).expect("the worker takes the home");
+    let endpoint = paneflow_home::serve_endpoint_path(home.path());
+
+    let mut other = HostControl::connect(&endpoint, "worker-identity-test").expect("connects");
+    other
+        .request("layout.attach", json!({"client": "dashboard"}))
+        .expect("attaches");
+    assert_eq!(
+        other.request("system.whoami", json!({})).unwrap(),
+        json!({"principal": "external"})
+    );
+
+    let mut window = HostControl::connect(&endpoint, "worker-identity-test").expect("connects");
+    assert_eq!(
+        window.request("system.whoami", json!({})).unwrap(),
+        json!({"principal": "external"})
+    );
+    window
+        .request("layout.attach", json!({"client": "window"}))
+        .expect("attaches");
+    assert_eq!(
+        window.request("system.whoami", json!({})).unwrap(),
+        json!({"principal": "window"})
+    );
+    worker.stop();
+}

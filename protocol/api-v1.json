@@ -2965,6 +2965,74 @@
     {
       "examples": [
         {
+          "params": {},
+          "result": {
+            "principal": "pane",
+            "session": "123e4567-e89b-42d3-a456-426614174000",
+            "workspace": "223e4567-e89b-42d3-a456-426614174000"
+          }
+        },
+        {
+          "params": {},
+          "result": {
+            "principal": "external"
+          }
+        }
+      ],
+      "fallback": "host",
+      "gate": "none",
+      "gate_note": null,
+      "in_capabilities": false,
+      "name": "system.whoami",
+      "owner": "window",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "NoParams",
+        "type": "object"
+      },
+      "reply": "inline",
+      "result": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "principal": {
+            "description": "window, worker, pane, external or unverified",
+            "type": "string"
+          },
+          "reason": {
+            "description": "Why the calling process could not be identified",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "session": {
+            "description": "The pane's session, for a pane principal",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workspace": {
+            "description": "The pane's workspace, for a pane principal",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "principal"
+        ],
+        "title": "WhoAmIResult",
+        "type": "object"
+      },
+      "stream": false,
+      "summary": "Say how the answering process identifies the caller: window, worker, pane, external or unverified."
+    },
+    {
+      "examples": [
+        {
           "params": {
             "session": "223e4567-e89b-42d3-a456-426614174000",
             "source_session": "123e4567-e89b-42d3-a456-426614174000",
@@ -3081,6 +3149,105 @@
       },
       "stream": false,
       "summary": "Relay a message from one agent's pane into another's, once a human allows the pair."
+    },
+    {
+      "examples": [
+        {
+          "params": {
+            "pid": 4242,
+            "started_at": 9876543
+          },
+          "result": {
+            "in_pane": true,
+            "session": "123e4567-e89b-42d3-a456-426614174000",
+            "workspace": "223e4567-e89b-42d3-a456-426614174000"
+          }
+        },
+        {
+          "params": {
+            "pid": 4242,
+            "started_at": 9876543
+          },
+          "result": {
+            "in_pane": false,
+            "stale": true
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "none",
+      "gate_note": null,
+      "in_capabilities": false,
+      "name": "peer.classify",
+      "owner": "host",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "pid": {
+            "description": "PID of the process to classify",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "started_at": {
+            "description": "Start time the caller read for that PID, in the host's process clock",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pid",
+          "started_at"
+        ],
+        "title": "PeerClassifyParams",
+        "type": "object"
+      },
+      "reply": "ready",
+      "result": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "in_pane": {
+            "description": "True when the process runs inside one of the host's panes",
+            "type": "boolean"
+          },
+          "session": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stale": {
+            "description": "True when the PID no longer names the process the caller read",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "unverified": {
+            "description": "Why membership could not be decided",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workspace": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "in_pane"
+        ],
+        "title": "PeerClass",
+        "type": "object"
+      },
+      "stream": false,
+      "summary": "Say whether a process runs inside one of the host's panes, and which one."
     },
     {
       "examples": [

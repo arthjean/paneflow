@@ -1114,6 +1114,7 @@ mod tests {
             },
             lifecycle: SessionLifecycle::Running,
             process: None,
+            process_session: None,
             name: None,
             title: None,
             current_cwd: None,

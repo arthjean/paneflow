@@ -76,6 +76,32 @@ pub(super) fn route(
     }
 }
 
+pub(super) fn route_to(
+    endpoints: &Endpoints,
+    process: super::api_cmd::Process,
+) -> Result<Endpoint, CliError> {
+    use super::api_cmd::Process;
+    let unreachable = |name: &str| {
+        CliError::runtime(format!("the Paneflow {name} has no endpoint that resolves"))
+    };
+    match process {
+        Process::Window => match &endpoints.control {
+            Some(ControlTarget::Controller(socket)) => Ok(Endpoint::Window(socket.clone())),
+            Some(ControlTarget::Host(_)) | None => Err(unreachable("window")),
+        },
+        Process::Host => endpoints
+            .host
+            .clone()
+            .map(Endpoint::Host)
+            .ok_or_else(|| unreachable("host")),
+        Process::Worker => endpoints
+            .worker
+            .clone()
+            .map(Endpoint::Worker)
+            .ok_or_else(|| unreachable("worker")),
+    }
+}
+
 fn owner_unreachable(descriptor: &Descriptor, reason: impl std::fmt::Display) -> CliError {
     let owner = match descriptor.spec.owner {
         Owner::Window => "the Paneflow window",

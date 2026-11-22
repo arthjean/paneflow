@@ -635,6 +635,27 @@ paneflow.pane = {}
 ---@return integer? code
 paneflow.pane.write = function(params) end
 
+---@class paneflow.peer
+paneflow.peer = {}
+
+---@class paneflow.peer.classify.params
+---@field pid integer PID of the process to classify
+---@field started_at integer Start time the caller read for that PID, in the host's process clock
+
+---@class paneflow.peer.classify.result
+---@field in_pane boolean
+---@field session? string
+---@field stale? boolean
+---@field unverified? string
+---@field workspace? string
+
+---Say whether a process runs inside one of the host's panes, and which one.
+---@param params paneflow.peer.classify.params
+---@return paneflow.peer.classify.result? result
+---@return string? message
+---@return integer? code
+paneflow.peer.classify = function(params) end
+
 ---@class paneflow.prompt
 paneflow.prompt = {}
 
@@ -980,6 +1001,21 @@ paneflow.system.identify = function(params) end
 ---@return string? message
 ---@return integer? code
 paneflow.system.ping = function(params) end
+
+---@class paneflow.system.whoami.params
+
+---@class paneflow.system.whoami.result
+---@field principal string
+---@field reason? string
+---@field session? string
+---@field workspace? string
+
+---Say how the answering process identifies the caller: window, worker, pane, external or unverified.
+---@param params paneflow.system.whoami.params?
+---@return paneflow.system.whoami.result? result
+---@return string? message
+---@return integer? code
+paneflow.system.whoami = function(params) end
 
 ---@class paneflow.tmux
 paneflow.tmux = {}

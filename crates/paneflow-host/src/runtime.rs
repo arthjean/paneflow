@@ -343,6 +343,7 @@ struct Shared {
     resets: AtomicU64,
     stream: Arc<OutputStream>,
     inbox: PtyInbox,
+    containment: Mutex<Option<crate::peer::PaneContainment>>,
     #[cfg(test)]
     tracked_descendants: AtomicUsize,
 }
@@ -362,9 +363,42 @@ impl Shared {
             resets: AtomicU64::new(0),
             stream: OutputStream::new(MAX_OUTPUT_TAIL_BYTES),
             inbox: PtyInbox::default(),
+            containment: Mutex::new(None),
             #[cfg(test)]
             tracked_descendants: AtomicUsize::new(0),
         })
+    }
+
+    fn contain(&self, pid: u32) {
+        let containment = crate::peer::PaneContainment::of(pid);
+        *self
+            .containment
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(containment);
+    }
+
+    fn release_containment(&self) {
+        *self
+            .containment
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    }
+
+    fn process_session(&self) -> Option<u32> {
+        self.containment
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .and_then(|containment| containment.process_session)
+    }
+
+    #[cfg(windows)]
+    fn pane_job(&self) -> Option<Arc<paneflow_peer::PaneJob>> {
+        self.containment
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .and_then(|containment| containment.job.clone())
     }
 
     fn exit(&self) -> Option<ExitOutcome> {
@@ -528,6 +562,15 @@ impl SessionRuntime {
 
     pub fn process(&self) -> ProcessIdentity {
         self.process
+    }
+
+    pub fn process_session(&self) -> Option<u32> {
+        self.shared.process_session()
+    }
+
+    #[cfg(windows)]
+    pub fn pane_job(&self) -> Option<Arc<paneflow_peer::PaneJob>> {
+        self.shared.pane_job()
     }
 
     pub fn exit(&self) -> Option<ExitOutcome> {
@@ -883,6 +926,7 @@ fn run(
         }
     }
     let _ = catch_unwind(AssertUnwindSafe(|| session.retire_terminal()));
+    shared.release_containment();
 }
 
 fn serve_loop(session: &mut Session, rx: &Receiver<Message>) {
@@ -1091,6 +1135,7 @@ fn start(
         .spawn_command(command)
         .map_err(|e| format!("failed to spawn {} in the PTY: {e}", spec.shell))?;
     let child_pid = child.process_id().unwrap_or(0);
+    shared.contain(child_pid);
     drop(pair.slave);
     let mut session = Session {
         terminal: Some(terminal),

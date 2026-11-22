@@ -234,11 +234,15 @@ pub fn window_declarations() -> Vec<Descriptor> {
         Descriptor::of::<config::ListBuiltinActions>(),
         Descriptor::of::<config::DispatchAction>(),
         Descriptor::of::<system::Describe>(),
+        Descriptor::of::<system::WhoAmI>(),
     ]
 }
 
 pub fn host_declarations() -> Vec<Descriptor> {
-    vec![Descriptor::of::<host::PaneWrite>()]
+    vec![
+        Descriptor::of::<host::PaneWrite>(),
+        Descriptor::of::<host::PeerClassify>(),
+    ]
 }
 
 pub fn worker_declarations() -> Vec<Descriptor> {

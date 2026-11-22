@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use crate::app::wake::AppWake;
 use crate::terminal::host_link::{LaunchRoute, WorkerLaunchAnswer, WorkerLauncher};
 
-pub(crate) const WINDOW_CLIENT: &str = "window";
+pub(crate) const WINDOW_CLIENT: &str = paneflow_serve::server::WINDOW_LAYOUT_CLIENT;
 const CONTROL_CLIENT: &str = "paneflow-window-layout";
 const RETRY: Duration = Duration::from_millis(500);
 const OLDER_WORKER_RETRY: Duration = Duration::from_secs(5);

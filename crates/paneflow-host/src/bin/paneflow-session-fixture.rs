@@ -2,7 +2,7 @@ use std::io::{Read, Write};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::Duration;
 
-const USAGE: &str = "paneflow-session-fixture <idle|declare|echo|flood <bytes>|stream <bytes-per-second> <seconds>|history <lines>|delayed-exit <ms> <code>|blocked-stdin|descendants <count> <parent-ms>|descendants-orphan <count> <parent-ms>|split-sequences>";
+const USAGE: &str = "paneflow-session-fixture <idle|declare|echo|flood <bytes>|stream <bytes-per-second> <seconds>|history <lines>|delayed-exit <ms> <code>|blocked-stdin|descendants <count> <parent-ms>|descendants-orphan <count> <parent-ms>|split-sequences|whoami <host|worker|window> <endpoint> [engine|control|worker]|setsid-whoami <args>|orphan-whoami <args>|escape-whoami <args>>";
 
 const FLOOD_CHUNK: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\r\n";
 
@@ -36,6 +36,11 @@ fn main() -> ExitCode {
         ),
         "descendant-sleep" => descendant_sleep(),
         "split-sequences" => split_sequences(),
+        "whoami" => whoami(&args[1..]),
+        "setsid-whoami" => spawn_whoami(&args[1..], Detach::Session),
+        "orphan-whoami" => spawn_whoami(&args[1..], Detach::Orphan),
+        "escape-whoami" => spawn_whoami(&args[1..], Detach::SessionAndOrphan),
+        "orphan-relay" => orphan_relay(&args[1..]),
         _ => {
             eprintln!("{USAGE}");
             Err(2)
@@ -244,4 +249,152 @@ fn split_sequences() -> Result<(), u8> {
         std::thread::sleep(Duration::from_millis(40));
     }
     announce("fixture split sequences done")
+}
+
+fn host_hello(kind: Option<&str>) -> paneflow_host::protocol::ClientHello {
+    use paneflow_host::protocol::ClientHello;
+    match kind {
+        Some("engine") => ClientHello::local("fixture-whoami"),
+        Some("worker") => ClientHello::control("paneflow-serve-fixture"),
+        _ => ClientHello::control("fixture-whoami"),
+    }
+}
+
+fn whoami(args: &[String]) -> Result<(), u8> {
+    use paneflow_ipc_client::IpcTransport;
+    use serde_json::json;
+    let server = args.first().map(String::as_str).unwrap_or_default();
+    let endpoint = std::path::PathBuf::from(args.get(1).ok_or(2_u8)?);
+    let mut classified = None;
+    let answer: Result<serde_json::Value, String> = match server {
+        "host" => {
+            let hello = host_hello(args.get(2).map(String::as_str));
+            match paneflow_host::HostClient::connect(&endpoint, &hello) {
+                Ok(mut client) => {
+                    let answer = client
+                        .call("system.whoami", json!({}))
+                        .map_err(|error| error.to_string());
+                    let pid = std::process::id();
+                    let started_at = paneflow_host::process::process_start_time(pid);
+                    classified = Some(client.call(
+                        "peer.classify",
+                        json!({"pid": pid, "started_at": started_at.unwrap_or_default()}),
+                    ));
+                    answer
+                }
+                Err(error) => Err(error.to_string()),
+            }
+        }
+        "worker" => paneflow_ipc_client::host_control::HostControl::open(
+            &endpoint,
+            "fixture-whoami",
+            Duration::from_secs(10),
+        )
+        .map_err(|error| format!("{error:?}"))
+        .and_then(|mut control| control.request("system.whoami", json!({}))),
+        "window" => paneflow_ipc_client::IpcClient::new(endpoint).call("system.whoami", json!({})),
+        _ => return Err(2),
+    };
+    match answer {
+        Ok(reply) => {
+            for key in ["principal", "session", "workspace"] {
+                if let Some(value) = reply[key].as_str() {
+                    announce(&format!("whoami {key}={value}"))?;
+                }
+            }
+        }
+        Err(error) => announce(&format!("whoami error={error}"))?,
+    }
+    match classified {
+        Some(Ok(reply)) => announce(&format!("classify in_pane={}", reply["in_pane"]))?,
+        Some(Err(error)) => announce(&format!(
+            "classify refused code={}",
+            error.code().unwrap_or_default()
+        ))?,
+        None => {}
+    }
+    announce("whoami done")?;
+    loop {
+        std::thread::sleep(Duration::from_secs(3600));
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Detach {
+    Session,
+    Orphan,
+    SessionAndOrphan,
+}
+
+#[cfg(unix)]
+fn whoami_command(args: &[String], new_session: bool) -> Result<Command, u8> {
+    use std::os::unix::process::CommandExt;
+    let executable = std::env::current_exe().map_err(|_| 3)?;
+    let mut command = Command::new(executable);
+    command
+        .arg("whoami")
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    if new_session {
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+    Ok(command)
+}
+
+#[cfg(unix)]
+fn spawn_whoami(args: &[String], detach: Detach) -> Result<(), u8> {
+    let child = match detach {
+        Detach::Session => whoami_command(args, true)?.spawn(),
+        Detach::Orphan | Detach::SessionAndOrphan => {
+            let executable = std::env::current_exe().map_err(|_| 3)?;
+            let mode = if detach == Detach::Orphan {
+                "keep-session"
+            } else {
+                "new-session"
+            };
+            Command::new(executable)
+                .arg("orphan-relay")
+                .arg(mode)
+                .args(args)
+                .stdin(Stdio::null())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .spawn()
+        }
+    };
+    let mut child = child.map_err(|_| 3)?;
+    if detach != Detach::Session {
+        let _ = child.wait();
+    }
+    loop {
+        std::thread::sleep(Duration::from_secs(3600));
+    }
+}
+
+#[cfg(unix)]
+fn orphan_relay(args: &[String]) -> Result<(), u8> {
+    let new_session = args.first().map(String::as_str) == Some("new-session");
+    whoami_command(&args[1..], new_session)?
+        .spawn()
+        .map(drop)
+        .map_err(|_| 3)
+}
+
+#[cfg(not(unix))]
+fn spawn_whoami(_args: &[String], _detach: Detach) -> Result<(), u8> {
+    Err(2)
+}
+
+#[cfg(not(unix))]
+fn orphan_relay(_args: &[String]) -> Result<(), u8> {
+    Err(2)
 }

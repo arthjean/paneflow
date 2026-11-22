@@ -87,6 +87,7 @@ paneflow-telemetry = { workspace = true }
 # `toml_edit` dep stays out of the size-budgeted embedded `paneflow-mcp`
 # bridge binary (PRD decision D3).
 paneflow-mcp-install.workspace = true
+paneflow-peer.workspace = true
 paneflow-serve.workspace = true
 jiff.workspace = true
 # EP-002 (prd-ultron-remediation): std-only bounded-subprocess primitive

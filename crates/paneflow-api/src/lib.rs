@@ -1,10 +1,12 @@
 pub mod descriptor;
 #[macro_use]
 pub mod methods;
+pub mod principal;
 pub mod schema;
 
 pub use descriptor::{Descriptor, Example, Gate, Method, Owner, Reply, Spec};
 pub use methods::{Catalog, DuplicateMethod, catalog, declarations};
+pub use principal::Principal;
 
 pub const SNAPSHOT_VERSION: u32 = 1;
 

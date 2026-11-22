@@ -70,6 +70,8 @@ use crate::limits::MAX_REQUEST_LEN;
 
 const MAX_REQUEST_CONNECTIONS: usize = 16;
 
+const WINDOW_CLASSIFY_CLIENT: &str = "paneflow-window-classify";
+
 const MAX_SUBSCRIPTION_CONNECTIONS: usize = 16;
 
 const MAX_CONCURRENT_CONNECTIONS: usize = MAX_REQUEST_CONNECTIONS + MAX_SUBSCRIPTION_CONNECTIONS;
@@ -209,6 +211,7 @@ pub fn start_server() -> (
 
             let active_connections = Arc::new(AtomicUsize::new(0));
             let active_subscriptions = Arc::new(AtomicUsize::new(0));
+            let classifier = Arc::new(window_classifier());
 
             loop {
                 match listener.accept() {
@@ -232,11 +235,12 @@ pub fn start_server() -> (
                         let tx = tx.clone();
                         let bus = Arc::clone(&thread_event_bus);
                         let subscriptions = Arc::clone(&active_subscriptions);
+                        let classifier = Arc::clone(&classifier);
                         if let Err(e) = std::thread::Builder::new()
                             .name("paneflow-ipc-conn".into())
                             .spawn(move || {
                                 let _guard = guard;
-                                handle_connection(stream, tx, bus, subscriptions);
+                                handle_connection(stream, tx, bus, subscriptions, &classifier);
                             })
                         {
                             log::warn!(
@@ -786,11 +790,36 @@ fn peer_pid(_stream: &Stream) -> Option<i64> {
     None
 }
 
+fn window_classifier() -> paneflow_host::peer::PeerClassifier {
+    paneflow_host::peer::PeerClassifier::new(
+        paneflow_host::endpoint::host_endpoint_path_for_current_home(),
+        paneflow_home::paneflow_home(),
+        WINDOW_CLASSIFY_CLIENT,
+    )
+}
+
+#[cfg(unix)]
+fn stream_peer(stream: &Stream) -> paneflow_peer::PeerRead {
+    use std::os::fd::AsFd;
+    match stream {
+        Stream::UdSocket(socket) => paneflow_peer::read_unix_peer(socket.as_fd()),
+    }
+}
+
+#[cfg(windows)]
+fn stream_peer(stream: &Stream) -> paneflow_peer::PeerRead {
+    use std::os::windows::io::AsHandle;
+    match stream {
+        Stream::NamedPipe(pipe) => paneflow_peer::read_pipe_peer(pipe.as_handle()),
+    }
+}
+
 fn handle_connection(
     stream: Stream,
     request_tx: smol::channel::Sender<IpcRequest>,
     event_bus: Arc<crate::ipc_events::EventBus>,
     active_subscriptions: Arc<AtomicUsize>,
+    classifier: &paneflow_host::peer::PeerClassifier,
 ) {
     let Ok(writer_stream) = stream.try_clone() else {
         return;
@@ -836,6 +865,7 @@ fn handle_connection(
     #[cfg(not(windows))]
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
+    let mut principal: Option<paneflow_api::Principal> = None;
 
     loop {
         match read_request_line(&mut reader, &mut line) {
@@ -852,6 +882,13 @@ fn handle_connection(
             Ok(LineRead::Got) => {}
             Err(_) => break,
         }
+        #[cfg(windows)]
+        let connection = &reader;
+        #[cfg(not(windows))]
+        let connection = reader.get_ref();
+        let caller = principal
+            .get_or_insert_with(|| classifier.principal(&stream_peer(connection), "window"))
+            .clone();
 
         let line = line.trim();
         if line.is_empty() {
@@ -922,7 +959,7 @@ fn handle_connection(
                         match route {
                             crate::app::ipc_handler::Route::Inline(entry) => {
                                 crate::app::ipc_handler::promote_response(
-                                    entry.answer_inline(&params),
+                                    entry.answer_inline(&params, &caller),
                                     response_id,
                                 )
                             }
@@ -2198,6 +2235,7 @@ mod counters_tests {
                 request_tx,
                 crate::ipc_events::EventBus::new(),
                 Arc::new(AtomicUsize::new(0)),
+                &paneflow_host::peer::PeerClassifier::new(None, None, WINDOW_CLASSIFY_CLIENT),
             );
         });
         let name = path
@@ -2307,5 +2345,138 @@ mod accept_wait_tests {
         let (outcome, elapsed) = waiter.join().expect("waiter thread");
         assert_eq!(outcome, Ok(()));
         assert!(elapsed < Duration::from_secs(4));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod caller_identity_tests {
+    use super::*;
+    use std::io::{BufRead, BufReader, Write};
+
+    const CHILD_ENV: &str = "PANEFLOW_WINDOW_WHOAMI_CHILD";
+    const CHILD_TEST: &str = "ipc::caller_identity_tests::ask_the_window_socket_who_this_pane_is";
+
+    fn whoami_over(path: &std::path::Path) -> Value {
+        let name = path
+            .to_fs_name::<GenericFilePath>()
+            .expect("the socket name");
+        let mut client = Stream::connect(name).expect("the client connects");
+        client
+            .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"system.whoami\"}\n")
+            .expect("the request is written");
+        let mut line = String::new();
+        BufReader::new(&mut client)
+            .read_line(&mut line)
+            .expect("the reply arrives");
+        let reply: Value = serde_json::from_str(&line).expect("a JSON reply");
+        reply["result"].clone()
+    }
+
+    #[test]
+    #[ignore = "runs inside a pane of the parent test"]
+    fn ask_the_window_socket_who_this_pane_is() {
+        let Some(path) = std::env::var_os(CHILD_ENV) else {
+            return;
+        };
+        let answer = whoami_over(std::path::Path::new(&path));
+        println!(
+            "window whoami principal={} session={}",
+            answer["principal"].as_str().unwrap_or("none"),
+            answer["session"].as_str().unwrap_or("none")
+        );
+        std::thread::sleep(Duration::from_secs(30));
+    }
+
+    #[test]
+    fn the_window_socket_names_a_pane_caller_by_its_session_and_an_outside_caller_external() {
+        let home = tempfile::tempdir().expect("a home");
+        let host_endpoint = home.path().join("host.sock");
+        let host = paneflow_host::SessionHost::open(home.path(), &host_endpoint).expect("a host");
+        let host_server =
+            paneflow_host::ServerHandle::spawn(Arc::clone(&host), host_endpoint.clone())
+                .expect("the host serves");
+        let socket = home.path().join("window.sock");
+        let listener = bind_socket(&socket).expect("the window socket binds");
+        let classifier = Arc::new(paneflow_host::peer::PeerClassifier::new(
+            Some(host_endpoint.clone()),
+            Some(home.path().to_path_buf()),
+            WINDOW_CLASSIFY_CLIENT,
+        ));
+        std::thread::spawn(move || {
+            for _ in 0..2 {
+                let stream = listener.accept().expect("a client connects");
+                let classifier = Arc::clone(&classifier);
+                std::thread::spawn(move || {
+                    let (request_tx, _never_drained) = smol::channel::bounded(1);
+                    handle_connection(
+                        stream,
+                        request_tx,
+                        crate::ipc_events::EventBus::new(),
+                        Arc::new(AtomicUsize::new(0)),
+                        &classifier,
+                    );
+                });
+            }
+        });
+
+        assert_eq!(
+            whoami_over(&socket),
+            serde_json::json!({"principal": "external"})
+        );
+
+        let mut client = paneflow_host::HostClient::connect(
+            &host_endpoint,
+            &paneflow_host::ClientHello::local("window-identity-test"),
+        )
+        .expect("a host client");
+        let request = paneflow_host::CreateSession {
+            workspace: Some(paneflow_config::schema::WorkspaceId::new()),
+            shell: Some(
+                std::env::current_exe()
+                    .expect("the test binary")
+                    .display()
+                    .to_string(),
+            ),
+            args: [
+                CHILD_TEST,
+                "--exact",
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ]
+            .iter()
+            .map(|arg| arg.to_string())
+            .collect(),
+            env: [(CHILD_ENV.to_string(), socket.display().to_string())]
+                .into_iter()
+                .collect(),
+            cwd: Some(std::env::temp_dir().display().to_string()),
+            cols: Some(200),
+            rows: Some(40),
+            ..paneflow_host::CreateSession::default()
+        };
+        let session = client
+            .create(&request)
+            .expect("the pane starts")
+            .manifest
+            .session;
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        let text = loop {
+            let text = client.text(&session).expect("the pane text").text;
+            if text.contains("window whoami principal=") {
+                break text;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the pane never answered: {text}"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        assert!(
+            text.contains(&format!("window whoami principal=pane session={session}")),
+            "{text}"
+        );
+        let _ = host.request_shutdown(true);
+        host_server.stop().expect("the host stops");
     }
 }

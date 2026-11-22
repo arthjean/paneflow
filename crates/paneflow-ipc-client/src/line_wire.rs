@@ -81,6 +81,20 @@ impl Wire {
         }
     }
 
+    #[cfg(not(windows))]
+    pub fn socket_fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        use std::os::fd::AsFd;
+        match &self.writer {
+            Stream::UdSocket(stream) => stream.as_fd(),
+        }
+    }
+
+    #[cfg(windows)]
+    pub fn pipe_handle(&self) -> std::os::windows::io::BorrowedHandle<'_> {
+        use std::os::windows::io::AsHandle;
+        self.stream.pipe().as_handle()
+    }
+
     pub fn set_max_frame(&mut self, max_frame: usize) {
         self.max_frame = max_frame;
     }

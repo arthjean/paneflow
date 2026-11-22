@@ -1263,6 +1263,7 @@ impl SessionHost {
             launch,
             lifecycle: SessionLifecycle::Starting,
             process: None,
+            process_session: None,
             name: request.title.clone(),
             title: request.title.clone(),
             current_cwd: None,
@@ -1493,6 +1494,7 @@ impl SessionHost {
             guard.host_instance = self.identity.host_instance.clone();
             guard.lifecycle = SessionLifecycle::Starting;
             guard.process = None;
+            guard.process_session = None;
             guard.current_cwd = None;
             guard.last_hook = None;
             guard.generation_started_at_ms = Some(now_ms());
@@ -1871,6 +1873,7 @@ impl SessionHost {
                 launch_binding_for_command(&guard.launch.shell).map(|bound| bound.id.to_string());
             guard.runtime = with_launch_binding(guard.runtime.take(), binding);
             guard.process = Some(process);
+            guard.process_session = runtime.process_session();
             guard.lifecycle = if cancelled {
                 SessionLifecycle::Unverified {
                     reason: "the cancelled launch is being stopped".into(),
@@ -2424,6 +2427,36 @@ impl SessionHost {
         generation: Option<SessionGeneration>,
     ) -> Result<(), HostError> {
         self.with_live_runtime(session, generation, SessionRuntime::reset)
+    }
+
+    pub fn pane_leaders(&self) -> Vec<paneflow_peer::PaneLeader> {
+        let sessions = self.lock_sessions();
+        sessions
+            .iter()
+            .filter_map(|(session, record)| {
+                let manifest = record
+                    .manifest
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let process = manifest.process?;
+                Some(paneflow_peer::PaneLeader {
+                    session: session.to_string(),
+                    workspace: manifest.workspace.as_ref().map(ToString::to_string),
+                    pid: process.pid,
+                    started_at: process.started_at?,
+                    process_session: manifest.process_session,
+                    #[cfg(windows)]
+                    job: record
+                        .runtime
+                        .as_ref()
+                        .and_then(|runtime| runtime.pane_job()),
+                })
+            })
+            .collect()
+    }
+
+    pub fn classify_peer(&self, pid: u32, started_at: u64) -> paneflow_peer::Membership {
+        paneflow_peer::classify(pid, started_at, &self.pane_leaders())
     }
 
     pub fn live_sessions(&self) -> Vec<SessionSummary> {

@@ -13,6 +13,7 @@ use paneflow_ipc_client::line_wire::{LineRead, Wire};
 use serde_json::{Value, json};
 
 use crate::event_log::{Delivery, EventLog, Filter};
+use crate::layout_authority::ConnectionId;
 use crate::protocol::{
     DEFAULT_ACTIVITY_LOG_LIMIT, ERR_BUSY, ERR_EVICTED, ERR_FRAME_TOO_LARGE, ERR_HANDSHAKE_REQUIRED,
     ERR_INVALID_REQUEST, ERR_PARSE, MAX_CONTROL_FRAME_BYTES, METHOD_HOST_HELLO,
@@ -23,6 +24,7 @@ use crate::state::WorkerState;
 use crate::usage::Usage;
 use crate::usage::probe::{self, ProbeSlots};
 use paneflow_agent_config::usage::accounts::UsageAgent;
+use paneflow_api::Principal;
 
 const MAX_CONNECTIONS: usize = 128;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -48,9 +50,55 @@ pub struct Worker {
     pub config: Arc<crate::config_runtime::ConfigRuntime>,
     pub prompts: crate::prompts::PromptBroker,
     pub layout: Arc<crate::layout_authority::LayoutAuthority>,
+    pub classifier: paneflow_host::peer::PeerClassifier,
+    pub principals: Mutex<std::collections::HashMap<ConnectionId, Principal>>,
 }
 
+pub const WINDOW_LAYOUT_CLIENT: &str = "window";
+
 impl Worker {
+    fn lock_principals(
+        &self,
+    ) -> std::sync::MutexGuard<'_, std::collections::HashMap<ConnectionId, Principal>> {
+        self.principals
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub fn principal_of(&self, connection: ConnectionId) -> Principal {
+        if connection == ConnectionId::INTERNAL {
+            return Principal::Worker;
+        }
+        self.lock_principals()
+            .get(&connection)
+            .cloned()
+            .unwrap_or_else(|| Principal::Unverified {
+                reason: "the connection has not been classified".into(),
+            })
+    }
+
+    fn classify_connection(&self, connection: ConnectionId, wire: &Wire) {
+        let read = paneflow_host::peer::read_wire_peer(wire);
+        let principal = self.classifier.principal(&read, "worker");
+        self.lock_principals().insert(connection, principal);
+    }
+
+    fn attached_as(&self, connection: ConnectionId, client: Option<&str>) {
+        if client != Some(WINDOW_LAYOUT_CLIENT) {
+            return;
+        }
+        let mut principals = self.lock_principals();
+        if let Some(principal) = principals.get_mut(&connection)
+            && *principal == Principal::External
+        {
+            *principal = Principal::Window;
+        }
+    }
+
+    fn forget_connection(&self, connection: ConnectionId) {
+        self.lock_principals().remove(&connection);
+    }
+
     pub fn lock_usage(&self) -> std::sync::MutexGuard<'_, Usage> {
         self.usage.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -590,6 +638,7 @@ struct Attachment<'a> {
 impl Drop for Attachment<'_> {
     fn drop(&mut self) {
         self.worker.layout.disconnect(self.connection);
+        self.worker.forget_connection(self.connection);
     }
 }
 
@@ -665,6 +714,7 @@ fn handle_connection(mut wire: Wire, worker: Arc<Worker>, shutdown: Arc<AtomicBo
                 return;
             }
             greeted = true;
+            worker.classify_connection(attachment.connection, &wire);
             if wire
                 .write_json(&result_envelope(&id, worker.identity_value()))
                 .is_err()
@@ -771,6 +821,7 @@ pub(crate) fn register_methods(builder: RegistryBuilder) -> RegistryBuilder {
             to_value(worker.layout.view(call.params.unless_revision))
         })
         .ready::<layout::Attach>(|worker, call| {
+            worker.attached_as(call.connection, call.params.client.as_deref());
             to_value(worker.layout.attach(call.connection, call.params.client))
         })
         .ready::<layout::LeaseIds>(|worker, call| {
@@ -814,6 +865,9 @@ pub(crate) fn register_methods(builder: RegistryBuilder) -> RegistryBuilder {
             to_value(adopted)
         })
         .inline::<system::Describe>(|_, call| registry()?.describe(call.params.method.as_deref()))
+        .inline::<system::WhoAmI>(|worker, call| {
+            Ok(worker.principal_of(call.connection).whoami_value())
+        })
 }
 
 fn to_value(value: impl serde::Serialize) -> Result<Value, ServeError> {

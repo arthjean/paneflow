@@ -211,3 +211,36 @@ method! {
         })],
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WhoAmIResult {
+    #[schemars(description = "window, worker, pane, external or unverified")]
+    pub principal: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "The pane's session, for a pane principal")]
+    pub session: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "The pane's workspace, for a pane principal")]
+    pub workspace: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Why the calling process could not be identified")]
+    pub reason: Option<String>,
+}
+
+method! {
+    WhoAmI {
+        name: "system.whoami",
+        summary: "Say how the answering process identifies the caller: window, worker, pane, external or unverified.",
+        owner: WINDOW,
+        fallback: HOST_FALLBACK,
+        gate: Gate::Open,
+        reply: Reply::Inline,
+        params: NoParams,
+        result: WhoAmIResult,
+        examples: [
+            ({} => {"principal": "pane", "session": "123e4567-e89b-42d3-a456-426614174000", "workspace": "223e4567-e89b-42d3-a456-426614174000"}),
+            ({} => {"principal": "external"})
+        ],
+    }
+}

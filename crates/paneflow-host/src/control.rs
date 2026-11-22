@@ -786,6 +786,7 @@ mod tests {
                 },
                 lifecycle: SessionLifecycle::Running,
                 process: None,
+                process_session: None,
                 name: None,
                 title: title.map(str::to_string),
                 current_cwd: None,

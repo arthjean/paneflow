@@ -1,7 +1,7 @@
 use std::sync::{LazyLock, OnceLock};
 
 use gpui::Context;
-use paneflow_api::{Descriptor, Gate, Method, Owner, Reply, Spec};
+use paneflow_api::{Descriptor, Gate, Method, Owner, Principal, Reply, Spec};
 use serde_json::Value;
 
 use super::{IpcReply, JsonRpcError, ipc_orchestration_enabled, ipc_scripting_enabled};
@@ -19,7 +19,7 @@ type AppHandler = Box<
         + Sync,
 >;
 
-type InlineHandler = Box<dyn Fn(&Value) -> Value + Send + Sync>;
+type InlineHandler = Box<dyn Fn(&Value, &Principal) -> Value + Send + Sync>;
 
 enum Serve {
     Inline(InlineHandler),
@@ -50,12 +50,12 @@ impl Entry {
             .map_err(|violation| JsonRpcError::invalid_params(violation.message))
     }
 
-    pub(crate) fn answer_inline(&self, params: &Value) -> Value {
+    pub(crate) fn answer_inline(&self, params: &Value, caller: &Principal) -> Value {
         if let Err(error) = self.validate(params) {
             return error.into_value();
         }
         match &self.serve {
-            Serve::Inline(answer) => answer(params),
+            Serve::Inline(answer) => answer(params, caller),
             Serve::App(_) | Serve::Stream => JsonRpcError::method_not_found(format!(
                 "{} is not answered inline",
                 self.spec().name
@@ -127,7 +127,7 @@ impl RegistryBuilder {
     pub(crate) fn inline<M: Method>(self, answer: fn(Call<'_, M::Params>) -> Value) -> Self {
         self.push::<M>(
             Reply::Inline,
-            Serve::Inline(Box::new(move |raw| match decode::<M::Params>(raw) {
+            Serve::Inline(Box::new(move |raw, _| match decode::<M::Params>(raw) {
                 Ok(params) => answer(Call {
                     params,
                     raw,
@@ -135,6 +135,13 @@ impl RegistryBuilder {
                 }),
                 Err(error) => error.into_value(),
             })),
+        )
+    }
+
+    pub(crate) fn inline_for_caller<M: Method>(self, answer: fn(&Principal) -> Value) -> Self {
+        self.push::<M>(
+            Reply::Inline,
+            Serve::Inline(Box::new(move |_, caller| answer(caller))),
         )
     }
 
@@ -321,7 +328,7 @@ impl Registry {
         }
         match &entry.serve {
             Serve::App(handler) => handler(app, params, caller_pid, cx),
-            Serve::Inline(answer) => IpcReply::Ready(answer(params)),
+            Serve::Inline(answer) => IpcReply::Ready(answer(params, &Principal::Window)),
             Serve::Stream => IpcReply::Ready(
                 JsonRpcError::method_not_found(format!(
                     "{method} is a stream; open it on its own connection"
