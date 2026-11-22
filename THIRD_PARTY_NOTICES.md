@@ -275,3 +275,29 @@ left out the published tests, benches and dev-dependencies. It is dual licensed
 under MIT or Apache-2.0; both texts are in
 [vendor/cosmic-text/LICENSE-MIT](vendor/cosmic-text/LICENSE-MIT) and
 [vendor/cosmic-text/LICENSE-APACHE](vendor/cosmic-text/LICENSE-APACHE).
+
+## Pierre highlights lexers, the wasm2c runtime and SIMDe
+
+`crates/paneflow-highlights/c/` is written by
+`scripts/sync-pierre-highlights.sh` (or `.ps1`) from inputs pinned by hash in
+`crates/paneflow-highlights/c/MANIFEST.toml`. The notices of all three parts
+are in [crates/paneflow-highlights/c/NOTICE](crates/paneflow-highlights/c/NOTICE).
+
+- `c/generated/highlights.c` and `highlights.h` are the 152 lexers of the npm
+  package `@pierre/highlights` 0.5.2 (https://github.com/pierrecomputer/pierre,
+  `packages/highlights`), Copyright Pierre Computer Company, translated from its
+  `dist/highlights.wasm` to C by wasm2c 1.0.42, and
+  `crates/paneflow-highlights/src/tables.rs` holds its language and token
+  tables. Apache License 2.0; the full text is in
+  [crates/paneflow-highlights/c/generated/LICENSE](crates/paneflow-highlights/c/generated/LICENSE).
+- `c/wasm2c/` is the wasm2c runtime of WABT 1.0.42
+  (https://github.com/WebAssembly/wabt), Copyright the WebAssembly Community
+  Group participants. Apache License 2.0; the full text is in
+  [crates/paneflow-highlights/c/wasm2c/LICENSE](crates/paneflow-highlights/c/wasm2c/LICENSE).
+- `c/simde/wasm/simd128.h` is the amalgamated header of SIMDe 0.8.2
+  (https://github.com/simd-everywhere/simde, commit
+  `71fd833d9666141edcd1d3c109a80e228303d8d7`), Copyright Evan Nemerson and
+  contributors. MIT License; the full text is in
+  [crates/paneflow-highlights/c/simde/LICENSE](crates/paneflow-highlights/c/simde/LICENSE).
+
+The shim under `c/shim/` and the Rust crate around it are Paneflow's own.

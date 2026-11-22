@@ -1,0 +1,87 @@
+name = "@pierre/highlights"
+version = "0.5.2"
+license = "Apache-2.0"
+source_repository = "https://github.com/pierrecomputer/pierre"
+source_path = "packages/highlights"
+
+[package]
+url = "https://registry.npmjs.org/@pierre/highlights/-/highlights-0.5.2.tgz"
+integrity = "sha512-CV+yFa8dodaU3w7U42FR+AfoavrsfcH0/n3rckDu1A/UXan1Dzo6OdM/MPOAAsGM/EbKhDxD6k+qMcNUtnLfsg=="
+wasm = "package/dist/highlights.wasm"
+wasm_sha256 = "ee1152cd422c09f2ee5344370bf752e37a51385beaeb851be0023009962096e5"
+
+[wabt]
+version = "1.0.42"
+url = "https://github.com/WebAssembly/wabt/releases/download/1.0.42"
+linux_x64_sha256 = "84895407a6bbb80e918f33b16b2fb2206021c150b6bc9ff6f761263a745ab131"
+linux_arm64_sha256 = "a7632c1cc66f70886441842ecf5a2ffa91a98c79e026059458451234ad013ea8"
+macos_arm64_sha256 = "3f654779b436c628db3ca4323c51538815f5fbc887a6d5f3bb1c18d36281e240"
+windows_x64_sha256 = "62f1eb2b51aa57cf0f0b8ba333bf2c72a049930aa9c5de01dcad271c4fe48c88"
+license_url = "https://raw.githubusercontent.com/WebAssembly/wabt/1.0.42/LICENSE"
+license_sha256 = "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+
+[simde]
+version = "0.8.2"
+commit = "71fd833d9666141edcd1d3c109a80e228303d8d7"
+url = "https://github.com/simd-everywhere/simde/releases/download/v0.8.2/simde-amalgamated-0.8.2.tar.xz"
+sha256 = "59068edc3420e75c5ff85ecfd80a77196fb3a151227a666cc20abb313a5360bf"
+header = "simde-amalgamated-0.8.2/wasm/simd128.h"
+header_sha256 = "f15c79463673bf931159808a26853a50ada8ff6d4282e0a01206e601628089b8"
+license_url = "https://raw.githubusercontent.com/simd-everywhere/simde/71fd833d9666141edcd1d3c109a80e228303d8d7/COPYING"
+license_sha256 = "75ce0a8c5a7bff42fbd6f8f3b469b518132132c4f4948fb8d02b1ccb5d0df9d8"
+
+[[files]]
+path = "c/generated/highlights.c"
+sha256 = "7ca3553b73148c317ac0a83361e2d10e641591475b2f52dc27ad1e030c7f047f"
+
+[[files]]
+path = "c/generated/highlights.h"
+sha256 = "162aac92dc193c95d242c87dde3bc026297f6f71ef2af0a22f8efff53a0f0107"
+
+[[files]]
+path = "c/generated/LICENSE"
+sha256 = "13d92be18d5ceac526f33cc96b6902a14d168f3e1d4b16be738f0fa70da7fe98"
+
+[[files]]
+path = "c/NOTICE"
+sha256 = "45baedb498cd026124c920e94659e1572bf1a66d7e1b586404e737948a569256"
+
+[[files]]
+path = "c/wasm2c/wasm-rt.h"
+sha256 = "8905fa9c64101ca20702368d0202cd0172ea83a596c5568db135402f82fcde57"
+
+[[files]]
+path = "c/wasm2c/wasm-rt-impl.h"
+sha256 = "dd8fbe19ba42258bb3a235017b82399c63fead4c932ad45197e77ca75b00d562"
+
+[[files]]
+path = "c/wasm2c/wasm-rt-impl.c"
+sha256 = "2f14845b510f331e48ffc747304b34ccd80b19d91b67fa3a568bcf0ebfde5301"
+
+[[files]]
+path = "c/wasm2c/wasm-rt-impl-tableops.inc"
+sha256 = "5debdc8ca347b7ca0fb763be3fdd3683e4824579f8f2eba84aa5de54ec040cd0"
+
+[[files]]
+path = "c/wasm2c/wasm-rt-mem-impl.c"
+sha256 = "1deec12ce672fa17dcd35844a9f36b16b649c4eff3d984fcd1a62ea023ff9719"
+
+[[files]]
+path = "c/wasm2c/wasm-rt-mem-impl-helper.inc"
+sha256 = "cb830e338448fafb4fa09a2013ecb11b45c6ff5ffd09eca3f72bffaf1cf63583"
+
+[[files]]
+path = "c/wasm2c/LICENSE"
+sha256 = "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+
+[[files]]
+path = "c/simde/wasm/simd128.h"
+sha256 = "f15c79463673bf931159808a26853a50ada8ff6d4282e0a01206e601628089b8"
+
+[[files]]
+path = "c/simde/LICENSE"
+sha256 = "75ce0a8c5a7bff42fbd6f8f3b469b518132132c4f4948fb8d02b1ccb5d0df9d8"
+
+[[files]]
+path = "src/tables.rs"
+sha256 = "707042c00d2c83a63b4ea7ff31201f6f34ddd368e16ddfce132c715463140903"

@@ -7,3 +7,8 @@ src-app/src/diff/queries/** text eol=lf
 src-app/src/diff/fixtures/*.scm text eol=lf
 scripts/sync-zed-queries.sh text eol=lf
 scripts/sync-zed-queries.ps1 text eol=lf
+
+crates/paneflow-highlights/c/** text eol=lf
+crates/paneflow-highlights/src/tables.rs text eol=lf
+scripts/sync-pierre-highlights.sh text eol=lf
+scripts/sync-pierre-highlights.ps1 text eol=lf
