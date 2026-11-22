@@ -66,6 +66,7 @@ fn configured(root: &Path) -> cc::Build {
     }
     if build.get_compiler().is_like_msvc() {
         build.flag("/std:c11");
+        build.flag("/experimental:c11atomics");
     } else {
         build.flag("-std=c11");
     }
