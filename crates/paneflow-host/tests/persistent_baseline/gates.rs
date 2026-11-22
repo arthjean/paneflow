@@ -294,6 +294,27 @@ pub(super) const BUDGETS: &[Budget] = &[
         scenario: &TERMINAL_SUITE,
         margin: "no margin: a simulated clock makes the count exact; measured 250",
     },
+    Budget {
+        counter: "editor.open_to_first_color_300kb_p95_ms",
+        limit: Limit::AtMost(3.0),
+        unit: "ms",
+        scenario: &EDITOR_SUITE,
+        margin: "layer 1 colors the first viewport inside the open (EP-003); p95 0.54 ms in release on a Ryzen 7 7800X3D, so 3 ms leaves 5x for the runner class, and still fails a layer 1 that lexes the whole file before the first frame (4.5 ms there) on a runner 1.5x slower, or a first color that waits for the tree (19 ms)",
+    },
+    Budget {
+        counter: "editor.lexical_comment_out_300kb_ui_p95_ms",
+        limit: Limit::AtMost(1.0),
+        unit: "ms",
+        scenario: &EDITOR_SUITE,
+        margin: "an unterminated /* at the top of 300 KB of Rust costs the render thread its edit tail and the first viewport, not the file; p95 0.059 ms on a Ryzen 7 7800X3D, against 2.3 ms when the keystroke spent its budget relexing toward the end of the file",
+    },
+    Budget {
+        counter: "editor.lexical_memory_10mib_per_input_byte",
+        limit: Limit::Below(8.0),
+        unit: "bytes per input byte",
+        scenario: &EDITOR_SUITE,
+        margin: "assumption A4 of the layered highlighting PRD: past 8 layer 1 needs its own cap below the 10 MiB editor cap (US-015); measured 7.16 on the bench corpus, deterministic for a fixed corpus",
+    },
 ];
 
 #[derive(Clone, Debug, PartialEq)]
@@ -750,7 +771,7 @@ mod tests {
         let verdicts = verify(BUDGETS, &measurements);
         let report = failure_report(&verdicts).expect("an overrun fails the verifier");
         assert!(
-            report.starts_with("2 of 26 performance budgets failed\ncounter | measured | budget | excess | scenario\n"),
+            report.starts_with("2 of 29 performance budgets failed\ncounter | measured | budget | excess | scenario\n"),
             "{report}"
         );
         assert!(
@@ -771,7 +792,7 @@ mod tests {
         );
         let summary = markdown(&verdicts);
         assert!(
-            summary.contains("26 budgets, 2 failed, 0 not measured."),
+            summary.contains("29 budgets, 2 failed, 0 not measured."),
             "{summary}"
         );
         assert!(

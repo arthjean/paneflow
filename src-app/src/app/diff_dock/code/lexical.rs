@@ -577,6 +577,14 @@ impl LexicalLayer {
     }
 
     #[cfg(test)]
+    pub(crate) fn linear_bytes(&self) -> usize {
+        match &self.state {
+            LexState::Ready(lexed) => lexed.memory_bytes(),
+            LexState::Pending => 0,
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn retained_bytes(&self) -> usize {
         let document = match &self.state {
             LexState::Ready(lexed) => lexed.memory_bytes(),

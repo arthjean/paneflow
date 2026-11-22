@@ -1143,6 +1143,7 @@ fn perf_gates() {
     measurements["status_line_relay"] = gate_runs::status_line(&inputs, &mut values);
     measurements["desktop_startup"] = gate_runs::startup(&inputs, &mut values);
     measurements["terminal_trickle"] = gate_runs::trickle(&inputs, &mut values);
+    measurements["editor_layer1"] = gate_runs::editor_layer1(&inputs, &mut values);
     drop(worker);
     let mut decisions = Vec::new();
     let fixtures = shutdown_host(

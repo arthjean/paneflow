@@ -802,6 +802,60 @@ pub(super) fn trickle(inputs: &Path, values: &mut Values) -> Value {
     json!({"result": path.display().to_string(), "measurement": format!("{measurement:?}")})
 }
 
+type SuiteReading = fn(&Value) -> Option<f64>;
+
+fn p95_ms(metric: &Value) -> Option<f64> {
+    Some(metric["p95"].as_f64()? / 1_000_000.0)
+}
+
+fn plain_value(metric: &Value) -> Option<f64> {
+    metric["value"].as_f64()
+}
+
+pub(super) const EDITOR_LAYER1_COUNTERS: [(&str, &str, SuiteReading); 3] = [
+    (
+        "editor.open_to_first_color_300kb_p95_ms",
+        "open_to_first_color_300kb",
+        p95_ms,
+    ),
+    (
+        "editor.lexical_comment_out_300kb_ui_p95_ms",
+        "lexical_comment_out_300kb_ui",
+        p95_ms,
+    ),
+    (
+        "editor.lexical_memory_10mib_per_input_byte",
+        "lexical_memory_10mib_per_input_byte",
+        plain_value,
+    ),
+];
+
+pub(super) fn editor_layer1(inputs: &Path, values: &mut Values) -> Value {
+    let path = inputs.join("editor.json");
+    let document = read_json(&path);
+    let mut report = serde_json::Map::new();
+    for (name, metric, read) in EDITOR_LAYER1_COUNTERS {
+        let measurement = match &document {
+            Err(error) => Measurement::Missing(format!(
+                "the editor suite wrote no result, so it failed or did not run: {error}"
+            )),
+            Ok(document) => match suite_metric(document, metric) {
+                None => Measurement::Missing(format!("the editor suite reported no {metric}")),
+                Some(found) if found["available"] == false => {
+                    Measurement::Missing(format!("{metric} is unavailable: {}", found["note"]))
+                }
+                Some(found) => read(found).map_or_else(
+                    || Measurement::Missing(format!("{metric} carries no measurement")),
+                    Measurement::Value,
+                ),
+            },
+        };
+        report.insert(name.to_string(), json!(format!("{measurement:?}")));
+        values.insert(name.to_string(), measurement);
+    }
+    json!({"result": path.display().to_string(), "measurements": report})
+}
+
 pub(super) fn allocation_baseline(suite: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../bench/baselines/linux-x86_64")
@@ -1020,6 +1074,35 @@ mod tests {
     }
 
     #[test]
+    fn the_layer_1_gauges_read_their_p95_in_ms_and_the_memory_ratio_as_is() {
+        let inputs = tempfile::tempdir().unwrap();
+        std::fs::write(
+            inputs.path().join("editor.json"),
+            json!({"metrics": [
+                {"metric": "open_to_first_color_300kb", "available": true, "value": 1.0, "p95": 1_500_000.0},
+                {"metric": "lexical_comment_out_300kb_ui", "available": false, "note": "skipped"},
+                {"metric": "lexical_memory_10mib_per_input_byte", "available": true, "value": 7.25},
+            ]})
+            .to_string(),
+        )
+        .unwrap();
+        let mut values = Values::new();
+        editor_layer1(inputs.path(), &mut values);
+        assert_eq!(
+            values["editor.open_to_first_color_300kb_p95_ms"],
+            Measurement::Value(1.5)
+        );
+        assert!(matches!(
+            &values["editor.lexical_comment_out_300kb_ui_p95_ms"],
+            Measurement::Missing(reason) if reason.contains("unavailable")
+        ));
+        assert_eq!(
+            values["editor.lexical_memory_10mib_per_input_byte"],
+            Measurement::Value(7.25)
+        );
+    }
+
+    #[test]
     fn a_suite_that_wrote_no_result_leaves_its_budgets_missing() {
         let empty = tempfile::tempdir().unwrap();
         let mut values = Values::new();
@@ -1028,7 +1111,8 @@ mod tests {
         status_line(empty.path(), &mut values);
         startup(empty.path(), &mut values);
         trickle(empty.path(), &mut values);
-        assert_eq!(values.len(), 7);
+        editor_layer1(empty.path(), &mut values);
+        assert_eq!(values.len(), 10);
         assert!(
             values
                 .values()

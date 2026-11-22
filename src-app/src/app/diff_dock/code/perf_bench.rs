@@ -34,8 +34,9 @@ use super::document::CodeDocument;
 use super::edit::{EditGroup, UndoHistory, disk_splices, splice};
 use super::element::{CODE_FONT_SIZE, CODE_ROW_HEIGHT, CodeScroll, ShapeCache};
 use super::highlight::{
-    CodeHighlighter, HIGHLIGHT_FRAME_BUDGET, HighlightOutcome, SYNC_PARSE_BUDGET,
+    CodeHighlighter, HIGHLIGHT_FRAME_BUDGET, HighlightOutcome, LineRuns, SYNC_PARSE_BUDGET,
 };
+use super::lexical::LexicalLayer;
 use super::rows::{RowMap, RowSlot};
 use super::wrap;
 
@@ -133,6 +134,9 @@ fn document(name: &str, text: &str) -> CodeDocument {
 fn parsed(doc: &CodeDocument, syntax: DiffSyntax) -> CodeHighlighter {
     let mut highlighter = CodeHighlighter::new(doc, syntax);
     highlighter.parse_initial_blocking(doc);
+    while highlighter.lexical_has_pending_scan() {
+        highlighter.lexical_idle_slice(doc, UNBOUNDED_BUDGET);
+    }
     highlighter
 }
 
@@ -206,6 +210,25 @@ fn open_scenarios(metrics: &mut Vec<Metric>, corpora: &Corpora) {
         },
     ));
     metrics.push(measure(
+        "open_to_first_color_300kb",
+        "the same 300 KB Rust file from the read to a first 60-row viewport with colors: layer 1 lexes it inside the open, so the tree is waited for only when layer 1 is off (PANEFLOW_BENCH_WITHOUT_LAYER1), where this equals open_to_first_tree_300kb",
+        1,
+        10,
+        || {
+            let doc = document("bench-300kb.rs", &corpora.highlighted_rust);
+            let mut highlighter = CodeHighlighter::new(&doc, dark());
+            let rows = 0..VIEWPORT_ROWS.min(doc.line_count());
+            if !viewport_colored(&highlighter, rows.clone()) {
+                if let Some(parse) = highlighter.initial_parse(&doc) {
+                    highlighter.apply_parsed(&doc, parse.run());
+                }
+                highlighter.fill_stale_rows(&doc, rows.clone(), Duration::from_millis(2));
+            }
+            assert!(viewport_colored(&highlighter, rows), "the first viewport is colored");
+            std::hint::black_box((doc, highlighter));
+        },
+    ));
+    metrics.push(measure(
         "open_2mb_to_text",
         "a 2 MB Rust file from the read to visible text: rope build, longest-line measure and the first 60-row viewport query while the initial parse is still in flight; US-030 budgets this under 50 ms",
         1,
@@ -231,6 +254,162 @@ fn open_scenarios(metrics: &mut Vec<Metric>, corpora: &Corpora) {
             let highlighter = CodeHighlighter::new(&doc, dark());
             std::hint::black_box((doc, highlighter));
         },
+    ));
+}
+
+fn viewport_colored(highlighter: &CodeHighlighter, rows: Range<usize>) -> bool {
+    let mut runs = LineRuns::new();
+    rows.into_iter().any(|row| {
+        highlighter.runs_into(row, &mut runs);
+        !runs.is_empty()
+    })
+}
+
+fn settle(layer: &mut LexicalLayer, doc: &CodeDocument) {
+    while layer.has_pending_scan() {
+        layer.idle_slice(doc, UNBOUNDED_BUDGET);
+    }
+}
+
+fn settled_layer(doc: &CodeDocument, syntax: &DiffSyntax) -> LexicalLayer {
+    let mut layer = LexicalLayer::open(doc, syntax).expect("a lexical layer");
+    settle(&mut layer, doc);
+    layer
+}
+
+fn lexical_scenarios(metrics: &mut Vec<Metric>, corpora: &Corpora) {
+    let syntax = dark();
+    let doc = document("bench-300kb.rs", &corpora.highlighted_rust);
+    if LexicalLayer::open(&doc, &syntax).is_none() {
+        println!(
+            "PANEFLOW_BENCH_SKIP lexical scenarios: layer 1 is off ({})",
+            super::lexical::DISABLE_ENV
+        );
+        return;
+    }
+    metrics.push(measure(
+        "lexical_open_300kb",
+        "layer 1 opens the 300 KB Rust file: the text staged into a fresh lexer and its first rows scanned and packed, the work open_blocking adds before the first frame",
+        2,
+        20,
+        || {
+            std::hint::black_box(LexicalLayer::open(&doc, &syntax).expect("a lexical layer"));
+        },
+    ));
+    metrics.push(measure(
+        "lexical_full_300kb",
+        "layer 1 colors the whole 300 KB Rust file: the open, then idle slices until the scan reaches the end; the slices run on the render thread between frames, at most IDLE_SLICE_BUDGET each",
+        2,
+        20,
+        || {
+            std::hint::black_box(settled_layer(&doc, &syntax));
+        },
+    ));
+
+    let heap_before = live_bytes();
+    let layer = settled_layer(&doc, &syntax);
+    let heap = (live_bytes() - heap_before).max(0) as f64;
+    metrics.push(Metric::count(
+        "lexical_memory_300kb",
+        "bytes",
+        heap + layer.linear_bytes() as f64,
+        "bytes layer 1 holds for the 300 KB Rust file once its scan reached the end: the lexer's linear memory plus the Rust heap of its line index and of the packed runs of every row",
+    ));
+
+    let span = doc.line_count().saturating_sub(VIEWPORT_ROWS).max(1);
+    let mut index = 0usize;
+    let mut runs = LineRuns::new();
+    metrics.push(measure(
+        "lexical_viewport_60_rows",
+        "the layer-1 runs of one 60-row viewport of the 300 KB Rust file resolved to colors at the same pseudo-random rows as viewport_query_60_rows: the paint-time cost of a row layer 2 has not covered",
+        5,
+        200,
+        || {
+            index += 1;
+            let first = stride(index, span);
+            let mut count = 0usize;
+            for row in first..first + VIEWPORT_ROWS {
+                runs.clear();
+                layer.push_runs(row, 0..usize::MAX, &mut runs);
+                count += runs.len();
+            }
+            std::hint::black_box(count);
+        },
+    ));
+    drop(layer);
+
+    let mut doc = document("bench-300kb.rs", &corpora.highlighted_rust);
+    let mut layer = settled_layer(&doc, &syntax);
+    let mut index = 0usize;
+    metrics.push(measure_segments(
+        "lexical_keystroke",
+        "one inserted character at a pseudo-random row of the 300 KB Rust file in layer 1 of the editor: the runs shifted, the edit staged and the lexer rescanned from the edited row to 64 rows past it, the render-thread work layer 1 adds to keystroke_to_runs; the splice and the idle slices that finish any longer scan are excluded",
+        5,
+        200,
+        |timer| {
+            index += 1;
+            let row = stride(index, doc.line_count());
+            let offset = doc.line_to_byte(row);
+            let Some(applied) = splice(&mut doc, offset..offset, "x") else {
+                return;
+            };
+            timer.time(|| layer.edit(&doc, std::slice::from_ref(&applied.edit), SYNC_PARSE_BUDGET));
+            settle(&mut layer, &doc);
+        },
+    ));
+
+    let mut flip = false;
+    metrics.push(measure_segments(
+        "lexical_comment_out_300kb_ui",
+        "an unterminated /* typed, then removed, at the top of the 300 KB Rust file in layer 1: the edit plus the fill of the first 60-row viewport, the render-thread work before the frame that shows it; the idle slices that recolor the rest of the file are excluded",
+        2,
+        40,
+        |timer| {
+            flip = !flip;
+            let applied = if flip {
+                splice(&mut doc, 0..0, "/*")
+            } else {
+                splice(&mut doc, 0..2, "")
+            };
+            let Some(applied) = applied else {
+                return;
+            };
+            timer.time(|| {
+                layer.edit(&doc, std::slice::from_ref(&applied.edit), SYNC_PARSE_BUDGET);
+                layer.fill(
+                    &doc,
+                    0..VIEWPORT_ROWS,
+                    Instant::now() + HIGHLIGHT_FRAME_BUDGET,
+                );
+            });
+            settle(&mut layer, &doc);
+        },
+    ));
+
+    let large = document("bench-10mib.rs", &rust_source(super::load::MAX_FILE_BYTES));
+    let heap_before = live_bytes();
+    let mut layer = LexicalLayer::open(&large, &syntax).expect("a lexical layer");
+    let job = layer
+        .job(&large)
+        .expect("a file past the cap lexes in a job");
+    let installed = matches!(
+        layer.apply(&large, job.run()),
+        super::lexical::Applied::Installed
+    );
+    let heap = (live_bytes() - heap_before).max(0) as f64;
+    let retained = heap + layer.linear_bytes() as f64;
+    assert!(installed, "the 10 MiB file lexed inside the memory ceiling");
+    metrics.push(Metric::count(
+        "lexical_memory_10mib",
+        "bytes",
+        retained,
+        "bytes layer 1 holds for a 10 MiB Rust file, the editor cap, once its background lex is installed: the lexer's linear memory plus the Rust heap of its line index and of the packed runs of every row (US-015, assumption A4)",
+    ));
+    metrics.push(Metric::count(
+        "lexical_memory_10mib_per_input_byte",
+        "ratio",
+        retained / large.len_bytes() as f64,
+        "lexical_memory_10mib divided by the file size; US-015 caps layer 1 below the editor cap only if this passes 8",
     ));
 }
 
@@ -1309,6 +1488,7 @@ fn editor_pipeline_benchmark() {
     plain_keystroke_scenario(&mut metrics, &corpora);
     viewport_scenario(&mut metrics, &corpora);
     lexer_engine_scenarios(&mut metrics, &corpora);
+    lexical_scenarios(&mut metrics, &corpora);
     wrap_scenarios(&mut metrics, &corpora);
     fill_stale_scenario(&mut metrics, &corpora);
     pagedown_scenario(&mut metrics, &corpora);
@@ -1388,6 +1568,18 @@ fn open_instruction_cases(corpora: &Corpora) {
     instruction_case("open_markdown_injected", || {
         let doc = document("bench-inline.md", &corpora.markdown);
         let highlighter = CodeHighlighter::new(&doc, dark());
+        std::hint::black_box((doc, highlighter));
+    });
+    instruction_case("open_to_first_color_300kb", || {
+        let doc = document("bench-300kb.rs", &corpora.highlighted_rust);
+        let mut highlighter = CodeHighlighter::new(&doc, dark());
+        let rows = 0..VIEWPORT_ROWS.min(doc.line_count());
+        if !viewport_colored(&highlighter, rows.clone())
+            && let Some(parse) = highlighter.initial_parse(&doc)
+        {
+            highlighter.apply_parsed(&doc, parse.run());
+            highlighter.fill_stale_rows(&doc, rows, UNBOUNDED_BUDGET);
+        }
         std::hint::black_box((doc, highlighter));
     });
     instruction_case("open_to_first_tree_300kb", || {
