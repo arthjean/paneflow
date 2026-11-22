@@ -7,6 +7,8 @@ mod hit_test;
 mod hscroll;
 #[cfg(test)]
 pub(crate) mod parity_tests;
+#[cfg(test)]
+mod query_guard;
 mod row_syntax;
 mod rows;
 mod syntax;
