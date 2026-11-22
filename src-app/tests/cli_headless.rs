@@ -3,10 +3,14 @@
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 
-use serde_json::{Value, json};
+use serde_json::Value;
+#[cfg(unix)]
+use serde_json::json;
 
+#[cfg(unix)]
 const SETTLE: Duration = Duration::from_secs(30);
 
 fn paneflow(home: &Path, args: &[&str]) -> (i32, Value, String) {
@@ -25,6 +29,7 @@ fn paneflow(home: &Path, args: &[&str]) -> (i32, Value, String) {
     (output.status.code().unwrap_or(-1), value, stderr)
 }
 
+#[cfg(unix)]
 fn ok(home: &Path, args: &[&str]) -> Value {
     let (code, value, stderr) = paneflow(home, args);
     assert_eq!(code, 0, "paneflow {args:?} failed: {stderr}");
