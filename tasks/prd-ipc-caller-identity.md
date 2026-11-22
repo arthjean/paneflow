@@ -160,10 +160,10 @@ Every connection on the window, the worker and the host carries a principal the 
 **Dependencies:** Blocked by US-001
 
 **Acceptance Criteria:**
-- [ ] Given a Unix socket connection on macOS 13 or later, when the peer is read, then the identity comes from the `LOCAL_PEERTOKEN` audit token
-- [ ] Given that identity, when the executable is needed, then it comes from `proc_pidpath_audittoken`
-- [ ] Given `getsockopt(LOCAL_PEERTOKEN)` failing, when the peer is read, then the result is `Unverified` with the OS error, and the PID from `LOCAL_PEERPID` is not used alone
-- [ ] Given the CI macOS job, when it runs, then the macOS reader compiles and its unit tests pass
+- [x] Given a Unix socket connection on macOS 13 or later, when the peer is read, then the identity comes from the `LOCAL_PEERTOKEN` audit token
+- [x] Given that identity, when the executable is needed, then it comes from `proc_pidpath_audittoken`
+- [x] Given `getsockopt(LOCAL_PEERTOKEN)` failing, when the peer is read, then the result is `Unverified` with the OS error, and the PID from `LOCAL_PEERPID` is not used alone
+- [x] Given the CI macOS job, when it runs, then the macOS reader compiles and its unit tests pass
 
 #### US-003: Read a peer identity on Windows
 **Description:** As the maintainer, I want the same function for named pipes, so that Windows decisions rest on a process handle and not on a reported PID.
@@ -172,11 +172,11 @@ Every connection on the window, the worker and the host carries a principal the 
 **Dependencies:** Blocked by US-001
 
 **Acceptance Criteria:**
-- [ ] Given a named-pipe connection, when the peer is read, then the PID comes from `GetNamedPipeClientProcessId` and a process handle is opened before the first request is handled
-- [ ] Given that handle, when the identity is built, then it records the process creation time from `GetProcessTimes`
-- [ ] Given the impersonated client token, when its user SID differs from the server's, then the identity is `Unverified`
-- [ ] Given `OpenProcess` failing, when the peer is read, then the result is `Unverified` with the OS error
-- [ ] Given the code, when the `Windows x86_64 libghostty check` job runs, then it compiles and lints with `-D warnings`
+- [x] Given a named-pipe connection, when the peer is read, then the PID comes from `GetNamedPipeClientProcessId` and a process handle is opened before the first request is handled
+- [x] Given that handle, when the identity is built, then it records the process creation time from `GetProcessTimes`
+- [x] Given the impersonated client token, when its user SID differs from the server's, then the identity is `Unverified`
+- [x] Given `OpenProcess` failing, when the peer is read, then the result is `Unverified` with the OS error
+- [x] Given the code, when the `Windows x86_64 libghostty check` job runs, then it compiles and lints with `-D warnings`
 
 #### US-004: Decide pane membership on Linux and macOS
 **Description:** As the maintainer, I want the host to know whether a peer runs inside a pane and which one, so that membership is a fact the host attests.
@@ -200,11 +200,11 @@ Every connection on the window, the worker and the host carries a principal the 
 **Dependencies:** Blocked by US-003
 
 **Acceptance Criteria:**
-- [ ] Given a session spawned on Windows, when its child starts, then the child is assigned to a new Job Object with breakaway disabled
-- [ ] Given a process of that tree, when it is classified, then `IsProcessInJob` on the pane's job makes the answer `Pane`
-- [ ] Given the job assignment failing, when the session starts, then the session still starts and the failure is logged once with the OS error
-- [ ] Given a pane whose assignment failed, when one of its processes is classified, then membership comes from the parent chain of a process snapshot
-- [ ] Given the pane's session ending, when the host releases it, then the job handle is closed
+- [x] Given a session spawned on Windows, when its child starts, then the child is assigned to a new Job Object with breakaway disabled
+- [x] Given a process of that tree, when it is classified, then `IsProcessInJob` on the pane's job makes the answer `Pane`
+- [x] Given the job assignment failing, when the session starts, then the session still starts and the failure is logged once with the OS error
+- [x] Given a pane whose assignment failed, when one of its processes is classified, then membership comes from the parent chain of a process snapshot
+- [x] Given the pane's session ending, when the host releases it, then the job handle is closed
 
 #### US-006: Serve `peer.classify` from the host
 **Description:** As the maintainer, I want the window and the worker to ask the host whether a peer is in a pane, so that the three servers agree on one answer.
@@ -217,7 +217,7 @@ Every connection on the window, the worker and the host carries a principal the 
 - [x] Given a PID whose live start time differs from the one sent, when the host answers, then the reply is `{"in_pane": false, "stale": true}`
 - [x] Given a caller of `peer.classify` that is itself `Pane`, when it calls, then it is refused with reason `principal_refused`
 - [x] Given the host unreachable on Linux or macOS, when the worker or the window classifies a peer, then it classifies from the session manifests in the home
-- [ ] Given the host unreachable on Windows, when the worker or the window classifies a peer, then the principal is `Unverified`
+- [x] Given the host unreachable on Windows, when the worker or the window classifies a peer, then the principal is `Unverified`
 - [x] Given `peer.classify`, when the catalog is listed, then it is declared with owner `host` and its schema is in `protocol/api-v1.json`
 
 #### US-007: Give every connection a principal and answer `system.whoami`
@@ -235,7 +235,7 @@ Every connection on the window, the worker and the host carries a principal the 
 - [x] Given a `Pane` peer of the host whose hello claims an engine, when it is classified, then its principal stays `Pane`
 - [x] Given `system.whoami` on any of the three servers, when it answers, then it returns the principal kind and, for `Pane`, the session id and workspace id
 - [x] Given a peer whose identity read returned `Unverified`, when it calls `system.whoami`, then the answer is `unverified`
-- [ ] Given a classification, when it completes, then a debug line records the principal and the time the classification took
+- [x] Given a classification, when it completes, then a debug line records the principal and the time the classification took
 
 ---
 
