@@ -103,7 +103,41 @@ std::string greet(const std::string &name) { return "hi " + name; }
         "sample.js",
         "// comment\nexport function greet(name) { const count = 3; return <div title=\"hi\">{name + count}</div>; }\n",
     ),
+    (
+        "sample.zig",
+        r#"//! Geometry helpers.
+const std = @import("std");
+const MAX_LEN: usize = 64;
+/// A point in the plane.
+const Point = struct {
+    x: f32,
+    y: f32,
+    fn len(self: Point) f32 {
+        return @sqrt(self.x * self.x + self.y * self.y);
+    }
+};
+pub fn main() !void {
+    var list = std.ArrayList(u8).init(std.heap.page_allocator);
+    defer list.deinit();
+    const p = Point{ .x = 1.5, .y = 2 };
+    try list.append('a');
+    for (0..MAX_LEN) |i| {
+        if (i > 3) break;
+    }
+    std.debug.print("len {d}\n", .{p.len()});
+}
+"#,
+    ),
 ];
+
+const ZON_SAMPLE: &str = r#".{
+    .name = .paneflow,
+    .version = "0.1.0",
+    .fingerprint = 0x1234abcd,
+    .lazy = true,
+    .paths = .{ "build.zig", "src" },
+}
+"#;
 
 fn captures(grammar: &'static Grammar, text: &str) -> Vec<(Range<usize>, &'static str)> {
     let mut parser = Parser::new();
@@ -260,6 +294,7 @@ compiles!(yaml_query_compiles, "yaml");
 compiles!(css_query_compiles, "css");
 compiles!(c_query_compiles, "c");
 compiles!(cpp_query_compiles, "cpp");
+compiles!(zig_query_compiles, "zig");
 
 #[test]
 fn markdown_inline_query_compiles() {
@@ -275,6 +310,7 @@ fn extension_aliases_select_the_intended_query() {
         vec!["md", "markdown", "mdx"],
         vec!["c", "h"],
         vec!["cpp", "cc", "cxx", "hpp", "hh", "hxx"],
+        vec!["zig", "zon"],
     ] {
         let first = grammar_for_ext(group[0]).unwrap();
         for ext in group {
@@ -319,6 +355,7 @@ fn stock_queries_report_every_same_node_priority_change() {
             ),
             "java" => tree_sitter_java::HIGHLIGHTS_QUERY.to_owned(),
             "rb" => tree_sitter_ruby::HIGHLIGHTS_QUERY.to_owned(),
+            "zig" => tree_sitter_zig::HIGHLIGHTS_QUERY.to_owned(),
             _ => unreachable!(),
         };
         let language = grammar_for_ext(ext).unwrap().language.clone();
@@ -597,6 +634,16 @@ fn token_expectations_cover_every_vendored_language() {
                 ("#include", "keyword.preproc"),
             ],
         ),
+        (
+            "zig",
+            &[
+                ("Point", "type"),
+                ("len", "function.definition"),
+                ("MAX_LEN", "constant"),
+                ("f32", "type.builtin"),
+                ("\"std\"", "string"),
+            ],
+        ),
     ];
     for (ext, expected) in cases {
         let (_, text) = CORPUS
@@ -627,4 +674,74 @@ fn token_expectations_cover_every_vendored_language() {
                 .any(|(span, actual)| *actual == class && text[span.clone()].contains(token))
         );
     }
+}
+
+fn class_at(bytes: &[Option<&'static str>], text: &str, token: &str) -> Option<&'static str> {
+    bytes[text.find(token).unwrap()]
+}
+
+fn resolved_classes(ext: &str, text: &str) -> Vec<Option<&'static str>> {
+    let syntax = DiffSyntax::from_theme(&paneflow_dark());
+    let mut raw = captures(grammar_for_ext(ext).unwrap(), text);
+    raw.retain(|(_, name)| syntax.color_for_capture(name).is_some());
+    oracle(&raw, text.len())
+}
+
+#[test]
+fn zig_tokens_resolve_to_the_zed_extension_classes() {
+    let (_, text) = CORPUS
+        .iter()
+        .find(|(name, _)| *name == "sample.zig")
+        .unwrap();
+    let bytes = resolved_classes("zig", text);
+    for (token, class) in [
+        ("//! Geometry", "comment.documentation"),
+        ("/// A point", "comment.documentation"),
+        ("MAX_LEN", "constant"),
+        ("Point", "type"),
+        ("struct", "keyword.type"),
+        ("len(self", "function.definition"),
+        ("self:", "variable.parameter"),
+        ("f32", "type.builtin"),
+        ("@import", "keyword.import"),
+        ("\"std\"", "string"),
+        ("'a'", "string"),
+        ("64", "number"),
+        ("1.5", "number.float"),
+        ("try list", "keyword.exception"),
+        ("defer", "keyword"),
+        ("for", "keyword.repeat"),
+        ("i|", "variable"),
+        ("if", "keyword.conditional"),
+        ("deinit", "function.call"),
+    ] {
+        assert_eq!(class_at(&bytes, text, token), Some(class), "{token}");
+    }
+    let syntax = DiffSyntax::from_theme(&paneflow_dark());
+    let palette = paneflow_dark().syntax;
+    assert_eq!(
+        syntax.color_for_capture("comment.documentation"),
+        Some(palette.comment_doc)
+    );
+    let rendered = highlight_lines(text, "zig", &syntax);
+    assert_eq!(rendered[0][0], (0..21, palette.comment_doc));
+}
+
+#[test]
+fn zon_manifests_keep_their_token_classes() {
+    let bytes = resolved_classes("zon", ZON_SAMPLE);
+    for (token, class) in [
+        ("name", "property"),
+        ("\"0.1.0\"", "string"),
+        ("0x1234abcd", "number"),
+        ("true", "boolean"),
+    ] {
+        assert_eq!(class_at(&bytes, ZON_SAMPLE, token), Some(class), "{token}");
+    }
+    let raw = captures(grammar_for_ext("zon").unwrap(), ZON_SAMPLE);
+    assert!(
+        raw.iter()
+            .any(|(span, class)| *class == "property" && &ZON_SAMPLE[span.clone()] == "name")
+    );
+    assert_oracle(ZON_SAMPLE, "zon");
 }

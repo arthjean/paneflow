@@ -21,7 +21,7 @@ impl DiffSyntax {
 
     pub fn color_for_capture(&self, name: &str) -> Option<Hsla> {
         let p = &self.palette;
-        let c = if cap_has(name, "comment.doc") {
+        let c = if cap_has(name, "comment.doc") || cap_has(name, "comment.documentation") {
             p.comment_doc
         } else if cap_has(name, "comment") {
             p.comment
@@ -188,6 +188,7 @@ mod tests {
         let expected = [
             ("comment", Some(palette.comment)),
             ("comment.doc", Some(palette.comment_doc)),
+            ("comment.documentation", Some(palette.comment_doc)),
             ("attribute", Some(palette.attribute)),
             ("attribute.builtin", Some(palette.attribute)),
             ("attribute.jsx", Some(palette.attribute)),
@@ -214,7 +215,15 @@ mod tests {
             ("function.special", Some(palette.function)),
             ("function.special.definition", Some(palette.function)),
             ("keyword", Some(palette.keyword)),
+            ("keyword.conditional", Some(palette.keyword)),
             ("keyword.control", Some(palette.keyword)),
+            ("keyword.coroutine", Some(palette.keyword)),
+            ("keyword.exception", Some(palette.keyword)),
+            ("keyword.function", Some(palette.keyword)),
+            ("keyword.modifier", Some(palette.keyword)),
+            ("keyword.repeat", Some(palette.keyword)),
+            ("keyword.return", Some(palette.keyword)),
+            ("keyword.type", Some(palette.keyword)),
             ("keyword.declaration", Some(palette.keyword)),
             ("keyword.definition", Some(palette.keyword)),
             ("keyword.directive", Some(palette.keyword)),
@@ -229,6 +238,7 @@ mod tests {
             ("namespace", Some(palette.namespace)),
             ("module", Some(palette.namespace)),
             ("number", Some(palette.number)),
+            ("number.float", Some(palette.number)),
             ("operator", Some(palette.operator)),
             ("operator.spaceship", Some(palette.operator)),
             ("property", Some(palette.property)),
@@ -268,6 +278,7 @@ mod tests {
             ("type.name", Some(palette.r#type)),
             ("type.unit", Some(palette.r#type)),
             ("variable", Some(palette.variable)),
+            ("variable.member", Some(palette.variable)),
             ("variable.special", Some(palette.variable_builtin)),
             ("variable.builtin", Some(palette.variable_builtin)),
             ("strikethrough.markup", None),
@@ -288,7 +299,7 @@ mod tests {
         }
         let mut grammars: Vec<_> = [
             "rs", "json", "jsonc", "sh", "py", "ts", "tsx", "js", "md", "go", "yaml", "css", "c",
-            "cpp",
+            "cpp", "zig",
         ]
         .into_iter()
         .map(|ext| crate::diff::grammar_for_ext(ext).unwrap())

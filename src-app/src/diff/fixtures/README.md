@@ -30,8 +30,13 @@ The four retained stock queries are not reordered:
   query, without local-variable semantic analysis. Its closing brace takes the
   later punctuation.bracket class, consistent with other neutral delimiters.
 - HTML has no priority changes on the corpus.
+- Zig's stock query is audited as test data only: the runtime loads the Zed
+  extension query. Its `#lua-match?` predicates are never evaluated by the Rust
+  runtime, so the audit records identifiers such as `self`, `list`, `std` and
+  `i` ending as constant, which is the defect that rules the stock query out.
 
 The Zed C++ query adds concept and _parent to the deliberately unstyled captures;
 module uses the existing neutral namespace role. Zed at the pinned revision
 ignores the query's has-ancestor? predicate as well: syntax_map.rs only handles
 has-parent? and not-has-parent?. No new predicate interpreter is introduced.
+query_guard.rs names that predicate as the only accepted unevaluated one.
