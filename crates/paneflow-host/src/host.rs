@@ -39,6 +39,7 @@ pub const DEFAULT_SCROLLBACK_LINES: usize = 10_000;
 pub const MAX_PENDING_LAUNCHES: usize = 8;
 pub const LAUNCH_ADMISSION_DEADLINE: Duration = Duration::from_secs(5);
 pub const LAUNCH_RESPONSE_BUDGET: Duration = Duration::from_secs(9);
+pub const PEER_LAUNCH_SETTLE_DEADLINE: Duration = Duration::from_secs(2);
 const MAX_LAUNCH_ARGS: usize = 64;
 const MAX_LAUNCH_ENV_ENTRIES: usize = 256;
 const MAX_HOOK_RECEIPTS: usize = 16;
@@ -2430,33 +2431,55 @@ impl SessionHost {
     }
 
     pub fn pane_leaders(&self) -> Vec<paneflow_peer::PaneLeader> {
-        let sessions = self.lock_sessions();
-        sessions
-            .iter()
-            .filter_map(|(session, record)| {
-                let manifest = record
-                    .manifest
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                let process = manifest.process?;
-                Some(paneflow_peer::PaneLeader {
-                    session: session.to_string(),
-                    workspace: manifest.workspace.as_ref().map(ToString::to_string),
-                    pid: process.pid,
-                    started_at: process.started_at?,
-                    process_session: manifest.process_session,
-                    #[cfg(windows)]
-                    job: record
-                        .runtime
-                        .as_ref()
-                        .and_then(|runtime| runtime.pane_job()),
-                })
-            })
-            .collect()
+        leaders_of(&self.lock_sessions())
     }
 
     pub fn classify_peer(&self, pid: u32, started_at: u64) -> paneflow_peer::Membership {
-        paneflow_peer::classify(pid, started_at, &self.pane_leaders())
+        let (leaders, in_flight) = {
+            let sessions = self.lock_sessions();
+            (leaders_of(&sessions), launch_operations(&sessions))
+        };
+        let membership = paneflow_peer::classify(pid, started_at, &leaders);
+        if membership != paneflow_peer::Membership::NotInPane || in_flight.is_empty() {
+            return membership;
+        }
+        let leaders = match self.leaders_after_launches(&in_flight) {
+            Ok(leaders) => leaders,
+            Err(pending) => {
+                return paneflow_peer::Membership::Unverified {
+                    reason: format!(
+                        "{pending} pane launches that began before process {pid} was read were still unresolved after {PEER_LAUNCH_SETTLE_DEADLINE:?}"
+                    ),
+                };
+            }
+        };
+        paneflow_peer::classify(pid, started_at, &leaders)
+    }
+
+    fn leaders_after_launches(
+        &self,
+        in_flight: &[OperationId],
+    ) -> Result<Vec<paneflow_peer::PaneLeader>, usize> {
+        let deadline = Instant::now() + PEER_LAUNCH_SETTLE_DEADLINE;
+        let mut sessions = self.lock_sessions();
+        loop {
+            let pending = launch_operations(&sessions)
+                .into_iter()
+                .filter(|operation| in_flight.contains(operation))
+                .count();
+            if pending == 0 {
+                return Ok(leaders_of(&sessions));
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(pending);
+            }
+            sessions = self
+                .launch_slots
+                .wait_timeout(sessions, remaining)
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .0;
+        }
     }
 
     pub fn live_sessions(&self) -> Vec<SessionSummary> {
@@ -3104,6 +3127,38 @@ fn read_xt_checksum(home: &Path) -> Option<crate::runtime::XtChecksum> {
             None
         }
     }
+}
+
+fn leaders_of(sessions: &BTreeMap<SessionId, SessionRecord>) -> Vec<paneflow_peer::PaneLeader> {
+    sessions
+        .iter()
+        .filter_map(|(session, record)| {
+            let manifest = record
+                .manifest
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let process = manifest.process?;
+            Some(paneflow_peer::PaneLeader {
+                session: session.to_string(),
+                workspace: manifest.workspace.as_ref().map(ToString::to_string),
+                pid: process.pid,
+                started_at: process.started_at?,
+                process_session: manifest.process_session,
+                #[cfg(windows)]
+                job: record
+                    .runtime
+                    .as_ref()
+                    .and_then(|runtime| runtime.pane_job()),
+            })
+        })
+        .collect()
+}
+
+fn launch_operations(sessions: &BTreeMap<SessionId, SessionRecord>) -> Vec<OperationId> {
+    sessions
+        .values()
+        .filter_map(|record| record.launch.as_ref().map(|launch| launch.operation))
+        .collect()
 }
 
 #[cfg(test)]

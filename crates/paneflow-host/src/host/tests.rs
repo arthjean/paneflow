@@ -3168,3 +3168,61 @@ fn the_final_text_is_served_while_its_cold_write_is_still_queued() {
     let cold = host.text(&session).unwrap();
     assert!(cold.available && cold.text == text.text);
 }
+
+#[cfg(target_os = "linux")]
+fn children_of_this_process() -> Vec<u32> {
+    let mut children = Vec::new();
+    for task in std::fs::read_dir("/proc/self/task").unwrap().flatten() {
+        let listed = std::fs::read_to_string(task.path().join("children")).unwrap_or_default();
+        children.extend(
+            listed
+                .split_whitespace()
+                .filter_map(|pid| pid.parse::<u32>().ok()),
+        );
+    }
+    children
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_pane_leader_read_before_its_launch_commits_is_classified_as_that_pane() {
+    let home = tempfile::tempdir().unwrap();
+    let host = SessionHost::open(home.path(), Path::new("peer-launch-race")).unwrap();
+    let (reached, at_commit) = std::sync::mpsc::channel::<()>();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let gate = Arc::new(Mutex::new((reached, released)));
+    host.set_barrier(Arc::new(move |point| {
+        if point == Barrier::LaunchCommit {
+            let gate = gate.lock().unwrap();
+            let _ = gate.0.send(());
+            let _ = gate.1.recv();
+        }
+    }));
+    let create = {
+        let host = Arc::clone(&host);
+        std::thread::spawn(move || host.create(shell_request(80, 24)))
+    };
+    at_commit.recv().unwrap();
+    let leader = *children_of_this_process()
+        .first()
+        .expect("the pane shell is running before its launch commits");
+    let started_at = paneflow_peer::process_start_time(leader).unwrap();
+    assert!(host.pane_leaders().is_empty());
+    let classify = {
+        let host = Arc::clone(&host);
+        std::thread::spawn(move || host.classify_peer(leader, started_at))
+    };
+    std::thread::sleep(Duration::from_millis(100));
+    release.send(()).unwrap();
+    let created = create.join().unwrap().unwrap();
+    host.set_barrier(Arc::new(|_| {}));
+    assert_eq!(
+        classify.join().unwrap(),
+        paneflow_peer::Membership::Pane {
+            session: created.manifest.session.to_string(),
+            workspace: created.manifest.workspace.as_ref().map(ToString::to_string),
+        }
+    );
+    host.stop(&created.manifest.session, None).unwrap();
+    host.lock_sessions().clear();
+}
