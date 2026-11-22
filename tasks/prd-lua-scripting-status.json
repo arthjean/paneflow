@@ -73,10 +73,10 @@
     {
       "id": "EP-009",
       "title": "Agents ask and act",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 7,
-      "stories_done": 0
+      "stories_done": 7
     },
     {
       "id": "EP-010",
@@ -930,96 +930,96 @@
       "id": "US-064",
       "title": "Prove that a hook can answer",
       "epic": "EP-009",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-22",
+      "completed_at": "2026-11-22",
+      "reviewed_at": "2026-11-22"
     },
     {
       "id": "US-065",
       "title": "The `ask_human` tool",
       "epic": "EP-009",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-048"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-22",
+      "completed_at": "2026-11-22",
+      "reviewed_at": "2026-11-22"
     },
     {
       "id": "US-066",
       "title": "Show who is asking",
       "epic": "EP-009",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-065",
         "US-049"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-22",
+      "completed_at": "2026-11-22",
+      "reviewed_at": "2026-11-22"
     },
     {
       "id": "US-067",
       "title": "Answer an agent's own question from Paneflow",
       "epic": "EP-009",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-064",
         "US-066",
         "US-046"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-22",
+      "completed_at": "2026-11-22",
+      "reviewed_at": "2026-11-22"
     },
     {
       "id": "US-068",
       "title": "Answer a permission request from Paneflow",
       "epic": "EP-009",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "blocked_by": [
         "US-067"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-22",
+      "completed_at": "2026-11-22",
+      "reviewed_at": "2026-11-22"
     },
     {
       "id": "US-069",
       "title": "Actions as agent tools",
       "epic": "EP-009",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-037",
         "US-065",
         "US-066"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-22",
+      "completed_at": "2026-11-22",
+      "reviewed_at": "2026-11-22"
     },
     {
       "id": "US-070",
       "title": "Install and retire the new integrations",
       "epic": "EP-009",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-067",
         "US-069"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-22",
+      "completed_at": "2026-11-22",
+      "reviewed_at": "2026-11-22"
     },
     {
       "id": "US-071",
