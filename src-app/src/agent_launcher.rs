@@ -819,7 +819,7 @@ mod tests {
 
     #[test]
     fn catalog_tables_match_the_pre_catalog_reference() {
-        let reference: [(&str, &str, Option<&str>); 13] = [
+        let reference: [(&str, &str, Option<&str>); 14] = [
             (
                 "com.anthropic.claude-code",
                 "claude_code_button_visible",
@@ -845,6 +845,7 @@ mod tests {
             ("ai.openclaw.cli", "openclaw_button_visible", None),
             ("com.muse.code", "muse_button_visible", None),
             ("sh.fx.cli", "fx_button_visible", None),
+            ("com.google.antigravity", "antigravity_button_visible", None),
         ];
         let generated = TerminalAgent::all()
             .map(|agent| {
@@ -1049,7 +1050,7 @@ mod tests {
                 .all(|agent| agent.supports_current_platform())
         );
         if cfg!(windows) {
-            assert_eq!(builtins.len(), 5);
+            assert_eq!(builtins.len(), 6);
             assert_eq!(
                 TerminalAgent::from_tag("grok").map(TerminalAgent::display_name),
                 Some("Grok")
@@ -1111,7 +1112,14 @@ mod tests {
             TerminalAgent::on_platform(RuntimePlatform::Windows)
                 .map(|agent| agent.runtime().slug)
                 .collect::<Vec<_>>(),
-            ["claude-code", "codex", "amp", "gemini", "github-copilot"]
+            [
+                "claude-code",
+                "codex",
+                "amp",
+                "gemini",
+                "github-copilot",
+                "antigravity"
+            ]
         );
         let launcher = AgentLaunch::all(&PaneFlowConfig::default());
         assert_eq!(
