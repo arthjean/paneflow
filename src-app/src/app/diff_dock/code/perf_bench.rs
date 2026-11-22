@@ -140,6 +140,12 @@ fn parsed(doc: &CodeDocument, syntax: DiffSyntax) -> CodeHighlighter {
     highlighter
 }
 
+fn parsed_layer2(doc: &CodeDocument, syntax: DiffSyntax) -> CodeHighlighter {
+    let mut highlighter = CodeHighlighter::layer2_only(doc, syntax);
+    highlighter.parse_initial_blocking(doc);
+    highlighter
+}
+
 fn fill_windows(doc: &CodeDocument) -> usize {
     (doc.line_count() / VIEWPORT_ROWS).clamp(1, FILL_WINDOWS_CAP)
 }
@@ -1377,11 +1383,11 @@ fn lexer_engine_scenarios(metrics: &mut Vec<Metric>, corpora: &Corpora) {
     let doc = document("bench-300kb.rs", text);
     metrics.push(measure(
         "tree_sitter_full_color_300kb",
-        "tree-sitter colors the whole 300 KB Rust file: the blocking initial parse plus the highlight query over every row, the counterpart of lexer_full_color_300kb",
+        "tree-sitter colors the whole 300 KB Rust file: the blocking initial parse plus the highlight query over every row, the counterpart of lexer_full_color_300kb; layer 1 is left out so the number is tree-sitter's alone",
         2,
         20,
         || {
-            let mut highlighter = parsed(&doc, dark());
+            let mut highlighter = parsed_layer2(&doc, dark());
             highlighter.requery_rows(&doc, 0..doc.line_count());
             std::hint::black_box(highlighter);
         },
@@ -1398,7 +1404,7 @@ fn lexer_engine_scenarios(metrics: &mut Vec<Metric>, corpora: &Corpora) {
         "bytes one colored 300 KB Rust document holds in the native lexer: the instance's linear memory (text, line table, tokens, lexer states) plus the Rust heap it allocated, its line index included",
     ));
     let heap_before = live_bytes();
-    let mut highlighter = parsed(&doc, dark());
+    let mut highlighter = parsed_layer2(&doc, dark());
     highlighter.requery_rows(&doc, 0..doc.line_count());
     let runs = (live_bytes() - heap_before).max(0) as f64;
     metrics.push(Metric::count(
@@ -1424,11 +1430,11 @@ fn lexer_engine_scenarios(metrics: &mut Vec<Metric>, corpora: &Corpora) {
         },
     ));
     let mut doc = document("bench-300kb.rs", text);
-    let mut highlighter = parsed(&doc, dark());
+    let mut highlighter = parsed_layer2(&doc, dark());
     let mut index = 0usize;
     metrics.push(measure_segments(
         "tree_sitter_keystroke_mid_file",
-        "one inserted character in the middle of the 300 KB Rust file with tree-sitter: splice, incremental parse or deferred-tree apply and the fill of the 60 rows below, the counterpart of lexer_keystroke_mid_file",
+        "one inserted character in the middle of the 300 KB Rust file with tree-sitter: splice, incremental parse or deferred-tree apply and the fill of the 60 rows below, the counterpart of lexer_keystroke_mid_file; layer 1 is left out so the number is tree-sitter's alone",
         5,
         200,
         |timer| {
@@ -1488,7 +1494,6 @@ fn editor_pipeline_benchmark() {
     plain_keystroke_scenario(&mut metrics, &corpora);
     viewport_scenario(&mut metrics, &corpora);
     lexer_engine_scenarios(&mut metrics, &corpora);
-    lexical_scenarios(&mut metrics, &corpora);
     wrap_scenarios(&mut metrics, &corpora);
     fill_stale_scenario(&mut metrics, &corpora);
     pagedown_scenario(&mut metrics, &corpora);
@@ -1499,6 +1504,7 @@ fn editor_pipeline_benchmark() {
     theme_scenario(&mut metrics, &corpora);
     reload_hunk_scenarios(&mut metrics, &corpora);
     textdiff_scenarios(&mut metrics, &corpora);
+    lexical_scenarios(&mut metrics, &corpora);
     let cpu_share = (process_cpu_time() - cpu_before).as_secs_f64()
         / timed_started.elapsed().as_secs_f64().max(f64::EPSILON);
     println!("PANEFLOW_BENCH_NOTE cpu share over the timed scenarios: {cpu_share:.2}");
