@@ -389,7 +389,7 @@ mod tests {
             }
             return;
         }
-        let root = tempfile::tempdir().expect("case root");
+        let root = tempfile::tempdir_in("/tmp").expect("case root");
         let user = root.path().join("user");
         std::fs::create_dir_all(&user).expect("case user home");
         let mut child = std::process::Command::new(std::env::current_exe().expect("test binary"));

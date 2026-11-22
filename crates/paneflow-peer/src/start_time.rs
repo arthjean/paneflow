@@ -26,37 +26,10 @@ pub fn process_start_time(pid: u32) -> Option<u64> {
     let pid = i32::try_from(pid).ok().filter(|pid| *pid > 0)?;
     match crate::macos::bsd_info(pid) {
         Ok(info) => Some(crate::macos::started_at(&info)),
-        Err(_) => unreaped_start_time(pid),
+        Err(_) => crate::macos::kernel_process(pid)
+            .ok()
+            .map(|process| process.started_at),
     }
-}
-
-#[cfg(target_os = "macos")]
-fn unreaped_start_time(pid: i32) -> Option<u64> {
-    const KINFO_PROC_BYTES: usize = 648;
-    const P_PID_OFFSET: usize = 40;
-    let mut name = [libc::CTL_KERN, libc::KERN_PROC, libc::KERN_PROC_PID, pid];
-    let mut buffer = [0u8; KINFO_PROC_BYTES];
-    let mut length = buffer.len();
-    let status = unsafe {
-        libc::sysctl(
-            name.as_mut_ptr(),
-            name.len() as libc::c_uint,
-            buffer.as_mut_ptr().cast(),
-            &mut length,
-            std::ptr::null_mut(),
-            0,
-        )
-    };
-    if status != 0 || length != KINFO_PROC_BYTES {
-        return None;
-    }
-    let recorded_pid = i32::from_ne_bytes(buffer[P_PID_OFFSET..P_PID_OFFSET + 4].try_into().ok()?);
-    if recorded_pid != pid {
-        return None;
-    }
-    let seconds = u64::try_from(i64::from_ne_bytes(buffer[0..8].try_into().ok()?)).ok()?;
-    let micros = u64::try_from(i32::from_ne_bytes(buffer[8..12].try_into().ok()?)).ok()?;
-    Some(seconds.saturating_mul(1_000_000) + micros)
 }
 
 #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]

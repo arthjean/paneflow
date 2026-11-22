@@ -109,6 +109,11 @@ fn a_mistyped_parameter_and_an_unknown_method_are_refused_with_their_codes() {
 #[test]
 fn a_caller_outside_every_pane_is_external_until_it_attaches_as_the_window() {
     let home = tempfile::tempdir().unwrap();
+    let core_endpoint = paneflow_home::host_endpoint_path(home.path());
+    let core = paneflow_host::SessionHost::open(home.path(), &core_endpoint).expect("a host opens");
+    let core_server =
+        paneflow_host::ServerHandle::spawn(std::sync::Arc::clone(&core), core_endpoint)
+            .expect("the host serves");
     let worker = paneflow_serve::open(home.path()).expect("the worker takes the home");
     let endpoint = paneflow_home::serve_endpoint_path(home.path());
 
@@ -134,4 +139,5 @@ fn a_caller_outside_every_pane_is_external_until_it_attaches_as_the_window() {
         json!({"principal": "window"})
     );
     worker.stop();
+    core_server.stop().unwrap();
 }

@@ -10,6 +10,11 @@ use crate::{PeerIdentity, PeerRead, PeerSource};
 const LOCAL_PEERTOKEN: libc::c_int = 0x006;
 const PROC_PIDPATHINFO_MAXSIZE: usize = 4 * 1024;
 const AUDIT_TOKEN_PID: usize = 5;
+const KINFO_PROC_BYTES: usize = 648;
+const KINFO_START_SECONDS: usize = 0;
+const KINFO_START_MICROS: usize = 8;
+const KINFO_PID: usize = 40;
+const KINFO_PARENT: usize = 560;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -45,6 +50,66 @@ pub(crate) fn bsd_info(pid: i32) -> io::Result<libc::proc_bsdinfo> {
         return Err(io::Error::new(io::ErrorKind::NotFound, error));
     }
     Err(error)
+}
+
+pub(crate) struct KernelProcess {
+    pub(crate) parent: u32,
+    pub(crate) started_at: u64,
+}
+
+fn field<const N: usize>(buffer: &[u8], offset: usize) -> io::Result<[u8; N]> {
+    buffer
+        .get(offset..offset + N)
+        .and_then(|bytes| bytes.try_into().ok())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "a short kinfo_proc record"))
+}
+
+pub(crate) fn kernel_process(pid: i32) -> io::Result<KernelProcess> {
+    let mut name = [libc::CTL_KERN, libc::KERN_PROC, libc::KERN_PROC_PID, pid];
+    let mut buffer = [0u8; KINFO_PROC_BYTES];
+    let mut length = buffer.len();
+    let status = unsafe {
+        libc::sysctl(
+            name.as_mut_ptr(),
+            name.len() as libc::c_uint,
+            buffer.as_mut_ptr().cast(),
+            &mut length,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if status != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if length == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("no process {pid}"),
+        ));
+    }
+    if length != KINFO_PROC_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("kinfo_proc for {pid} has {length} bytes, not {KINFO_PROC_BYTES}"),
+        ));
+    }
+    if i32::from_ne_bytes(field(&buffer, KINFO_PID)?) != pid {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("kinfo_proc for {pid} names another process"),
+        ));
+    }
+    let seconds = i64::from_ne_bytes(field(&buffer, KINFO_START_SECONDS)?);
+    let micros = i32::from_ne_bytes(field(&buffer, KINFO_START_MICROS)?);
+    let parent = i32::from_ne_bytes(field(&buffer, KINFO_PARENT)?);
+    let invalid = || io::Error::new(io::ErrorKind::InvalidData, "a negative kinfo_proc field");
+    Ok(KernelProcess {
+        parent: u32::try_from(parent).map_err(|_| invalid())?,
+        started_at: u64::try_from(seconds)
+            .map_err(|_| invalid())?
+            .saturating_mul(1_000_000)
+            + u64::try_from(micros).map_err(|_| invalid())?,
+    })
 }
 
 pub(crate) fn started_at(info: &libc::proc_bsdinfo) -> u64 {
@@ -130,13 +195,20 @@ impl ProcessTable for LiveTable {
             .ok()
             .filter(|pid| *pid > 0)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("no process {pid}")))?;
-        let info = bsd_info(signed)?;
-        if info.pbi_status == libc::SZOMB {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("process {pid} has exited"),
-            ));
-        }
+        let (parent, started) = match bsd_info(signed) {
+            Ok(info) if info.pbi_status == libc::SZOMB => {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("process {pid} has exited"),
+                ));
+            }
+            Ok(info) => (info.pbi_ppid, started_at(&info)),
+            Err(error) if error.raw_os_error() == Some(libc::EPERM) => {
+                let process = kernel_process(signed)?;
+                (process.parent, process.started_at)
+            }
+            Err(error) => return Err(error),
+        };
         let session = unsafe { libc::getsid(signed) };
         if session < 0 {
             let error = io::Error::last_os_error();
@@ -146,9 +218,9 @@ impl ProcessTable for LiveTable {
             return Err(error);
         }
         Ok(ProcessFacts {
-            parent: info.pbi_ppid,
+            parent,
             session: session as u32,
-            started_at: started_at(&info),
+            started_at: started,
         })
     }
 }
@@ -188,6 +260,21 @@ mod tests {
             matches!(&read, PeerRead::Unverified { reason } if reason.starts_with("LOCAL_PEERTOKEN failed")),
             "{read:?}"
         );
+    }
+
+    #[test]
+    fn the_kernel_process_record_agrees_with_proc_pidinfo() {
+        let pid = std::process::id();
+        let record = kernel_process(pid as i32).unwrap();
+        assert_eq!(record.parent, std::os::unix::process::parent_id());
+        assert_eq!(Some(record.started_at), crate::process_start_time(pid));
+    }
+
+    #[test]
+    fn launchd_owned_by_root_is_still_read_as_the_root_of_every_chain() {
+        let facts = LiveTable.facts(1).unwrap();
+        assert_eq!(facts.parent, 0);
+        assert!(facts.started_at > 0);
     }
 
     #[test]

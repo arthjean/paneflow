@@ -3294,4 +3294,31 @@ mod tests {
             "the observer saw the unverified transition"
         );
     }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_windows_pane_is_contained_in_a_job_that_is_released_when_the_session_ends() {
+        let mut spec = echo_shell_spec(80, 24);
+        spec.args = vec![
+            "/D".to_string(),
+            "/C".to_string(),
+            "ping -n 3 127.0.0.1 >NUL".to_string(),
+        ];
+        let runtime = SessionRuntime::spawn(spec, SessionGeneration::FIRST, Arc::new(|_| {}))
+            .expect("the pane spawns");
+        let job = runtime
+            .pane_job()
+            .expect("the pane process is contained in a job");
+        let released = Arc::downgrade(&job);
+        drop(job);
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while released.upgrade().is_some() {
+            assert!(
+                Instant::now() < deadline,
+                "the pane's job outlived its session"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(runtime.pane_job().is_none());
+    }
 }

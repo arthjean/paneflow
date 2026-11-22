@@ -437,4 +437,12 @@ mod tests {
             Principal::External
         );
     }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_failed_job_assignment_leaves_the_pane_uncontained_and_is_logged_once() {
+        assert!(PaneContainment::of(u32::MAX - 3).job.is_none());
+        assert!(JOB_FAILURE_LOGGED.load(std::sync::atomic::Ordering::Acquire));
+        assert!(PaneContainment::of(u32::MAX - 3).job.is_none());
+    }
 }

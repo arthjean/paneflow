@@ -132,13 +132,15 @@ fn server_token_user() -> Result<Vec<u64>, String> {
     token_user(token.as_raw_handle())
 }
 
-fn same_user_as_server(pipe: HANDLE) -> Result<(), String> {
-    let client = client_token_user(pipe)?;
-    let server = server_token_user()?;
-    if unsafe { EqualSid(user_sid(&client), user_sid(&server)) } == 0 {
+fn same_user(client: &[u64], server: &[u64]) -> Result<(), String> {
+    if unsafe { EqualSid(user_sid(client), user_sid(server)) } == 0 {
         return Err("the pipe client's token belongs to another user than the server".into());
     }
     Ok(())
+}
+
+fn same_user_as_server(pipe: HANDLE) -> Result<(), String> {
+    same_user(&client_token_user(pipe)?, &server_token_user()?)
 }
 
 pub(crate) fn read(pipe: BorrowedHandle<'_>) -> PeerRead {
@@ -150,6 +152,10 @@ pub(crate) fn read(pipe: BorrowedHandle<'_>) -> PeerRead {
             io::Error::last_os_error()
         ));
     }
+    identify(raw, pid)
+}
+
+fn identify(pipe: HANDLE, pid: u32) -> PeerRead {
     let process = match open_process(pid, PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE) {
         Ok(process) => process,
         Err(error) => return PeerRead::unverified(format!("OpenProcess({pid}) failed: {error}")),
@@ -160,7 +166,7 @@ pub(crate) fn read(pipe: BorrowedHandle<'_>) -> PeerRead {
             io::Error::last_os_error()
         ));
     };
-    if let Err(reason) = same_user_as_server(raw) {
+    if let Err(reason) = same_user_as_server(pipe) {
         return PeerRead::unverified(reason);
     }
     PeerRead::Identified(PeerIdentity {
@@ -298,5 +304,236 @@ pub(crate) fn classify(pid: u32, started_at: u64, leaders: &[PaneLeader]) -> Mem
     }
     Membership::Unverified {
         reason: format!("the parent chain of {pid} is longer than {MAX_ANCESTORS} processes"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::io::AsHandle;
+    use std::process::{Child, Command, Stdio};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    use windows_sys::Win32::Foundation::ERROR_PIPE_CONNECTED;
+    use windows_sys::Win32::Security::{
+        CreateWellKnownSid, SECURITY_MAX_SID_SIZE, WinLocalSystemSid,
+    };
+    use windows_sys::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
+    use windows_sys::Win32::System::JobObjects::{
+        JOB_OBJECT_LIMIT_BREAKAWAY_OK, JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK,
+        QueryInformationJobObject,
+    };
+    use windows_sys::Win32::System::Pipes::{
+        ConnectNamedPipe, CreateNamedPipeW, PIPE_TYPE_BYTE, PIPE_WAIT,
+    };
+
+    static NEXT_PIPE: AtomicU32 = AtomicU32::new(0);
+
+    struct Pipe {
+        server: std::fs::File,
+        _client: std::fs::File,
+    }
+
+    fn connected_pipe() -> Pipe {
+        let name = format!(
+            r"\\.\pipe\paneflow-peer-test-{}-{}",
+            std::process::id(),
+            NEXT_PIPE.fetch_add(1, Ordering::Relaxed)
+        );
+        let wide: Vec<u16> = std::ffi::OsStr::new(&name)
+            .encode_wide()
+            .chain(Some(0))
+            .collect();
+        let server = unsafe {
+            CreateNamedPipeW(
+                wide.as_ptr(),
+                PIPE_ACCESS_DUPLEX,
+                PIPE_TYPE_BYTE | PIPE_WAIT,
+                1,
+                4096,
+                4096,
+                0,
+                std::ptr::null(),
+            )
+        };
+        assert_ne!(
+            server,
+            INVALID_HANDLE_VALUE,
+            "{}",
+            io::Error::last_os_error()
+        );
+        let mut server = std::fs::File::from(unsafe { OwnedHandle::from_raw_handle(server) });
+        let mut client = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&name)
+            .unwrap();
+        if unsafe { ConnectNamedPipe(server.as_raw_handle(), std::ptr::null_mut()) } == 0 {
+            let error = io::Error::last_os_error();
+            assert_eq!(
+                error.raw_os_error(),
+                Some(ERROR_PIPE_CONNECTED as i32),
+                "{error}"
+            );
+        }
+        client.write_all(b"x").unwrap();
+        let mut byte = [0u8; 1];
+        server.read_exact(&mut byte).unwrap();
+        Pipe {
+            server,
+            _client: client,
+        }
+    }
+
+    #[test]
+    fn a_pipe_client_is_read_with_its_pid_creation_time_and_executable() {
+        let pipe = connected_pipe();
+        let PeerRead::Identified(identity) = read(pipe.server.as_handle()) else {
+            panic!("this process is identified");
+        };
+        assert_eq!(identity.source(), PeerSource::PipeClient);
+        assert_eq!(identity.pid(), std::process::id());
+        assert_eq!(
+            Some(identity.started_at()),
+            crate::process_start_time(std::process::id())
+        );
+        assert!(identity._anchor.is_some());
+        assert_eq!(
+            identity.executable().unwrap().canonicalize().unwrap(),
+            std::env::current_exe().unwrap().canonicalize().unwrap()
+        );
+    }
+
+    #[test]
+    fn a_client_whose_process_cannot_be_opened_is_unverified_with_the_os_error() {
+        let pipe = connected_pipe();
+        let read = identify(pipe.server.as_raw_handle(), u32::MAX - 3);
+        assert!(
+            matches!(&read, PeerRead::Unverified { reason } if reason.starts_with("OpenProcess(")),
+            "{read:?}"
+        );
+    }
+
+    fn token_user_naming(sid: &mut [u8]) -> Vec<u64> {
+        let mut buffer = vec![0u64; std::mem::size_of::<TOKEN_USER>().div_ceil(8)];
+        unsafe {
+            (*buffer.as_mut_ptr().cast::<TOKEN_USER>()).User.Sid = sid.as_mut_ptr().cast();
+        }
+        buffer
+    }
+
+    #[test]
+    fn a_client_token_of_another_user_is_refused_and_the_same_user_accepted() {
+        let server = server_token_user().unwrap();
+        let mut system = vec![0u8; SECURITY_MAX_SID_SIZE as usize];
+        let mut size = SECURITY_MAX_SID_SIZE;
+        let created = unsafe {
+            CreateWellKnownSid(
+                WinLocalSystemSid,
+                std::ptr::null_mut(),
+                system.as_mut_ptr().cast(),
+                &mut size,
+            )
+        };
+        assert_ne!(created, 0, "{}", io::Error::last_os_error());
+        let other = token_user_naming(&mut system);
+        assert!(same_user(&other, &server).is_err());
+        assert_eq!(same_user(&server, &server), Ok(()));
+    }
+
+    struct Sleeper(Child);
+
+    impl Drop for Sleeper {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    fn sleeper() -> Sleeper {
+        Sleeper(
+            Command::new("ping.exe")
+                .args(["-n", "60", "127.0.0.1"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+        )
+    }
+
+    fn leader(pid: u32, started_at: u64, job: Option<Arc<PaneJob>>) -> PaneLeader {
+        PaneLeader {
+            session: "pane-session".into(),
+            workspace: Some("workspace-7".into()),
+            pid,
+            started_at,
+            process_session: None,
+            job,
+        }
+    }
+
+    fn pane() -> Membership {
+        Membership::Pane {
+            session: "pane-session".into(),
+            workspace: Some("workspace-7".into()),
+        }
+    }
+
+    #[test]
+    fn a_contained_pane_process_is_in_its_job_and_the_job_forbids_breakaway() {
+        let child = sleeper();
+        let pid = child.0.id();
+        let started = crate::process_start_time(pid).unwrap();
+        let job = PaneJob::contain(pid).unwrap();
+        let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+        let queried = unsafe {
+            QueryInformationJobObject(
+                job.0.as_raw_handle(),
+                JobObjectExtendedLimitInformation,
+                (&raw mut limits).cast(),
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                std::ptr::null_mut(),
+            )
+        };
+        assert_ne!(queried, 0, "{}", io::Error::last_os_error());
+        assert_eq!(
+            limits.BasicLimitInformation.LimitFlags
+                & (JOB_OBJECT_LIMIT_BREAKAWAY_OK | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK),
+            0
+        );
+        let job = Arc::new(job);
+        assert_eq!(
+            classify(pid, started, &[leader(0, 0, Some(Arc::clone(&job)))]),
+            pane()
+        );
+        let me = std::process::id();
+        let mine = crate::process_start_time(me).unwrap();
+        assert_eq!(
+            classify(me, mine, &[leader(pid, started, Some(job))]),
+            Membership::NotInPane
+        );
+    }
+
+    #[test]
+    fn a_process_that_cannot_be_opened_is_not_contained() {
+        assert!(PaneJob::contain(u32::MAX - 3).is_err());
+    }
+
+    #[test]
+    fn a_pane_whose_job_assignment_failed_is_found_through_the_parent_chain() {
+        let child = sleeper();
+        let pid = child.0.id();
+        let started = crate::process_start_time(pid).unwrap();
+        let me = std::process::id();
+        let mine = crate::process_start_time(me).unwrap();
+        assert_eq!(classify(pid, started, &[leader(me, mine, None)]), pane());
+        assert_eq!(
+            classify(me, mine, &[leader(pid, started, None)]),
+            Membership::NotInPane
+        );
     }
 }
