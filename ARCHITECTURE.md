@@ -106,7 +106,8 @@ The editor's `CodeHighlighter` and the diff view's `highlight_lines` share
 Fifteen Zed highlighting queries are compiled with `include_str!` from
 `diff/queries/`. TOML, HTML, Java and Ruby keep their grammar's stock queries.
 JavaScript uses the JavaScript query on the existing TSX grammar. Markdown
-runs block and inline passes; fenced code does not inject another language.
+runs block and inline passes; fenced code does not inject another language
+in layer 2, and the editor colors it through layer 1 instead.
 
 Captures are ordered by byte start, preserving query order at equal starts.
 Each styled capture goes onto a stack. The last active capture paints until
@@ -198,6 +199,53 @@ staging that would pass it is refused before memory grows. `LexDocument`
 takes edits as document byte ranges, converts them to the lexer's UTF-16
 columns and returns tokens as byte ranges. Its lines follow the lexer, which
 also breaks on a lone `\r`, unlike the editor's ropey (`\n` only).
+
+### How the editor combines the layers
+
+`code/lexical.rs` owns layer 1 for one open document. Its lexer scans forward
+from the first line whose state is unknown, and `LexDocument::run_before`
+bounds a scan to the lines before a given one, so layer 1 lexes only what the
+next frame needs. `open_blocking`, which runs off the render thread, stages a
+file at or under its tree-sitter cap into a lexer and scans its first
+`INITIAL_LEXICAL_ROWS`, so the first frame is colored. A larger file, up to
+the 10 MiB editor cap, opens plain and is lexed whole by a background job the
+view starts right after the open. The layer keeps each row's runs packed as
+`u32` words (24-bit end, 8-bit token id), with blank tokens folded into their
+neighbor, and maps lexer lines to editor rows through byte offsets when a
+lone `\r` makes them differ. A theme switch rebuilds only the 75-entry token
+color table.
+
+`CodeHighlighter::runs_into` paints, per row, layer 2 when the row is `Fresh`
+and layer 1 otherwise. Inside a nested-code region of a fresh layer-2 row,
+Markdown `code_fence_content` and HTML `raw_text`
+(`NESTED_CODE_REGIONS`), layer 1 shows through where it has a color. The
+regions are stored in the row's run list under a reserved pass index, so the
+existing interpolation and requery keep them in step with the rows.
+
+The rest of the document is scanned in three places, all on the render
+thread and all bounded. Every edit reaches layer 1 through `edit_batch`: the
+row runs are shifted like layer 2's, the edits are staged into the lexer, and
+the scan covers the edited rows plus `EDIT_TAIL_ROWS` within
+`SYNC_PARSE_BUDGET`. Each frame's `fill_stale_rows` then scans up to the last
+shown row within the frame budget, so a row is rescanned before it is painted.
+Whatever is left, such as the rest of a file an unterminated `/*` comments
+out, is scanned by the view's idle task (`start_lexical`), which yields to the
+event loop between slices of at most `IDLE_SLICE_BUDGET` and asks for a frame
+only when a slice rewrote a shown row (text area or minimap). A scan slice
+reads back exactly the lines it lexed, bounded by its end line; rows not yet
+reached keep their shifted runs. On any lexer error the document is dropped
+and a background job relexes the current text from scratch; a job that an
+edit overtakes stops early and is followed by one for the new text. `edit_batch` expects the document to be exactly the state after the
+edits it receives, so undo and redo report each record's replacement as the
+history applies it (`UndoHistory::undo_with`, `redo_with`). A lexer error at
+open or in a job turns layer 1 off for that document with one warning; layer
+2 is unaffected. When layer 2 gives up on a parse, layer 1 keeps coloring and
+the "too complex" banner stays hidden.
+
+The diff view uses layer 1 only for a side whose extension has no grammar
+(`diff/lexical.rs`), under the same `highlight_cap`; the side store's key
+carries the lexer language, so a `Dockerfile` and a `Makefile` with the same
+text are kept apart.
 
 ## Files tree
 

@@ -8,6 +8,7 @@ use gpui::Hsla;
 
 use super::git::FileDiff;
 use super::highlighter::{grammar_for_ext, highlight_cap, highlight_lines};
+use super::lexical::{lexer_only_language, lexical_lines};
 use super::rows::{FileRowCache, file_ext};
 use super::syntax::DiffSyntax;
 use crate::theme::SyntaxPalette;
@@ -25,12 +26,13 @@ const SECOND_DIGEST_SALT: u8 = 0xA5;
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct SideKey {
     ext: String,
+    lexer: Option<paneflow_highlights::Language>,
     len: usize,
     digest: (u64, u64),
 }
 
 impl SideKey {
-    fn of(ext: &str, text: &str) -> Self {
+    fn of(ext: &str, lexer: Option<paneflow_highlights::Language>, text: &str) -> Self {
         let mut first = std::collections::hash_map::DefaultHasher::new();
         text.hash(&mut first);
         let mut second = std::collections::hash_map::DefaultHasher::new();
@@ -38,6 +40,7 @@ impl SideKey {
         text.hash(&mut second);
         Self {
             ext: ext.to_string(),
+            lexer,
             len: text.len(),
             digest: (first.finish(), second.finish()),
         }
@@ -112,11 +115,19 @@ fn store() -> MutexGuard<'static, SyntaxStore> {
 }
 
 fn side_key(file: &FileDiff, ext: &str, text: &str) -> Option<SideKey> {
+    let lexer = lexer_only_language(&file.path, ext);
     let colored = !file.is_binary
         && !text.is_empty()
         && text.len() <= highlight_cap(ext)
-        && grammar_for_ext(ext).is_some();
-    colored.then(|| SideKey::of(ext, text))
+        && (grammar_for_ext(ext).is_some() || lexer.is_some());
+    colored.then(|| SideKey::of(ext, lexer, text))
+}
+
+fn highlight_side(key: &SideKey, text: &str, syntax: &DiffSyntax) -> Vec<LineRuns> {
+    match key.lexer {
+        Some(language) => lexical_lines(text, language, syntax),
+        None => highlight_lines(text, &key.ext, syntax),
+    }
 }
 
 fn sides(file: &FileDiff) -> [&str; 2] {
@@ -162,7 +173,6 @@ pub(crate) struct SyntaxWork {
 struct SideJob<'a> {
     file: usize,
     new_side: bool,
-    ext: String,
     text: &'a str,
     key: SideKey,
 }
@@ -218,7 +228,6 @@ pub(crate) fn highlighted_file_row_caches(
                 jobs.push(SideJob {
                     file: index,
                     new_side: new_side == 1,
-                    ext: ext.clone(),
                     text,
                     key,
                 });
@@ -232,7 +241,7 @@ pub(crate) fn highlighted_file_row_caches(
         if let Some(runs) = store().get(palette, &job.key) {
             return (runs, true);
         }
-        let runs: SideRuns = Arc::new(highlight_lines(job.text, &job.ext, syntax));
+        let runs: SideRuns = Arc::new(highlight_side(&job.key, job.text, syntax));
         store().insert(palette, job.key.clone(), runs.clone(), STORE_TEXT_BYTES);
         (runs, false)
     });
@@ -370,9 +379,9 @@ mod tests {
         let mut store = SyntaxStore::default();
         let palette = syntax().palette();
         let runs = SideRuns::default();
-        let first = SideKey::of("rs", "aaaa");
-        let second = SideKey::of("rs", "bbbb");
-        let third = SideKey::of("rs", "cccc");
+        let first = SideKey::of("rs", None, "aaaa");
+        let second = SideKey::of("rs", None, "bbbb");
+        let third = SideKey::of("rs", None, "cccc");
         store.insert(palette, first.clone(), runs.clone(), 8);
         store.insert(palette, second.clone(), runs.clone(), 8);
         assert!(store.get(palette, &first).is_some());
@@ -387,7 +396,7 @@ mod tests {
     fn a_side_larger_than_the_store_is_not_kept() {
         let mut store = SyntaxStore::default();
         let palette = syntax().palette();
-        let key = SideKey::of("rs", "0123456789");
+        let key = SideKey::of("rs", None, "0123456789");
         store.insert(palette, key.clone(), SideRuns::default(), 4);
         assert!(store.get(palette, &key).is_none());
         assert_eq!(store.bytes, 0);
@@ -399,6 +408,77 @@ mod tests {
         assert_eq!(
             squares,
             (0..64).map(|index| index * index).collect::<Vec<_>>()
+        );
+    }
+
+    fn side_file(path: &str, base: &str, new: &str) -> FileDiff {
+        FileDiff {
+            path: path.to_string(),
+            change: FileChange::Modified,
+            old_path: None,
+            base_text: base.to_string(),
+            new_text: new.to_string(),
+            hunks: Vec::new(),
+            is_binary: false,
+        }
+    }
+
+    #[test]
+    fn a_side_without_a_grammar_but_with_a_lexer_is_colored_by_layer_1() {
+        let file = side_file(
+            "scripts/init_layer1_side.lua",
+            "local a = 1\n",
+            "local a = \"two\"\n",
+        );
+        let key = side_key(&file, "lua", &file.new_text).expect("a lexer side is keyed");
+        assert!(key.lexer.is_some());
+        let syntax = syntax();
+        let (caches, work) = highlighted_file_row_caches(std::slice::from_ref(&file), 1, &syntax);
+        assert_eq!(work.highlighted, 2);
+        let (_, new) = caches[0].sides();
+        let language = key.lexer.expect("a language");
+        assert_eq!(
+            new.as_slice(),
+            lexical_lines(&file.new_text, language, &syntax).as_slice()
+        );
+        assert!(colored(&caches[0]));
+    }
+
+    #[test]
+    fn a_side_with_a_grammar_keeps_the_tree_sitter_runs() {
+        let file = rust_file("src/layer2_side.rs", "keeps_tree_sitter");
+        let key = side_key(&file, "rs", &file.new_text).expect("a grammar side is keyed");
+        assert!(key.lexer.is_none());
+        let syntax = syntax();
+        let (caches, _) = highlighted_file_row_caches(std::slice::from_ref(&file), 1, &syntax);
+        let (_, new) = caches[0].sides();
+        assert_eq!(
+            new.as_slice(),
+            highlight_lines(&file.new_text, "rs", &syntax).as_slice()
+        );
+    }
+
+    #[test]
+    fn a_lexer_side_past_the_highlight_cap_stays_plain() {
+        let big = "local a = 1\n".repeat(crate::diff::MAX_HIGHLIGHT_BYTES / 12 + 1);
+        let file = side_file("big_layer1.lua", &big, &big);
+        assert!(big.len() > crate::diff::MAX_HIGHLIGHT_BYTES);
+        assert!(side_key(&file, "lua", &file.new_text).is_none());
+        let (caches, work) = highlighted_file_row_caches(std::slice::from_ref(&file), 1, &syntax());
+        assert_eq!(work, SyntaxWork::default());
+        assert!(!colored(&caches[0]));
+    }
+
+    #[test]
+    fn the_same_text_under_two_lexer_languages_is_kept_apart() {
+        let text = "FROM rust\n";
+        let docker = side_file("Dockerfile", text, text);
+        let make = side_file("Makefile", text, text);
+        let docker_key = side_key(&docker, "", text).expect("a key");
+        let make_key = side_key(&make, "", text).expect("a key");
+        assert!(
+            docker_key != make_key,
+            "Dockerfile and Makefile share a cache entry"
         );
     }
 }

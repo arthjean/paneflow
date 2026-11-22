@@ -5,6 +5,7 @@ mod git;
 mod highlighter;
 mod hit_test;
 mod hscroll;
+mod lexical;
 #[cfg(test)]
 pub(crate) mod parity_tests;
 #[cfg(test)]

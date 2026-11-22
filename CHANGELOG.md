@@ -7,6 +7,7 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Added
 
+- **Files open already colored, and 152 languages are colored in the Files dock editor.** A file is colored in its first frame instead of turning from plain text to colors once it is parsed, and the line you type in stays colored on every keystroke. Languages without a tree-sitter grammar, such as Kotlin, Lua, Swift and SQL, are now colored in the editor and in the diff view, files past the 2 MB tree-sitter limit (1 MB for Markdown) and up to the 10 MB editing limit are colored a moment after they open, and code inside Markdown fences and HTML `<script>` and `<style>` blocks keeps its own colors.
 - **Zig files are syntax highlighted.** `.zig` and `.zon` files, `build.zig.zon` included, are colored in the Files dock editor and in the diff view, with the highlighting rules of Zed's Zig extension: types, functions, builtins such as `@import`, constants, fields, and `///` and `//!` doc comments in the doc comment color.
 
 ### Changed
