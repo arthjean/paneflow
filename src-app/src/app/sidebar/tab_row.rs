@@ -2,6 +2,8 @@ use super::*;
 
 use crate::ui_primitives::AnimatedHoverExt;
 
+const TAB_AGENT_LOGO_SIZE: f32 = 15.;
+
 pub(super) fn checkout_diffstat_visible(
     show: paneflow_config::schema::SidebarShow,
     stats: &crate::workspace::GitDiffStats,
@@ -89,15 +91,37 @@ impl PaneFlowApp {
         let mut surfaces: std::collections::HashSet<u64> =
             std::collections::HashSet::with_capacity(panes.len());
         let mut tab_agents: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut tab_agent = None;
         for pane in &panes {
             let pane = pane.read(cx);
             for terminal in pane.terminals() {
                 surfaces.insert(terminal.entity_id().as_u64());
                 if let Some(agent) = terminal.read(cx).terminal.detected_agent {
                     tab_agents.insert(agent.binary().to_string());
+                    tab_agent.get_or_insert(agent);
                 }
             }
         }
+        let tab_logo = tab_agent
+            .filter(|_| self.cached_config.sidebar_show.agent_logo_enabled())
+            .map(|agent| {
+                let tint = agent
+                    .accent()
+                    .map_or(ui.text, |tint| gpui::Hsla::from(gpui::rgb(tint)));
+                div()
+                    .flex_none()
+                    .w(px(SIDEBAR_FOLDER_SLOT_WIDTH))
+                    .h(px(SIDEBAR_ROW_LINE_HEIGHT))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(crate::settings::components::render_logo(
+                        agent.icon_path(),
+                        agent.icon_multicolor(),
+                        px(TAB_AGENT_LOGO_SIZE),
+                        tint,
+                    ))
+            });
         let tab_sessions = || tab_row_sessions(ws.agent_sessions.values(), &surfaces);
         let row_agent_status = tab_row_agent_summary(self.tree_status(), ws, &surfaces);
         let agent_status = ai_types::workspace_agent_status(tab_sessions(), &tab_agents);
@@ -210,6 +234,7 @@ impl PaneFlowApp {
             .when(!indent_guide && !grouped_by_status, |row| {
                 row.child(div().flex_none().w(px(SIDEBAR_FOLDER_SLOT_WIDTH)))
             })
+            .when_some(tab_logo, |row, logo| row.child(logo))
             .child(sidebar_title_with_trailing(
                 titled,
                 branch,
