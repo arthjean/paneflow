@@ -125,7 +125,8 @@ fn the_structural_methods_build_a_layout_with_running_terminals_and_no_window() 
         Some(index),
         "workspace.up selects the new workspace"
     );
-    let canonical_a = std::fs::canonicalize(a.path()).unwrap();
+    let canonical_a =
+        paneflow_launch::cwd::strip_verbatim_prefix(std::fs::canonicalize(a.path()).unwrap());
     assert_eq!(
         surface(&view, ids[0])["definition"]["cwd"].as_str(),
         canonical_a.to_str()

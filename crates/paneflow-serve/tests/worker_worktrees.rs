@@ -106,9 +106,11 @@ fn workspace_up_creates_the_worktree_starts_the_pane_in_it_and_records_it() {
         .expect("the worktree has its own tab");
     assert_eq!(bound["title"], "feat/login");
     let text = bound.to_string();
-    let canonical = std::fs::canonicalize(&path).unwrap();
+    let canonical =
+        paneflow_launch::cwd::strip_verbatim_prefix(std::fs::canonicalize(&path).unwrap());
+    let quoted = serde_json::to_string(&canonical.display().to_string()).unwrap();
     assert!(
-        text.contains(&canonical.display().to_string()),
+        text.contains(quoted.trim_matches('"')),
         "the pane starts in the worktree: {text}"
     );
     let notices = opened["notices"].as_array().expect("notices");
@@ -271,7 +273,13 @@ fn a_host_refusal_after_the_layout_took_the_worktree_keeps_the_worktree_it_point
         recorded.join("README.md").is_file(),
         "the worktree the layout records still exists"
     );
-    assert!(worktree_paths(&repo.repo).contains(&recorded));
+    let recorded_file = std::fs::canonicalize(&recorded).unwrap();
+    assert!(
+        worktree_paths(&repo.repo)
+            .iter()
+            .any(|listed| std::fs::canonicalize(listed).ok().as_ref() == Some(&recorded_file)),
+        "git lists the worktree the layout records"
+    );
 
     let split = call(
         home.path(),
