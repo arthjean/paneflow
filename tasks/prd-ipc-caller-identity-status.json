@@ -9,10 +9,10 @@
     {
       "id": "EP-001",
       "title": "Know who is calling",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 7,
-      "stories_done": 0
+      "stories_done": 7
     },
     {
       "id": "EP-002",
@@ -52,92 +52,92 @@
       "id": "US-001",
       "title": "Read a peer identity on Linux",
       "epic": "EP-001",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [],
       "started_at": "2026-11-21T18:17:23+01:00",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-22T15:00:54+01:00",
+      "reviewed_at": "2026-11-22T15:00:54+01:00"
     },
     {
       "id": "US-002",
       "title": "Read a peer identity on macOS",
       "epic": "EP-001",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-001"
       ],
       "started_at": "2026-11-21T18:22:22+01:00",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-22T15:00:54+01:00",
+      "reviewed_at": "2026-11-22T15:00:54+01:00"
     },
     {
       "id": "US-003",
       "title": "Read a peer identity on Windows",
       "epic": "EP-001",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-001"
       ],
       "started_at": "2026-11-21T18:22:22+01:00",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-22T15:00:54+01:00",
+      "reviewed_at": "2026-11-22T15:00:54+01:00"
     },
     {
       "id": "US-004",
       "title": "Decide pane membership on Linux and macOS",
       "epic": "EP-001",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-001",
         "US-002"
       ],
       "started_at": "2026-11-21T18:22:22+01:00",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-22T15:00:54+01:00",
+      "reviewed_at": "2026-11-22T15:00:54+01:00"
     },
     {
       "id": "US-005",
       "title": "Contain each pane in a Job Object on Windows",
       "epic": "EP-001",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-003"
       ],
       "started_at": "2026-11-21T18:22:22+01:00",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-22T15:00:54+01:00",
+      "reviewed_at": "2026-11-22T15:00:54+01:00"
     },
     {
       "id": "US-006",
       "title": "Serve `peer.classify` from the host",
       "epic": "EP-001",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-004",
         "US-005"
       ],
       "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-22T15:00:54+01:00",
+      "reviewed_at": "2026-11-22T15:00:54+01:00"
     },
     {
       "id": "US-007",
       "title": "Give every connection a principal and answer `system.whoami`",
       "epic": "EP-001",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-006"
       ],
       "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-22T15:00:54+01:00",
+      "reviewed_at": "2026-11-22T15:00:54+01:00"
     },
     {
       "id": "US-008",
