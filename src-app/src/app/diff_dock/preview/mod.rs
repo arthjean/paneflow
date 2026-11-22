@@ -367,6 +367,23 @@ mod tests {
     }
 
     #[test]
+    fn a_lexer_only_language_past_the_editor_cap_still_opens_in_the_plain_large_viewer() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let line = b"fun main() { println(\"hi\") }\n";
+        let bytes: Vec<u8> = line
+            .iter()
+            .copied()
+            .cycle()
+            .take(MAX_FILE_BYTES + line.len())
+            .collect();
+        let big = write(&dir, "Huge.kt", &bytes);
+        assert!(matches!(
+            open_file_blocking(&big, syntax()),
+            Ok(OpenedFile::LargeText { .. })
+        ));
+    }
+
+    #[test]
     fn a_large_csv_or_markdown_falls_back_to_the_large_text_viewer() {
         let dir = tempfile::tempdir().expect("tempdir");
         for name in ["big.csv", "big.md"] {

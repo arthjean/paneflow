@@ -103,6 +103,7 @@ impl CodeView {
                 }
             });
         }
+        self.start_lexical(cx);
         self.refresh_longest_line(cx);
         self.after_motion(cx);
     }
@@ -332,17 +333,17 @@ impl CodeView {
         let mut restored = None;
         let mut changes = Vec::new();
         if let Some((doc, hl)) = self.state.editable() {
+            let mut highlight = |doc: &CodeDocument, edit: &CodeEdit| {
+                if let HighlightOutcome::Deferred(parse) = hl.edit(doc, edit) {
+                    deferred = Some(parse);
+                }
+            };
             let step = if redo {
-                self.history.redo(doc)
+                self.history.redo_with(doc, &mut highlight)
             } else {
-                self.history.undo(doc)
+                self.history.undo_with(doc, &mut highlight)
             };
             if let Some(step) = step {
-                for change in &step.edits {
-                    if let HighlightOutcome::Deferred(parse) = hl.edit(doc, &change.edit) {
-                        deferred = Some(parse);
-                    }
-                }
                 changes = step.edits.iter().map(|change| change.window).collect();
                 restored = Some(step.selection);
             }
@@ -733,6 +734,117 @@ mod tests {
 
             view.outdent(&CeOutdent, window, cx);
             assert_eq!(text_of(view), "one\ntwo\nthree\n");
+        });
+    }
+
+    fn assert_layers_match_a_fresh_open(view: &mut CodeView) {
+        let (doc, live) = view.state.editable().expect("document and highlighter");
+        let mut oracle =
+            CodeHighlighter::new(doc, DiffSyntax::from_theme(&crate::theme::paneflow_dark()));
+        oracle.settle_lexical_for_test(doc);
+        assert!(live.lexical_is_ready(), "layer 1 is in step with the text");
+        for row in 0..doc.line_count() {
+            assert_eq!(
+                live.lexical_runs(row),
+                oracle.lexical_runs(row),
+                "layer-1 row {row} diverges from a fresh open: {:?}",
+                doc.line_string(row)
+            );
+        }
+        oracle.parse_initial_blocking(doc);
+        oracle.requery_rows(doc, 0..doc.line_count());
+        live.requery_rows(doc, 0..doc.line_count());
+        for row in 0..doc.line_count() {
+            assert_eq!(
+                live.runs(row),
+                oracle.runs(row),
+                "row {row} after the edits"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn undo_and_redo_of_grouped_keystrokes_keep_layer_1_equal_to_a_fresh_open(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = view(cx, "fn main() {\n    let value = 1;\n}\n");
+
+        view.update_in(cx, |view, window, cx| {
+            view.selection = CodeSelection::at(16);
+            for text in ["/", "*", " ", "\""] {
+                view.replace_text_in_range(None, text, window, cx);
+            }
+            view.selection = CodeSelection {
+                anchor: 24,
+                head: 29,
+            };
+            view.replace_text_in_range(None, "other", window, cx);
+            assert_layers_match_a_fresh_open(view);
+            view.undo(&CeUndo, window, cx);
+            assert_layers_match_a_fresh_open(view);
+            view.undo(&CeUndo, window, cx);
+            assert_eq!(text_of(view), "fn main() {\n    let value = 1;\n}\n");
+            assert_layers_match_a_fresh_open(view);
+            view.redo(&CeRedo, window, cx);
+            view.redo(&CeRedo, window, cx);
+            assert_layers_match_a_fresh_open(view);
+
+            let end = text_of(view).len();
+            view.selection = CodeSelection {
+                anchor: 0,
+                head: end,
+            };
+            view.indent(&CeIndent, window, cx);
+            assert!(
+                text_of(view).starts_with("    fn main"),
+                "every row indented"
+            );
+            assert_layers_match_a_fresh_open(view);
+            view.undo(&CeUndo, window, cx);
+            assert_layers_match_a_fresh_open(view);
+            view.redo(&CeRedo, window, cx);
+            assert!(text_of(view).starts_with("    fn main"));
+            assert_layers_match_a_fresh_open(view);
+        });
+    }
+
+    #[gpui::test]
+    fn a_keystroke_that_comments_out_the_file_leaves_its_tail_to_the_idle_scan(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = view(cx, &rows_of_code(20_000));
+
+        view.update_in(cx, |view, window, cx| {
+            view.selection = CodeSelection::at(0);
+            view.replace_text_in_range(None, "/*", window, cx);
+            let highlighter = view.highlighter().expect("a highlighter");
+            assert!(
+                !highlighter.lexical_is_ready(),
+                "a keystroke rescans its own rows, not the 20 000 it comments out"
+            );
+            assert!(
+                !highlighter.runs(5).is_empty(),
+                "the rows keep their shifted runs"
+            );
+        });
+        cx.run_until_parked();
+
+        view.update(cx, |view, _cx| {
+            let (doc, live) = view.state.editable().expect("document and highlighter");
+            assert!(
+                live.lexical_is_ready(),
+                "the idle scan reached the end of the file"
+            );
+            let mut oracle =
+                CodeHighlighter::new(doc, DiffSyntax::from_theme(&crate::theme::paneflow_dark()));
+            oracle.settle_lexical_for_test(doc);
+            for row in [0, 1, 5, 19_999] {
+                assert_eq!(
+                    live.lexical_runs(row),
+                    oracle.lexical_runs(row),
+                    "row {row}"
+                );
+            }
         });
     }
 }

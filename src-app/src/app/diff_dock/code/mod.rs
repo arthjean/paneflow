@@ -11,9 +11,10 @@ pub(crate) mod highlight;
 mod lexer_compare;
 #[cfg(test)]
 mod lexer_parity;
+pub(crate) mod lexical;
 pub(crate) mod load;
 pub(crate) mod markers;
-mod minimap;
+pub(crate) mod minimap;
 mod navigation;
 mod navigation_paint;
 #[cfg(test)]

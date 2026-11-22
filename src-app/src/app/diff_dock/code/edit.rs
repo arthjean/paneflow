@@ -254,6 +254,17 @@ fn shift_offset_for_splices(offset: usize, splices_descending: &[(Range<usize>, 
     (offset as isize + delta).max(0) as usize
 }
 
+fn notify_replacement(
+    doc: &CodeDocument,
+    changes: &[DocChange],
+    applied: &mut impl FnMut(&CodeDocument, &CodeEdit),
+) {
+    let mut edits = changes.iter().map(|change| change.edit.clone());
+    if let Some(edit) = replacement_edit(edits.next(), edits.next()) {
+        applied(doc, &edit);
+    }
+}
+
 fn apply_forward(doc: &mut CodeDocument, record: &AppliedEdit) -> Vec<DocChange> {
     raw_splice(
         doc,
@@ -407,14 +418,25 @@ impl UndoHistory {
         self.open = false;
     }
 
+    #[cfg(test)]
     pub(crate) fn undo(&mut self, doc: &mut CodeDocument) -> Option<HistoryStep> {
+        self.undo_with(doc, |_, _| {})
+    }
+
+    pub(crate) fn undo_with(
+        &mut self,
+        doc: &mut CodeDocument,
+        mut applied: impl FnMut(&CodeDocument, &CodeEdit),
+    ) -> Option<HistoryStep> {
         self.open = false;
         let transaction = self.undo.pop_back()?;
         let bytes = transaction.bytes();
         self.undo_bytes = self.undo_bytes.saturating_sub(bytes);
         let mut edits = Vec::new();
         for record in transaction.edits.iter().rev() {
-            edits.extend(apply_reverse(doc, record));
+            let changes = apply_reverse(doc, record);
+            notify_replacement(doc, &changes, &mut applied);
+            edits.extend(changes);
         }
         let selection = transaction.before;
         self.redo.push(transaction);
@@ -422,14 +444,25 @@ impl UndoHistory {
         Some(HistoryStep { edits, selection })
     }
 
+    #[cfg(test)]
     pub(crate) fn redo(&mut self, doc: &mut CodeDocument) -> Option<HistoryStep> {
+        self.redo_with(doc, |_, _| {})
+    }
+
+    pub(crate) fn redo_with(
+        &mut self,
+        doc: &mut CodeDocument,
+        mut applied: impl FnMut(&CodeDocument, &CodeEdit),
+    ) -> Option<HistoryStep> {
         self.open = false;
         let transaction = self.redo.pop()?;
         let bytes = transaction.bytes();
         self.redo_bytes = self.redo_bytes.saturating_sub(bytes);
         let mut edits = Vec::new();
         for record in &transaction.edits {
-            edits.extend(apply_forward(doc, record));
+            let changes = apply_forward(doc, record);
+            notify_replacement(doc, &changes, &mut applied);
+            edits.extend(changes);
         }
         let selection = transaction.after;
         self.undo.push_back(transaction);

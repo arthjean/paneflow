@@ -1,14 +1,14 @@
 use std::ops::{ControlFlow, Range};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use gpui::{Context, Hsla};
 use ropey::Rope;
 use streaming_iterator::StreamingIterator;
 use tree_sitter::{
-    InputEdit, Node, ParseOptions, ParseState, Parser, Point as TsPoint, QueryCursor, TextProvider,
-    Tree,
+    InputEdit, Node, ParseOptions, ParseState, Parser, Point as TsPoint, Query, QueryCursor,
+    TextProvider, Tree,
 };
 
 use crate::diff::{
@@ -17,6 +17,7 @@ use crate::diff::{
 };
 
 use super::document::{CodeDocument, CodeEdit};
+use super::lexical::{Applied, LexJob, Lexed, LexicalLayer};
 
 pub(crate) const SYNC_PARSE_BUDGET: Duration = Duration::from_millis(1);
 pub(crate) const INITIAL_PARSE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -24,6 +25,11 @@ pub(crate) const HIGHLIGHT_FRAME_BUDGET: Duration = Duration::from_millis(2);
 pub(crate) const MAX_QUERY_ROWS: usize = 128;
 
 pub(crate) type LineRuns = Vec<(Range<usize>, Hsla)>;
+
+pub(crate) const NESTED_CODE_REGIONS: &[(&str, &str)] =
+    &[("md", "code_fence_content"), ("html", "raw_text")];
+
+const NESTED_PASS: u16 = u16::MAX;
 
 #[derive(Clone, Copy)]
 struct IndexedCapture {
@@ -46,6 +52,56 @@ struct GrammarPass {
     tree: Option<Tree>,
     colors: Vec<Option<Hsla>>,
     cursor: QueryCursor,
+    nested: Option<&'static Query>,
+}
+
+fn nested_query(grammar: &'static Grammar) -> Option<&'static Query> {
+    static QUERIES: [OnceLock<Option<Query>>; NESTED_CODE_REGIONS.len()] =
+        [const { OnceLock::new() }; NESTED_CODE_REGIONS.len()];
+    NESTED_CODE_REGIONS
+        .iter()
+        .zip(&QUERIES)
+        .find_map(|((ext, kind), cell)| {
+            let owner = grammar_for_ext(ext)?;
+            if !std::ptr::eq(owner, grammar) {
+                return None;
+            }
+            cell.get_or_init(|| Query::new(&grammar.language, &format!("({kind}) @nested")).ok())
+                .as_ref()
+        })
+}
+
+fn overlay_runs(base: &LineRuns, top: &LineRuns, out: &mut LineRuns) {
+    fn emit(base: &LineRuns, next: &mut usize, from: usize, to: usize, out: &mut LineRuns) {
+        while let Some((range, color)) = base.get(*next) {
+            if range.end <= from {
+                *next += 1;
+                continue;
+            }
+            if range.start >= to {
+                break;
+            }
+            let start = range.start.max(from);
+            let end = range.end.min(to);
+            if start < end {
+                out.push((start..end, *color));
+            }
+            if range.end <= to {
+                *next += 1;
+            } else {
+                break;
+            }
+        }
+    }
+    out.clear();
+    let mut next = 0usize;
+    let mut at = 0usize;
+    for (range, color) in top {
+        emit(base, &mut next, at, range.start, out);
+        out.push((range.clone(), *color));
+        at = range.end;
+    }
+    emit(base, &mut next, at, usize::MAX, out);
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -168,6 +224,7 @@ impl DeferredParse {
 
 pub(crate) struct CodeHighlighter {
     syntax: DiffSyntax,
+    lexical: Option<LexicalLayer>,
     passes: Vec<GrammarPass>,
     rows: Vec<IndexedLineRuns>,
     row_states: Vec<RowState>,
@@ -180,6 +237,11 @@ pub(crate) struct CodeHighlighter {
 
 impl CodeHighlighter {
     pub(crate) fn new(doc: &CodeDocument, syntax: DiffSyntax) -> Self {
+        let lexical = LexicalLayer::open(doc, &syntax);
+        Self::with_lexical(doc, syntax, lexical)
+    }
+
+    fn with_lexical(doc: &CodeDocument, syntax: DiffSyntax, lexical: Option<LexicalLayer>) -> Self {
         let mut passes = Vec::new();
         if doc.len_bytes() <= highlight_cap(doc.ext())
             && let Some(grammar) = grammar_for_ext(doc.ext())
@@ -202,6 +264,7 @@ impl CodeHighlighter {
                     tree: None,
                     colors: capture_colors(grammar, &syntax),
                     cursor: QueryCursor::new(),
+                    nested: nested_query(grammar),
                 })
             })
             .collect::<Vec<_>>();
@@ -210,6 +273,7 @@ impl CodeHighlighter {
 
         Self {
             syntax,
+            lexical,
             passes,
             rows: vec![Vec::new(); tracked_lines],
             row_states: vec![RowState::Stale; tracked_lines],
@@ -245,7 +309,40 @@ impl CodeHighlighter {
     }
 
     pub(crate) fn is_too_complex(&self) -> bool {
-        self.too_complex
+        self.too_complex && self.lexical.is_none()
+    }
+
+    pub(crate) fn lexical_job(&mut self, doc: &CodeDocument) -> Option<LexJob> {
+        self.lexical.as_mut()?.job(doc)
+    }
+
+    pub(crate) fn lexical_has_pending_scan(&self) -> bool {
+        self.lexical
+            .as_ref()
+            .is_some_and(LexicalLayer::has_pending_scan)
+    }
+
+    pub(crate) fn lexical_idle_slice(
+        &mut self,
+        doc: &CodeDocument,
+        budget: Duration,
+    ) -> Option<Range<usize>> {
+        self.lexical.as_mut()?.idle_slice(doc, budget)
+    }
+
+    pub(crate) fn apply_lexed(&mut self, doc: &CodeDocument, lexed: Lexed) -> bool {
+        let Some(layer) = self.lexical.as_mut() else {
+            return false;
+        };
+        match layer.apply(doc, lexed) {
+            Applied::Installed => true,
+            Applied::Ignored => false,
+            Applied::Failed(err) => {
+                layer.warn(&err);
+                self.lexical = None;
+                true
+            }
+        }
     }
 
     #[cfg(test)]
@@ -270,13 +367,20 @@ impl CodeHighlighter {
 
     pub(crate) fn runs_into(&self, row: usize, out: &mut LineRuns) {
         out.clear();
-        if self.row_states.get(row) != Some(&RowState::Fresh) {
-            return;
-        }
-        let Some(runs) = self.rows.get(row) else {
+        let fresh = self.row_states.get(row) == Some(&RowState::Fresh);
+        let runs = self.rows.get(row).filter(|_| fresh);
+        let Some(runs) = runs else {
+            if let Some(lexical) = &self.lexical {
+                lexical.push_runs(row, 0..usize::MAX, out);
+            }
             return;
         };
+        let mut nested = false;
         for &(start, end, indexed) in runs.iter() {
+            if indexed.pass == NESTED_PASS {
+                nested = true;
+                continue;
+            }
             let Some(pass) = self.passes.get(indexed.pass as usize) else {
                 continue;
             };
@@ -284,6 +388,16 @@ impl CodeHighlighter {
                 continue;
             };
             out.push((start as usize..end as usize, color));
+        }
+        if let Some(lexical) = self.lexical.as_ref().filter(|_| nested) {
+            let mut top = LineRuns::new();
+            for &(start, end, indexed) in runs.iter() {
+                if indexed.pass == NESTED_PASS {
+                    lexical.push_runs(row, start as usize..end as usize, &mut top);
+                }
+            }
+            let base = std::mem::take(out);
+            overlay_runs(&base, &top, out);
         }
     }
 
@@ -295,6 +409,9 @@ impl CodeHighlighter {
     }
 
     pub(crate) fn set_syntax(&mut self, syntax: DiffSyntax) {
+        if let Some(lexical) = self.lexical.as_mut() {
+            lexical.set_syntax(&syntax);
+        }
         self.syntax = syntax;
         for pass in &mut self.passes {
             pass.colors = capture_colors(pass.grammar, &self.syntax);
@@ -324,7 +441,13 @@ impl CodeHighlighter {
         if !descends_without_overlap(edits) {
             return Err(UnorderedBatch);
         }
-        if !self.enabled || edits.is_empty() {
+        if edits.is_empty() {
+            return Ok(HighlightOutcome::Synced);
+        }
+        if let Some(lexical) = self.lexical.as_mut() {
+            lexical.edit(doc, edits, budget);
+        }
+        if !self.enabled {
             return Ok(HighlightOutcome::Synced);
         }
         self.cancel_deferred();
@@ -588,6 +711,7 @@ impl CodeHighlighter {
         for row in rows.clone() {
             self.rows[row].clear();
         }
+        let mut nested_rows: Vec<IndexedLineRuns> = Vec::new();
 
         for (pass_index, pass) in self.passes.iter_mut().enumerate() {
             let GrammarPass {
@@ -595,6 +719,7 @@ impl CodeHighlighter {
                 tree,
                 colors,
                 cursor,
+                nested,
                 ..
             } = pass;
             let Some(tree) = tree.as_ref() else {
@@ -627,10 +752,37 @@ impl CodeHighlighter {
                     &mut self.rows,
                 );
             }
+            drop(caps);
+            let Some(nested) = (*nested).filter(|_| self.lexical.is_some()) else {
+                continue;
+            };
+            if nested_rows.is_empty() {
+                nested_rows.resize(rows.len(), Vec::new());
+            }
+            let mut region_counts = vec![0usize; line_ranges.len()];
+            let mut regions = cursor.captures(nested, tree.root_node(), RopeText(doc.text()));
+            while let Some((mat, idx)) = regions.next() {
+                let node = mat.captures[*idx].node;
+                bucket_capture(
+                    node.start_byte(),
+                    node.end_byte(),
+                    IndexedCapture {
+                        pass: NESTED_PASS,
+                        capture: 0,
+                    },
+                    &(0..rows.len()),
+                    &line_ranges,
+                    &mut region_counts,
+                    &mut nested_rows,
+                );
+            }
         }
 
-        for row in rows {
+        for (offset, row) in rows.enumerate() {
             resolve_indexed_runs(&mut self.rows[row]);
+            if let Some(regions) = nested_rows.get_mut(offset) {
+                self.rows[row].append(regions);
+            }
             self.row_states[row] = RowState::Fresh;
         }
     }
@@ -641,12 +793,15 @@ impl CodeHighlighter {
         rows: Range<usize>,
         budget: Duration,
     ) -> StaleFill {
-        if !self.enabled || !self.has_tree() {
-            return StaleFill::default();
-        }
         let lines = doc.line_count();
         let rows = rows.start.min(lines)..rows.end.min(lines);
         let deadline = Instant::now() + budget;
+        if let Some(lexical) = self.lexical.as_mut() {
+            lexical.fill(doc, rows.clone(), deadline);
+        }
+        if !self.enabled || !self.has_tree() {
+            return StaleFill::default();
+        }
         let mut queried = false;
         let mut row = rows.start;
         'fill: while row < rows.end {
@@ -697,6 +852,44 @@ impl Drop for CodeHighlighter {
 
 #[cfg(test)]
 impl CodeHighlighter {
+    pub(crate) fn layer2_only(doc: &CodeDocument, syntax: DiffSyntax) -> Self {
+        Self::with_lexical(doc, syntax, None)
+    }
+
+    pub(crate) fn has_lexical(&self) -> bool {
+        self.lexical.is_some()
+    }
+
+    pub(crate) fn settle_lexical_for_test(&mut self, doc: &CodeDocument) {
+        while self.lexical_has_pending_scan() {
+            self.lexical_idle_slice(doc, Duration::from_secs(60));
+        }
+    }
+
+    pub(crate) fn lexical_is_ready(&self) -> bool {
+        self.lexical.as_ref().is_some_and(LexicalLayer::is_ready)
+    }
+
+    pub(crate) fn lexical_retained_bytes(&self) -> usize {
+        self.lexical
+            .as_ref()
+            .map_or(0, LexicalLayer::retained_bytes)
+    }
+
+    pub(crate) fn row_has_nested_region(&self, row: usize) -> bool {
+        self.rows
+            .get(row)
+            .is_some_and(|runs| runs.iter().any(|(_, _, run)| run.pass == NESTED_PASS))
+    }
+
+    pub(crate) fn lexical_runs(&self, row: usize) -> LineRuns {
+        let mut out = LineRuns::new();
+        if let Some(lexical) = &self.lexical {
+            lexical.push_runs(row, 0..usize::MAX, &mut out);
+        }
+        out
+    }
+
     pub(crate) fn parse_initial_blocking(&mut self, doc: &CodeDocument) -> bool {
         let Some(parse) = self.initial_parse(doc) else {
             return false;
@@ -912,6 +1105,7 @@ where
 mod tests {
     use std::path::PathBuf;
 
+    use super::super::lexical::INITIAL_LEXICAL_ROWS;
     use super::*;
     use crate::diff::{MAX_HIGHLIGHT_BYTES, MAX_MARKDOWN_HIGHLIGHT_BYTES, highlight_lines};
     use crate::theme::paneflow_dark;
@@ -926,6 +1120,12 @@ mod tests {
 
     fn parsed(doc: &CodeDocument) -> CodeHighlighter {
         let mut highlighter = CodeHighlighter::new(doc, syntax());
+        highlighter.parse_initial_blocking(doc);
+        highlighter
+    }
+
+    fn parsed_layer2(doc: &CodeDocument) -> CodeHighlighter {
+        let mut highlighter = CodeHighlighter::layer2_only(doc, syntax());
         highlighter.parse_initial_blocking(doc);
         highlighter
     }
@@ -955,7 +1155,7 @@ mod tests {
 
     fn assert_parity(name: &str, text: &str) {
         let d = doc(name, text);
-        let mut h = parsed(&d);
+        let mut h = parsed_layer2(&d);
         assert!(h.is_enabled(), "{name} resolved no grammar");
         assert!(h.all_rows_stale(), "{name} queried during construction");
         fill_all(&mut h, &d);
@@ -981,7 +1181,7 @@ mod tests {
     fn parity_holds_after_an_incremental_edit_on_every_grammar() {
         for (name, text) in corpus() {
             let mut d = doc(name, text);
-            let h = &mut parsed(&d);
+            let h = &mut parsed_layer2(&d);
             fill_all(h, &d);
             let at = d.line_to_byte(1);
             let edit = d.insert(at, "\n ").expect("insert");
@@ -1059,8 +1259,10 @@ mod tests {
             panic!("a zero budget must defer");
         };
         assert_eq!(deferred.generation(), h.generation());
-        assert!(h.runs(1).is_empty());
-        assert!(h.runs(2).is_empty());
+        assert!(h.is_row_stale(1) && h.is_row_stale(2));
+        assert_eq!(h.runs(1), h.lexical_runs(1), "a stale row paints layer 1");
+        assert_eq!(h.runs(2), h.lexical_runs(2), "a stale row paints layer 1");
+        assert!(!h.runs(2).is_empty());
 
         assert!(h.apply_parsed(&d, deferred.run()));
         assert!(
@@ -1179,7 +1381,7 @@ mod tests {
     #[test]
     fn an_initial_parse_past_its_timeout_gives_up_and_greys_the_file() {
         let d = doc("slow.rs", &rows_of_code(4_000));
-        let mut h = CodeHighlighter::new(&d, syntax());
+        let mut h = CodeHighlighter::layer2_only(&d, syntax());
         let parse = h
             .initial_parse(&d)
             .expect("the initial parse is deferred")
@@ -1194,6 +1396,24 @@ mod tests {
         assert!(!h.has_tree());
         assert_eq!(h.per_row_capacity(), (0, 0), "no per-row storage is kept");
         assert!(h.runs(0).is_empty());
+    }
+
+    #[test]
+    fn a_tree_sitter_give_up_leaves_layer_1_coloring_and_no_banner() {
+        let d = doc("slow.rs", &rows_of_code(4_000));
+        let mut h = CodeHighlighter::new(&d, syntax());
+        let parse = h
+            .initial_parse(&d)
+            .expect("the initial parse is deferred")
+            .with_timeout_for_test(Duration::ZERO);
+        assert!(h.apply_parsed(&d, parse.run()));
+        assert!(!h.is_enabled(), "layer 2 gave up");
+        assert!(
+            !h.is_too_complex(),
+            "layer 1 still colors, so no give-up banner"
+        );
+        assert!(!h.runs(0).is_empty());
+        assert_eq!(h.runs(0), h.lexical_runs(0));
     }
 
     #[test]
@@ -1213,7 +1433,7 @@ mod tests {
     fn a_starved_fill_stops_between_slices_and_leaves_whole_rows_stale() {
         let text = rows_of_code(300);
         let d = doc("sliced.rs", &text);
-        let mut h = parsed(&d);
+        let mut h = parsed_layer2(&d);
 
         let first = h.fill_stale_rows(&d, 0..300, Duration::ZERO);
         assert_eq!(first.stale_rows, 300 - MAX_QUERY_ROWS);
@@ -1377,7 +1597,7 @@ mod tests {
     fn a_deferred_parse_holds_parity_on_every_grammar() {
         for (name, text) in corpus() {
             let mut d = doc(name, text);
-            let h = &mut parsed(&d);
+            let h = &mut parsed_layer2(&d);
             fill_all(h, &d);
             let at = d.line_to_byte(1);
             let edit = d.insert(at, "\n ").expect("insert");
@@ -1534,7 +1754,14 @@ mod tests {
             h.edit_with_budget(&d, &edit, Duration::from_secs(5)),
             HighlightOutcome::Synced
         ));
-        assert!(h.runs(0).is_empty());
+        assert!(h.is_row_stale(0), "the edited row waits for layer 2");
+        assert!(!h.runs(0).is_empty(), "and paints layer 1 meanwhile");
+        let fresh = CodeHighlighter::new(&d, syntax());
+        assert_eq!(
+            h.runs(0),
+            fresh.runs(0),
+            "the edited row shows the layer-1 colors of its new text"
+        );
         assert!(!h.runs(1).is_empty());
         assert!(
             !h.fill_stale_rows(&d, 0..1, Duration::from_secs(1))
@@ -1550,7 +1777,11 @@ mod tests {
         assert!(h.is_enabled(), "the grammar resolved");
         assert!(!h.has_tree(), "the initial parse did not run inside new");
         assert!(h.all_rows_stale());
-        assert!(h.runs(0).is_empty());
+        assert!(
+            !h.runs(0).is_empty(),
+            "layer 1 colors the row before the tree"
+        );
+        assert_eq!(h.runs(0), h.lexical_runs(0));
         assert_eq!(
             h.fill_stale_rows(&d, 0..d.line_count(), Duration::from_secs(1)),
             StaleFill::default(),
@@ -1710,5 +1941,408 @@ mod tests {
             "the batch left exactly one live deferred parse"
         );
         assert!(h.apply_parsed(&d, batched.run()));
+    }
+
+    fn other_syntax() -> DiffSyntax {
+        let other = crate::theme::THEMES
+            .iter()
+            .find(|(name, _)| *name != crate::theme::DEFAULT_THEME)
+            .map(|(_, build)| build())
+            .expect("a second bundled theme");
+        DiffSyntax::from_theme(&other)
+    }
+
+    fn assert_layer1_equals_a_fresh_open(h: &CodeHighlighter, d: &CodeDocument) {
+        let mut fresh = CodeHighlighter::new(d, syntax());
+        fresh.settle_lexical_for_test(d);
+        for row in 0..d.line_count() {
+            assert_eq!(
+                h.lexical_runs(row),
+                fresh.lexical_runs(row),
+                "layer-1 row {row} diverges from a fresh lex: {:?}",
+                d.line_string(row)
+            );
+        }
+    }
+
+    #[test]
+    fn every_row_with_text_paints_layer_1_before_the_first_tree() {
+        let text = crate::app::diff_dock::code::bench_corpus::rust_source(40_000);
+        let d = doc("first.rs", &text);
+        let mut h = CodeHighlighter::new(&d, syntax());
+        assert!(!h.has_tree(), "the tree is still deferred");
+        let first = INITIAL_LEXICAL_ROWS.min(d.line_count());
+        assert!(
+            d.line_count() > 4 * first,
+            "the corpus outgrows the first scan"
+        );
+        let painted_rows = |h: &CodeHighlighter, rows: Range<usize>| {
+            let mut painted = 0;
+            for row in rows {
+                let line = d.line_string(row).unwrap_or_default();
+                if line.trim().is_empty() {
+                    continue;
+                }
+                assert!(
+                    !h.runs(row).is_empty(),
+                    "row {row} paints plain before the tree: {line:?}"
+                );
+                painted += 1;
+            }
+            painted
+        };
+        assert!(painted_rows(&h, 0..first) > 64, "new colors the first rows");
+        assert!(
+            h.lexical_has_pending_scan(),
+            "the rest is left to the idle scan"
+        );
+        h.settle_lexical_for_test(&d);
+        assert!(!h.has_tree(), "the idle scan finished before any tree");
+        assert!(h.lexical_is_ready());
+        assert!(painted_rows(&h, 0..d.line_count()) > 500);
+    }
+
+    #[test]
+    fn a_fresh_layer_2_row_shows_only_layer_2_outside_nested_code() {
+        let mut nested = 0;
+        for (name, text) in corpus() {
+            let d = doc(name, text);
+            let mut layered = parsed(&d);
+            let mut alone = parsed_layer2(&d);
+            assert!(
+                layered.has_lexical() || name.ends_with(".jsonc"),
+                "{name} has no lexer"
+            );
+            fill_all(&mut layered, &d);
+            fill_all(&mut alone, &d);
+            for row in 0..d.line_count() {
+                if layered.row_has_nested_region(row) {
+                    nested += 1;
+                    continue;
+                }
+                assert_eq!(
+                    layered.runs(row),
+                    alone.runs(row),
+                    "{name} row {row} mixes layer 1 into a fresh layer-2 row: {:?}",
+                    d.line_string(row)
+                );
+            }
+        }
+        assert!(
+            nested > 0,
+            "the corpus has no nested code, so the skip proves nothing"
+        );
+    }
+
+    #[tracing_test::traced_test]
+    #[test]
+    fn a_lexer_error_at_open_turns_layer_1_off_logs_once_and_keeps_layer_2() {
+        let d = doc("broken.rs", "fn main() { let a = 1; }\n");
+        crate::app::diff_dock::code::lexical::inject_failure_for_test(
+            paneflow_highlights::LexError::Trap,
+        );
+        let mut h = CodeHighlighter::new(&d, syntax());
+        assert!(!h.has_lexical(), "layer 1 is off for this document");
+        assert!(h.runs(0).is_empty(), "so the row is plain until the tree");
+        assert!(h.parse_initial_blocking(&d), "layer 2 still parses");
+        fill_all(&mut h, &d);
+        assert!(!h.runs(0).is_empty(), "and still colors");
+        logs_assert(|lines: &[&str]| {
+            let warnings = lines
+                .iter()
+                .filter(|line| {
+                    line.contains("WARN")
+                        && line.contains(
+                            "lexical coloring is off for this .rs file: the lexer trapped",
+                        )
+                })
+                .count();
+            if warnings == 1 {
+                Ok(())
+            } else {
+                Err(format!("{warnings} warnings instead of one"))
+            }
+        });
+    }
+
+    #[test]
+    fn a_theme_switch_recolors_layer_1_without_relexing() {
+        let d = doc("theme1.rs", "fn main() { let s = \"x\"; }\n");
+        let mut h = CodeHighlighter::new(&d, syntax());
+        let before = h.runs(0);
+        assert!(!before.is_empty());
+        let lexes = crate::app::diff_dock::code::lexical::lex_count_for_test();
+        h.set_syntax(other_syntax());
+        assert_eq!(
+            crate::app::diff_dock::code::lexical::lex_count_for_test(),
+            lexes,
+            "the theme switch did not relex"
+        );
+        let after = h.runs(0);
+        let fresh = CodeHighlighter::new(&d, other_syntax());
+        assert_eq!(after, fresh.runs(0), "layer 1 follows the new palette");
+        assert_ne!(after, before);
+    }
+
+    #[test]
+    fn an_edit_reaches_the_layer_1_document_on_the_render_thread() {
+        let mut d = doc("typed1.rs", "fn main() {\n    let a = 1;\n}\nfn b() {}\n");
+        let mut h = CodeHighlighter::new(&d, syntax());
+        for (at, text) in [(16, "/* "), (2, "\n"), (0, "\"")] {
+            let edit = d.insert(at, text).expect("insert");
+            let outcome = h
+                .edit_batch(&d, std::slice::from_ref(&edit), SYNC_PARSE_BUDGET)
+                .expect("a single edit is a valid batch");
+            assert!(matches!(outcome, HighlightOutcome::Synced) || h.has_lexical());
+            assert!(h.lexical_is_ready(), "the relex settled inside the budget");
+            assert_layer1_equals_a_fresh_open(&h, &d);
+        }
+    }
+
+    #[test]
+    fn a_relex_past_the_budget_paints_shifted_runs_until_the_idle_scan_reaches_them() {
+        let mut d = doc("deferred1.rs", "let value = 1;\nlet other = 2;\n");
+        let mut h = CodeHighlighter::new(&d, syntax());
+        let before = h.runs(1);
+        let edit = d.insert(d.line_to_byte(1), "zz").expect("insert");
+        let _ = h.edit_with_budget(&d, &edit, Duration::ZERO);
+        assert!(
+            !h.lexical_is_ready(),
+            "a zero budget scans nothing on the spot"
+        );
+        let shifted: LineRuns = before
+            .iter()
+            .map(|(range, color)| (range.start + 2..range.end + 2, *color))
+            .collect();
+        assert_eq!(
+            h.runs(1),
+            shifted,
+            "the row keeps its previous runs, shifted"
+        );
+        assert!(
+            h.lexical_job(&d).is_none(),
+            "an unfinished scan is no relex"
+        );
+        let rewritten = h
+            .lexical_idle_slice(&d, Duration::from_secs(5))
+            .expect("the idle scan rewrites the edited row");
+        assert!(rewritten.contains(&1));
+        assert!(h.lexical_is_ready());
+        assert_layer1_equals_a_fresh_open(&h, &d);
+    }
+
+    #[test]
+    fn a_language_without_a_grammar_is_colored_by_layer_1_alone() {
+        for (name, text) in [
+            (
+                "main.kt",
+                "fun main() {\n    val greeting = \"hi\"\n    println(greeting)\n}\n",
+            ),
+            (
+                "init.lua",
+                "local function greet(name)\n  return \"hi \" .. name\nend\n",
+            ),
+            (
+                "App.swift",
+                "struct App {\n    let name: String = \"x\"\n}\n",
+            ),
+            ("query.sql", "SELECT id, name FROM users WHERE id = 1;\n"),
+        ] {
+            let mut d = doc(name, text);
+            let mut h = CodeHighlighter::new(&d, syntax());
+            assert!(!h.is_enabled(), "{name} has no grammar");
+            assert!(h.has_lexical(), "{name} has a lexer");
+            assert!(h.initial_parse(&d).is_none(), "{name} asks for no tree");
+            assert!(!h.runs(0).is_empty(), "{name} row 0 is plain");
+            let rows: Vec<_> = (0..d.line_count()).map(|row| h.runs(row)).collect();
+            assert_eq!(
+                h.fill_stale_rows(&d, 0..d.line_count(), Duration::from_secs(1)),
+                StaleFill::default(),
+                "{name} asks for no follow-up frame"
+            );
+            let after: Vec<_> = (0..d.line_count()).map(|row| h.runs(row)).collect();
+            assert_eq!(rows, after, "{name} fill changed the layer-1 rows");
+
+            let edit = d.insert(d.line_to_byte(1), "-- \"").expect("insert");
+            let _ = h.edit(&d, &edit);
+            assert!(h.lexical_is_ready(), "{name} relexed in budget");
+            let fresh = CodeHighlighter::new(&d, syntax());
+            assert_eq!(h.runs(1), fresh.runs(1), "{name} edited row");
+            assert!(!h.runs(1).is_empty());
+        }
+    }
+
+    fn fenced_markdown() -> &'static str {
+        "# Title\n\n```rust\nfn main() { let x = \"s\"; }\n```\n\nSome *prose* here.\n"
+    }
+
+    #[test]
+    fn a_markdown_fence_keeps_layer_1_colors_inside_and_layer_2_on_its_delimiters() {
+        let d = doc("fence.md", fenced_markdown());
+        let mut h = parsed(&d);
+        let mut alone = parsed_layer2(&d);
+        fill_all(&mut h, &d);
+        fill_all(&mut alone, &d);
+        assert!(!h.is_row_stale(3), "the tree is fresh on the fence body");
+        assert!(h.row_has_nested_region(3));
+        assert!(
+            !h.lexical_runs(3).is_empty(),
+            "the lexer colors the fenced Rust"
+        );
+        assert_eq!(h.runs(3), h.lexical_runs(3), "the fence body shows layer 1");
+        assert_ne!(
+            h.runs(3),
+            alone.runs(3),
+            "which layer 2 alone does not color"
+        );
+
+        let fence = syntax()
+            .color_for_capture("punctuation.embedded.markup")
+            .expect("a fence color");
+        for row in [2, 4] {
+            assert!(!h.row_has_nested_region(row), "row {row} is a delimiter");
+            assert_eq!(
+                h.runs(row),
+                alone.runs(row),
+                "delimiter row {row} keeps layer 2"
+            );
+        }
+        assert!(
+            h.runs(2)
+                .iter()
+                .any(|(range, color)| *range == (3..7) && *color == fence),
+            "the info string keeps punctuation.embedded.markup: {:?}",
+            h.runs(2)
+        );
+    }
+
+    #[test]
+    fn an_unknown_fence_language_paints_without_panicking() {
+        let text = "```nosuchlanguage\nwhatever goes { here }\n```\n";
+        let d = doc("unknown-fence.md", text);
+        let mut h = parsed(&d);
+        let mut alone = parsed_layer2(&d);
+        fill_all(&mut h, &d);
+        fill_all(&mut alone, &d);
+        for row in 0..d.line_count() {
+            let _ = h.runs(row);
+        }
+        assert_eq!(h.runs(0), alone.runs(0));
+        assert_eq!(h.runs(2), alone.runs(2));
+        assert!(!h.runs(0).is_empty());
+    }
+
+    #[test]
+    fn html_script_and_style_bodies_keep_layer_1_colors_after_the_tree() {
+        let text = "<html>\n<script>\nconst x = \"y\";\n</script>\n<style>\nbody { color: red; }\n</style>\n</html>\n";
+        let d = doc("page.html", text);
+        let mut h = parsed(&d);
+        let mut alone = parsed_layer2(&d);
+        fill_all(&mut h, &d);
+        fill_all(&mut alone, &d);
+        for row in [2, 5] {
+            assert!(!h.is_row_stale(row));
+            assert!(h.row_has_nested_region(row), "row {row} is raw_text");
+            assert!(!h.lexical_runs(row).is_empty(), "row {row}");
+            assert_eq!(h.runs(row), h.lexical_runs(row), "row {row} shows layer 1");
+        }
+        for row in [1, 3, 4, 6] {
+            assert_eq!(h.runs(row), alone.runs(row), "tag row {row} keeps layer 2");
+        }
+    }
+
+    #[test]
+    fn every_nested_region_kind_exists_in_its_grammar() {
+        for (ext, kind) in NESTED_CODE_REGIONS {
+            let grammar = grammar_for_ext(ext).expect("a grammar for the nested table");
+            assert_ne!(
+                grammar.language.id_for_node_kind(kind, true),
+                0,
+                "{kind} is not a node kind of the {ext} grammar"
+            );
+            assert!(nested_query(grammar).is_some(), "{kind} does not compile");
+        }
+    }
+
+    #[test]
+    fn overlay_keeps_the_base_outside_the_top_runs() {
+        let a = gpui::hsla(0.1, 0.5, 0.5, 1.0);
+        let b = gpui::hsla(0.6, 0.5, 0.5, 1.0);
+        let base: LineRuns = vec![(0..4, a), (6..12, a)];
+        let top: LineRuns = vec![(2..3, b), (8..9, b)];
+        let mut out = LineRuns::new();
+        overlay_runs(&base, &top, &mut out);
+        assert_eq!(
+            out,
+            vec![
+                (0..2, a),
+                (2..3, b),
+                (3..4, a),
+                (6..8, a),
+                (8..9, b),
+                (9..12, a)
+            ]
+        );
+    }
+
+    fn large_rust() -> String {
+        let mut text = String::with_capacity(MAX_HIGHLIGHT_BYTES + 64);
+        while text.len() <= MAX_HIGHLIGHT_BYTES {
+            text.push_str("pub fn f() -> i32 { 1 }\n");
+        }
+        text
+    }
+
+    #[test]
+    fn a_file_past_the_tree_sitter_cap_opens_plain_and_colors_from_a_background_lex() {
+        const fn assert_send<T: Send>() {}
+        assert_send::<super::super::lexical::LexJob>();
+        let mut d = doc("large.rs", &large_rust());
+        let mut h = CodeHighlighter::new(&d, syntax());
+        assert!(!h.is_enabled(), "past the tree-sitter cap");
+        assert!(
+            h.has_lexical() && !h.lexical_is_ready(),
+            "the lex is deferred"
+        );
+        assert!(h.runs(0).is_empty(), "the first frame is plain");
+        let typed = d.insert(0, "// a\n").expect("insert");
+        assert!(matches!(h.edit(&d, &typed), HighlightOutcome::Synced));
+        let job = h.lexical_job(&d).expect("the open hands out a lex job");
+        let lexed = std::thread::spawn(move || job.run())
+            .join()
+            .expect("the job thread");
+        assert!(h.apply_lexed(&d, lexed));
+        let last = d.line_count() - 2;
+        assert!(!h.runs(0).is_empty() && !h.runs(last).is_empty());
+        assert!(h.lexical_retained_bytes() > d.len_bytes());
+    }
+
+    #[tracing_test::traced_test]
+    #[test]
+    fn a_lexer_error_on_a_large_file_leaves_it_plain_editable_and_logs_once() {
+        let mut d = doc("large-broken.rs", &large_rust());
+        let mut h = CodeHighlighter::new(&d, syntax());
+        let job = h.lexical_job(&d).expect("a lex job");
+        crate::app::diff_dock::code::lexical::inject_failure_for_test(
+            paneflow_highlights::LexError::Trap,
+        );
+        assert!(h.apply_lexed(&d, job.run()));
+        assert!(!h.has_lexical());
+        assert!(h.lexical_job(&d).is_none(), "no second attempt");
+        assert!(h.runs(0).is_empty());
+        let edit = d.insert(0, "// still editable\n").expect("insert");
+        assert!(matches!(h.edit(&d, &edit), HighlightOutcome::Synced));
+        assert_eq!(d.line_string(0).as_deref(), Some("// still editable"));
+        logs_assert(|lines: &[&str]| {
+            let warnings = lines
+                .iter()
+                .filter(|line| line.contains("WARN") && line.contains("lexical coloring is off"))
+                .count();
+            if warnings == 1 {
+                Ok(())
+            } else {
+                Err(format!("{warnings} warnings instead of one"))
+            }
+        });
     }
 }

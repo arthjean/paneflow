@@ -120,6 +120,7 @@ impl CodeView {
                 self.disk_stamp = loaded.stamp;
                 self.state = CodeLoadState::Ready(loaded);
                 self.start_initial_parse(cx);
+                self.start_lexical(cx);
                 self.start_base_load(cx);
             }
             Ok(opened) => {

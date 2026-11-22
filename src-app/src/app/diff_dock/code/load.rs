@@ -544,7 +544,11 @@ mod tests {
             !opened.highlighter.has_tree(),
             "open_blocking returns the text before any parse has run"
         );
-        assert!(opened.highlighter.runs(0).is_empty());
+        assert!(
+            opened.highlighter.lexical_is_ready(),
+            "but after layer 1 lexed the whole document"
+        );
+        assert!(!opened.highlighter.runs(0).is_empty());
 
         assert!(
             opened.highlighter.parse_initial_blocking(&opened.document),

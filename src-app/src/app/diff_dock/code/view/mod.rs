@@ -44,7 +44,7 @@ type WatchEvents = mpsc::UnboundedReceiver<notify::Result<notify::Event>>;
 use super::base::{Base, spawn_base_load};
 use super::controls::EditorControls;
 use super::cursor::{self, CodeSelection};
-use super::document::{CodeDocument, LineEnding, ReadOnlyReason, normalize_newlines};
+use super::document::{CodeDocument, CodeEdit, LineEnding, ReadOnlyReason, normalize_newlines};
 use super::edit::{self, EditGroup, IndentUnit, TrackerWindow};
 #[cfg(test)]
 use super::element;
@@ -56,6 +56,7 @@ use super::highlight::{
     CodeHighlighter, DeferredParse, HIGHLIGHT_FRAME_BUDGET, HighlightOutcome, SYNC_PARSE_BUDGET,
     spawn_deferred_parse,
 };
+use super::lexical::IDLE_SLICE_BUDGET;
 use super::load::{CodeLoadError, CodeLoadSlot, CodeLoadState};
 use super::markers::MARKER_COLUMN_W;
 use super::navigation::NavigationState;
@@ -223,6 +224,7 @@ pub(crate) struct CodeView {
     tracker: BlockTracker,
     tracker_generation: u64,
     hovered_marker: Option<usize>,
+    lexical_scan: Option<gpui::Task<()>>,
     popup: Option<MarkerPopup>,
     highlight_budget: Duration,
     load_deferred: bool,
@@ -349,6 +351,7 @@ impl CodeView {
             tracker: BlockTracker::inactive(),
             tracker_generation: 0,
             hovered_marker: None,
+            lexical_scan: None,
             popup: None,
             highlight_budget: HIGHLIGHT_FRAME_BUDGET,
             load_deferred: false,
@@ -431,6 +434,7 @@ impl CodeView {
             tracker: BlockTracker::inactive(),
             tracker_generation: 0,
             hovered_marker: None,
+            lexical_scan: None,
             popup: None,
             highlight_budget: HIGHLIGHT_FRAME_BUDGET,
             load_deferred: false,
@@ -817,6 +821,59 @@ impl CodeView {
         });
     }
 
+    pub(super) fn start_lexical(&mut self, cx: &mut Context<Self>) {
+        let Some((doc, hl)) = self.state.editable() else {
+            return;
+        };
+        if let Some(job) = hl.lexical_job(doc) {
+            spawn_blocking_then(
+                cx,
+                move || job.run(),
+                |view: &mut Self, lexed, cx| {
+                    if let Some((doc, hl)) = view.state.editable()
+                        && hl.apply_lexed(doc, lexed)
+                    {
+                        cx.notify();
+                    }
+                    view.start_lexical(cx);
+                },
+            );
+            return;
+        }
+        if self.lexical_scan.is_some() || !hl.lexical_has_pending_scan() {
+            return;
+        }
+        self.lexical_scan = Some(cx.spawn(
+            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                loop {
+                    smol::future::yield_now().await;
+                    let more = this.update(cx, |view, cx| {
+                        let shown = view.shown_rows();
+                        let Some((doc, hl)) = view.state.editable() else {
+                            return false;
+                        };
+                        let rewritten = hl.lexical_idle_slice(doc, IDLE_SLICE_BUDGET);
+                        if rewritten.is_some_and(|rows| {
+                            shown
+                                .iter()
+                                .any(|seen| rows.start < seen.end && seen.start < rows.end)
+                        }) {
+                            cx.notify();
+                        }
+                        hl.lexical_has_pending_scan()
+                    });
+                    if !matches!(more, Ok(true)) {
+                        break;
+                    }
+                }
+                let _ = this.update(cx, |view, cx| {
+                    view.lexical_scan = None;
+                    view.start_lexical(cx);
+                });
+            },
+        ));
+    }
+
     pub(crate) fn path(&self) -> &Path {
         &self.path
     }
@@ -873,6 +930,21 @@ impl CodeView {
         if let Some((_, hl)) = self.state.editable() {
             hl.set_syntax(syntax);
         }
+    }
+
+    fn shown_rows(&self) -> Vec<Range<usize>> {
+        let Some(line_count) = self.state.document().map(CodeDocument::line_count) else {
+            return Vec::new();
+        };
+        let mut shown = vec![if self.scroll.viewport_height() > 0.0 {
+            self.visible_lines()
+        } else {
+            0..INITIAL_HIGHLIGHT_ROWS.min(line_count)
+        }];
+        if self.navigation.layout.get().minimap.is_some() {
+            shown.push(super::minimap::visible_rows(line_count, &self.scroll));
+        }
+        shown
     }
 
     fn fill_visible_highlights(&mut self, window: &mut Window) {
@@ -1258,15 +1330,19 @@ mod tests {
     fn an_initial_parse_that_gives_up_greys_the_file_and_raises_its_banner(
         cx: &mut TestAppContext,
     ) {
+        crate::app::diff_dock::code::lexical::set_disabled_for_test(true);
         let (view, cx) = view(cx, "fn main() {\n    let value = 1;\n}\n");
+        crate::app::diff_dock::code::lexical::set_disabled_for_test(false);
         let ui = crate::theme::ui_colors();
 
         let before = view.update(cx, |view, cx| view.banners(ui, cx).len());
 
         view.update(cx, |view, _cx| {
             let (doc, highlighter) = view.state.editable().expect("ready");
-            let mut fresh =
-                CodeHighlighter::new(doc, DiffSyntax::from_theme(&crate::theme::paneflow_dark()));
+            let mut fresh = CodeHighlighter::layer2_only(
+                doc,
+                DiffSyntax::from_theme(&crate::theme::paneflow_dark()),
+            );
             let expired = fresh
                 .initial_parse(doc)
                 .expect("a fresh highlighter defers its first parse")

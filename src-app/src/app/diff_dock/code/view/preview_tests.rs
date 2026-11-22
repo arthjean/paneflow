@@ -619,3 +619,42 @@ fn an_editor_tab_whose_file_turns_binary_reopens_on_the_no_preview_screen(cx: &m
     });
     stop_watching(&mut opened);
 }
+
+#[gpui::test]
+fn a_rust_file_past_the_tree_sitter_cap_opens_then_colors_from_its_background_lex(
+    cx: &mut TestAppContext,
+) {
+    let mut text = String::new();
+    while text.len() <= crate::diff::MAX_HIGHLIGHT_BYTES {
+        text.push_str("pub fn value() -> u32 { 42 }\n");
+    }
+    let opened = open_file(cx, "generated.rs", text.as_bytes());
+    opened.view.update(opened.cx, |view, _cx| {
+        let highlighter = view.highlighter().expect("the file opened in the editor");
+        assert!(!highlighter.is_enabled(), "no tree past the cap");
+        assert!(
+            highlighter.lexical_is_ready(),
+            "the background lex was installed"
+        );
+        assert!(
+            !highlighter.runs(0).is_empty(),
+            "the visible rows are colored"
+        );
+    });
+}
+
+#[gpui::test]
+fn a_kotlin_file_opens_colored_in_the_editor_and_its_minimap(cx: &mut TestAppContext) {
+    let text = "fun main() {\n    val greeting = \"hi\"\n    println(greeting)\n}\n";
+    let opened = open_file(cx, "Main.kt", text.as_bytes());
+    opened.view.update(opened.cx, |view, _cx| {
+        let highlighter = view.highlighter().expect("the file opened in the editor");
+        assert!(!highlighter.is_enabled(), "Kotlin has no grammar");
+        let mut minimap = Vec::new();
+        for row in 0..4 {
+            assert!(!highlighter.runs(row).is_empty(), "row {row} is plain");
+            crate::app::diff_dock::code::minimap::row_syntax(view, row, &mut minimap);
+            assert_eq!(minimap, highlighter.runs(row), "minimap row {row}");
+        }
+    });
+}

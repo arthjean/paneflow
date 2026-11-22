@@ -6,6 +6,7 @@ use gpui::{
 };
 
 use super::element::{CodeScroll, code_font};
+use super::highlight::LineRuns;
 use super::navigation::{MINIMAP_FONT_SIZE, MINIMAP_LINE_HEIGHT, Track, minimap_top};
 use super::view::CodeView;
 use crate::diff::text_runs;
@@ -15,6 +16,13 @@ pub(crate) fn visible_rows(line_count: usize, scroll: &CodeScroll) -> Range<usiz
     let first = minimap_top(line_count, scroll).floor() as usize;
     let count = (scroll.viewport_height() / MINIMAP_LINE_HEIGHT).ceil() as usize + 1;
     first.min(line_count)..first.saturating_add(count).min(line_count)
+}
+
+pub(crate) fn row_syntax(view: &CodeView, row: usize, out: &mut LineRuns) {
+    out.clear();
+    if let Some(highlighter) = view.highlighter() {
+        highlighter.runs_into(row, out);
+    }
 }
 
 pub(crate) struct MinimapPaint {
@@ -48,10 +56,7 @@ impl MinimapPaint {
             if text.is_empty() {
                 continue;
             }
-            syntax.clear();
-            if let Some(highlighter) = view.highlighter() {
-                highlighter.runs_into(row, &mut syntax);
-            }
+            row_syntax(view, row, &mut syntax);
             let runs = text_runs(&text, &syntax, &font, foreground);
             let line = TabExpandedLine::shape(
                 &text.into(),

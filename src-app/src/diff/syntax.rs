@@ -19,6 +19,13 @@ impl DiffSyntax {
         self.palette
     }
 
+    pub(crate) fn lexical_colors(&self) -> Vec<Option<Hsla>> {
+        paneflow_highlights::token_types()
+            .iter()
+            .map(|name| self.color_for_capture(name))
+            .collect()
+    }
+
     pub fn color_for_capture(&self, name: &str) -> Option<Hsla> {
         let p = &self.palette;
         let c = if cap_has(name, "comment.doc") || cap_has(name, "comment.documentation") {

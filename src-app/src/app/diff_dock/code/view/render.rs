@@ -146,6 +146,7 @@ impl Render for CodeView {
         self.ensure_focus_observers(window, cx);
         self.sync_theme();
         self.fill_visible_highlights(window);
+        self.start_lexical(cx);
         let ui = crate::theme::ui_colors();
 
         if let Some(preview) = self.render_preview(ui, cx) {
@@ -387,6 +388,69 @@ mod tests {
             cx.notify();
         });
         cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn a_deep_scroll_is_colored_by_the_visible_fill_before_the_idle_scan_reaches_it(
+        cx: &mut TestAppContext,
+    ) {
+        let text: String = (0..6_000)
+            .map(|row| format!("val v{row} = \"{row}\"\n"))
+            .collect();
+        let (view, cx) = view_named(cx, "/nonexistent/deep.kt", &text, Duration::from_secs(5));
+        frame(&view, cx);
+        let before = view.update(cx, |view, _cx| {
+            let highlighter = view.highlighter().expect("a highlighter");
+            assert!(
+                !highlighter.is_enabled(),
+                "Kotlin has no tree-sitter grammar"
+            );
+            assert!(
+                highlighter.lexical_is_ready(),
+                "the open finished its idle scan"
+            );
+            highlighter.lexical_runs(5_900)
+        });
+        assert!(
+            before.len() > 1,
+            "a code row carries several colors: {before:?}"
+        );
+        view.update_in(cx, |view, window, cx| {
+            view.selection = CodeSelection::at(0);
+            view.replace_text_in_range(None, "/*", window, cx);
+            let line_count = view.document().expect("a document").line_count();
+            view.scroll.set_metrics(
+                gpui::Bounds::new(gpui::point(px(0.), px(0.)), gpui::size(px(800.), px(360.))),
+                line_count,
+            );
+            view.scroll.set_rows(4_000.0);
+            let shown = view.visible_lines();
+            assert!(shown.start >= 3_990 && shown.end < 4_100, "{shown:?}");
+            view.fill_visible_highlights(window);
+            let highlighter = view.highlighter().expect("a highlighter");
+            for row in shown {
+                assert_eq!(
+                    highlighter.lexical_runs(row).len(),
+                    1,
+                    "shown row {row} is one comment run as soon as it is painted"
+                );
+            }
+            assert_eq!(
+                highlighter.lexical_runs(5_900),
+                before,
+                "a row past the viewport keeps its old runs until the idle scan reaches it"
+            );
+            assert!(highlighter.lexical_has_pending_scan());
+        });
+        frame(&view, cx);
+        view.update(cx, |view, _cx| {
+            let highlighter = view.highlighter().expect("a highlighter");
+            assert!(
+                highlighter.lexical_is_ready(),
+                "the idle scan reached the end"
+            );
+            assert_eq!(highlighter.lexical_runs(5_900).len(), 1);
+        });
     }
 
     #[gpui::test]
