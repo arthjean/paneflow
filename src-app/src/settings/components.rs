@@ -843,10 +843,6 @@ const CHROME_EDGE_ALPHA: f32 = 0.6;
 const SURFACE_EDGE_ALPHA: f32 = 0.12;
 const CLASSIC_EDGE_ALPHA: f32 = 0.07;
 
-pub(crate) fn menu_row_height() -> Pixels {
-    action_menu::ROW_HEIGHT
-}
-
 pub(crate) fn menu_padding() -> Pixels {
     action_menu::PANEL_PADDING
 }
@@ -1454,7 +1450,7 @@ mod tests {
 
         for shape in [Shape::Rounded, Shape::Surface, Shape::Classic] {
             scoped(shape, || {
-                assert_eq!((menu_row_height(), menu_padding()), (px(28.), px(4.)));
+                assert_eq!((action_menu::ROW_HEIGHT, menu_padding()), (px(28.), px(4.)));
                 assert_eq!(PANEL_PADDING + ROW_RADIUS, PANEL_RADIUS);
             });
         }

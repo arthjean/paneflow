@@ -13,7 +13,6 @@ use gpui::{
 use paneflow_config::schema::AgentProfileConfig;
 
 use paneflow_agent_config::usage::accounts::UsageAgent;
-use paneflow_agent_config::usage::model::UsageLevel;
 
 use crate::PaneFlowApp;
 use crate::agent_launcher::{AgentProfile, TerminalAgent};
@@ -1059,14 +1058,6 @@ fn usage_agent(agent: TerminalAgent) -> Option<UsageAgent> {
         .find(|candidate| paneflow_serve::usage::probe::binary_name(*candidate) == agent.binary())
 }
 
-fn meter_tone(level: UsageLevel) -> MeterTone {
-    match level {
-        UsageLevel::Normal => MeterTone::Normal,
-        UsageLevel::Warn => MeterTone::Warning,
-        UsageLevel::Critical => MeterTone::Danger,
-    }
-}
-
 fn account_detail(account: &AgentAccountRow) -> String {
     match &account.source {
         Some(source) => format!("{} · {source}", account.detail),
@@ -1093,7 +1084,7 @@ fn account_meters(tag: &str, account: &AgentAccountRow, ink: Ink) -> Option<AnyE
             meter.label,
             meter.fraction,
             meter.percent.clone(),
-            meter_tone(meter.level),
+            MeterTone::of(meter.level),
         )
     }));
     Some(match &account.resets {
@@ -1289,7 +1280,7 @@ mod tests {
                 meters: vec![crate::app::usage::model::AccountMeter {
                     label: "Week",
                     fraction: 0.97,
-                    level: UsageLevel::Critical,
+                    level: paneflow_agent_config::usage::model::UsageLevel::Critical,
                     percent: "97%".to_string(),
                 }],
                 resets: Some("Week resets in 2 days".to_string()),

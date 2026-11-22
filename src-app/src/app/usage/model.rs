@@ -76,7 +76,10 @@ const NO_DATA_TOOLTIP: &str = "Plan usage: no data yet";
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct AccountBlock {
     pub(crate) agent: UsageAgent,
+    pub(crate) key: String,
     pub(crate) label: String,
+    pub(crate) plan: Option<String>,
+    pub(crate) in_use: bool,
     pub(crate) body: BlockBody,
 }
 
@@ -106,6 +109,7 @@ pub(crate) enum Pace {
 
 struct Row<'a> {
     agent: UsageAgent,
+    key: String,
     label: String,
     dir: String,
     api_billing: bool,
@@ -419,6 +423,7 @@ fn ordered_rows<'a>(inputs: &UsageInputs<'a>) -> Vec<Row<'a>> {
         .filter(|entry| shown(entry.account.agent))
         .map(|entry| Row {
             agent: entry.account.agent,
+            key: account_dir_key(&entry.account.config_dir),
             label: entry.account.label.clone(),
             dir: display_dir(&entry.account.config_dir, inputs.home),
             api_billing: entry.account.api_billing,
@@ -441,6 +446,7 @@ fn ordered_rows<'a>(inputs: &UsageInputs<'a>) -> Vec<Row<'a>> {
             let shown = display_dir(dir, inputs.home);
             rows.push(Row {
                 agent,
+                key: account_dir_key(dir),
                 label: shown.clone(),
                 dir: shown,
                 api_billing: false,
@@ -457,12 +463,23 @@ fn ordered_rows<'a>(inputs: &UsageInputs<'a>) -> Vec<Row<'a>> {
 }
 
 fn build(row: Row<'_>, now: u64, offset: i32) -> Built {
+    let label = row
+        .plan
+        .and_then(|plan| plan.email.clone())
+        .unwrap_or_else(|| row.label.clone());
+    let block = |body: BlockBody| AccountBlock {
+        agent: row.agent,
+        key: row.key.clone(),
+        label: label.clone(),
+        plan: row
+            .plan
+            .filter(|_| !row.api_billing)
+            .and_then(|plan| plan.plan.clone()),
+        in_use: row.active,
+        body,
+    };
     let message = |text: String| Built {
-        block: AccountBlock {
-            agent: row.agent,
-            label: row.label.clone(),
-            body: BlockBody::Message(text),
-        },
+        block: block(BlockBody::Message(text)),
         active: row.active,
         readings: Vec::new(),
         observed_at_ms: None,
@@ -502,11 +519,7 @@ fn build(row: Row<'_>, now: u64, offset: i32) -> Built {
         .map(|reading| window_row(reading, now, offset))
         .collect();
     Built {
-        block: AccountBlock {
-            agent: row.agent,
-            label: row.label,
-            body: BlockBody::Windows(rows),
-        },
+        block: block(BlockBody::Windows(rows)),
         active: row.active,
         readings,
         observed_at_ms: plan.map(|plan| plan.received_at_ms.unwrap_or(plan.updated_at_ms)),
@@ -578,7 +591,10 @@ fn capsule(built: &[Built]) -> CapsuleView {
             owner.block.agent.display_name(),
             window.to_lowercase()
         ),
-        tooltip: format!("Plan usage: {}, {window} {percent}", owner.block.label),
+        tooltip: format!(
+            "Plan usage: {}, {window} {percent}",
+            owner.block.agent.display_name()
+        ),
         percent,
     }
 }
@@ -1090,7 +1106,7 @@ mod tests {
                 level: UsageLevel::Normal,
                 percent: "54%".into(),
                 accessible: "54% plan usage, Claude Code week".into(),
-                tooltip: "Plan usage: arthur@example.com, Week 54%".into(),
+                tooltip: "Plan usage: Claude Code, Week 54%".into(),
             }
         );
         assert_eq!(view.updated.as_deref(), Some("Updated 2 min ago"));

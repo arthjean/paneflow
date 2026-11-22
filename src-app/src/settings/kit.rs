@@ -3,6 +3,8 @@ use gpui::{
     Stateful, StatefulInteractiveElement, Styled, div, prelude::*, px, rgb, svg,
 };
 
+use paneflow_agent_config::usage::model::UsageLevel;
+
 use crate::agent_launcher::TerminalAgent;
 use crate::settings::components::{
     keyboard_focus_inset, render_logo, select_menu_surface, switch_blue, with_alpha,
@@ -430,6 +432,16 @@ pub(crate) enum MeterTone {
     Danger,
 }
 
+impl MeterTone {
+    pub(crate) fn of(level: UsageLevel) -> Self {
+        match level {
+            UsageLevel::Normal => Self::Normal,
+            UsageLevel::Warn => Self::Warning,
+            UsageLevel::Critical => Self::Danger,
+        }
+    }
+}
+
 pub(crate) fn meter(
     ink: Ink,
     label: &'static str,
@@ -686,10 +698,14 @@ pub(crate) fn avatar_hues(seed: &str) -> ((u32, u32), f32) {
 }
 
 pub(crate) fn avatar(seed: &str) -> AnyElement {
+    avatar_of(seed, LEAD)
+}
+
+pub(crate) fn avatar_of(seed: &str, size: f32) -> AnyElement {
     let ((soft, deep), angle) = avatar_hues(seed);
     div()
         .flex_none()
-        .size(px(LEAD))
+        .size(px(size))
         .rounded_full()
         .bg(gpui::linear_gradient(
             angle,

@@ -667,9 +667,14 @@ impl PaneFlowApp {
         if event.keystroke.modifiers.modified() {
             return;
         }
-        let stops = self
-            .sidebar_usage_view()
-            .map_or(0, |view| view.blocks.len() + 1);
+        let view = self.sidebar_usage_view();
+        let stops = view.as_ref().map_or(0, |view| view.blocks.len() + 1);
+        let private_key = self
+            .usage
+            .cursor
+            .and_then(|cursor| view.as_ref()?.blocks.get(cursor))
+            .filter(|block| crate::settings::private_text::is_private(&block.label))
+            .map(|block| block.key.clone());
         match event.keystroke.key.as_str() {
             "escape" => self.close_usage_bubble(window, cx),
             "up" | "down" => {
@@ -679,6 +684,12 @@ impl PaneFlowApp {
             }
             "enter" | "space" if self.usage.cursor == stops.checked_sub(1) => {
                 self.open_usage_settings(window, cx);
+            }
+            "enter" | "space" if private_key.is_some() => {
+                if let Some(key) = private_key {
+                    self.private_reveals.toggle(&key);
+                }
+                cx.notify();
             }
             _ => return,
         }

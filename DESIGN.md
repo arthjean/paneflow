@@ -328,8 +328,10 @@ Plan usage has three levels, set by the used fraction of a window in
 `UsageLevel::for_fraction` (`crates/paneflow-agent-config/src/usage/model.rs`):
 `Normal` below 0.80 takes `accent`, `Warn` from 0.80 takes the callout warning
 hue above, and `Critical` from 0.95 takes `agent_error`. `level_color` in
-`src-app/src/ui_primitives/ring.rs` is the only mapping; the ring, the bubble
-meters, and the tile legend all read it. A level color only ever comes from a
+`src-app/src/ui_primitives/ring.rs` maps them for the ring and the tile
+legend; the meters of Settings › Agents and of the usage bubble map them
+through `kit::MeterTone::of` instead (`Normal` in the switch blue, `Warn` and
+`Critical` in the kit warning and danger inks). A level color only ever comes from a
 reported window: an account without a snapshot, billed through an API key, or
 reporting no limits draws the bare track and never tints the capsule. The
 activity registers use their own ramp, never the level colors: level 0 is
@@ -1622,7 +1624,8 @@ by 32 copies on a 4 px Vogel disk at 0.08 each, so the real address is never
 painted while hidden. A click, Enter or Space shows that one address and
 another hides it, unpersisted; the change blurs or sharpens the real text over
 180 ms with a cubic ease-out (at once under reduced motion) before the
-stand-in takes its place.
+stand-in takes its place. The usage bubble of 5.6 hides the same addresses
+and shares the reveals with this page, keyed by the account folder.
 
 Clicking an agent opens its page under an `Agents › {name}` breadcrumb, and
 Escape closes the profile editor or the update method select, then returns to
@@ -1865,28 +1868,35 @@ The usage bubble opens from the sidebar capsule of 5.2: a 284 px
 `menu_surface` whose bottom edge sits 52 px above the sidebar's, revealed with
 `menu_reveal`.
 Escape, an outside click, or a second click closes it and returns focus to
-the capsule. Every line of the bubble, the last row included, starts on one
-10 px content inset. Its header pairs the `Plan usage` title (12 Medium
-`text`) with `Updated {relative time}` at 11 muted, taken from the oldest
-snapshot shown. One block per account follows, the active space's accounts
-first, separated by space alone (no divider): the
-15 px agent logo, the agent name at 12.5 Medium, and the account label at
-11.5 muted, truncated with a tooltip. Each window is a meter: a 52 px label,
-a 4 px capsule bar on a `text` at 0.13 track in the level color of 4.3, and the
-percentage right-aligned on 34 px, with the reset time in the meter's tooltip.
-A week window whose projection needs attention adds one line: the 12 px warning glyph and `At this
-pace you reach the weekly limit {Mon 12:00}, {2 d 21 h} before it resets.`
-when it overshoots, or `Weekly limit reached. It resets {Thu 09:00}.` with the
-glyph in the `Critical` color once the week is used up. An on-track week adds
-nothing here; its `On track` line shows only in Settings › Usage. A single
-divider separates the accounts from the last row. An account without limits shows one muted sentence that
-says why and names the fix (no snapshot yet, API key billing, no limits
-reported, reset since the snapshot). The list scrolls past 420 px with the
-header and the last row fixed; the last row, 28 px high with the menu row
-hover of `text` at 0.05, opens Settings › Usage. Up and Down move a 1.5 px
-`text` ring at 0.35 across the blocks and that row. The hover and the ring
-are concentric with the bubble: their radius is the bubble's resolved radius
-minus its padding (14 - 4 = 10), never the menu row radius.
+the capsule. Inside the surface it speaks the Settings › Agents type and inks
+of the kit (`settings/kit.rs`) at menu density, without a card: every line
+starts on one 10 px content inset. Its header pairs the `Plan usage` title
+(13 Medium) with `Updated {relative time}` in a 12 px tertiary `kit::line`,
+taken from the oldest snapshot shown. One row per account follows, padded 8 px
+vertically, the active space's accounts first, split by `kit::rule`: a 24 px
+`kit::avatar_of` seeded by the account title, 8 px before a 13 Medium title
+top-aligned with it (the email when one is known, hidden as in
+Settings › Agents (5.5), otherwise the account label, truncated with a
+tooltip), the `In use` `kit::badge` on an account the active space or the
+defaults use, a 12 px tertiary line `{agent}` or `{agent} · {plan}`, then 4 px
+lower the account's windows, 4 px apart, each a `kit::meter` (52 px label,
+88 px bar, 34 px percentage) with the reset time in its tooltip. A week window
+whose projection needs attention adds one 12 px line: the 12 px warning glyph
+in the kit warning ink and `At this pace you reach the weekly limit
+{Mon 12:00}, {2 d 21 h} before it resets.` when it overshoots, or `Weekly
+limit reached. It resets {Thu 09:00}.` with the glyph in the danger ink once
+the week is used up. An on-track week adds nothing here; its `On track` line
+shows only in Settings › Usage. An account without limits shows one tertiary
+sentence that says why and names the fix (no snapshot yet, API key billing,
+no limits reported, reset since the snapshot). A `kit::rule` with 4 px above
+and below separates the accounts from the last row, a 28 px menu row
+`Open usage settings` at 13 px with a 12 px tertiary chevron and the kit hover
+tint, that opens Settings › Usage. The list scrolls past 420 px with the header
+and the last row fixed. Up and Down move a 1.5 px `text` ring at 0.35 across
+the accounts and that row; Enter or Space on an account with a hidden email
+shows or hides it, and on the last row opens Settings › Usage. The hover and
+the ring are concentric with the bubble: their radius is the bubble's resolved
+radius minus its padding (14 - 4 = 10), never the menu row radius.
 
 ### 5.7 Palettes
 

@@ -1193,7 +1193,10 @@ mod tests {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
             let block = |agent, label: &str| AccountBlock {
                 agent,
+                key: label.to_lowercase(),
                 label: label.to_string(),
+                plan: None,
+                in_use: false,
                 body: BlockBody::Message("No snapshot yet.".to_string()),
             };
             let view = UsageView {
