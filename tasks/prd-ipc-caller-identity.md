@@ -252,14 +252,14 @@ Every method on every server is authorized by one function from the caller's pri
 **Dependencies:** Blocked by US-007
 
 **Acceptance Criteria:**
-- [ ] Given the descriptor in `crates/paneflow-api/src/descriptor.rs`, when a method is declared, then it states an audience among `Anyone`, `NotPane` and `PaneflowOnly` (Window and Worker)
-- [ ] Given `layout.launch`, `layout.sweep`, `approval.follow`, `approval.decide`, `runtime.bind` and `host.shutdown`, when the catalog is listed, then their audience is `PaneflowOnly`
-- [ ] Given `layout.attach` and `peer.classify`, when the catalog is listed, then their audience is `NotPane`
-- [ ] Given `session.input`, `stop`, `restart`, `remove`, `reset` and `clear_history`, when the catalog is listed, then each declares the workspace scope rule
-- [ ] Given every method the host dispatches at `crates/paneflow-host/src/server.rs:549-577,900-1066`, when this story ends, then each has a descriptor
-- [ ] Given a descriptor declared without an audience, when the crate compiles, then compilation fails
-- [ ] Given `system.describe`, when it lists a method, then its audience and gate appear
-- [ ] Given `protocol/api-v1.json` regenerated, when it is compared with the previous one, then the parameters and results of every existing method are unchanged
+- [x] Given the descriptor in `crates/paneflow-api/src/descriptor.rs`, when a method is declared, then it states an audience among `Anyone`, `NotPane` and `PaneflowOnly` (Window and Worker)
+- [x] Given `layout.launch`, `layout.sweep`, `approval.follow`, `approval.decide`, `runtime.bind` and `host.shutdown`, when the catalog is listed, then their audience is `PaneflowOnly`
+- [x] Given `layout.attach` and `peer.classify`, when the catalog is listed, then their audience is `NotPane`
+- [x] Given `session.input`, `stop`, `restart`, `remove`, `reset` and `clear_history`, when the catalog is listed, then each declares the workspace scope rule
+- [x] Given every method the host dispatches at `crates/paneflow-host/src/server.rs:549-577,900-1066`, when this story ends, then each has a descriptor
+- [x] Given a descriptor declared without an audience, when the crate compiles, then compilation fails
+- [x] Given `system.describe`, when it lists a method, then its audience and gate appear
+- [x] Given `protocol/api-v1.json` regenerated, when it is compared with the previous one, then the parameters and results of every existing method are unchanged
 
 #### US-009: Evaluate one `authorize` function
 **Description:** As the maintainer, I want one pure function that decides a call from the principal, the descriptor, the parameters and the policy, so that the three servers cannot disagree.
@@ -268,14 +268,14 @@ Every method on every server is authorized by one function from the caller's pri
 **Dependencies:** Blocked by US-008
 
 **Acceptance Criteria:**
-- [ ] Given `authorize(principal, descriptor, params, policy)`, when it is called, then it returns `Allowed { scope }` or `Refused { reason }`
-- [ ] Given `authorize`, when its module is read, then it takes the policy as a value and calls no file, socket or environment API
-- [ ] Given a `Pane` caller of a `PaneflowOnly` or `NotPane` method, when it is authorized, then it is refused with reason `principal_refused`
-- [ ] Given a `Pane` caller that sends `scope_session` naming another session, when a scoped method is authorized, then the scope is the caller's own workspace
-- [ ] Given a `Pane` caller of a scoped method on another workspace with the orchestration gate closed for it, when it is authorized, then it is refused with reason `scope_refused`
-- [ ] Given an `External` caller that sends `scope_session`, when a scoped method is authorized, then the parameter is honored as today
-- [ ] Given an `Unverified` caller of any method other than `system.whoami`, `system.capabilities` and `system.describe`, when it is authorized, then it is refused with reason `unverified_caller`
-- [ ] Given every catalog method and each principal kind, when the decision-table test runs, then each decision matches the table checked in beside the test
+- [x] Given `authorize(principal, descriptor, params, policy)`, when it is called, then it returns `Allowed { scope }` or `Refused { reason }`
+- [x] Given `authorize`, when its module is read, then it takes the policy as a value and calls no file, socket or environment API
+- [x] Given a `Pane` caller of a `PaneflowOnly` or `NotPane` method, when it is authorized, then it is refused with reason `principal_refused`
+- [x] Given a `Pane` caller that sends `scope_session` naming another session, when a scoped method is authorized, then the scope is the caller's own workspace
+- [x] Given a `Pane` caller of a scoped method on another workspace with the orchestration gate closed for it, when it is authorized, then it is refused with reason `scope_refused`
+- [x] Given an `External` caller that sends `scope_session`, when a scoped method is authorized, then the parameter is honored as today
+- [x] Given an `Unverified` caller of any method other than `system.whoami`, `system.capabilities` and `system.describe`, when it is authorized, then it is refused with reason `unverified_caller`
+- [x] Given every catalog method and each principal kind, when the decision-table test runs, then each decision matches the table checked in beside the test
 
 #### US-010: Move the switches into `paneflow.json`
 **Description:** As a user, I want one place that says what scripts and agents may do, so that it does not depend on which process started with which variable.
@@ -284,16 +284,16 @@ Every method on every server is authorized by one function from the caller's pri
 **Dependencies:** Blocked by US-009
 
 **Acceptance Criteria:**
-- [ ] Given `"ipc": {"scripting": true}` in `paneflow.json`, when an `External` or `Pane` request is authorized, then the scripting gate is open in all three servers
-- [ ] Given `"ipc": {"orchestration": true}`, when an `External` or `Pane` request is authorized, then the orchestration gate is open in all three servers
-- [ ] Given the section changed while Paneflow runs, when the next gated request arrives, then each server applies the new value
-- [ ] Given `PANEFLOW_IPC_SCRIPTING=1` in a serving process's environment, when an `External` request is authorized, then the scripting gate is open
-- [ ] Given that variable set, no `ipc` section, and a `Pane` request in the deprecation release, when it is authorized, then the gate is open
-- [ ] Given that case, when the first such request arrives, then the server logs one deprecation warning naming the `ipc` key that replaces the variable
-- [ ] Given an `ipc` section present and the variable set, when a `Pane` request is authorized, then only the section decides
-- [ ] Given `ai_unrestricted: true`, when a `Pane` or `External` request is authorized, then both gates are open
-- [ ] Given a malformed `ipc` section, when a `Pane` request is authorized, then both gates are closed
-- [ ] Given a malformed `ipc` section, when the config loads, then the error names the key
+- [x] Given `"ipc": {"scripting": true}` in `paneflow.json`, when an `External` or `Pane` request is authorized, then the scripting gate is open in all three servers
+- [x] Given `"ipc": {"orchestration": true}`, when an `External` or `Pane` request is authorized, then the orchestration gate is open in all three servers
+- [x] Given the section changed while Paneflow runs, when the next gated request arrives, then each server applies the new value
+- [x] Given `PANEFLOW_IPC_SCRIPTING=1` in a serving process's environment, when an `External` request is authorized, then the scripting gate is open
+- [x] Given that variable set, no `ipc` section, and a `Pane` request in the deprecation release, when it is authorized, then the gate is open
+- [x] Given that case, when the first such request arrives, then the server logs one deprecation warning naming the `ipc` key that replaces the variable
+- [x] Given an `ipc` section present and the variable set, when a `Pane` request is authorized, then only the section decides
+- [x] Given `ai_unrestricted: true`, when a `Pane` or `External` request is authorized, then both gates are open
+- [x] Given a malformed `ipc` section, when a `Pane` request is authorized, then both gates are closed
+- [x] Given a malformed `ipc` section, when the config loads, then the error names the key
 
 #### US-011: Authorize at the worker's dispatch
 **Description:** As the maintainer, I want the worker to authorize every call before its handler runs, so that the attached-connection gaps close.
@@ -302,13 +302,13 @@ Every method on every server is authorized by one function from the caller's pri
 **Dependencies:** Blocked by US-010
 
 **Acceptance Criteria:**
-- [ ] Given a `Pane` caller of `layout.attach`, when the worker answers, then it is refused with reason `principal_refused` and the connection is not attached
-- [ ] Given a `Pane` caller whose `layout.apply` op spawns a surface carrying a command, a prompt or an environment with the orchestration gate closed for it, when the op is applied, then it is refused and the model is unchanged
-- [ ] Given `launcher::orchestration_enabled`, `structural::orchestration_open` and the gate check in `worktrees.rs`, when this story ends, then none of them exists
-- [ ] Given the worker's existing gate tests (`worker_structural.rs`, `worker_worktrees.rs`, `worker_launch.rs`), when they run against `authorize`, then they pass unchanged
-- [ ] Given an `init.lua` action started from a key or the palette, when it calls a method in-process, then it is authorized as `Window`
-- [ ] Given an `init.lua` action started by `paneflow actions run` from a pane, when it calls a method in-process, then it is authorized as that `Pane`
-- [ ] Given a gated method refused by the worker, when the error is returned, then the code and message equal those the method returns today with its gate closed
+- [x] Given a `Pane` caller of `layout.attach`, when the worker answers, then it is refused with reason `principal_refused` and the connection is not attached
+- [x] Given a `Pane` caller whose `layout.apply` op spawns a surface carrying a command, a prompt or an environment with the orchestration gate closed for it, when the op is applied, then it is refused and the model is unchanged
+- [x] Given `launcher::orchestration_enabled`, `structural::orchestration_open` and the gate check in `worktrees.rs`, when this story ends, then none of them exists
+- [x] Given the worker's existing gate tests (`worker_structural.rs`, `worker_worktrees.rs`, `worker_launch.rs`), when they run against `authorize`, then they pass unchanged
+- [x] Given an `init.lua` action started from a key or the palette, when it calls a method in-process, then it is authorized as `Window`
+- [x] Given an `init.lua` action started by `paneflow actions run` from a pane, when it calls a method in-process, then it is authorized as that `Pane`
+- [x] Given a gated method refused by the worker, when the error is returned, then the code and message equal those the method returns today with its gate closed
 
 #### US-012: Let the worker decide a live sweep
 **Description:** As a user, I want sessions stopped only by the sweep that follows a restore, so that no caller can ask for a live sweep at another time.
@@ -317,11 +317,11 @@ Every method on every server is authorized by one function from the caller's pri
 **Dependencies:** Blocked by US-011
 
 **Acceptance Criteria:**
-- [ ] Given the worker loading its layout from `session.json` at start, re-reading it after an outside write, or adopting a window's layout, when that happens, then it marks one live sweep as due
-- [ ] Given a `layout.sweep` from the `Window` with a live sweep due, when it runs, then it stops the live orphan sessions and clears the mark
-- [ ] Given a `layout.sweep` with no live sweep due, when it runs with `live: true`, then it forgets ended records and stops nothing
-- [ ] Given a live sweep that cannot list the host's sessions, when it ends, then the mark stays set
-- [ ] Given the window's diff-dock terminal sessions, which no layout surface holds, when a sweep from the `Window` runs, then they are kept through the `keep` list as today
+- [x] Given the worker loading its layout from `session.json` at start, re-reading it after an outside write, or adopting a window's layout, when that happens, then it marks one live sweep as due
+- [x] Given a `layout.sweep` from the `Window` with a live sweep due, when it runs, then it stops the live orphan sessions and clears the mark
+- [x] Given a `layout.sweep` with no live sweep due, when it runs with `live: true`, then it forgets ended records and stops nothing
+- [x] Given a live sweep that cannot list the host's sessions, when it ends, then the mark stays set
+- [x] Given the window's diff-dock terminal sessions, which no layout surface holds, when a sweep from the `Window` runs, then they are kept through the `keep` list as today
 
 #### US-013: Authorize at the host's dispatch and close the write path
 **Description:** As a user, I want an agent in a pane unable to approve its own writes or reach panes of other workspaces, so that the human stays in the loop.
@@ -330,13 +330,13 @@ Every method on every server is authorized by one function from the caller's pri
 **Dependencies:** Blocked by US-010
 
 **Acceptance Criteria:**
-- [ ] Given a `Pane` caller whose hello claims an engine, when it calls `approval.decide`, then it is refused with reason `principal_refused`
-- [ ] Given a `Pane` caller whose hello claims an engine, when it calls `session.input` with the scripting gate closed for it, then it is refused as a non-attached client is today
-- [ ] Given a `Pane` caller of `pane.write` with a `source_session` other than its own, when it is called, then it is refused with reason `source_mismatch`
-- [ ] Given a `Pane` caller of `session.stop` on a session of another workspace with the orchestration gate closed for it, when it is called, then it is refused with reason `scope_refused` and a message naming that workspace
-- [ ] Given a `Pane` caller of `session.stop` on a session of its own workspace, when it is called, then it succeeds as today
-- [ ] Given a `Pane` caller of `host.shutdown`, when it is called, then it is refused with reason `principal_refused`
-- [ ] Given the window and the worker, when they call these methods, then they succeed as today
+- [x] Given a `Pane` caller whose hello claims an engine, when it calls `approval.decide`, then it is refused with reason `principal_refused`
+- [x] Given a `Pane` caller whose hello claims an engine, when it calls `session.input` with the scripting gate closed for it, then it is refused as a non-attached client is today
+- [x] Given a `Pane` caller of `pane.write` with a `source_session` other than its own, when it is called, then it is refused with reason `source_mismatch`
+- [x] Given a `Pane` caller of `session.stop` on a session of another workspace with the orchestration gate closed for it, when it is called, then it is refused with reason `scope_refused` and a message naming that workspace
+- [x] Given a `Pane` caller of `session.stop` on a session of its own workspace, when it is called, then it succeeds as today
+- [x] Given a `Pane` caller of `host.shutdown`, when it is called, then it is refused with reason `principal_refused`
+- [x] Given the window and the worker, when they call these methods, then they succeed as today
 
 #### US-014: Authorize at the window's dispatch
 **Description:** As the maintainer, I want the window socket to apply the same function, so that a method the window still answers is not a side door.
@@ -345,11 +345,11 @@ Every method on every server is authorized by one function from the caller's pri
 **Dependencies:** Blocked by US-010
 
 **Acceptance Criteria:**
-- [ ] Given a request on the window's socket, when it is handled, then `authorize` runs on the connection thread before the request reaches the GPUI thread
-- [ ] Given `src-app/src/app/ipc_handler/gates.rs`, when this story ends, then it reads no environment variable
-- [ ] Given a spawn check of the window, when it runs, then it calls `authorize`
-- [ ] Given a `Pane` caller of `surface.send_text` with the scripting gate closed for it, when the window answers, then the refusal code and message equal today's
-- [ ] Given a peer of another user, when it connects to the window's socket, then it is refused by the UID check (`src-app/src/ipc.rs:803-827`) before any classification
+- [x] Given a request on the window's socket, when it is handled, then `authorize` runs on the connection thread before the request reaches the GPUI thread
+- [x] Given `src-app/src/app/ipc_handler/gates.rs`, when this story ends, then it reads no environment variable
+- [x] Given a spawn check of the window, when it runs, then it calls `authorize`
+- [x] Given a `Pane` caller of `surface.send_text` with the scripting gate closed for it, when the window answers, then the refusal code and message equal today's
+- [x] Given a peer of another user, when it connects to the window's socket, then it is refused by the UID check (`src-app/src/ipc.rs:803-827`) before any classification
 
 #### US-015: Document the threat model and the migration
 **Description:** As a user, I want to know what Paneflow protects against and how to keep my setup working, so that I configure it knowingly.
@@ -358,13 +358,13 @@ Every method on every server is authorized by one function from the caller's pri
 **Dependencies:** Blocked by US-011, US-012, US-013, US-014
 
 **Acceptance Criteria:**
-- [ ] Given `docs/user/scripting.md`, when it is read, then it lists the principals and the `ipc` keys with their defaults
-- [ ] Given that page, when it is read, then it states that a hostile process of the same user outside a sandbox can escape pane classification
-- [ ] Given `docs/user/conductor.md:78`, when it is read, then it names `ipc.scripting` instead of `PANEFLOW_IPC_SCRIPTING`
-- [ ] Given `ARCHITECTURE.md`'s IPC section, when it is read, then it describes the classification by the host, `peer.classify`, `authorize` and the audience of each method family
-- [ ] Given `CHANGELOG.md`, when it is read, then its entry gives the exact `paneflow.json` lines that keep an agent in a pane able to orchestrate
-- [ ] Given the migration lines applied and `PANEFLOW_IPC_SCRIPTING` unset, when an agent pane runs `paneflow send --submit` to a pane of its workspace, then it succeeds
-- [ ] Given neither the migration lines nor the variable, when an agent pane runs the same command, then it is refused with the documented message
+- [x] Given `docs/user/scripting.md`, when it is read, then it lists the principals and the `ipc` keys with their defaults
+- [x] Given that page, when it is read, then it states that a hostile process of the same user outside a sandbox can escape pane classification
+- [x] Given `docs/user/conductor.md:78`, when it is read, then it names `ipc.scripting` instead of `PANEFLOW_IPC_SCRIPTING`
+- [x] Given `ARCHITECTURE.md`'s IPC section, when it is read, then it describes the classification by the host, `peer.classify`, `authorize` and the audience of each method family
+- [x] Given `CHANGELOG.md`, when it is read, then its entry gives the exact `paneflow.json` lines that keep an agent in a pane able to orchestrate
+- [x] Given the migration lines applied and `PANEFLOW_IPC_SCRIPTING` unset, when an agent pane runs `paneflow send --submit` to a pane of its workspace, then it succeeds
+- [x] Given neither the migration lines nor the variable, when an agent pane runs the same command, then it is refused with the documented message
 
 ---
 
