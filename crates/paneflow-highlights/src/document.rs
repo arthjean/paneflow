@@ -60,19 +60,18 @@ fn to_usize(value: u32) -> usize {
 
 fn line_starts_of(text: &str) -> Vec<usize> {
     let bytes = text.as_bytes();
-    let mut starts = vec![0];
-    let mut at = 0;
-    while at < bytes.len() {
-        match bytes[at] {
-            b'\r' if bytes.get(at + 1) == Some(&b'\n') => {
-                at += 2;
-                starts.push(at);
-            }
-            b'\r' | b'\n' => {
-                at += 1;
-                starts.push(at);
-            }
-            _ => at += 1,
+    let mut starts = Vec::with_capacity(bytes.len() / 32 + 1);
+    starts.push(0);
+    let mut skip_lf_at = None;
+    for at in memchr::memchr2_iter(b'\n', b'\r', bytes) {
+        if skip_lf_at == Some(at) {
+            continue;
+        }
+        if bytes[at] == b'\r' && bytes.get(at + 1) == Some(&b'\n') {
+            skip_lf_at = Some(at + 1);
+            starts.push(at + 2);
+        } else {
+            starts.push(at + 1);
         }
     }
     starts
@@ -188,13 +187,31 @@ impl LexDocument {
         status(code, 0, self.lexer.memory_limit())
     }
 
+    pub fn run_before(&mut self, line_budget: u32, end_line: usize) -> Result<(), LexError> {
+        if end_line == 0 {
+            return Ok(());
+        }
+        let end = to_u32(end_line)?;
+        let code = unsafe { ffi::paneflow_hl_run(self.lexer.raw(), line_budget, end, 0) };
+        status(code, 0, self.lexer.memory_limit())
+    }
+
     pub fn pending_lines(&self) -> Result<usize, LexError> {
-        let mut pending = 0;
-        let code = unsafe {
-            ffi::paneflow_hl_stat(self.lexer.raw(), ffi::STAT_PENDING_LINES, &mut pending)
-        };
+        self.stat(ffi::STAT_PENDING_LINES)
+    }
+
+    pub fn next_pending_line(&self) -> Result<Option<usize>, LexError> {
+        if self.pending_lines()? == 0 {
+            return Ok(None);
+        }
+        Ok(Some(self.stat(ffi::STAT_NEXT_PENDING_LINE)?))
+    }
+
+    fn stat(&self, index: u32) -> Result<usize, LexError> {
+        let mut value = 0;
+        let code = unsafe { ffi::paneflow_hl_stat(self.lexer.raw(), index, &mut value) };
         status(code, 0, self.lexer.memory_limit())?;
-        Ok(to_usize(pending))
+        Ok(to_usize(value))
     }
 
     fn raw_line_count(&self) -> Result<usize, LexError> {
@@ -284,6 +301,14 @@ impl LexDocument {
         lines: Range<usize>,
         mut visit: impl FnMut(usize, &[Token]),
     ) -> Result<(), LexError> {
+        self.for_each_line(lines, |line, _, tokens| visit(line, tokens))
+    }
+
+    pub fn for_each_line(
+        &self,
+        lines: Range<usize>,
+        mut visit: impl FnMut(usize, &str, &[Token]),
+    ) -> Result<(), LexError> {
         const BATCH: usize = 64;
         let end = lines.end.min(self.line_count());
         let mut raws = Vec::with_capacity(BATCH);
@@ -293,20 +318,25 @@ impl LexDocument {
             let batch = first..(first + BATCH).min(end);
             self.views(batch.clone(), &mut raws)?;
             for (line, raw) in batch.zip(&raws) {
+                let view = self.line_view(raw);
+                let text = std::str::from_utf8(view.text).map_err(|_| LexError::OutOfBounds)?;
                 tokens.clear();
-                convert_tokens(&self.line_view(raw), &mut tokens)?;
-                visit(line, &tokens);
+                convert_tokens(&view, &mut tokens)?;
+                visit(line, text, &tokens);
             }
             first += raws.len();
         }
         Ok(())
     }
 
-    fn position(&self, offset: usize) -> Result<(usize, usize, u32), LexError> {
-        let line = self
-            .line_starts
+    pub fn line_at(&self, offset: usize) -> usize {
+        self.line_starts
             .partition_point(|start| *start <= offset)
-            .saturating_sub(1);
+            .saturating_sub(1)
+    }
+
+    fn position(&self, offset: usize) -> Result<(usize, usize, u32), LexError> {
+        let line = self.line_at(offset);
         let column = offset - self.line_starts[line];
         let view = self.view(line)?;
         let units =
@@ -554,6 +584,86 @@ mod tests {
             .for_each_line_tokens(500..600, |_, _| none += 1)
             .expect("an empty range");
         assert_eq!(none, 0);
+    }
+
+    #[test]
+    fn line_starts_break_after_lf_crlf_and_a_lone_cr_like_the_lexer() {
+        for (text, starts) in [
+            ("", vec![0]),
+            ("a", vec![0]),
+            ("a\nb", vec![0, 2]),
+            ("a\r\nb", vec![0, 3]),
+            ("a\rb", vec![0, 2]),
+            ("\r\r\n\n\r", vec![0, 1, 3, 4, 5]),
+            ("x\n\r\ny\r", vec![0, 2, 4, 6]),
+        ] {
+            assert_eq!(line_starts_of(text), starts, "{text:?}");
+            let document = LexDocument::lex(text, rust()).expect("a document");
+            assert_eq!(document.line_count(), starts.len(), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn a_bounded_run_stops_before_its_end_line_and_reports_where_work_resumes() {
+        let text: String = (0..20)
+            .map(|line| format!("let a{line} = {line};\n"))
+            .collect();
+        let mut document = LexDocument::lex(&text, rust()).expect("a document");
+        assert_eq!(document.next_pending_line().expect("stats"), None);
+        let at = text.find("let a3").expect("line 3");
+        document.apply_edit(at..at, "/*").expect("an edit");
+        assert_eq!(document.next_pending_line().expect("stats"), Some(3));
+        document.run_before(u32::MAX >> 1, 9).expect("a run");
+        assert_eq!(
+            document.next_pending_line().expect("stats"),
+            Some(9),
+            "the scan stops before line 9 although the comment runs on"
+        );
+        document.run_before(2, 20).expect("a run");
+        assert_eq!(document.next_pending_line().expect("stats"), Some(11));
+        document.run_before(u32::MAX >> 1, 0).expect("an empty run");
+        assert_eq!(document.next_pending_line().expect("stats"), Some(11));
+        document.settle().expect("settle");
+        assert_eq!(document.next_pending_line().expect("stats"), None);
+        let fresh = LexDocument::lex(&document.text().expect("text"), rust()).expect("fresh");
+        for line in 0..document.line_count() {
+            assert_eq!(
+                document.line_tokens(line).expect("tokens"),
+                fresh.line_tokens(line).expect("tokens"),
+                "line {line}"
+            );
+        }
+    }
+
+    #[test]
+    fn each_line_is_visited_with_its_text_and_any_offset_maps_to_its_line() {
+        let text = "fn a() {}\r\nlet b = 1;\rlet c;\n";
+        let document = LexDocument::lex(text, rust()).expect("a document");
+        let mut seen = Vec::new();
+        document
+            .for_each_line(0..document.line_count(), |line, line_text, tokens| {
+                assert_eq!(
+                    tokens.last().map_or(0, |token| token.range.end),
+                    line_text.len()
+                );
+                seen.push((line, line_text.to_owned()));
+            })
+            .expect("the lines");
+        assert_eq!(
+            seen,
+            vec![
+                (0, "fn a() {}".to_owned()),
+                (1, "let b = 1;".to_owned()),
+                (2, "let c;".to_owned()),
+                (3, String::new()),
+            ]
+        );
+        assert_eq!(document.line_at(0), 0);
+        assert_eq!(document.line_at(10), 0);
+        assert_eq!(document.line_at(11), 1);
+        assert_eq!(document.line_at(22), 2);
+        assert_eq!(document.line_at(text.len()), 3);
+        assert_eq!(document.line_at(text.len() + 5), 3);
     }
 
     #[test]

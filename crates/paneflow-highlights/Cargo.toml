@@ -12,6 +12,7 @@ build = "build.rs"
 links = "paneflow_highlights"
 
 [dependencies]
+memchr = "2"
 thiserror = { workspace = true }
 unicode-ident = "1"
 

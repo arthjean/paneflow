@@ -5,6 +5,7 @@ pub(crate) const POISONED: i32 = 4;
 pub(crate) const ALLOCATION: i32 = 5;
 
 pub(crate) const STAT_PENDING_LINES: u32 = 9;
+pub(crate) const STAT_NEXT_PENDING_LINE: u32 = 10;
 pub(crate) const WIDE_RECORDS_FLAG: u32 = 4;
 pub(crate) const TERMINATOR_MASK: u32 = 3;
 pub(crate) const LONE_CR_FLAG: u32 = 16;
