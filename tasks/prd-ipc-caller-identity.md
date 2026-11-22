@@ -142,16 +142,16 @@ Every connection on the window, the worker and the host carries a principal the 
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given the new GPUI-free crate `crates/paneflow-peer`, when `Cargo.lock` is compared before and after, then no crate was added to it
-- [ ] Given `paneflow-shim` and `paneflow-ai-hook`, when their dependency trees are listed, then `paneflow-peer` is absent from both
-- [ ] Given a Unix socket connection on Linux 6.5 or later, when the peer is read, then the identity holds a pidfd from `SO_PEERPIDFD`
-- [ ] Given that identity, when it is built, then it records the peer's start time
-- [ ] Given that identity, when it is built, then it records the peer's executable path
-- [ ] Given `getsockopt(SO_PEERPIDFD)` failing with `ENOPROTOOPT`, when the peer is read, then the PID comes from `SO_PEERCRED` and the start time from `/proc/<pid>/stat`
-- [ ] Given that fallback, when a `pidfd_open` made after the read reports a different start time, then the identity is `Unverified`
-- [ ] Given a peer that exited before the read, when the peer is read, then the result is `Unverified` with the OS error
-- [ ] Given two connections from one process, when both are read, then the identities compare equal
-- [ ] Given a PID reused by a new process, when both identities are compared, then they differ
+- [x] Given the new GPUI-free crate `crates/paneflow-peer`, when `Cargo.lock` is compared before and after, then no crate was added to it
+- [x] Given `paneflow-shim` and `paneflow-ai-hook`, when their dependency trees are listed, then `paneflow-peer` is absent from both
+- [x] Given a Unix socket connection on Linux 6.5 or later, when the peer is read, then the identity holds a pidfd from `SO_PEERPIDFD`
+- [x] Given that identity, when it is built, then it records the peer's start time
+- [x] Given that identity, when it is built, then it records the peer's executable path
+- [x] Given `getsockopt(SO_PEERPIDFD)` failing with `ENOPROTOOPT`, when the peer is read, then the PID comes from `SO_PEERCRED` and the start time from `/proc/<pid>/stat`
+- [x] Given that fallback, when a `pidfd_open` made after the read reports a different start time, then the identity is `Unverified`
+- [x] Given a peer that exited before the read, when the peer is read, then the result is `Unverified` with the OS error
+- [x] Given two connections from one process, when both are read, then the identities compare equal
+- [x] Given a PID reused by a new process, when both identities are compared, then they differ
 
 #### US-002: Read a peer identity on macOS
 **Description:** As the maintainer, I want the same function on macOS, so that the principal does not depend on a reusable PID there either.
@@ -185,13 +185,13 @@ Every connection on the window, the worker and the host carries a principal the 
 **Dependencies:** Blocked by US-001, US-002
 
 **Acceptance Criteria:**
-- [ ] Given a session the host spawns, when it starts, then its manifest records the leader's PID, start time and session id
-- [ ] Given a process started by the pane's shell, when it is classified, then the answer is `Pane` with that session's id and workspace
-- [ ] Given a process of the pane that called `setsid` and kept its parent, when it is classified, then the parent chain reaches the leader and the answer is `Pane`
-- [ ] Given a process of the pane that double-forked without `setsid`, when it is classified, then its session id names the pane and the answer is `Pane`
-- [ ] Given a process unrelated to every pane, when it is classified, then the answer is `NotInPane`
-- [ ] Given a pane leader that exited and whose PID was reused, when a process of the new owner is classified, then the start-time mismatch makes the answer `NotInPane`
-- [ ] Given a parent chain that cannot be read (a `/proc` entry or `sysctl` call fails), when the peer is classified, then the answer is `Unverified`
+- [x] Given a session the host spawns, when it starts, then its manifest records the leader's PID, start time and session id
+- [x] Given a process started by the pane's shell, when it is classified, then the answer is `Pane` with that session's id and workspace
+- [x] Given a process of the pane that called `setsid` and kept its parent, when it is classified, then the parent chain reaches the leader and the answer is `Pane`
+- [x] Given a process of the pane that double-forked without `setsid`, when it is classified, then its session id names the pane and the answer is `Pane`
+- [x] Given a process unrelated to every pane, when it is classified, then the answer is `NotInPane`
+- [x] Given a pane leader that exited and whose PID was reused, when a process of the new owner is classified, then the start-time mismatch makes the answer `NotInPane`
+- [x] Given a parent chain that cannot be read (a `/proc` entry or `sysctl` call fails), when the peer is classified, then the answer is `Unverified`
 
 #### US-005: Contain each pane in a Job Object on Windows
 **Description:** As the maintainer, I want each Windows pane's process tree in its own job, so that membership there is a container the process cannot leave.
@@ -213,12 +213,12 @@ Every connection on the window, the worker and the host carries a principal the 
 **Dependencies:** Blocked by US-004, US-005
 
 **Acceptance Criteria:**
-- [ ] Given a `peer.classify` call with a PID and a start time, when the host answers, then the reply is `{"in_pane": true, "session": ..., "workspace": ...}` or `{"in_pane": false}`
-- [ ] Given a PID whose live start time differs from the one sent, when the host answers, then the reply is `{"in_pane": false, "stale": true}`
-- [ ] Given a caller of `peer.classify` that is itself `Pane`, when it calls, then it is refused with reason `principal_refused`
-- [ ] Given the host unreachable on Linux or macOS, when the worker or the window classifies a peer, then it classifies from the session manifests in the home
+- [x] Given a `peer.classify` call with a PID and a start time, when the host answers, then the reply is `{"in_pane": true, "session": ..., "workspace": ...}` or `{"in_pane": false}`
+- [x] Given a PID whose live start time differs from the one sent, when the host answers, then the reply is `{"in_pane": false, "stale": true}`
+- [x] Given a caller of `peer.classify` that is itself `Pane`, when it calls, then it is refused with reason `principal_refused`
+- [x] Given the host unreachable on Linux or macOS, when the worker or the window classifies a peer, then it classifies from the session manifests in the home
 - [ ] Given the host unreachable on Windows, when the worker or the window classifies a peer, then the principal is `Unverified`
-- [ ] Given `peer.classify`, when the catalog is listed, then it is declared with owner `host` and its schema is in `protocol/api-v1.json`
+- [x] Given `peer.classify`, when the catalog is listed, then it is declared with owner `host` and its schema is in `protocol/api-v1.json`
 
 #### US-007: Give every connection a principal and answer `system.whoami`
 **Description:** As a script author, I want to see how Paneflow identifies my process, so that a refusal can be understood.
@@ -227,14 +227,14 @@ Every connection on the window, the worker and the host carries a principal the 
 **Dependencies:** Blocked by US-006
 
 **Acceptance Criteria:**
-- [ ] Given a connection accepted by the host, the worker or the window, when its first request is handled, then the connection carries one principal among `Window`, `Worker`, `Pane`, `External`, `Unverified`
-- [ ] Given a non-pane peer of the host, when its hello claims an engine, then its principal is `Window`
-- [ ] Given a non-pane peer of the host, when its hello names a worker client (`paneflow-serve-*`), then its principal is `Worker`
-- [ ] Given a non-pane peer of the worker, when it calls `layout.attach` with the client name `window`, then its connection's principal becomes `Window`
-- [ ] Given a non-pane peer of the window's socket, when it connects, then its principal is `External`
-- [ ] Given a `Pane` peer of the host whose hello claims an engine, when it is classified, then its principal stays `Pane`
-- [ ] Given `system.whoami` on any of the three servers, when it answers, then it returns the principal kind and, for `Pane`, the session id and workspace id
-- [ ] Given a peer whose identity read returned `Unverified`, when it calls `system.whoami`, then the answer is `unverified`
+- [x] Given a connection accepted by the host, the worker or the window, when its first request is handled, then the connection carries one principal among `Window`, `Worker`, `Pane`, `External`, `Unverified`
+- [x] Given a non-pane peer of the host, when its hello claims an engine, then its principal is `Window`
+- [x] Given a non-pane peer of the host, when its hello names a worker client (`paneflow-serve-*`), then its principal is `Worker`
+- [x] Given a non-pane peer of the worker, when it calls `layout.attach` with the client name `window`, then its connection's principal becomes `Window`
+- [x] Given a non-pane peer of the window's socket, when it connects, then its principal is `External`
+- [x] Given a `Pane` peer of the host whose hello claims an engine, when it is classified, then its principal stays `Pane`
+- [x] Given `system.whoami` on any of the three servers, when it answers, then it returns the principal kind and, for `Pane`, the session id and workspace id
+- [x] Given a peer whose identity read returned `Unverified`, when it calls `system.whoami`, then the answer is `unverified`
 - [ ] Given a classification, when it completes, then a debug line records the principal and the time the classification took
 
 ---

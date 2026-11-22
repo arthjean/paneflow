@@ -3,13 +3,13 @@
     "file": "tasks/prd-ipc-caller-identity.md",
     "title": "Caller identity, per-pane grants and sandboxed agent panes for Paneflow's local IPC",
     "created_at": "2026-11-21",
-    "status": "READY"
+    "status": "IN_PROGRESS"
   },
   "epics": [
     {
       "id": "EP-001",
       "title": "Know who is calling",
-      "status": "TODO",
+      "status": "BLOCKED",
       "priority": "P0",
       "stories_total": 7,
       "stories_done": 0
@@ -52,10 +52,10 @@
       "id": "US-001",
       "title": "Read a peer identity on Linux",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "blocked_by": [],
-      "started_at": null,
+      "started_at": "2026-11-21T18:17:23+01:00",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -63,12 +63,12 @@
       "id": "US-002",
       "title": "Read a peer identity on macOS",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "BLOCKED",
       "priority": "P0",
       "blocked_by": [
         "US-001"
       ],
-      "started_at": null,
+      "started_at": "2026-11-21T18:22:22+01:00",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -76,12 +76,12 @@
       "id": "US-003",
       "title": "Read a peer identity on Windows",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "BLOCKED",
       "priority": "P0",
       "blocked_by": [
         "US-001"
       ],
-      "started_at": null,
+      "started_at": "2026-11-21T18:22:22+01:00",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -89,13 +89,13 @@
       "id": "US-004",
       "title": "Decide pane membership on Linux and macOS",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "blocked_by": [
         "US-001",
         "US-002"
       ],
-      "started_at": null,
+      "started_at": "2026-11-21T18:22:22+01:00",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -103,12 +103,12 @@
       "id": "US-005",
       "title": "Contain each pane in a Job Object on Windows",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "BLOCKED",
       "priority": "P0",
       "blocked_by": [
         "US-003"
       ],
-      "started_at": null,
+      "started_at": "2026-11-21T18:22:22+01:00",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -116,7 +116,7 @@
       "id": "US-006",
       "title": "Serve `peer.classify` from the host",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "blocked_by": [
         "US-004",
@@ -130,7 +130,7 @@
       "id": "US-007",
       "title": "Give every connection a principal and answer `system.whoami`",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "blocked_by": [
         "US-006"
