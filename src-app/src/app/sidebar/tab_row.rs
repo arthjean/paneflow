@@ -91,18 +91,25 @@ impl PaneFlowApp {
         let mut surfaces: std::collections::HashSet<u64> =
             std::collections::HashSet::with_capacity(panes.len());
         let mut tab_agents: std::collections::HashSet<String> = std::collections::HashSet::new();
-        let mut tab_agent = None;
+        let mut first_agent = None;
+        let mut active_agent = None;
         for pane in &panes {
             let pane = pane.read(cx);
+            if let Some(active) = pane.active_terminal_opt()
+                && let Some(agent) = active.read(cx).terminal.detected_agent
+            {
+                active_agent.get_or_insert(agent);
+            }
             for terminal in pane.terminals() {
                 surfaces.insert(terminal.entity_id().as_u64());
                 if let Some(agent) = terminal.read(cx).terminal.detected_agent {
                     tab_agents.insert(agent.binary().to_string());
-                    tab_agent.get_or_insert(agent);
+                    first_agent.get_or_insert(agent);
                 }
             }
         }
-        let tab_logo = tab_agent
+        let tab_logo = active_agent
+            .or(first_agent)
             .filter(|_| self.cached_config.sidebar_show.agent_logo_enabled())
             .map(|agent| {
                 let tint = agent
