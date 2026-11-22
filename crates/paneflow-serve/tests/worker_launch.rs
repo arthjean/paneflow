@@ -7,7 +7,9 @@
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(unix)]
+use std::time::Instant;
 
 use paneflow_api::methods::layout::{HOST_UNREACHABLE, LAUNCH_FAILED, NOT_ATTACHED};
 use paneflow_config::schema::{
@@ -20,6 +22,7 @@ use paneflow_serve::launcher::{LaunchError, SessionLink, SessionStarter};
 use serde_json::{Value, json};
 
 const REPLY_WAIT: Duration = Duration::from_secs(30);
+#[cfg(unix)]
 const SETTLE: Duration = Duration::from_secs(20);
 
 struct Client {
