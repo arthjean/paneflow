@@ -14,7 +14,12 @@ pub const METHOD_PEER_CLASSIFY: &str =
 
 pub const WORKER_CLIENT_PREFIX: &str = "paneflow-serve";
 
-const CLASSIFY_DEADLINE: Duration = Duration::from_secs(2);
+const CLASSIFY_DEADLINE: Duration = Duration::from_secs(4);
+
+const _: () = assert!(
+    CLASSIFY_DEADLINE.as_millis() > crate::host::PEER_LAUNCH_SETTLE_DEADLINE.as_millis(),
+    "a caller of peer.classify must outwait the host's launch settle wait, or it classifies from manifests that do not name the pane being launched"
+);
 
 #[derive(Debug, Default)]
 pub(crate) struct PaneContainment {
@@ -132,19 +137,28 @@ pub fn leaders_from_manifests(home: &Path) -> Result<Vec<PaneLeader>, String> {
         .map_err(|error| format!("cannot list the session manifests: {error}"))?;
     let mut leaders = Vec::new();
     for path in paths {
-        let Ok(manifest) = read_manifest(&path) else {
-            continue;
-        };
-        let Some(process) = manifest.process else {
-            continue;
-        };
-        let Some(started_at) = process.started_at else {
+        let manifest = read_manifest(&path).map_err(|error| {
+            format!(
+                "the session manifest {} cannot be read: {error}",
+                path.display()
+            )
+        })?;
+        let leader = manifest
+            .process
+            .and_then(|process| Some((process.pid, process.started_at?)));
+        let Some((pid, started_at)) = leader else {
+            if manifest.lifecycle.is_running() {
+                return Err(format!(
+                    "the running session {} records no pane leader yet",
+                    manifest.session
+                ));
+            }
             continue;
         };
         leaders.push(PaneLeader {
             session: manifest.session.to_string(),
             workspace: manifest.workspace.as_ref().map(ToString::to_string),
-            pid: process.pid,
+            pid,
             started_at,
             process_session: manifest.process_session,
             #[cfg(windows)]
@@ -393,6 +407,56 @@ mod tests {
                 session: manifest.session.to_string(),
                 workspace: manifest.workspace.as_ref().map(ToString::to_string),
             }
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_manifest_that_cannot_name_its_running_pane_leader_leaves_the_peer_unverified() {
+        let read = identified_self();
+        for break_manifest in [
+            (|home: &Path, manifest: &mut SessionManifest| {
+                manifest.process = None;
+                write_manifest(home, manifest).unwrap();
+            }) as fn(&Path, &mut SessionManifest),
+            |home, manifest| {
+                let path = paneflow_home::host_sessions_dir_in(home)
+                    .join(format!("{}.json", manifest.session));
+                std::fs::write(path, b"{").unwrap();
+            },
+        ] {
+            let home = tempfile::tempdir().unwrap();
+            let classifier = PeerClassifier::new(
+                Some(home.path().join("no-host.sock")),
+                Some(home.path().to_path_buf()),
+                "paneflow-test",
+            );
+            let mut manifest = manifest_naming_this_process(home.path());
+            break_manifest(home.path(), &mut manifest);
+            let principal = classifier.principal(&read, "test");
+            assert!(
+                matches!(principal, Principal::Unverified { .. }),
+                "{principal:?}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_session_that_ended_without_a_leader_does_not_block_the_manifest_fallback() {
+        let home = tempfile::tempdir().unwrap();
+        let classifier = PeerClassifier::new(
+            Some(home.path().join("no-host.sock")),
+            Some(home.path().to_path_buf()),
+            "paneflow-test",
+        );
+        let mut manifest = manifest_naming_this_process(home.path());
+        manifest.process = None;
+        manifest.lifecycle = crate::manifest::SessionLifecycle::Lost;
+        write_manifest(home.path(), &manifest).unwrap();
+        assert_eq!(
+            classifier.principal(&identified_self(), "test"),
+            Principal::External
         );
     }
 

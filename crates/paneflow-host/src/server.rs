@@ -753,7 +753,7 @@ fn classify_connection(host: &SessionHost, wire: &Wire, hello: &ClientHello) -> 
 }
 
 fn classify_for(host: &SessionHost, caller: &Principal, id: &Value, params: &Value) -> Value {
-    if caller.is_pane() {
+    if !caller.is_outside_every_pane() {
         let (code, message, data) = caller.refusal(METHOD_PEER_CLASSIFY);
         return error_envelope(id, code, message, Some(data));
     }
@@ -4414,5 +4414,32 @@ mod tests {
         host.stop(&source, None).unwrap();
         host.stop(&target, None).unwrap();
         server.stop().unwrap();
+    }
+    #[test]
+    fn peer_classify_answers_only_a_caller_identified_outside_every_pane() {
+        let home = tempfile::tempdir().unwrap();
+        let host = SessionHost::open(home.path(), Path::new("classify-callers")).unwrap();
+        let params = json!({"pid": std::process::id(), "started_at": 0});
+        let refused = [
+            Principal::Pane {
+                session: "s".into(),
+                workspace: None,
+            },
+            Principal::Unverified {
+                reason: "the parent chain is too long".into(),
+            },
+        ];
+        for caller in refused {
+            let envelope = classify_for(&host, &caller, &json!(1), &params);
+            assert_eq!(
+                envelope["error"]["data"]["reason"],
+                paneflow_api::principal::REASON_PRINCIPAL_REFUSED,
+                "{caller:?}: {envelope}"
+            );
+        }
+        for caller in [Principal::Window, Principal::Worker, Principal::External] {
+            let envelope = classify_for(&host, &caller, &json!(1), &params);
+            assert_eq!(envelope["result"]["stale"], true, "{caller:?}: {envelope}");
+        }
     }
 }

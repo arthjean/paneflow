@@ -33,6 +33,10 @@ impl Principal {
         matches!(self, Self::Pane { .. })
     }
 
+    pub const fn is_outside_every_pane(&self) -> bool {
+        matches!(self, Self::Window | Self::Worker | Self::External)
+    }
+
     pub fn whoami(&self) -> WhoAmIResult {
         let (session, workspace) = match self {
             Self::Pane { session, workspace } => (Some(session.clone()), workspace.clone()),
