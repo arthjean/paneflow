@@ -87,12 +87,13 @@ fn utf16_units(prefix: &[u8]) -> Option<usize> {
     )
 }
 
-fn convert_tokens(view: &LineView<'_>, out: &mut Vec<Token>) -> Result<(), LexError> {
+fn line_text<'a>(view: &LineView<'a>) -> Result<&'a str, LexError> {
+    std::str::from_utf8(view.text).map_err(|_| LexError::OutOfBounds)
+}
+
+fn convert_tokens(view: &LineView<'_>, text: &str, out: &mut Vec<Token>) {
     let ascii = view.text.len() == view.utf16_len;
-    let mut chars = std::str::from_utf8(view.text)
-        .map_err(|_| LexError::OutOfBounds)?
-        .char_indices()
-        .peekable();
+    let mut chars = text.char_indices().peekable();
     let mut units = 0usize;
     let mut start = 0usize;
     let mut start_units = 0usize;
@@ -125,7 +126,6 @@ fn convert_tokens(view: &LineView<'_>, out: &mut Vec<Token>) -> Result<(), LexEr
         start = end;
         start_units = end_units;
     }
-    Ok(())
 }
 
 impl LexDocument {
@@ -293,7 +293,9 @@ impl LexDocument {
         if line >= self.line_count() {
             return Ok(());
         }
-        convert_tokens(&self.view(line)?, out)
+        let view = self.view(line)?;
+        convert_tokens(&view, line_text(&view)?, out);
+        Ok(())
     }
 
     pub fn for_each_line_tokens(
@@ -319,9 +321,9 @@ impl LexDocument {
             self.views(batch.clone(), &mut raws)?;
             for (line, raw) in batch.zip(&raws) {
                 let view = self.line_view(raw);
-                let text = std::str::from_utf8(view.text).map_err(|_| LexError::OutOfBounds)?;
+                let text = line_text(&view)?;
                 tokens.clear();
-                convert_tokens(&view, &mut tokens)?;
+                convert_tokens(&view, text, &mut tokens);
                 visit(line, text, &tokens);
             }
             first += raws.len();
