@@ -3,24 +3,24 @@
     "file": "tasks/prd-ipc-caller-identity.md",
     "title": "Caller identity, per-pane grants and sandboxed agent panes for Paneflow's local IPC",
     "created_at": "2026-11-21",
-    "status": "READY"
+    "status": "IN_PROGRESS"
   },
   "epics": [
     {
       "id": "EP-001",
       "title": "Know who is calling",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 7,
-      "stories_done": 0
+      "stories_done": 7
     },
     {
       "id": "EP-002",
       "title": "One authorization point",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 8,
-      "stories_done": 0
+      "stories_done": 8
     },
     {
       "id": "EP-003",
@@ -52,189 +52,189 @@
       "id": "US-001",
       "title": "Read a peer identity on Linux",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-21T18:17:23+01:00",
+      "completed_at": "2026-11-22T15:00:54+01:00",
+      "reviewed_at": "2026-11-22T15:00:54+01:00"
     },
     {
       "id": "US-002",
       "title": "Read a peer identity on macOS",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-001"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-21T18:22:22+01:00",
+      "completed_at": "2026-11-22T15:00:54+01:00",
+      "reviewed_at": "2026-11-22T15:00:54+01:00"
     },
     {
       "id": "US-003",
       "title": "Read a peer identity on Windows",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-001"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-21T18:22:22+01:00",
+      "completed_at": "2026-11-22T15:00:54+01:00",
+      "reviewed_at": "2026-11-22T15:00:54+01:00"
     },
     {
       "id": "US-004",
       "title": "Decide pane membership on Linux and macOS",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-001",
         "US-002"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-21T18:22:22+01:00",
+      "completed_at": "2026-11-22T15:00:54+01:00",
+      "reviewed_at": "2026-11-22T15:00:54+01:00"
     },
     {
       "id": "US-005",
       "title": "Contain each pane in a Job Object on Windows",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-003"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-21T18:22:22+01:00",
+      "completed_at": "2026-11-22T15:00:54+01:00",
+      "reviewed_at": "2026-11-22T15:00:54+01:00"
     },
     {
       "id": "US-006",
       "title": "Serve `peer.classify` from the host",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-004",
         "US-005"
       ],
       "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-22T15:00:54+01:00",
+      "reviewed_at": "2026-11-22T15:00:54+01:00"
     },
     {
       "id": "US-007",
       "title": "Give every connection a principal and answer `system.whoami`",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-006"
       ],
       "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-22T15:00:54+01:00",
+      "reviewed_at": "2026-11-22T15:00:54+01:00"
     },
     {
       "id": "US-008",
       "title": "Declare the audience and scope rule per method",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-007"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-22T15:27:51+01:00",
+      "completed_at": "2026-11-22T16:54:27+01:00",
+      "reviewed_at": "2026-11-22T16:54:27+01:00"
     },
     {
       "id": "US-009",
       "title": "Evaluate one `authorize` function",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-008"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-22T15:27:51+01:00",
+      "completed_at": "2026-11-22T16:54:27+01:00",
+      "reviewed_at": "2026-11-22T16:54:27+01:00"
     },
     {
       "id": "US-010",
       "title": "Move the switches into `paneflow.json`",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-009"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-22T15:27:51+01:00",
+      "completed_at": "2026-11-22T16:54:27+01:00",
+      "reviewed_at": "2026-11-22T16:54:27+01:00"
     },
     {
       "id": "US-011",
       "title": "Authorize at the worker's dispatch",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-010"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-22T15:27:51+01:00",
+      "completed_at": "2026-11-22T16:54:27+01:00",
+      "reviewed_at": "2026-11-22T16:54:27+01:00"
     },
     {
       "id": "US-012",
       "title": "Let the worker decide a live sweep",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-011"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-22T15:27:51+01:00",
+      "completed_at": "2026-11-22T16:54:27+01:00",
+      "reviewed_at": "2026-11-22T16:54:27+01:00"
     },
     {
       "id": "US-013",
       "title": "Authorize at the host's dispatch and close the write path",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-010"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-22T15:27:51+01:00",
+      "completed_at": "2026-11-22T16:54:27+01:00",
+      "reviewed_at": "2026-11-22T16:54:27+01:00"
     },
     {
       "id": "US-014",
       "title": "Authorize at the window's dispatch",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-010"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-22T15:27:51+01:00",
+      "completed_at": "2026-11-22T16:54:27+01:00",
+      "reviewed_at": "2026-11-22T16:54:27+01:00"
     },
     {
       "id": "US-015",
       "title": "Document the threat model and the migration",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-011",
@@ -242,9 +242,9 @@
         "US-013",
         "US-014"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-22T15:27:51+01:00",
+      "completed_at": "2026-11-22T16:54:27+01:00",
+      "reviewed_at": "2026-11-22T16:54:27+01:00"
     },
     {
       "id": "US-016",
