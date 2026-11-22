@@ -49,6 +49,9 @@ pub struct Worker {
     pub events: EventLog,
     pub config: Arc<crate::config_runtime::ConfigRuntime>,
     pub prompts: crate::prompts::PromptBroker,
+    pub agent_limit: crate::agent_asks::AgentRateLimit,
+    pub action_runs: crate::action_runs::ActionRuns,
+    pub integration_refreshes: std::sync::atomic::AtomicU64,
     pub layout: Arc<crate::layout_authority::LayoutAuthority>,
     pub classifier: paneflow_host::peer::PeerClassifier,
     pub principals: Mutex<std::collections::HashMap<ConnectionId, Principal>>,
@@ -342,6 +345,11 @@ impl Worker {
         let events = state.drain_events();
         if events.is_empty() {
             return;
+        }
+        for event in &events {
+            if event.kind == crate::state::TERMINAL_EXITED {
+                self.prompts.cancel_asked_by(&event.session.to_string());
+            }
         }
         self.events.append_all(events.into_iter().map(|event| {
             (
@@ -803,21 +811,31 @@ pub(crate) fn register_methods(builder: RegistryBuilder) -> RegistryBuilder {
         .ready::<config::Reload>(|worker, _| to_value(worker.config.reload(worker)))
         .ready::<config::ListActions>(|worker, _| to_value(worker.config.actions()))
         .ready::<config::InvokeAction>(|worker, call| {
-            let mut params = call.params;
-            let mut context = params.ctx.take().unwrap_or_default();
-            let acting = crate::authority::acting_principal(&call.authority.principal, &context);
-            let _run = worker.acting.start(acting, &mut context);
-            params.ctx = Some(context);
-            worker.config.invoke(params).and_then(to_value)
+            worker
+                .invoke_action(call.params, &call.authority.principal)
+                .and_then(to_value)
+        })
+        .ready::<prompt::ResolveAgentPrompt>(|worker, call| {
+            to_value(worker.resolve_agent_prompt(call.params, &call.authority.principal))
+        })
+        .ready::<config::WaitAction>(|worker, call| {
+            worker
+                .wait_action(call.params, &call.authority.principal)
+                .and_then(to_value)
         })
         .ready::<config::ListKeymap>(|worker, _| to_value(worker.config.keymap()))
         .ready::<prompt::Request>(|worker, call| {
-            worker.prompts.request(&call.params).and_then(to_value)
+            worker
+                .request_prompt(call.params, &call.authority.principal)
+                .and_then(to_value)
         })
         .ready::<prompt::Wait>(|worker, call| {
             worker
-                .prompts
-                .wait(call.params.id, call.params.wait_ms)
+                .wait_prompt(
+                    call.params.id,
+                    call.params.wait_ms,
+                    &call.authority.principal,
+                )
                 .and_then(to_value)
         })
         .ready::<prompt::ReplyTo>(|worker, call| {

@@ -71,6 +71,7 @@ fn origin(shared: &Shared) -> PromptOrigin {
         || shared.context.borrow().clone(),
         |scope| scope.ids.clone(),
     );
+    let agent = scope.as_ref().and_then(|scope| scope.agent.clone());
     let action = scope.and_then(|scope| scope.action);
     let (kind, title, name, file) = match action {
         Some(action) => (
@@ -86,9 +87,14 @@ fn origin(shared: &Shared) -> PromptOrigin {
         title,
         name,
         file,
-        agent: None,
+        agent: if kind == OriginKind::Action {
+            agent
+        } else {
+            None
+        },
         surface_id: ids.surface_id,
         workspace_id: ids.workspace_id,
+        session: None,
     }
 }
 

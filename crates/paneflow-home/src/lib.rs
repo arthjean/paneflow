@@ -296,6 +296,15 @@ pub fn serve_endpoint_path_for_current_home() -> Option<PathBuf> {
     paneflow_home().map(|home| serve_endpoint_path(&home))
 }
 
+pub fn serve_endpoint_beside_host_endpoint(host_endpoint: &Path) -> Option<PathBuf> {
+    let name = host_endpoint.file_name()?.to_str()?;
+    let rest = name.strip_prefix(HOST_ENDPOINT_PREFIX)?;
+    let mut serve = String::with_capacity(SERVE_ENDPOINT_PREFIX.len() + rest.len());
+    serve.push_str(SERVE_ENDPOINT_PREFIX);
+    serve.push_str(rest);
+    Some(host_endpoint.with_file_name(serve))
+}
+
 const IPC_ENDPOINT_PREFIX: &str = "paneflow-ipc-";
 
 #[cfg(windows)]
@@ -397,6 +406,23 @@ fn copy_private(from: &Path, to: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_worker_endpoint_beside_a_host_endpoint_is_the_one_of_the_same_home() {
+        let home = Path::new(if cfg!(windows) {
+            r"C:\Users\someone\.paneflow-dev-tagged"
+        } else {
+            "/home/someone/.paneflow-dev-tagged"
+        });
+        assert_eq!(
+            serve_endpoint_beside_host_endpoint(&host_endpoint_path(home)),
+            Some(serve_endpoint_path(home))
+        );
+        assert_eq!(
+            serve_endpoint_beside_host_endpoint(Path::new("elsewhere.sock")),
+            None
+        );
+    }
 
     #[test]
     fn an_explicit_home_never_imports_the_legacy_state() {

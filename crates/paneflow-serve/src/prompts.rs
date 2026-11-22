@@ -335,6 +335,37 @@ impl BrokerState {
         changed
     }
 
+    pub fn asker_of(&self, id: u64) -> Option<Option<String>> {
+        self.open.get(&id).map(|open| {
+            open.origin
+                .as_ref()
+                .and_then(|origin| origin.session.clone())
+        })
+    }
+
+    pub fn cancel_asked_by(&mut self, session: &str, now_ms: u64) -> bool {
+        let asked: Vec<u64> = self
+            .open
+            .iter()
+            .filter(|(_, open)| {
+                open.origin
+                    .as_ref()
+                    .and_then(|origin| origin.session.as_deref())
+                    == Some(session)
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in &asked {
+            self.end(
+                *id,
+                EndReason::Cancelled,
+                PromptOutcome::ended(PromptStatus::Cancelled, Some(*id)),
+                now_ms,
+            );
+        }
+        !asked.is_empty()
+    }
+
     pub fn next_deadline_ms(&self) -> Option<u64> {
         self.open
             .values()
@@ -456,6 +487,16 @@ impl PromptBroker {
     pub fn unfollow(&self, follower: u64) {
         self.lock().unfollow(follower, Self::now());
         self.changed.notify_all();
+    }
+
+    pub fn asker_of(&self, id: u64) -> Option<Option<String>> {
+        self.lock().asker_of(id)
+    }
+
+    pub fn cancel_asked_by(&self, session: &str) {
+        if self.lock().cancel_asked_by(session, Self::now()) {
+            self.changed.notify_all();
+        }
     }
 
     pub fn sweep(&self) {
@@ -754,11 +795,54 @@ mod tests {
             agent: None,
             surface_id: Some(7),
             workspace_id: None,
+            session: None,
         });
         state.request(&params, 0).unwrap();
         let frame = &frames(&feed)[0];
         assert_eq!(frame["origin"]["title"], "New branch");
         assert_eq!(frame["origin"]["surface_id"], 7);
+    }
+
+    fn asked_by(session: &str) -> RequestParams {
+        let mut params = input("Deploy?");
+        params.origin = Some(PromptOrigin {
+            kind: OriginKind::Agent,
+            title: None,
+            name: None,
+            file: None,
+            agent: Some("Claude Code".into()),
+            surface_id: None,
+            workspace_id: None,
+            session: Some(session.into()),
+        });
+        params
+    }
+
+    #[test]
+    fn the_end_of_an_asking_session_cancels_only_its_own_prompts() {
+        let mut state = BrokerState::default();
+        let feed = state.follow(vec![PromptKind::Input], 0);
+        let mine = pending_id(&state.request(&asked_by("s1"), 0).unwrap());
+        let other = pending_id(&state.request(&asked_by("s2"), 0).unwrap());
+        let unowned = pending_id(&state.request(&input("Name"), 0).unwrap());
+        assert_eq!(state.asker_of(mine), Some(Some("s1".into())));
+        assert_eq!(state.asker_of(unowned), Some(None));
+        assert!(state.cancel_asked_by("s1", 5));
+        assert!(!state.cancel_asked_by("s1", 6), "nothing left to cancel");
+        assert_eq!(
+            state.lookup(mine),
+            Lookup::Ended(PromptOutcome::ended(PromptStatus::Cancelled, Some(mine)))
+        );
+        assert_eq!(state.lookup(other), Lookup::Open);
+        assert_eq!(state.lookup(unowned), Lookup::Open);
+        let ended: Vec<Value> = frames(&feed)
+            .into_iter()
+            .filter(|frame| frame["type"] == "ended")
+            .collect();
+        assert_eq!(
+            ended,
+            vec![json!({"type": "ended", "id": mine, "reason": "cancelled"})]
+        );
     }
 
     #[test]

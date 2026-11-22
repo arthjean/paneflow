@@ -39,7 +39,8 @@ pub(crate) fn dispatch() {
     let Ok(session) = env::var(SESSION_ID_ENV) else {
         return;
     };
-    let Some(event_name) = env::args_os().nth(1) else {
+    let mut args = env::args_os().skip(1);
+    let Some(event_name) = args.next() else {
         diagnose(format_args!("missing argv[1] hook event name"));
         return;
     };
@@ -68,9 +69,12 @@ pub(crate) fn dispatch() {
         crate::status_line::relay(&endpoint, &session, runtime_generation);
         return;
     };
-    let Some(hook_payload) = read_payload(event) else {
+    let Some((hook_payload, stdin)) = read_payload(event) else {
         return;
     };
+    let resolving = (args.next().as_deref() == Some(OsStr::new(crate::answer::ANSWER_ARG)))
+        .then(|| crate::answer::resolve_event(event, &hook_payload))
+        .flatten();
     let tool = match detect_tool_from(env::var(TOOL_ENV).ok().as_deref(), &hook_payload) {
         Ok(tool) => tool,
         Err(error) => {
@@ -78,6 +82,7 @@ pub(crate) fn dispatch() {
             return;
         }
     };
+    let agent = tool.as_ref().map(|tool| tool.as_str().to_owned());
     let session_dir = env::var_os(SESSION_DIR_ENV);
     let context = FrameContext {
         tool,
@@ -111,9 +116,25 @@ pub(crate) fn dispatch() {
         Ok(BuildOutcome::Drop(reason)) => diagnose(format_args!("{}: {reason}", event.name())),
         Err(error) => diagnose(format_args!("{}: {error}", event.name())),
     }
+    let Some(params) = resolving.zip(stdin).and_then(|(resolving, bytes)| {
+        let payload = serde_json::from_str(std::str::from_utf8(&bytes).ok()?).ok()?;
+        Some(crate::answer::resolve_params(
+            resolving,
+            agent.as_deref(),
+            &session,
+            payload,
+        ))
+    }) else {
+        return;
+    };
+    if let Some(reply) =
+        crate::answer::resolve(&endpoint, crate::transport::HOOK_REQUEST_DEADLINE, params)
+    {
+        crate::answer::print(&reply);
+    }
 }
 
-fn read_payload(event: HookEvent) -> Option<Value> {
+fn read_payload(event: HookEvent) -> Option<(Value, Option<Vec<u8>>)> {
     match event.input_source() {
         InputSource::ExitCodeEnvironment => {
             let Some(exit_code) = read_exit_code_from(env::var(EXIT_CODE_ENV).ok().as_deref())
@@ -124,7 +145,7 @@ fn read_payload(event: HookEvent) -> Option<Value> {
                 ));
                 return None;
             };
-            Some(serde_json::json!({"exit_code": exit_code}))
+            Some((serde_json::json!({"exit_code": exit_code}), None))
         }
         InputSource::Stdin => read_stdin_json(event),
     }
@@ -176,6 +197,12 @@ fn read_event_source_from(raw: Option<&str>) -> Option<LifecycleEventSource> {
     raw.and_then(LifecycleEventSource::parse)
 }
 
+#[cfg(unix)]
+pub(crate) fn read_stdin_bytes() -> Option<Vec<u8>> {
+    read_past_limit(crate::answer::Stdin, MAX_STDIN_BYTES)
+}
+
+#[cfg(not(unix))]
 pub(crate) fn read_stdin_bytes() -> Option<Vec<u8>> {
     read_past_limit(std::io::stdin().lock(), MAX_STDIN_BYTES)
 }
@@ -194,7 +221,7 @@ fn read_past_limit(mut reader: impl Read, limit: usize) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
-fn read_stdin_json(event: HookEvent) -> Option<Value> {
+fn read_stdin_json(event: HookEvent) -> Option<(Value, Option<Vec<u8>>)> {
     let Some(bytes) = read_stdin_bytes() else {
         diagnose(format_args!("{}: stdin read error", event.name()));
         return None;
@@ -207,7 +234,7 @@ fn read_stdin_json(event: HookEvent) -> Option<Value> {
         return None;
     }
     if bytes.iter().all(u8::is_ascii_whitespace) && event == HookEvent::SessionEnd {
-        return Some(serde_json::json!({}));
+        return Some((serde_json::json!({}), None));
     }
     if bytes.iter().all(u8::is_ascii_whitespace) {
         diagnose(format_args!("{}: empty stdin", event.name()));
@@ -217,7 +244,7 @@ fn read_stdin_json(event: HookEvent) -> Option<Value> {
         .ok()
         .and_then(|text| serde_json::from_str(text).ok())
     {
-        Some(value) => Some(value),
+        Some(value) => Some((value, Some(bytes))),
         None => {
             diagnose(format_args!("{}: invalid stdin JSON", event.name()));
             None

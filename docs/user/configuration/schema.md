@@ -90,6 +90,7 @@ JetBrains IDEs, Helix, and other JSON Schema-aware editors:
 | `ai_unrestricted` | boolean/null | `false` | Per IPC call | Allows trusted conductors to submit to peer panes without `PANEFLOW_IPC_SCRIPTING`. |
 | `ai_injection_fence` | boolean/null | `true` | Per read call | Wraps `surface.read` output in an untrusted-output fence by default. |
 | `on_quit` | `ask`, `keep`, `stop`, null | `ask` | At quit | What quitting does while hosted sessions run: `ask` opens the quit dialog, `keep` leaves every session running, `stop` stops them all and shuts the host down. With no live session the app exits and shuts the idle host down. |
+| `agent_prompts` | `native`, `paneflow`, null | `native` | At the next agent question | Where a coding agent's own questions and permission requests are answered: `native` leaves them in the agent's terminal, `paneflow` shows Claude Code's questions and the permission requests of Claude Code and Codex as a Paneflow prompt, with a way back to the terminal. Codex questions are never intercepted. |
 | `agent_panel` | object/null | defaults below | Agents UI | Agents-view notification preferences. |
 | `agents` | object/null | defaults below | Restore and next launch | Agent conversation restore and Claude Code session-id preassignment. |
 | `usage` | object/null | defaults below | Next integration refresh | Subscription usage: whether Paneflow relays Claude Code plan limits. |

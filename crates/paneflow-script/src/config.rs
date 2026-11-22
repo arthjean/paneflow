@@ -196,6 +196,7 @@ pub(crate) struct TaskScope {
     pub depth: usize,
     pub queue: Vec<String>,
     pub dispatches_at_once: bool,
+    pub agent: Option<String>,
 }
 
 fn open_caller_scope(shared: &Shared, task: TaskId) -> bool {
@@ -798,6 +799,8 @@ async fn invoke(lua: Lua, (name, args): (String, LuaValue)) -> mlua::Result<Mult
             workspace_id: scope.ids.workspace_id,
             client_id: scope.client_id.clone(),
             grant: None,
+            session: None,
+            agent: None,
         })
         .unwrap_or_else(|_| json!({})),
     });
@@ -1022,6 +1025,9 @@ pub(crate) fn spawn_action(
                 depth: 1,
                 queue: Vec::new(),
                 dispatches_at_once: false,
+                agent: (context.origin.as_deref() == Some("agent"))
+                    .then(|| context.agent.clone())
+                    .flatten(),
             },
         );
         let run = {

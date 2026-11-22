@@ -136,6 +136,7 @@ struct ConfigPaths {
     codex_hooks: PathBuf,
     codex_config: PathBuf,
     plan_limits: bool,
+    agent_prompts: bool,
 }
 
 impl ConfigPaths {
@@ -158,6 +159,8 @@ impl ConfigPaths {
             &codex_home,
         );
         paths.plan_limits = plan_limits_enabled(&paneflow_home::config_path_in(&marker_home));
+        paths.agent_prompts =
+            agent_prompts_in_paneflow(&paneflow_home::config_path_in(&marker_home));
         Ok(paths)
     }
 
@@ -180,6 +183,7 @@ impl ConfigPaths {
         );
         paths.launch_time_evidence = false;
         paths.plan_limits = plan_limits_enabled(&target.config_file);
+        paths.agent_prompts = agent_prompts_in_paneflow(&target.config_file);
         Ok(paths)
     }
 
@@ -199,6 +203,7 @@ impl ConfigPaths {
             codex_hooks: codex_home.join("hooks.json"),
             codex_config: codex_home.join("config.toml"),
             plan_limits: true,
+            agent_prompts: false,
         }
     }
 
@@ -986,6 +991,21 @@ fn reporter_for_current_platform<'a>(unix_reporter: &'a Path, hook_binary: &'a P
     }
 }
 
+pub const ANSWER_ARG: &str = "answer";
+pub const ANSWERING_HOOK_TIMEOUT_SECS: u64 = 600;
+const HOOK_TIMEOUT_SECS: u64 = 5;
+
+pub fn agent_prompts_in_paneflow(config_file: &Path) -> bool {
+    merge::read_json_or_default(config_file)
+        .ok()
+        .and_then(|root| {
+            root.get("agent_prompts")
+                .and_then(Value::as_str)
+                .map(|mode| mode == "paneflow")
+        })
+        .unwrap_or(false)
+}
+
 fn plan_limits_enabled(config_file: &Path) -> bool {
     merge::read_json_or_default(config_file)
         .ok()
@@ -1001,7 +1021,7 @@ fn install_claude_hooks(
     io::with_config_lock(&paths.claude_settings, || {
         let mut root = merge::read_json_or_default(&paths.claude_settings)?;
         let reporter = reporter_for_current_platform(unix_reporter, &binaries.hook_binary);
-        reconcile_claude_hooks(&mut root, reporter)?;
+        reconcile_claude_hooks(&mut root, reporter, paths.agent_prompts)?;
         let status_line = paths
             .plan_limits
             .then(|| status_line_command(reporter, paneflow_agent_config::home_dir().as_deref()));
@@ -1032,7 +1052,12 @@ fn install_codex_hooks(
 ) -> Result<()> {
     io::with_config_lock(&paths.codex_hooks, || {
         let mut root = merge::read_json_or_default(&paths.codex_hooks)?;
-        reconcile_codex_hooks(&mut root, unix_reporter, &binaries.hook_binary)?;
+        reconcile_codex_hooks(
+            &mut root,
+            unix_reporter,
+            &binaries.hook_binary,
+            paths.agent_prompts,
+        )?;
         io::write_if_changed_unlocked(&paths.codex_hooks, &merge::json_to_bytes(&root)?)?;
         Ok(())
     })
@@ -1074,7 +1099,7 @@ fn remove_json_hooks(path: &Path, events: &[&str]) -> Result<()> {
     })
 }
 
-fn reconcile_claude_hooks(root: &mut Value, reporter: &Path) -> Result<()> {
+fn reconcile_claude_hooks(root: &mut Value, reporter: &Path, agent_prompts: bool) -> Result<()> {
     let hooks = hooks_object(root)?;
     for event in CLAUDE_RETIRED_EVENTS {
         sweep_owned_hooks(hooks, event)?;
@@ -1082,13 +1107,19 @@ fn reconcile_claude_hooks(root: &mut Value, reporter: &Path) -> Result<()> {
     for event in CLAUDE_EVENTS {
         let entries = hook_entries(hooks, event)?;
         strip_owned_handlers(entries);
+        let answers = agent_prompts && matches!(*event, "PermissionRequest" | "PreToolUse");
+        let (args, timeout) = if answers {
+            (json!([event, ANSWER_ARG]), ANSWERING_HOOK_TIMEOUT_SECS)
+        } else {
+            (json!([event]), HOOK_TIMEOUT_SECS)
+        };
         let mut group = json!({
             MANAGED_MARKER: true,
             "hooks": [{
                 "type": "command",
                 "command": reporter.display().to_string(),
-                "args": [event],
-                "timeout": 5,
+                "args": args,
+                "timeout": timeout,
                 "async": false,
             }],
         });
@@ -1119,6 +1150,7 @@ fn reconcile_codex_hooks(
     root: &mut Value,
     unix_reporter: &Path,
     windows_reporter: &Path,
+    agent_prompts: bool,
 ) -> Result<()> {
     let hooks = hooks_object(root)?;
     for event in CODEX_RETIRED_EVENTS {
@@ -1127,21 +1159,29 @@ fn reconcile_codex_hooks(
     for event in CODEX_EVENTS {
         let entries = hook_entries(hooks, event)?;
         strip_owned_handlers(entries);
-        let timeout = if matches!(*event, "Interrupt" | "SessionEnd") {
+        let answers = agent_prompts && *event == "PermissionRequest";
+        let timeout = if answers {
+            ANSWERING_HOOK_TIMEOUT_SECS
+        } else if matches!(*event, "Interrupt" | "SessionEnd") {
             1
         } else {
-            5
+            HOOK_TIMEOUT_SECS
+        };
+        let arguments = if answers {
+            format!("{event} {ANSWER_ARG}")
+        } else {
+            (*event).to_string()
         };
         let mut group = json!({
             MANAGED_MARKER: true,
             "hooks": [{
                 "type": "command",
                 "command": format!(
-                    "{} {event}",
+                    "{} {arguments}",
                     sh_command_word(&unix_reporter.display().to_string())
                 ),
                 "command_windows": format!(
-                    "{} {event}",
+                    "{} {arguments}",
                     cmd_command_word(&windows_reporter.display().to_string())
                 ),
                 "timeout": timeout,
@@ -1315,6 +1355,7 @@ mod tests {
             codex_hooks: root.join("codex").join("hooks.json"),
             codex_config: root.join("codex").join("config.toml"),
             plan_limits: true,
+            agent_prompts: false,
         };
         (
             directory,
@@ -2727,5 +2768,176 @@ mod tests {
             std::fs::read(&paths.claude_settings).expect("settings"),
             broken
         );
+    }
+
+    fn managed_group<'a>(root: &'a Value, event: &str) -> &'a Value {
+        root["hooks"][event]
+            .as_array()
+            .and_then(|entries| entries.iter().find(|entry| entry[MANAGED_MARKER] == true))
+            .expect("a managed group")
+    }
+
+    fn answering(paths: ConfigPaths) -> ConfigPaths {
+        std::fs::write(
+            paneflow_home::config_path_in(&paths.marker_home),
+            br#"{"agent_prompts": "paneflow"}"#,
+        )
+        .expect("paneflow.json");
+        let resolved = ConfigPaths::resolve(paths.marker_home.clone()).expect("resolved paths");
+        assert!(
+            resolved.agent_prompts,
+            "agent_prompts is read from paneflow.json"
+        );
+        ConfigPaths {
+            agent_prompts: resolved.agent_prompts,
+            ..paths
+        }
+    }
+
+    #[test]
+    fn agent_prompts_paneflow_gives_the_claude_question_and_permission_hooks_600_seconds() {
+        let (_directory, paths, binaries) = fixture();
+        write_settings(&paths, &user_stop_hook());
+        install_claude(&paths, &binaries);
+        let native = read_settings(&paths);
+        for event in ["PermissionRequest", "PreToolUse", "Stop"] {
+            let hook = &managed_group(&native, event)["hooks"][0];
+            assert_eq!(hook["timeout"], 5, "{event}");
+            assert_eq!(hook["args"], json!([event]), "{event}");
+        }
+        let paths = answering(paths);
+        install_claude(&paths, &binaries);
+        let opted = read_settings(&paths);
+        for event in ["PermissionRequest", "PreToolUse"] {
+            let hook = &managed_group(&opted, event)["hooks"][0];
+            assert_eq!(hook["timeout"], ANSWERING_HOOK_TIMEOUT_SECS, "{event}");
+            assert_eq!(hook["args"], json!([event, ANSWER_ARG]), "{event}");
+        }
+        assert_eq!(
+            managed_group(&opted, "PreToolUse")["matcher"],
+            "AskUserQuestion"
+        );
+        assert_eq!(managed_group(&opted, "Stop")["hooks"][0]["timeout"], 5);
+        assert!(
+            opted["hooks"]["Stop"]
+                .as_array()
+                .expect("Stop")
+                .contains(&user_stop_hook()["hooks"]["Stop"][0]),
+            "an entry not marked as managed is untouched: {opted}"
+        );
+        assert_eq!(
+            read_mcp_timeout(&paths),
+            None,
+            "the installer writes no per-server MCP timeout, opted in or not"
+        );
+        std::fs::write(
+            &paths.claude_mcp,
+            br#"{"mcpServers":{"paneflow":{"type":"stdio","command":"/old/paneflow-mcp","args":[],"timeout":30000}}}"#,
+        )
+        .expect("an entry with a user timeout");
+        install_claude(&paths, &binaries);
+        assert_eq!(
+            read_mcp_timeout(&paths),
+            Some(30_000),
+            "no tool call waits past 20 s, so a timeout already set stays as it is"
+        );
+    }
+
+    fn read_mcp_timeout(paths: &ConfigPaths) -> Option<u64> {
+        let root: Value = serde_json::from_slice(&std::fs::read(&paths.claude_mcp).ok()?).ok()?;
+        root["mcpServers"]["paneflow"]["timeout"].as_u64()
+    }
+
+    #[test]
+    fn agent_prompts_paneflow_opts_only_the_codex_permission_hook_in() {
+        let (_directory, paths, binaries) = fixture();
+        let paths = answering(paths);
+        install_integration_at(&paths, "codex", &binaries, None, InstallMode::default())
+            .expect("install");
+        let root: Value =
+            serde_json::from_slice(&std::fs::read(&paths.codex_hooks).expect("hooks"))
+                .expect("JSON");
+        let permission = &managed_group(&root, "PermissionRequest")["hooks"][0];
+        assert_eq!(permission["timeout"], ANSWERING_HOOK_TIMEOUT_SECS);
+        for key in ["command", "command_windows"] {
+            assert!(
+                permission[key]
+                    .as_str()
+                    .is_some_and(|command| command.ends_with(" PermissionRequest answer")),
+                "{key}: {permission}"
+            );
+        }
+        let question = &managed_group(&root, "PreToolUse")["hooks"][0];
+        assert_eq!(question["timeout"], 5, "no Codex question is intercepted");
+        assert!(
+            question["command"]
+                .as_str()
+                .is_some_and(|command| command.ends_with(" PreToolUse")),
+            "{question}"
+        );
+    }
+
+    #[test]
+    fn the_previous_release_restores_its_own_entries_over_answering_ones() {
+        let (_directory, paths, binaries) = fixture();
+        write_settings(&paths, &user_stop_hook());
+        install_claude(&paths, &binaries);
+        let native = read_settings(&paths);
+        let mut root = native.clone();
+        let reporter = managed_group(&native, "Stop")["hooks"][0]["command"]
+            .as_str()
+            .expect("reporter")
+            .to_string();
+        reconcile_claude_hooks(&mut root, Path::new(&reporter), true).expect("answering");
+        assert_ne!(root, native);
+        reconcile_claude_hooks(&mut root, Path::new(&reporter), false)
+            .expect("the previous release's own reconcile, which writes native entries");
+        assert_eq!(
+            root, native,
+            "the managed marker lets either release replace the other's entries"
+        );
+    }
+
+    #[test]
+    fn an_invalid_settings_file_stays_untouched_with_agent_prompts_paneflow() {
+        let (_directory, paths, binaries) = fixture();
+        let paths = answering(paths);
+        std::fs::create_dir_all(paths.claude_settings.parent().expect("parent"))
+            .expect("config directory");
+        std::fs::write(&paths.claude_settings, b"{ not json").expect("invalid settings");
+        let error = install_integration_at(
+            &paths,
+            "claude-code",
+            &binaries,
+            None,
+            InstallMode::default(),
+        )
+        .expect_err("invalid settings refused");
+        assert!(
+            format!("{error:#}").contains(&paths.claude_settings.display().to_string()),
+            "{error:#}"
+        );
+        assert_eq!(
+            std::fs::read(&paths.claude_settings).expect("settings after"),
+            b"{ not json"
+        );
+    }
+
+    #[test]
+    fn agent_prompts_is_off_unless_paneflow_json_says_paneflow() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let config = directory.path().join("paneflow.json");
+        assert!(!agent_prompts_in_paneflow(&config));
+        for body in [
+            &br#"{}"#[..],
+            br#"{"agent_prompts": "native"}"#,
+            br#"{"agent_prompts": true}"#,
+            b"{broken",
+        ] {
+            std::fs::write(&config, body).expect("config");
+            assert!(!agent_prompts_in_paneflow(&config));
+        }
+        std::fs::write(&config, br#"{"agent_prompts": "paneflow"}"#).expect("config");
+        assert!(agent_prompts_in_paneflow(&config));
     }
 }

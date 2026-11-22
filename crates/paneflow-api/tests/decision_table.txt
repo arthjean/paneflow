@@ -219,6 +219,11 @@ action.invoke worker worker allowed:instance allowed:instance
 action.invoke worker pane allowed:instance allowed:instance
 action.invoke worker external allowed:instance allowed:instance
 action.invoke worker unverified refused:unverified_caller refused:unverified_caller
+action.wait worker window allowed:instance allowed:instance
+action.wait worker worker allowed:instance allowed:instance
+action.wait worker pane allowed:instance allowed:instance
+action.wait worker external allowed:instance allowed:instance
+action.wait worker unverified refused:unverified_caller refused:unverified_caller
 keymap.list worker window allowed:instance allowed:instance
 keymap.list worker worker allowed:instance allowed:instance
 keymap.list worker pane allowed:instance allowed:instance
@@ -244,6 +249,11 @@ prompt.follow worker worker allowed:instance allowed:instance
 prompt.follow worker pane allowed:instance allowed:instance
 prompt.follow worker external allowed:instance allowed:instance
 prompt.follow worker unverified refused:unverified_caller refused:unverified_caller
+agent_prompt.resolve worker window allowed:instance allowed:instance
+agent_prompt.resolve worker worker allowed:instance allowed:instance
+agent_prompt.resolve worker pane allowed:instance allowed:instance
+agent_prompt.resolve worker external allowed:instance allowed:instance
+agent_prompt.resolve worker unverified refused:unverified_caller refused:unverified_caller
 layout.view worker window allowed:instance allowed:instance
 layout.view worker worker allowed:instance allowed:instance
 layout.view worker pane allowed:instance allowed:instance

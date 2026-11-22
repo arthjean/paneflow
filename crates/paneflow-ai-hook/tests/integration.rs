@@ -33,7 +33,64 @@ struct MockHost {
     endpoint: PathBuf,
     event_rx: mpsc::Receiver<Value>,
     thread: Option<std::thread::JoinHandle<()>>,
-    _keepalive: PathKeepalive,
+    _keepalive: Option<PathKeepalive>,
+}
+
+#[derive(Default)]
+struct Order {
+    sets: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    requires: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+}
+
+struct Recorder {
+    endpoint: PathBuf,
+    seen: mpsc::Receiver<String>,
+    thread: std::thread::JoinHandle<()>,
+}
+
+const RECORDER_STOP: &str = "recorder.stop";
+
+impl Recorder {
+    fn start(endpoint: PathBuf) -> Self {
+        let name = endpoint
+            .as_path()
+            .to_fs_name::<GenericFilePath>()
+            .expect("IPC name");
+        let listener = ListenerOptions::new()
+            .name(name)
+            .create_sync()
+            .expect("IPC listener");
+        let (seen_tx, seen) = mpsc::channel();
+        let thread = std::thread::spawn(move || loop {
+            let stream = listener.accept().expect("accept");
+            let mut reader = BufReader::new(stream);
+            let first = read_json_line(&mut reader);
+            let method = first["method"].as_str().unwrap_or_default().to_string();
+            if method == RECORDER_STOP {
+                return;
+            }
+            seen_tx.send(method).expect("record");
+        });
+        Self {
+            endpoint,
+            seen,
+            thread,
+        }
+    }
+
+    fn contacts(self) -> Vec<String> {
+        let name = self
+            .endpoint
+            .as_path()
+            .to_fs_name::<GenericFilePath>()
+            .expect("IPC name");
+        let mut stream = Stream::connect(name).expect("connect to the recorder");
+        stream
+            .write_all(format!("{{\"method\":\"{RECORDER_STOP}\"}}\n").as_bytes())
+            .expect("stop the recorder");
+        self.thread.join().expect("recorder thread");
+        self.seen.try_iter().collect()
+    }
 }
 
 impl MockHost {
@@ -43,6 +100,22 @@ impl MockHost {
 
     fn replying(reply: Value) -> Self {
         let (endpoint, keepalive) = unique_ipc_path();
+        Self::at(
+            endpoint,
+            Some(keepalive),
+            "agent.event",
+            reply,
+            Order::default(),
+        )
+    }
+
+    fn at(
+        endpoint: PathBuf,
+        keepalive: Option<PathKeepalive>,
+        method: &'static str,
+        reply: Value,
+        order: Order,
+    ) -> Self {
         let name = endpoint
             .as_path()
             .to_fs_name::<GenericFilePath>()
@@ -60,8 +133,16 @@ impl MockHost {
             assert_eq!(hello["method"], "host.hello");
             write_result(&mut writer, &hello, json!({"protocol": 1}));
             let event = read_json_line(&mut reader);
-            assert_eq!(event["method"], "agent.event");
-            event_tx.send(event.clone()).expect("send event");
+            assert_eq!(event["method"], method);
+            let ordered = order
+                .requires
+                .is_none_or(|flag| flag.load(Ordering::SeqCst));
+            if let Some(flag) = order.sets {
+                flag.store(true, Ordering::SeqCst);
+            }
+            event_tx
+                .send(json!({"request": event.clone(), "ordered": ordered}))
+                .expect("send event");
             write_result(&mut writer, &event, reply);
         });
         Self {
@@ -73,6 +154,10 @@ impl MockHost {
     }
 
     fn event(&self) -> Value {
+        self.request()["request"].clone()
+    }
+
+    fn request(&self) -> Value {
         self.event_rx
             .recv_timeout(Duration::from_secs(2))
             .expect("reporter event")
@@ -139,6 +224,32 @@ fn unique_ipc_path() -> (PathBuf, PathKeepalive) {
     )
 }
 
+#[cfg(unix)]
+fn paired_ipc_paths() -> (PathBuf, PathBuf, PathKeepalive) {
+    let directory = tempfile::TempDir::new().expect("temp directory");
+    let sequence = UNIQUE.fetch_add(1, Ordering::Relaxed);
+    (
+        directory
+            .path()
+            .join(format!("paneflow-host-{sequence}.sock")),
+        directory
+            .path()
+            .join(format!("paneflow-serve-{sequence}.sock")),
+        directory,
+    )
+}
+
+#[cfg(windows)]
+fn paired_ipc_paths() -> (PathBuf, PathBuf, PathKeepalive) {
+    let sequence = UNIQUE.fetch_add(1, Ordering::Relaxed);
+    let suffix = format!("{}-{sequence}", std::process::id());
+    (
+        PathBuf::from(format!(r"\\.\pipe\paneflow-host-{suffix}")),
+        PathBuf::from(format!(r"\\.\pipe\paneflow-serve-{suffix}")),
+        PathKeepalive,
+    )
+}
+
 struct HookEnv<'a> {
     endpoint: Option<&'a Path>,
     session: Option<&'a str>,
@@ -150,13 +261,13 @@ struct HookEnv<'a> {
 
 fn run_reporter(
     executable: &Path,
-    event: &str,
+    args: &[&str],
     hook_env: &HookEnv<'_>,
     stdin_bytes: &[u8],
 ) -> (std::process::ExitStatus, Duration, Vec<u8>) {
     let mut command = Command::new(executable);
     command
-        .arg(event)
+        .args(args)
         .env_clear()
         .envs(non_paneflow_environment())
         .stdin(Stdio::piped())
@@ -250,7 +361,7 @@ fn hand_typed_claude_events_use_the_host_protocol() {
         });
         let (status, elapsed, stdout) = run_reporter(
             Path::new(HOOK_BIN),
-            event,
+            &[event],
             &HookEnv {
                 endpoint: Some(&host.endpoint),
                 session: Some(SESSION_ID),
@@ -280,7 +391,7 @@ fn a_hook_that_names_no_tool_reaches_the_host_unattributed() {
     let host = MockHost::start();
     let (status, _, _) = run_reporter(
         Path::new(HOOK_BIN),
-        "UserPromptSubmit",
+        &["UserPromptSubmit"],
         &HookEnv {
             endpoint: Some(&host.endpoint),
             session: Some(SESSION_ID),
@@ -310,7 +421,7 @@ fn a_host_drop_of_an_unattributed_hook_is_logged_with_its_reason() {
     let log = directory.path().join("hook.log");
     let (status, _, _) = run_reporter(
         Path::new(HOOK_BIN),
-        "Stop",
+        &["Stop"],
         &HookEnv {
             endpoint: Some(&host.endpoint),
             session: Some(SESSION_ID),
@@ -335,7 +446,7 @@ fn a_stop_failure_forwards_the_provider_error() {
     let host = MockHost::start();
     let (status, _, _) = run_reporter(
         Path::new(HOOK_BIN),
-        "StopFailure",
+        &["StopFailure"],
         &HookEnv {
             endpoint: Some(&host.endpoint),
             session: Some(SESSION_ID),
@@ -370,7 +481,7 @@ fn stdin_preserves_utf8_and_escaped_unicode_prompts() {
         let host = MockHost::start();
         let (status, _, stdout) = run_reporter(
             Path::new(HOOK_BIN),
-            "UserPromptSubmit",
+            &["UserPromptSubmit"],
             &HookEnv {
                 endpoint: Some(&host.endpoint),
                 session: Some(SESSION_ID),
@@ -402,7 +513,7 @@ fn malformed_stdin_is_rejected_before_delivery_or_fallback() {
         let log = directory.path().join("hook.log");
         let (status, _, stdout) = run_reporter(
             Path::new(HOOK_BIN),
-            "UserPromptSubmit",
+            &["UserPromptSubmit"],
             &HookEnv {
                 endpoint: Some(&endpoint),
                 session: Some(SESSION_ID),
@@ -431,7 +542,7 @@ fn missing_session_is_an_immediate_no_op_without_files_or_network() {
     for _ in 0..3 {
         let (status, elapsed, stdout) = run_reporter(
             Path::new(HOOK_BIN),
-            "Stop",
+            &["Stop"],
             &HookEnv {
                 endpoint: None,
                 session: None,
@@ -457,7 +568,7 @@ fn unreachable_host_is_bounded_and_writes_the_generation_seed() {
     let directory = tempfile::tempdir().expect("session directory");
     let (status, elapsed, stdout) = run_reporter(
         Path::new(HOOK_BIN),
-        "PermissionRequest",
+        &["PermissionRequest"],
         &HookEnv {
             endpoint: Some(&endpoint),
             session: Some(SESSION_ID),
@@ -491,7 +602,7 @@ fn unreachable_host_seed_keeps_the_notification_type() {
     let directory = tempfile::tempdir().expect("session directory");
     let (status, _, stdout) = run_reporter(
         Path::new(HOOK_BIN),
-        "Notification",
+        &["Notification"],
         &HookEnv {
             endpoint: Some(&endpoint),
             session: Some(SESSION_ID),
@@ -537,7 +648,7 @@ fn unix_reporter_script_passes_the_same_event_contract() {
     let host = MockHost::start();
     let (status, _, stdout) = run_reporter(
         &script,
-        "SessionStart",
+        &["SessionStart"],
         &HookEnv {
             endpoint: Some(&host.endpoint),
             session: Some(SESSION_ID),
@@ -581,7 +692,7 @@ fn subagent_events_keep_a_background_marker_per_child_under_their_generation() {
         let host = MockHost::start();
         let (status, _, _) = run_reporter(
             Path::new(HOOK_BIN),
-            event,
+            &[event],
             &HookEnv {
                 endpoint: Some(&host.endpoint),
                 session: Some(SESSION_ID),
@@ -620,7 +731,7 @@ fn subagent_events_keep_a_background_marker_per_child_under_their_generation() {
     let host = MockHost::start();
     let (status, _, _) = run_reporter(
         Path::new(HOOK_BIN),
-        "SubagentStop",
+        &["SubagentStop"],
         &HookEnv {
             endpoint: Some(&host.endpoint),
             session: Some(SESSION_ID),
@@ -649,7 +760,7 @@ fn an_unusable_background_identity_is_still_forwarded_as_a_latch() {
     let host = MockHost::start();
     let (status, _, _) = run_reporter(
         Path::new(HOOK_BIN),
-        "SubagentStart",
+        &["SubagentStart"],
         &HookEnv {
             endpoint: Some(&host.endpoint),
             session: Some(SESSION_ID),
@@ -830,4 +941,174 @@ fn the_status_line_relay_exits_zero_when_the_host_is_down_or_silent() {
         )
         .expect("status line measurement file");
     }
+}
+
+fn answering_env<'a>(endpoint: &'a Path) -> HookEnv<'a> {
+    HookEnv {
+        endpoint: Some(endpoint),
+        session: Some(SESSION_ID),
+        session_dir: None,
+        tool: "claude",
+        generation: None,
+        hook_log: None,
+    }
+}
+
+const QUESTION_INPUT: &[u8] = br#"{"hook_event_name":"PreToolUse","tool_name":"AskUserQuestion","tool_input":{"questions":[{"question":"Which color?","options":[{"label":"Red"},{"label":"Blue"}],"multiSelect":false}]}}"#;
+
+fn answered_output() -> Value {
+    json!({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "allow",
+        "updatedInput": {
+            "questions": [{"question": "Which color?", "options": [{"label": "Red"}, {"label": "Blue"}], "multiSelect": false}],
+            "answers": {"Which color?": "Blue"}
+        }
+    }})
+}
+
+#[test]
+fn an_answered_question_reports_to_the_host_first_then_prints_the_workers_output() {
+    let (host_path, serve_path, keepalive) = paired_ipc_paths();
+    let reported = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let host = MockHost::at(
+        host_path.clone(),
+        Some(keepalive),
+        "agent.event",
+        json!({"accepted": true}),
+        Order {
+            sets: Some(reported.clone()),
+            requires: None,
+        },
+    );
+    let worker = MockHost::at(
+        serve_path,
+        None,
+        "agent_prompt.resolve",
+        json!({"status": "answered", "output": answered_output()}),
+        Order {
+            sets: None,
+            requires: Some(reported),
+        },
+    );
+    let (status, _, stdout) = run_reporter(
+        Path::new(HOOK_BIN),
+        &["PreToolUse", "answer"],
+        &answering_env(&host_path),
+        QUESTION_INPUT,
+    );
+    assert!(status.success());
+    assert_eq!(host.event()["method"], "agent.event");
+    let resolved = worker.request();
+    assert_eq!(
+        resolved["ordered"], true,
+        "the host hears the event before the worker is asked"
+    );
+    let params = &resolved["request"]["params"];
+    assert_eq!(params["event"], "ask_user_question");
+    assert_eq!(params["agent"], "claude");
+    assert_eq!(params["session"], SESSION_ID);
+    assert_eq!(
+        params["payload"],
+        serde_json::from_slice::<Value>(QUESTION_INPUT).unwrap()
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&stdout).expect("stdout is the hook JSON"),
+        answered_output()
+    );
+}
+
+#[test]
+fn a_declined_answer_or_a_hook_without_the_answer_argument_writes_nothing() {
+    let (host_path, serve_path, keepalive) = paired_ipc_paths();
+    let _host = MockHost::at(
+        host_path.clone(),
+        Some(keepalive),
+        "agent.event",
+        json!({"accepted": true}),
+        Order::default(),
+    );
+    let worker = MockHost::at(
+        serve_path,
+        None,
+        "agent_prompt.resolve",
+        json!({"status": "declined", "reason": "terminal"}),
+        Order::default(),
+    );
+    let (status, _, stdout) = run_reporter(
+        Path::new(HOOK_BIN),
+        &["PreToolUse", "answer"],
+        &answering_env(&host_path),
+        QUESTION_INPUT,
+    );
+    assert!(status.success());
+    assert!(stdout.is_empty());
+    assert_eq!(
+        worker.request()["request"]["params"]["event"],
+        "ask_user_question"
+    );
+
+    let (host_path, serve_path, keepalive) = paired_ipc_paths();
+    let _host = MockHost::at(
+        host_path.clone(),
+        Some(keepalive),
+        "agent.event",
+        json!({"accepted": true}),
+        Order::default(),
+    );
+    let recorder = Recorder::start(serve_path);
+    let (status, _, stdout) = run_reporter(
+        Path::new(HOOK_BIN),
+        &["PreToolUse"],
+        &answering_env(&host_path),
+        QUESTION_INPUT,
+    );
+    assert!(status.success());
+    assert!(stdout.is_empty());
+    assert!(
+        recorder.contacts().is_empty(),
+        "without the answer argument, which only agent_prompts paneflow writes, the worker is never asked"
+    );
+}
+
+#[test]
+fn an_unreachable_worker_or_a_question_permission_writes_nothing_within_the_hook_bound() {
+    let (host_path, _serve_path, keepalive) = paired_ipc_paths();
+    let _host = MockHost::at(
+        host_path.clone(),
+        Some(keepalive),
+        "agent.event",
+        json!({"accepted": true}),
+        Order::default(),
+    );
+    let (status, _, stdout) = run_reporter(
+        Path::new(HOOK_BIN),
+        &["PermissionRequest", "answer"],
+        &answering_env(&host_path),
+        br#"{"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"ls"}}"#,
+    );
+    assert!(status.success());
+    assert!(stdout.is_empty());
+
+    let (host_path, serve_path, keepalive) = paired_ipc_paths();
+    let _host = MockHost::at(
+        host_path.clone(),
+        Some(keepalive),
+        "agent.event",
+        json!({"accepted": true}),
+        Order::default(),
+    );
+    let recorder = Recorder::start(serve_path);
+    let (status, _, stdout) = run_reporter(
+        Path::new(HOOK_BIN),
+        &["PermissionRequest", "answer"],
+        &answering_env(&host_path),
+        br#"{"hook_event_name":"PermissionRequest","tool_name":"AskUserQuestion","tool_input":{}}"#,
+    );
+    assert!(status.success());
+    assert!(stdout.is_empty());
+    assert!(
+        recorder.contacts().is_empty(),
+        "the permission Claude Code raises for a declined question is never asked"
+    );
 }

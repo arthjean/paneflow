@@ -4682,6 +4682,7 @@ version = "0.20.0"
 dependencies = [
  "interprocess",
  "paneflow-agent-config",
+ "paneflow-home",
  "paneflow-ipc-client",
  "serde_json",
  "tempfile",

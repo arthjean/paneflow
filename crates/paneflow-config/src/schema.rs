@@ -117,6 +117,7 @@ mod tests {
             ai_injection_fence: Some(false),
             ipc: None,
             on_quit: Some(OnQuit::Stop),
+            agent_prompts: Some(AgentPrompts::Paneflow),
             agent_button_visibility: [
                 "claude_code_button_visible",
                 "codex_button_visible",

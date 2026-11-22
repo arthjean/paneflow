@@ -194,22 +194,33 @@ pub struct PromptOrigin {
     pub surface_id: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "The Paneflow session of the agent that asks; the worker replaces it with the caller's own session when the caller runs in a pane"
+    )]
+    pub session: Option<String>,
 }
 
 impl PromptOrigin {
     pub fn label(&self) -> String {
         match self.kind {
-            OriginKind::Action => match (&self.title, &self.name) {
-                (Some(title), _) => format!("Asked by the action {title}"),
-                (None, Some(name)) => format!("Asked by the action {name}"),
-                (None, None) => "Asked by an action".to_string(),
-            },
+            OriginKind::Action => {
+                let action = match (&self.title, &self.name) {
+                    (Some(title), _) => format!("Asked by the action {title}"),
+                    (None, Some(name)) => format!("Asked by the action {name}"),
+                    (None, None) => "Asked by an action".to_string(),
+                };
+                match &self.agent {
+                    Some(agent) => format!("{action}, run by {agent}"),
+                    None => action,
+                }
+            }
             OriginKind::Script => match &self.file {
                 Some(file) => format!("Asked by the script {file}"),
                 None => "Asked by a script".to_string(),
             },
             OriginKind::Agent => {
-                let agent = self.agent.as_deref().unwrap_or("An agent");
+                let agent = self.agent.as_deref().unwrap_or("an agent");
                 match self.surface_id {
                     Some(surface) => format!("Asked by {agent} in pane {surface}"),
                     None => format!("Asked by {agent}"),
@@ -299,6 +310,7 @@ pub enum PromptStatus {
     NoClient,
     Unsupported,
     Busy,
+    RateLimited,
     Failed,
 }
 
@@ -312,6 +324,7 @@ impl PromptStatus {
             Self::NoClient => "no_client",
             Self::Unsupported => "unsupported",
             Self::Busy => "busy",
+            Self::RateLimited => "rate_limited",
             Self::Failed => "failed",
         }
     }
@@ -567,7 +580,7 @@ pub fn normalize_answer(spec: &PromptSpec, answer: PromptAnswer) -> Result<Promp
 method! {
     Request {
         name: "prompt.request",
-        summary: "Ask the user through every attached client that can show the prompt; the first answer wins. Returns {status: answered, answer} within wait_ms, {status: pending, id} when wait_ms passes first, or the reason it ended: cancelled, timeout, no_client, unsupported, busy or failed with a detail.",
+        summary: "Ask the user through every attached client that can show the prompt; the first answer wins. Returns {status: answered, answer} within wait_ms, {status: pending, id} when wait_ms passes first, or the reason it ended: cancelled, timeout, no_client, unsupported, busy, rate_limited (an agent asking more than 3 times in a burst or more than once a second after it) or failed with a detail.",
         owner: WORKER,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
@@ -627,6 +640,85 @@ method! {
         params: FollowParams,
         result: FollowHeader,
         examples: [({"kinds": ["input", "pick"]} => {"type": "following", "kinds": ["input", "pick"], "pending": 1})],
+    }
+}
+
+pub const AGENT_PROMPT_RESOLVE: &str = "agent_prompt.resolve";
+pub const AGENT_PROMPT_DEADLINE_SECS: u64 = DEFAULT_TIMEOUT_SECS;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentPromptEvent {
+    AskUserQuestion,
+    PermissionRequest,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ResolveParams {
+    pub event: AgentPromptEvent,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "The agent's runtime name, such as claude or codex")]
+    pub agent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "The Paneflow session of the agent; the worker replaces it with the caller's own session when the caller runs in a pane"
+    )]
+    pub session: Option<String>,
+    #[schemars(description = "The hook's input JSON, as the agent wrote it")]
+    pub payload: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ResolveStatus {
+    Answered,
+    Declined,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct Resolved {
+    pub status: ResolveStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "For answered, the exact JSON the hook prints for the agent")]
+    pub output: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "For declined: native, terminal, cancelled, timeout, no_window, unsupported or failed"
+    )]
+    pub reason: Option<String>,
+}
+
+impl Resolved {
+    pub fn answered(output: serde_json::Value) -> Self {
+        Self {
+            status: ResolveStatus::Answered,
+            output: Some(output),
+            reason: None,
+        }
+    }
+
+    pub fn declined(reason: &str) -> Self {
+        Self {
+            status: ResolveStatus::Declined,
+            output: None,
+            reason: Some(reason.to_string()),
+        }
+    }
+}
+
+method! {
+    ResolveAgentPrompt {
+        name: "agent_prompt.resolve",
+        summary: "Ask the user, in the window, the question or the permission request a coding agent's hook received, when agent_prompts is paneflow in paneflow.json. Holds one 300 second deadline for the whole call and replies answered with the JSON the hook prints, or declined, after which the agent asks in its own terminal.",
+        owner: WORKER,
+        fallback: NO_FALLBACK,
+        gate: Gate::Open,
+        audience: Audience::Anyone,
+        reply: Reply::Ready,
+        params: ResolveParams,
+        result: Resolved,
+        examples: [({"event": "permission_request", "agent": "claude", "payload": {"tool_name": "Bash", "tool_input": {"command": "rm -rf build"}}} => {"status": "answered", "output": {"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": "allow"}}}})],
     }
 }
 

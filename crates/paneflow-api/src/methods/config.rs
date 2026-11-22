@@ -11,7 +11,14 @@ pub const CONFIG_RELOADED: &str = "config.reloaded";
 
 pub const CONFIG_EVENT_TYPES: &[&str] = &[CONFIG_RELOADED];
 
-pub const SLOW_REPLY_METHODS: &[&str] = &["config.reload", "prompt.request", "prompt.wait"];
+pub const SLOW_REPLY_METHODS: &[&str] = &[
+    "config.reload",
+    "prompt.request",
+    "prompt.wait",
+    "action.wait",
+];
+
+pub const MAX_ACTION_WAIT_MS: u64 = 25_000;
 
 pub const SLOW_REPLY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(45);
 
@@ -24,6 +31,10 @@ pub const ACTION_REPLY_DEADLINE: std::time::Duration = std::time::Duration::from
 pub fn reply_deadline(method: &str, default: std::time::Duration) -> std::time::Duration {
     if method == ACTION_INVOKE {
         ACTION_REPLY_DEADLINE
+    } else if method == super::prompt::AGENT_PROMPT_RESOLVE {
+        std::time::Duration::from_secs(
+            super::prompt::AGENT_PROMPT_DEADLINE_SECS + SLOW_REPLY_DEADLINE.as_secs(),
+        )
     } else if SLOW_REPLY_METHODS.contains(&method) {
         SLOW_REPLY_DEADLINE
     } else {
@@ -125,6 +136,16 @@ pub struct InvokeContext {
         description = "An opaque grant the window mints for a run it starts from a key or the palette; the run's writes to that window carry it in the request's grant field and pass the write gate. Never shown to Lua"
     )]
     pub grant: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "For origin agent, the Paneflow session of the agent; the worker replaces it with the caller's own session when the caller runs in a pane"
+    )]
+    pub session: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "For origin agent, the agent's name; the worker keeps it only when it names a known agent"
+    )]
+    pub agent: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -136,6 +157,19 @@ pub struct InvokeParams {
     pub args: Option<Map<String, Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ctx: Option<InvokeContext>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Milliseconds to wait for the run to end, at most 25000; past it the reply is {status: running, run_id} and action.wait keeps waiting. Absent waits for the end"
+    )]
+    pub wait_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RunStatus {
+    Done,
+    Running,
+    RateLimited,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -143,6 +177,48 @@ pub struct Invoked {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(description = "What run returned; absent when it returned nothing, nil or true")]
     pub result: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Set when the call waited with wait_ms: done, running (then run_id names the run), or rate_limited for an agent running more than 3 actions in a burst or more than 1 per second after it"
+    )]
+    pub status: Option<RunStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<u64>,
+}
+
+impl Invoked {
+    pub fn done(result: Option<Value>) -> Self {
+        Self {
+            result,
+            status: Some(RunStatus::Done),
+            run_id: None,
+        }
+    }
+
+    pub fn running(run_id: u64) -> Self {
+        Self {
+            result: None,
+            status: Some(RunStatus::Running),
+            run_id: Some(run_id),
+        }
+    }
+
+    pub fn rate_limited() -> Self {
+        Self {
+            result: None,
+            status: Some(RunStatus::RateLimited),
+            run_id: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WaitRunParams {
+    pub run_id: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Milliseconds to wait, 0 by default, at most 25000")]
+    pub wait_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -283,7 +359,7 @@ method! {
 method! {
     InvokeAction {
         name: "action.invoke",
-        summary: "Run an action of init.lua with arguments and return what it returned. Arguments are checked against its schema first; a run is stopped after 30 seconds.",
+        summary: "Run an action of init.lua with arguments and return what it returned. Arguments are checked against its schema first; a run is stopped after 30 seconds. With wait_ms, a run still going past it answers {status: running, run_id} for action.wait. With ctx.origin agent, only an action declared with agents = true runs.",
         owner: WORKER,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
@@ -292,6 +368,21 @@ method! {
         params: InvokeParams,
         result: Invoked,
         examples: [({"name": "dev_layout", "args": {"file": "app.log"}, "ctx": {"origin": "cli"}} => {"result": {"surface_id": 12}})],
+    }
+}
+
+method! {
+    WaitAction {
+        name: "action.wait",
+        summary: "Keep waiting on an action run that action.invoke returned as {status: running, run_id}: the run's result with status done, the same running status, or the action's error.",
+        owner: WORKER,
+        fallback: NO_FALLBACK,
+        gate: Gate::Open,
+        audience: Audience::Anyone,
+        reply: Reply::Ready,
+        params: WaitRunParams,
+        result: Invoked,
+        examples: [({"run_id": 3, "wait_ms": 20000} => {"result": {"surface_id": 12}, "status": "done"})],
     }
 }
 

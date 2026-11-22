@@ -152,6 +152,15 @@ fn fresh_token() -> String {
 
 impl ActingRuns {
     pub(crate) fn start(&self, principal: Principal, context: &mut InvokeContext) -> ActingRun<'_> {
+        let token = self.start_detached(principal, context);
+        ActingRun { runs: self, token }
+    }
+
+    pub(crate) fn start_detached(
+        &self,
+        principal: Principal,
+        context: &mut InvokeContext,
+    ) -> String {
         let token = fresh_token();
         self.runs
             .lock()
@@ -161,7 +170,14 @@ impl ActingRuns {
         context.grant = Some(format!(
             "{ACTING_PREFIX}{token}{GRANT_SEPARATOR}{window_grant}"
         ));
-        ActingRun { runs: self, token }
+        token
+    }
+
+    pub(crate) fn end(&self, token: &str) {
+        self.runs
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(token);
     }
 
     pub(crate) fn resolve<'g>(&self, grant: Option<&'g str>) -> (Principal, Option<&'g str>) {

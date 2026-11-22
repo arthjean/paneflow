@@ -4723,6 +4723,13 @@
           "InvokeContext": {
             "additionalProperties": false,
             "properties": {
+              "agent": {
+                "description": "For origin agent, the agent's name; the worker keeps it only when it names a known agent",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "client_id": {
                 "type": [
                   "string",
@@ -4748,6 +4755,13 @@
                 "minimum": 0,
                 "type": [
                   "integer",
+                  "null"
+                ]
+              },
+              "session": {
+                "description": "For origin agent, the Paneflow session of the agent; the worker replaces it with the caller's own session when the caller runs in a pane",
+                "type": [
+                  "string",
                   "null"
                 ]
               },
@@ -4802,6 +4816,15 @@
           },
           "name": {
             "type": "string"
+          },
+          "wait_ms": {
+            "description": "Milliseconds to wait for the run to end, at most 25000; past it the reply is {status: running, run_id} and action.wait keeps waiting. Absent waits for the end",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
           }
         },
         "required": [
@@ -4812,10 +4835,39 @@
       },
       "reply": "ready",
       "result": {
+        "$defs": {
+          "RunStatus": {
+            "enum": [
+              "done",
+              "running",
+              "rate_limited"
+            ],
+            "type": "string"
+          }
+        },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
           "result": {
             "description": "What run returned; absent when it returned nothing, nil or true"
+          },
+          "run_id": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RunStatus"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Set when the call waited with wait_ms: done, running (then run_id names the run), or rate_limited for an agent running more than 3 actions in a burst or more than 1 per second after it"
           }
         },
         "title": "Invoked",
@@ -4824,7 +4876,99 @@
       "scope": "none",
       "scope_note": null,
       "stream": false,
-      "summary": "Run an action of init.lua with arguments and return what it returned. Arguments are checked against its schema first; a run is stopped after 30 seconds."
+      "summary": "Run an action of init.lua with arguments and return what it returned. Arguments are checked against its schema first; a run is stopped after 30 seconds. With wait_ms, a run still going past it answers {status: running, run_id} for action.wait. With ctx.origin agent, only an action declared with agents = true runs."
+    },
+    {
+      "audience": "anyone",
+      "examples": [
+        {
+          "params": {
+            "run_id": 3,
+            "wait_ms": 20000
+          },
+          "result": {
+            "result": {
+              "surface_id": 12
+            },
+            "status": "done"
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "none",
+      "gate_note": null,
+      "in_capabilities": false,
+      "name": "action.wait",
+      "owner": "worker",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "wait_ms": {
+            "description": "Milliseconds to wait, 0 by default, at most 25000",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "run_id"
+        ],
+        "title": "WaitRunParams",
+        "type": "object"
+      },
+      "reply": "ready",
+      "result": {
+        "$defs": {
+          "RunStatus": {
+            "enum": [
+              "done",
+              "running",
+              "rate_limited"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "result": {
+            "description": "What run returned; absent when it returned nothing, nil or true"
+          },
+          "run_id": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/RunStatus"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Set when the call waited with wait_ms: done, running (then run_id names the run), or rate_limited for an agent running more than 3 actions in a burst or more than 1 per second after it"
+          }
+        },
+        "title": "Invoked",
+        "type": "object"
+      },
+      "scope": "none",
+      "scope_note": null,
+      "stream": false,
+      "summary": "Keep waiting on an action run that action.invoke returned as {status: running, run_id}: the run's result with status done, the same running status, or the action's error."
     },
     {
       "audience": "anyone",
@@ -5096,6 +5240,13 @@
                   "null"
                 ]
               },
+              "session": {
+                "description": "The Paneflow session of the agent that asks; the worker replaces it with the caller's own session when the caller runs in a pane",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
               "surface_id": {
                 "description": "The surface the asker runs in or acts on",
                 "format": "uint64",
@@ -5257,6 +5408,7 @@
               "no_client",
               "unsupported",
               "busy",
+              "rate_limited",
               "failed"
             ],
             "type": "string"
@@ -5305,7 +5457,7 @@
       "scope": "none",
       "scope_note": null,
       "stream": false,
-      "summary": "Ask the user through every attached client that can show the prompt; the first answer wins. Returns {status: answered, answer} within wait_ms, {status: pending, id} when wait_ms passes first, or the reason it ended: cancelled, timeout, no_client, unsupported, busy or failed with a detail."
+      "summary": "Ask the user through every attached client that can show the prompt; the first answer wins. Returns {status: answered, answer} within wait_ms, {status: pending, id} when wait_ms passes first, or the reason it ended: cancelled, timeout, no_client, unsupported, busy, rate_limited (an agent asking more than 3 times in a burst or more than once a second after it) or failed with a detail."
     },
     {
       "audience": "anyone",
@@ -5393,6 +5545,7 @@
               "no_client",
               "unsupported",
               "busy",
+              "rate_limited",
               "failed"
             ],
             "type": "string"
@@ -5677,6 +5830,118 @@
       "scope_note": null,
       "stream": true,
       "summary": "Stream the prompts this client can show: a following header, a requested frame for each pending prompt oldest first, then requested frames (id, spec, origin, remaining time) and ended frames (id, reason), keepalive frames when quiet."
+    },
+    {
+      "audience": "anyone",
+      "examples": [
+        {
+          "params": {
+            "agent": "claude",
+            "event": "permission_request",
+            "payload": {
+              "tool_input": {
+                "command": "rm -rf build"
+              },
+              "tool_name": "Bash"
+            }
+          },
+          "result": {
+            "output": {
+              "hookSpecificOutput": {
+                "decision": {
+                  "behavior": "allow"
+                },
+                "hookEventName": "PermissionRequest"
+              }
+            },
+            "status": "answered"
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "none",
+      "gate_note": null,
+      "in_capabilities": false,
+      "name": "agent_prompt.resolve",
+      "owner": "worker",
+      "params": {
+        "$defs": {
+          "AgentPromptEvent": {
+            "enum": [
+              "ask_user_question",
+              "permission_request"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "agent": {
+            "description": "The agent's runtime name, such as claude or codex",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "event": {
+            "$ref": "#/$defs/AgentPromptEvent"
+          },
+          "payload": {
+            "description": "The hook's input JSON, as the agent wrote it"
+          },
+          "session": {
+            "description": "The Paneflow session of the agent; the worker replaces it with the caller's own session when the caller runs in a pane",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "event",
+          "payload"
+        ],
+        "title": "ResolveParams",
+        "type": "object"
+      },
+      "reply": "ready",
+      "result": {
+        "$defs": {
+          "ResolveStatus": {
+            "enum": [
+              "answered",
+              "declined"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "output": {
+            "description": "For answered, the exact JSON the hook prints for the agent"
+          },
+          "reason": {
+            "description": "For declined: native, terminal, cancelled, timeout, no_window, unsupported or failed",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/$defs/ResolveStatus"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "Resolved",
+        "type": "object"
+      },
+      "scope": "none",
+      "scope_note": null,
+      "stream": false,
+      "summary": "Ask the user, in the window, the question or the permission request a coding agent's hook received, when agent_prompts is paneflow in paneflow.json. Holds one 300 second deadline for the whole call and replies answered with the JSON the hook prints, or declined, after which the agent asks in its own terminal."
     },
     {
       "audience": "anyone",

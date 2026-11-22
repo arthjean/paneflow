@@ -902,7 +902,7 @@ impl PaneFlowApp {
         );
     }
 
-    fn surface_pane_title(&self, surface_id: u64, cx: &gpui::App) -> Option<String> {
+    pub(crate) fn surface_pane_title(&self, surface_id: u64, cx: &gpui::App) -> Option<String> {
         self.workspaces.iter().find_map(|ws| {
             ws.collect_panes().iter().find_map(|pane| {
                 pane.read(cx)

@@ -345,11 +345,32 @@ fn case_shutdown(mut running: Running) -> &'static str {
     "a_worker_shutdown_fails_the_waiting_asker"
 }
 
+fn case_agent_rate_limited(endpoint: &Path) -> &'static str {
+    let mut follower = Follower::open(endpoint, &["input"]);
+    let agent = |session: &str| json!({"kind": "input", "title": "Deploy?", "origin": {"kind": "agent", "session": session}});
+    for _ in 0..3 {
+        assert_eq!(ask(endpoint, agent("a1"))["status"], "pending");
+        follower.requested();
+    }
+    assert_eq!(
+        ask(endpoint, agent("a1")),
+        json!({"status": "rate_limited"})
+    );
+    let other = ask(endpoint, agent("a2"));
+    assert_eq!(other["status"], "pending");
+    assert_eq!(
+        follower.requested()["id"],
+        other["id"],
+        "the refused question was never shown"
+    );
+    "an_agent_past_its_burst_is_rate_limited_and_nothing_is_shown"
+}
+
 #[test]
 fn the_prompt_broker_passes_every_listed_conformance_case() {
     let mut listed = listed_cases();
     listed.sort();
-    let cases: [fn(&Path) -> &'static str; 10] = [
+    let cases: [fn(&Path) -> &'static str; 11] = [
         case_first_reply_wins,
         case_cancel,
         case_unsupported,
@@ -360,6 +381,7 @@ fn the_prompt_broker_passes_every_listed_conformance_case() {
         case_malformed,
         case_busy,
         case_timeout,
+        case_agent_rate_limited,
     ];
     let mut ran: Vec<String> = cases
         .iter()

@@ -413,7 +413,20 @@ impl ConfigRuntime {
             .append(CONFIG_RELOADED, EventIds::default(), data);
     }
 
-    pub fn invoke(&self, params: InvokeParams) -> Result<Invoked, ServeError> {
+    pub fn agent_may_run(&self, name: &str) -> bool {
+        self.lock()
+            .actions
+            .iter()
+            .any(|action| action.name == name && action.agents)
+    }
+
+    pub fn no_action_named(name: &str) -> ServeError {
+        ServeError::invalid_params(format!(
+            "no action named '{name}'; paneflow actions lists the actions init.lua declares"
+        ))
+    }
+
+    pub fn begin(&self, params: InvokeParams, done: ActionDone) -> Result<(), ServeError> {
         let mailbox = {
             let active = self.lock();
             if !active
@@ -421,10 +434,7 @@ impl ConfigRuntime {
                 .iter()
                 .any(|action| action.name == params.name)
             {
-                return Err(ServeError::invalid_params(format!(
-                    "no action named '{}'; paneflow actions lists the actions init.lua declares",
-                    params.name
-                )));
+                return Err(Self::no_action_named(&params.name));
             }
             active
                 .generation
@@ -437,24 +447,32 @@ impl ConfigRuntime {
                 params.name
             )));
         };
-        let (reply_tx, reply_rx) = channel();
         mailbox.invoke(
             params.name,
             Value::Object(params.args.unwrap_or_default()),
             params.ctx.unwrap_or_default(),
             Box::new(move |result| {
-                let _ = reply_tx.send(result);
+                done(match result {
+                    Ok(result) => Ok(Invoked {
+                        result,
+                        ..Invoked::default()
+                    }),
+                    Err(failure) => Err(action_error(failure)),
+                });
             }),
         );
-        match reply_rx.recv() {
-            Ok(Ok(result)) => Ok(Invoked { result }),
-            Ok(Err(failure)) => Err(action_error(failure)),
-            Err(_) => Err(ServeError {
-                code: ERR_ACTION_FAILED,
-                message: "the configuration runtime stopped before the action returned".to_string(),
-                data: None,
+        Ok(())
+    }
+
+    pub fn invoke(&self, params: InvokeParams) -> Result<Invoked, ServeError> {
+        let (reply_tx, reply_rx) = channel();
+        self.begin(
+            params,
+            Box::new(move |result| {
+                let _ = reply_tx.send(result);
             }),
-        }
+        )?;
+        reply_rx.recv().unwrap_or_else(|_| Err(runtime_stopped()))
     }
 
     pub fn start_watching(self: &Arc<Self>, worker: &Arc<Worker>) {
@@ -544,6 +562,16 @@ pub fn describe_problem(problem: &ConfigProblem) -> String {
     }
 }
 
+pub type ActionDone = Box<dyn FnOnce(Result<Invoked, ServeError>) + Send>;
+
+pub fn runtime_stopped() -> ServeError {
+    ServeError {
+        code: ERR_ACTION_FAILED,
+        message: "the configuration runtime stopped before the action returned".to_string(),
+        data: None,
+    }
+}
+
 fn action_error(failure: ActionFailure) -> ServeError {
     ServeError {
         code: if failure.timeout {
@@ -626,6 +654,11 @@ fn watch(
     .filter_map(|path| watch_key(path))
     .collect();
     watch_dirs_of(&before_load);
+    let settings_file = paneflow_home::config_path_in(&runtime.home);
+    let settings_key = watch_key(&settings_file);
+    let mut agent_prompts =
+        paneflow_config::loader::load_config_from_path(&settings_file).agent_prompts_in_paneflow();
+    let mut settings_pending: Option<Instant> = None;
     if let Some(worker) = worker.upgrade() {
         runtime.initial_load(&worker);
     }
@@ -637,20 +670,31 @@ fn watch(
             .filter_map(|path| watch_key(path))
             .collect();
         watch_dirs_of(&tracked);
-        let signal = match pending {
+        let wake = match (pending, settings_pending) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        let signal = match wake {
             Some(at) => signals.recv_timeout(at.saturating_duration_since(Instant::now())),
             None => signals.recv().map_err(|_| RecvTimeoutError::Disconnected),
         };
         match signal {
             Ok(Signal::Changed(Ok(event))) => {
-                if changes_content(&event.kind)
-                    && event
+                if changes_content(&event.kind) {
+                    let keys: Vec<PathBuf> = event
                         .paths
                         .iter()
                         .filter_map(|path| watch_key(path))
-                        .any(|path| tracked.contains(&path))
-                {
-                    pending = Some(Instant::now() + RELOAD_SETTLE);
+                        .collect();
+                    if keys.iter().any(|path| tracked.contains(path)) {
+                        pending = Some(Instant::now() + RELOAD_SETTLE);
+                    }
+                    if settings_key
+                        .as_ref()
+                        .is_some_and(|settings| keys.contains(settings))
+                    {
+                        settings_pending = Some(Instant::now() + RELOAD_SETTLE);
+                    }
                 }
             }
             Ok(Signal::Changed(Err(error))) => {
@@ -662,6 +706,17 @@ fn watch(
         }
         if runtime.stopping.load(Ordering::Acquire) {
             return;
+        }
+        if settings_pending.is_some_and(|at| Instant::now() >= at) {
+            settings_pending = None;
+            let now = paneflow_config::loader::load_config_from_path(&settings_file)
+                .agent_prompts_in_paneflow();
+            if now != agent_prompts {
+                agent_prompts = now;
+                if let Some(worker) = worker.upgrade() {
+                    worker.agent_prompts_changed();
+                }
+            }
         }
         if pending.is_some_and(|at| Instant::now() >= at) {
             pending = None;

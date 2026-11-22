@@ -8,7 +8,10 @@
     )
 )]
 
+pub mod action_runs;
 pub mod activity;
+pub mod agent_asks;
+pub mod agent_prompts;
 mod authority;
 pub mod bootstrap;
 pub mod config_runtime;

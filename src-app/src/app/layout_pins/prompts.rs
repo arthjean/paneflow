@@ -13,7 +13,7 @@ use crate::terminal::TerminalView;
 use crate::terminal::view::DisplayOnlyTerminals;
 use crate::workspace::{Workspace, next_workspace_id_in};
 
-pub(super) const PINS: usize = 4;
+pub(super) const PINS: usize = 5;
 
 const PATIENCE: Duration = Duration::from_secs(60);
 
@@ -139,7 +139,7 @@ fn finish(cx: &mut VisualTestContext, worker: paneflow_serve::worker::RunningWor
 }
 
 fn shown(app: &Entity<PaneFlowApp>, cx: &mut VisualTestContext) -> Option<(String, String)> {
-    cx.update(|_, cx| app.read(cx).shown_prompt_title())
+    cx.update(|_, cx| app.read(cx).shown_prompt_title(cx))
 }
 
 fn rows(app: &Entity<PaneFlowApp>, cx: &mut VisualTestContext) -> Vec<String> {
@@ -339,19 +339,80 @@ fn pin_activating_a_prompt_from_the_attention_queue_shows_it_before_an_older_one
             app.activate_attention_surface(surface, window, cx)
         })
     });
-    pump_until(&app, cx, "the activated prompt", |app, _| {
-        app.shown_prompt_title()
+    pump_until(&app, cx, "the activated prompt", |app, cx| {
+        app.shown_prompt_title(cx)
             .is_some_and(|(title, _)| title == "New branch")
     });
     cx.simulate_keystrokes("escape");
     newer.join().expect("the newer run returns");
-    pump_until(&app, cx, "the older prompt coming back", |app, _| {
-        app.shown_prompt_title()
+    pump_until(&app, cx, "the older prompt coming back", |app, cx| {
+        app.shown_prompt_title(cx)
             .is_some_and(|(title, _)| title == "Projects")
     });
     cx.simulate_keystrokes("escape");
     older.join().expect("the older run returns");
     assert_eq!(last(&home)["reason"], "cancelled");
+    finish(cx, worker, &home);
+}
+
+fn agent_asks_later(home: &Path, title: &str) -> std::thread::JoinHandle<Value> {
+    let home = home.to_path_buf();
+    let params = json!({
+        "kind": "input",
+        "title": title,
+        "origin": {"kind": "agent", "agent": "claude", "session": "a9e52660-0000-4000-8000-000000000001"},
+        "wait_ms": 25_000
+    });
+    std::thread::spawn(move || call(&home, "prompt.request", params))
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_an_agent_question_is_named_plain_and_waits_behind_the_users_own_prompt(
+    cx: &mut TestAppContext,
+) {
+    let (app, cx, home, worker) = start(cx);
+    let first = agent_asks_later(&home, "Deploy\u{202e}gnp.exe\u{7} to\nproduction?");
+    pump_until(&app, cx, "the agent's question", |app, _| {
+        app.prompts.shown.is_some()
+    });
+    assert_eq!(
+        shown(&app, cx),
+        Some((
+            "Deploygnp.exe to\nproduction?".to_string(),
+            "Asked by Claude Code".to_string()
+        ))
+    );
+    let second = agent_asks_later(&home, "Second agent question");
+    pump_until(&app, cx, "the second agent question", |app, _| {
+        app.prompts.pending.len() == 2
+    });
+    let users = invoke_later(&home, "new_branch", json!({"origin": "api"}));
+    pump_until(&app, cx, "the user's own prompt", |app, _| {
+        app.prompts.pending.len() == 3
+    });
+    cx.simulate_keystrokes("escape");
+    assert_eq!(
+        first.join().expect("the agent waited")["status"],
+        "cancelled"
+    );
+    pump_until(&app, cx, "the user's prompt shown first", |app, cx| {
+        app.shown_prompt_title(cx)
+            .is_some_and(|(title, _)| title == "New branch")
+    });
+    let (_, origin) = shown(&app, cx).expect("shown");
+    assert_eq!(origin, "Asked by the action New branch");
+    cx.simulate_keystrokes("escape");
+    users.join().expect("the user's run returns");
+    pump_until(&app, cx, "the older agent question last", |app, cx| {
+        app.shown_prompt_title(cx)
+            .is_some_and(|(title, _)| title == "Second agent question")
+    });
+    cx.simulate_keystrokes("escape");
+    assert_eq!(
+        second.join().expect("the agent waited")["status"],
+        "cancelled"
+    );
     finish(cx, worker, &home);
 }
 

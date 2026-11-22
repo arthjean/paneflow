@@ -26,6 +26,7 @@ const PROMPT_TOP_MARGIN: f32 = 96.;
 const PROMPT_CHROME: f32 = 112.;
 const PROMPT_BOTTOM_GAP: f32 = 16.;
 const ORIGIN_SIZE: f32 = 13.;
+const QUESTION_MAX_HEIGHT: f32 = 120.;
 const DETAIL_MAX_WIDTH: f32 = 200.;
 const HEADER_GAP: f32 = 2.;
 const HEADER_BOTTOM: f32 = 8.;
@@ -95,13 +96,17 @@ pub(crate) fn input_rows(spec: &PromptSpec, typed: &str) -> Vec<PromptRow> {
     vec![PromptRow::plain(RowKind::Confirm, label)]
 }
 
+fn one_line(text: &str) -> String {
+    super::plain_text(text).replace('\n', " ")
+}
+
 fn item_row(index: usize, item: &PickItem, highlights: Vec<Range<usize>>) -> PromptRow {
     PromptRow {
         kind: RowKind::Item(index),
-        label: item.title().to_string(),
+        label: one_line(item.title()),
         highlights,
-        subtitle: item.subtitle().map(str::to_string),
-        detail: item.detail().map(str::to_string),
+        subtitle: item.subtitle().map(one_line),
+        detail: item.detail().map(one_line),
         icon: item.icon().map(str::to_string),
     }
 }
@@ -116,7 +121,9 @@ pub(crate) fn pick_rows(spec: &PromptSpec, query: &str) -> Vec<PromptRow> {
             .flatten()
             .collect::<Vec<_>>()
             .join(" ");
-        let Some(matched) = matcher::match_entry(item.title(), item.subtitle(), &keywords, query)
+        let title = one_line(item.title());
+        let subtitle = item.subtitle().map(one_line);
+        let Some(matched) = matcher::match_entry(&title, subtitle.as_deref(), &keywords, query)
         else {
             continue;
         };
@@ -518,7 +525,7 @@ impl PaneFlowApp {
         let field = filter_field(
             "prompt-field",
             "prompt-field-clear",
-            SharedString::from(title.clone()),
+            SharedString::from(title.replace('\n', " ")),
             ui,
             FilterFieldStyle::palette(),
             focused,
@@ -553,12 +560,12 @@ impl PaneFlowApp {
                     .pb(px(HEADER_BOTTOM))
                     .child(
                         div()
+                            .id("prompt-question")
+                            .max_h(px(QUESTION_MAX_HEIGHT))
+                            .overflow_y_scroll()
                             .text_size(px(LABEL_SIZE))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(ui.text)
-                            .overflow_x_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis()
                             .child(SharedString::from(title)),
                     )
                     .child(
@@ -568,7 +575,9 @@ impl PaneFlowApp {
                             .overflow_x_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis()
-                            .child(SharedString::from(shown.prompt.origin_line())),
+                            .child(SharedString::from(
+                                self.prompt_origin_line(&shown.prompt, cx),
+                            )),
                     ),
             )
             .child(field)
@@ -679,11 +688,13 @@ impl PaneFlowApp {
             .unwrap_or_default()
     }
 
-    pub(crate) fn shown_prompt_title(&self) -> Option<(String, String)> {
-        self.prompts
-            .shown
-            .as_ref()
-            .map(|shown| (shown.prompt.spec.title.clone(), shown.prompt.origin_line()))
+    pub(crate) fn shown_prompt_title(&self, cx: &gpui::App) -> Option<(String, String)> {
+        self.prompts.shown.as_ref().map(|shown| {
+            (
+                shown.prompt.spec.title.clone(),
+                self.prompt_origin_line(&shown.prompt, cx),
+            )
+        })
     }
 
     pub(crate) fn shown_prompt_filtering(&self) -> bool {

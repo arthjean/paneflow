@@ -194,6 +194,10 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.prompts.surface_agent_prompt(surface_id).is_some() {
+            self.activate_surface_prompt(surface_id, cx);
+            return;
+        }
         let Some(loc) = self.locate_surface(surface_id) else {
             cx.notify();
             return;
@@ -319,6 +323,7 @@ mod tests {
                 agent: None,
                 surface_id: surface,
                 workspace_id: None,
+                session: None,
             }),
             asked_at: std::time::Instant::now()
                 .checked_sub(std::time::Duration::from_secs(waited_secs))

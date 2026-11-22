@@ -269,11 +269,14 @@ function paneflow.ui.pick(spec) end
 ---@field args? table The action's arguments, checked against its declared schema
 ---@field ctx? table
 ---@field name string
+---@field wait_ms? integer Milliseconds to wait for the run to end, at most 25000; past it the reply is {status: running, run_id} and action.wait keeps waiting. Absent waits for the end
 
 ---@class paneflow.action.invoke.result
 ---@field result? any
+---@field run_id? integer
+---@field status? "done"|"running"|"rate_limited"
 
----Run an action of init.lua with arguments and return what it returned. Arguments are checked against its schema first; a run is stopped after 30 seconds.
+---Run an action of init.lua with arguments and return what it returned. Arguments are checked against its schema first; a run is stopped after 30 seconds. With wait_ms, a run still going past it answers {status: running, run_id} for action.wait. With ctx.origin agent, only an action declared with agents = true runs.
 ---@param params paneflow.action.invoke.params
 ---@return paneflow.action.invoke.result? result
 ---@return string? message
@@ -291,6 +294,22 @@ paneflow.action.invoke = function(params) end
 ---@return string? message
 ---@return integer? code
 paneflow.action.list = function(params) end
+
+---@class paneflow.action.wait.params
+---@field run_id integer
+---@field wait_ms? integer Milliseconds to wait, 0 by default, at most 25000
+
+---@class paneflow.action.wait.result
+---@field result? any
+---@field run_id? integer
+---@field status? "done"|"running"|"rate_limited"
+
+---Keep waiting on an action run that action.invoke returned as {status: running, run_id}: the run's result with status done, the same running status, or the action's error.
+---@param params paneflow.action.wait.params
+---@return paneflow.action.wait.result? result
+---@return string? message
+---@return integer? code
+paneflow.action.wait = function(params) end
 
 ---@class paneflow.agent
 paneflow.agent = {}
@@ -355,6 +374,27 @@ paneflow.agent.follow = function(params) end
 ---@return string? message
 ---@return integer? code
 paneflow.agent.snapshot = function(params) end
+
+---@class paneflow.agent_prompt
+paneflow.agent_prompt = {}
+
+---@class paneflow.agent_prompt.resolve.params
+---@field agent? string The agent's runtime name, such as claude or codex
+---@field event "ask_user_question"|"permission_request"
+---@field payload any The hook's input JSON, as the agent wrote it
+---@field session? string The Paneflow session of the agent; the worker replaces it with the caller's own session when the caller runs in a pane
+
+---@class paneflow.agent_prompt.resolve.result
+---@field output? any
+---@field reason? string
+---@field status "answered"|"declined"
+
+---Ask the user, in the window, the question or the permission request a coding agent's hook received, when agent_prompts is paneflow in paneflow.json. Holds one 300 second deadline for the whole call and replies answered with the JSON the hook prints, or declined, after which the agent asks in its own terminal.
+---@param params paneflow.agent_prompt.resolve.params
+---@return paneflow.agent_prompt.resolve.result? result
+---@return string? message
+---@return integer? code
+paneflow.agent_prompt.resolve = function(params) end
 
 ---@class paneflow.client.dispatch_action.params
 ---@field name string A name from client.list_actions, such as toggle_zoom
@@ -707,9 +747,9 @@ paneflow.prompt.reply = function(params) end
 ---@field answer? string|string[]|table
 ---@field detail? string
 ---@field id? integer
----@field status "answered"|"pending"|"cancelled"|"timeout"|"no_client"|"unsupported"|"busy"|"failed"
+---@field status "answered"|"pending"|"cancelled"|"timeout"|"no_client"|"unsupported"|"busy"|"rate_limited"|"failed"
 
----Ask the user through every attached client that can show the prompt; the first answer wins. Returns {status: answered, answer} within wait_ms, {status: pending, id} when wait_ms passes first, or the reason it ended: cancelled, timeout, no_client, unsupported, busy or failed with a detail.
+---Ask the user through every attached client that can show the prompt; the first answer wins. Returns {status: answered, answer} within wait_ms, {status: pending, id} when wait_ms passes first, or the reason it ended: cancelled, timeout, no_client, unsupported, busy, rate_limited (an agent asking more than 3 times in a burst or more than once a second after it) or failed with a detail.
 ---@param params paneflow.prompt.request.params
 ---@return paneflow.prompt.request.result? result
 ---@return string? message
@@ -724,7 +764,7 @@ paneflow.prompt.request = function(params) end
 ---@field answer? string|string[]|table
 ---@field detail? string
 ---@field id? integer
----@field status "answered"|"pending"|"cancelled"|"timeout"|"no_client"|"unsupported"|"busy"|"failed"
+---@field status "answered"|"pending"|"cancelled"|"timeout"|"no_client"|"unsupported"|"busy"|"rate_limited"|"failed"
 
 ---Keep waiting on a pending prompt by id, with the same outcomes as prompt.request.
 ---@param params paneflow.prompt.wait.params

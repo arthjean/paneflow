@@ -37,12 +37,42 @@ pub(crate) fn waited(requested_at_ms: u64, now_ms: u64) -> Duration {
     Duration::from_millis(now_ms.saturating_sub(requested_at_ms))
 }
 
+pub(crate) fn plain_text(raw: &str) -> String {
+    let mut text = String::with_capacity(raw.len());
+    let mut chars = raw.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\r' => {
+                if chars.peek() != Some(&'\n') {
+                    text.push('\n');
+                }
+            }
+            '\n' => text.push('\n'),
+            '\t' => text.push(' '),
+            c if c.is_control() => {}
+            c => text.push(c),
+        }
+    }
+    crate::markdown::strip_bidi_zero_width(text)
+}
+
+fn displayable(mut spec: PromptSpec) -> PromptSpec {
+    spec.title = plain_text(&spec.title);
+    for text in [&mut spec.placeholder, &mut spec.value, &mut spec.confirm]
+        .into_iter()
+        .flatten()
+    {
+        *text = plain_text(text).replace('\n', " ");
+    }
+    spec
+}
+
 impl PendingPrompt {
     pub(crate) fn from_frame(frame: RequestedFrame, now_ms: u64) -> Self {
         let waited = waited(frame.requested_at_ms, now_ms);
         Self {
             id: frame.id,
-            spec: Arc::new(frame.spec),
+            spec: Arc::new(displayable(frame.spec)),
             origin: frame.origin,
             asked_at: Instant::now()
                 .checked_sub(waited)
@@ -60,10 +90,23 @@ impl PendingPrompt {
         self.origin.as_ref().and_then(|origin| origin.surface_id)
     }
 
-    pub(crate) fn origin_line(&self) -> String {
-        self.origin
-            .as_ref()
-            .map_or_else(|| "Asked by a script".to_string(), PromptOrigin::label)
+    pub(crate) fn origin_line_in(&self, pane_title: Option<&str>) -> String {
+        let Some(origin) = self.origin.as_ref() else {
+            return "Asked by a script".to_string();
+        };
+        let pane = pane_title
+            .map(|title| plain_text(title).replace('\n', " "))
+            .filter(|title| !title.trim().is_empty());
+        match (origin.kind, pane) {
+            (OriginKind::Agent, Some(pane)) => {
+                let agent = origin.agent.as_deref().map_or_else(
+                    || "an agent".to_string(),
+                    |agent| plain_text(agent).replace('\n', " "),
+                );
+                format!("Asked by {agent} in {}", pane.trim())
+            }
+            _ => plain_text(&origin.label()).replace('\n', " "),
+        }
     }
 }
 
@@ -289,6 +332,14 @@ impl PromptsView {
         }
     }
 
+    pub(crate) fn surface_agent_prompt(&self, surface_id: u64) -> Option<u64> {
+        self.pending
+            .iter()
+            .filter(|prompt| prompt.raised_by_agent() && prompt.surface_id() == Some(surface_id))
+            .min_by_key(|prompt| (prompt.asked_at, prompt.id))
+            .map(|prompt| prompt.id)
+    }
+
     pub(crate) fn surface_prompt(&self, surface_id: u64) -> Option<u64> {
         self.pending
             .iter()
@@ -325,6 +376,15 @@ impl PaneFlowApp {
         if changed {
             cx.notify();
         }
+    }
+
+    pub(crate) fn prompt_origin_line(&self, prompt: &PendingPrompt, cx: &gpui::App) -> String {
+        let pane_title = prompt
+            .raised_by_agent()
+            .then(|| prompt.surface_id())
+            .flatten()
+            .and_then(|surface_id| self.surface_pane_title(surface_id, cx));
+        prompt.origin_line_in(pane_title.as_deref())
     }
 
     pub(crate) fn activate_surface_prompt(&mut self, surface_id: u64, cx: &mut Context<Self>) {
@@ -370,6 +430,7 @@ mod tests {
                 agent: None,
                 surface_id: surface,
                 workspace_id: None,
+                session: None,
             }),
             asked_at: Instant::now()
                 .checked_sub(Duration::from_secs(waited_secs))
@@ -417,7 +478,7 @@ mod tests {
             "a clock step back waits zero"
         );
         assert_eq!(prompt.id, 7);
-        assert_eq!(prompt.origin_line(), "Asked by a script");
+        assert_eq!(prompt.origin_line_in(None), "Asked by a script");
         assert_eq!(
             parse_line(r#"{"type":"ended","id":7,"reason":"answered"}"#, 0),
             StreamLine::Frame(PromptFrame::Ended(7))
@@ -450,5 +511,85 @@ mod tests {
         };
         assert_eq!(view.surface_prompt(9), Some(2));
         assert_eq!(view.surface_prompt(4), None);
+    }
+
+    #[test]
+    fn an_agent_question_is_shown_as_plain_text_with_its_controls_and_bidi_marks_stripped() {
+        let line = serde_json::to_string(&RequestedFrame {
+            kind: FrameKind::Requested,
+            id: 8,
+            spec: spec("Delete\u{202e}gpj.exe\u{1b}[31m the\r\nbranch\u{200b}?\u{7}\tnow"),
+            origin: None,
+            requested_at_ms: 0,
+            remaining_ms: 1,
+        })
+        .unwrap();
+        let StreamLine::Frame(PromptFrame::Requested(prompt)) = parse_line(&line, 0) else {
+            panic!("a requested frame");
+        };
+        assert_eq!(prompt.spec.title, "Deletegpj.exe[31m the\nbranch? now");
+        assert_eq!(plain_text("a\rb\u{2066}c\u{85}d"), "a\nbcd");
+    }
+
+    fn agent_origin(agent: Option<&str>) -> PromptOrigin {
+        PromptOrigin {
+            kind: OriginKind::Agent,
+            title: None,
+            name: None,
+            file: None,
+            agent: agent.map(str::to_string),
+            surface_id: Some(9),
+            workspace_id: Some(1),
+            session: Some("s".into()),
+        }
+    }
+
+    #[test]
+    fn an_agent_origin_names_the_agent_and_its_pane_title_and_no_other_origin_does() {
+        let mut asked = prompt(1, OriginKind::Agent, 0, Some(9));
+        asked.origin = Some(agent_origin(Some("Claude Code")));
+        assert_eq!(
+            asked.origin_line_in(Some("api \u{202e}tests")),
+            "Asked by Claude Code in api tests"
+        );
+        assert_eq!(asked.origin_line_in(None), "Asked by Claude Code in pane 9");
+        asked.origin = Some(agent_origin(None));
+        assert_eq!(
+            asked.origin_line_in(Some("web")),
+            "Asked by an agent in web"
+        );
+
+        let mut action = prompt(2, OriginKind::Action, 0, Some(9));
+        if let Some(origin) = action.origin.as_mut() {
+            origin.title = Some("New branch".into());
+        }
+        assert_eq!(
+            action.origin_line_in(Some("web")),
+            "Asked by the action New branch"
+        );
+        let script = prompt(3, OriginKind::Script, 0, Some(9));
+        assert_eq!(script.origin_line_in(Some("web")), "Asked by a script");
+        for line in [
+            action.origin_line_in(Some("web")),
+            script.origin_line_in(Some("web")),
+        ] {
+            assert!(!line.contains(" in web"), "{line}");
+        }
+    }
+
+    #[test]
+    fn a_surface_resolves_its_agent_question_apart_from_its_other_prompts() {
+        let view = PromptsView {
+            pending: vec![
+                prompt(1, OriginKind::Action, 500, Some(9)),
+                prompt(2, OriginKind::Agent, 5, Some(9)),
+                prompt(3, OriginKind::Agent, 50, Some(4)),
+            ],
+            ..PromptsView::default()
+        };
+        assert_eq!(view.surface_agent_prompt(9), Some(2));
+        assert_eq!(view.surface_agent_prompt(4), Some(3));
+        assert_eq!(view.surface_agent_prompt(7), None);
+        assert_eq!(view.surface_prompt(9), Some(1));
     }
 }

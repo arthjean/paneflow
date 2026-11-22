@@ -58,6 +58,11 @@
       "id": "a_worker_shutdown_fails_the_waiting_asker",
       "summary": "A worker that stops while an asker waits gives it failed with a detail saying the worker stopped.",
       "method": "prompt.request"
+    },
+    {
+      "id": "an_agent_past_its_burst_is_rate_limited_and_nothing_is_shown",
+      "summary": "Three prompt.request calls with origin {kind: agent, session} are queued; a fourth from the same session within the second returns {status: rate_limited} and no follower receives a requested frame for it, while another session is still admitted.",
+      "method": "prompt.request"
     }
   ]
 }

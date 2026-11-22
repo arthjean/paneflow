@@ -4,7 +4,7 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
 use crate::bridge::{
-    Bridge, SearchMatch, SurfaceTarget, MAX_LINES, MAX_MATCHES, MAX_SAFE_JSON_INTEGER,
+    Bridge, Question, SearchMatch, SurfaceTarget, MAX_LINES, MAX_MATCHES, MAX_SAFE_JSON_INTEGER,
 };
 use crate::output::{sanitize_attr, source_attr, wrap_untrusted};
 
@@ -71,6 +71,60 @@ pub fn tool_specs() -> Vec<Value> {
                     "max_matches": { "type": "integer", "minimum": 1, "maximum": MAX_MATCHES, "description": "Cap on matching lines returned (default 50, max 1000)." }
                 },
                 "required": ["target", "pattern"],
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "ask_human",
+            "description": "Ask the user a question in Paneflow's own prompt, shown in whichever pane they are in, with your agent and pane named under it. Give options for a choice (set multiple to allow several) or none for a free-text answer. Waits up to 20 s: the result is {status: \"answered\", answer}, or {status: \"pending\", prompt_id} - call again with only that prompt_id to keep waiting for the same question. Other statuses end the question: cancelled, timeout, no_window (no Paneflow window can show it), busy, rate_limited (more than 3 questions in a burst or 1 per second after it) and failed.",
+            "annotations": {
+                "readOnlyHint": false,
+                "destructiveHint": false,
+                "idempotentHint": false,
+                "openWorldHint": false
+            },
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "question": { "type": "string", "minLength": 1, "maxLength": MAX_QUESTION_BYTES, "description": "The question, as plain text (at most 16 KiB)." },
+                    "options": { "type": "array", "maxItems": MAX_OPTIONS, "uniqueItems": true, "items": { "type": "string", "minLength": 1 }, "description": "The choices to pick from (at most 2000); the answer is the chosen option, or the list of them with multiple." },
+                    "multiple": { "type": "boolean", "default": false, "description": "Let the user choose several options." },
+                    "prompt_id": { "type": "integer", "minimum": 1, "maximum": MAX_SAFE_JSON_INTEGER, "description": "The prompt_id of a pending answer, to keep waiting for that question instead of asking a new one." }
+                },
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "list_actions",
+            "description": "List the workflows the user prepared for agents in Paneflow (init.lua actions marked agents = true): each with its name, title, description and the JSON Schema of its arguments. Run one with run_action.",
+            "annotations": {
+                "readOnlyHint": true,
+                "destructiveHint": false,
+                "idempotentHint": true,
+                "openWorldHint": false
+            },
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }
+        }),
+        json!({
+            "name": "run_action",
+            "description": "Run one of the user's workflows that list_actions returns, with arguments matching its schema. Waits up to 20 s: the result is {status: \"done\", result}, or {status: \"running\", run_id} - call again with only that run_id to keep waiting. rate_limited means more than 3 runs or questions in a burst or 1 per second after it.",
+            "annotations": {
+                "readOnlyHint": false,
+                "destructiveHint": true,
+                "idempotentHint": false,
+                "openWorldHint": false
+            },
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "minLength": 1, "description": "The action's name, from list_actions." },
+                    "args": { "type": "object", "description": "The action's arguments, as its schema in list_actions describes." },
+                    "run_id": { "type": "integer", "minimum": 1, "maximum": MAX_SAFE_JSON_INTEGER, "description": "The run_id of a running action, to keep waiting for its result instead of starting a run." }
+                },
                 "additionalProperties": false
             }
         }),
@@ -153,6 +207,98 @@ impl WritePaneArgs {
     }
 }
 
+pub const MAX_QUESTION_BYTES: usize = 16 * 1024;
+pub const MAX_OPTIONS: usize = 2_000;
+
+enum AskHumanArgs {
+    Ask(Question),
+    Resume(u64),
+}
+
+impl AskHumanArgs {
+    fn parse(arguments: &Value) -> Result<Self, String> {
+        let args = Arguments::parse(arguments, &["question", "options", "multiple", "prompt_id"])?;
+        let question: Option<String> = args.optional("question")?;
+        let options: Option<Vec<String>> = args.optional("options")?;
+        let multiple: Option<bool> = args.optional("multiple")?;
+        let prompt_id: Option<u64> = args.optional("prompt_id")?;
+        if let Some(prompt_id) = prompt_id {
+            if question.is_some() || options.is_some() || multiple.is_some() {
+                return Err(
+                    "invalid arguments: 'prompt_id' resumes a pending question, so it takes no 'question', 'options' or 'multiple'"
+                        .to_string(),
+                );
+            }
+            validate_maximum("prompt_id", Some(prompt_id), MAX_SAFE_JSON_INTEGER)?;
+            return Ok(Self::Resume(prompt_id));
+        }
+        let text = question.ok_or("invalid arguments: missing argument 'question'")?;
+        if text.trim().is_empty() {
+            return Err("missing or empty 'question' argument".to_string());
+        }
+        if text.len() > MAX_QUESTION_BYTES {
+            return Err(format!(
+                "'question' is {} bytes; a question is at most {MAX_QUESTION_BYTES} bytes (16 KiB)",
+                text.len()
+            ));
+        }
+        let options = options.unwrap_or_default();
+        if options.len() > MAX_OPTIONS {
+            return Err(format!(
+                "'options' has {} entries; a question offers at most {MAX_OPTIONS} options",
+                options.len()
+            ));
+        }
+        if options.iter().any(|option| option.trim().is_empty()) {
+            return Err("'options' must not contain an empty option".to_string());
+        }
+        let multiple = multiple.unwrap_or(false);
+        if multiple && options.is_empty() {
+            return Err("'multiple' needs 'options' to choose from".to_string());
+        }
+        Ok(Self::Ask(Question {
+            text,
+            options,
+            multiple,
+        }))
+    }
+}
+
+enum RunActionArgs {
+    Start {
+        name: String,
+        args: Map<String, Value>,
+    },
+    Resume(u64),
+}
+
+impl RunActionArgs {
+    fn parse(arguments: &Value) -> Result<Self, String> {
+        let args = Arguments::parse(arguments, &["name", "args", "run_id"])?;
+        let name: Option<String> = args.optional("name")?;
+        let action_args: Option<Map<String, Value>> = args.optional("args")?;
+        match (args.optional::<u64>("run_id")?, name) {
+            (Some(_), Some(_)) => Err(
+                "invalid arguments: 'run_id' keeps waiting on a run, so it takes no 'name' or 'args'"
+                    .to_string(),
+            ),
+            (Some(_), None) if action_args.is_some() => Err(
+                "invalid arguments: 'run_id' keeps waiting on a run, so it takes no 'name' or 'args'"
+                    .to_string(),
+            ),
+            (Some(run_id), None) => {
+                validate_maximum("run_id", Some(run_id), MAX_SAFE_JSON_INTEGER)?;
+                Ok(Self::Resume(run_id))
+            }
+            (None, Some(name)) if !name.trim().is_empty() => Ok(Self::Start {
+                name,
+                args: action_args.unwrap_or_default(),
+            }),
+            (None, _) => Err("invalid arguments: missing argument 'name'".to_string()),
+        }
+    }
+}
+
 struct Arguments<'a>(&'a Map<String, Value>);
 
 impl<'a> Arguments<'a> {
@@ -199,6 +345,13 @@ pub fn dispatch_call<T: IpcTransport + ?Sized>(
         }
         "write_pane" => {
             WritePaneArgs::parse(&call.arguments).and_then(|args| write_pane(args, bridge))
+        }
+        "ask_human" => {
+            AskHumanArgs::parse(&call.arguments).and_then(|args| ask_human(args, bridge))
+        }
+        "list_actions" => Arguments::parse(&call.arguments, &[]).and_then(|_| list_actions(bridge)),
+        "run_action" => {
+            RunActionArgs::parse(&call.arguments).and_then(|args| run_action(args, bridge))
         }
         other => return Err(format!("unknown tool: {other}")),
     };
@@ -290,6 +443,95 @@ fn write_pane<T: IpcTransport + ?Sized>(
     }
 }
 
+fn list_actions<T: IpcTransport + ?Sized>(bridge: &Bridge<'_, T>) -> Result<String, String> {
+    let listed = bridge.actions().map_err(|error| error.to_string())?;
+    let actions: Vec<Value> = listed
+        .get("actions")
+        .and_then(Value::as_array)
+        .map(|actions| {
+            actions
+                .iter()
+                .filter(|action| action.get("agents").and_then(Value::as_bool) == Some(true))
+                .map(|action| {
+                    let mut entry = Map::new();
+                    for field in ["name", "title", "description", "args"] {
+                        if let Some(value) = action.get(field).filter(|value| !value.is_null()) {
+                            entry.insert(field.into(), value.clone());
+                        }
+                    }
+                    Value::Object(entry)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    serde_json::to_string_pretty(&json!({ "actions": actions })).map_err(|error| error.to_string())
+}
+
+fn run_action<T: IpcTransport + ?Sized>(
+    args: RunActionArgs,
+    bridge: &Bridge<'_, T>,
+) -> Result<String, String> {
+    let outcome = match args {
+        RunActionArgs::Start { name, args } => bridge.run_action(&name, args),
+        RunActionArgs::Resume(run_id) => bridge.wait_action(run_id),
+    }
+    .map_err(|error| match error {
+        crate::bridge::BridgeError::Transport { message, .. } => message,
+        other => other.to_string(),
+    })?;
+    let result = match outcome.get("status").and_then(Value::as_str) {
+        Some("running") => {
+            json!({"status": "running", "run_id": outcome.get("run_id").cloned().unwrap_or(Value::Null)})
+        }
+        Some("rate_limited") => json!({"status": "rate_limited"}),
+        _ => {
+            json!({"status": "done", "result": outcome.get("result").cloned().unwrap_or(Value::Null)})
+        }
+    };
+    serde_json::to_string_pretty(&result).map_err(|error| error.to_string())
+}
+
+fn ask_human<T: IpcTransport + ?Sized>(
+    args: AskHumanArgs,
+    bridge: &Bridge<'_, T>,
+) -> Result<String, String> {
+    let outcome = match args {
+        AskHumanArgs::Ask(question) => bridge.ask(&question),
+        AskHumanArgs::Resume(prompt_id) => bridge.resume(prompt_id),
+    };
+    serde_json::to_string_pretty(&ask_result(outcome)).map_err(|error| error.to_string())
+}
+
+fn ask_result(outcome: Result<Value, crate::bridge::BridgeError>) -> Value {
+    let outcome = match outcome {
+        Ok(outcome) => outcome,
+        Err(error) => return json!({"status": "failed", "detail": error.to_string()}),
+    };
+    match outcome.get("status").and_then(Value::as_str) {
+        Some("answered") => json!({
+            "status": "answered",
+            "answer": outcome.get("answer").cloned().unwrap_or(Value::Null),
+        }),
+        Some("pending") => match outcome.get("id").and_then(Value::as_u64) {
+            Some(prompt_id) => json!({"status": "pending", "prompt_id": prompt_id}),
+            None => {
+                json!({"status": "failed", "detail": "the worker answered pending without a prompt id"})
+            }
+        },
+        Some("no_client" | "unsupported") => json!({"status": "no_window"}),
+        Some(status @ ("cancelled" | "timeout" | "busy" | "rate_limited")) => {
+            json!({"status": status})
+        }
+        Some("failed") => json!({
+            "status": "failed",
+            "detail": outcome.get("detail").cloned().unwrap_or(Value::Null),
+        }),
+        _ => {
+            json!({"status": "failed", "detail": format!("the worker answered an unknown outcome: {outcome}")})
+        }
+    }
+}
+
 fn decode<T: DeserializeOwned>(value: &Value) -> Result<T, String> {
     serde_json::from_value(value.clone()).map_err(|error| format!("invalid arguments: {error}"))
 }
@@ -371,6 +613,16 @@ mod tests {
         for spec in tool_specs() {
             let name = spec["name"].as_str().expect("tool name");
             let path = manifest_dir.join(format!("{name}.json"));
+            let current = std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|text| serde_json::from_str::<Value>(&text).ok());
+            if std::env::var("PANEFLOW_MCP_MANIFESTS").as_deref() == Ok("write")
+                && current.as_ref() != Some(&spec)
+            {
+                let mut rendered = serde_json::to_string_pretty(&spec).unwrap();
+                rendered.push('\n');
+                std::fs::write(&path, rendered).unwrap();
+            }
             let manifest: Value =
                 serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
             assert_eq!(manifest, spec, "{} drifted", path.display());
@@ -429,7 +681,7 @@ mod tests {
         assert!(
             sizes.contains(&format!(
                 "is {} bytes",
-                serde_json::to_vec(&tools[4]).unwrap().len()
+                serde_json::to_vec(tools.last().unwrap()).unwrap().len()
             )),
             "{sizes}"
         );
@@ -442,6 +694,12 @@ mod tests {
             match spec["name"].as_str().unwrap() {
                 "list_panes" | "read_pane" | "search_pane" => {
                     assert_eq!(annotations["readOnlyHint"], true, "{spec}");
+                }
+                "list_actions" => assert_eq!(annotations["readOnlyHint"], true, "{spec}"),
+                "run_action" => assert_eq!(annotations["destructiveHint"], true, "{spec}"),
+                "ask_human" => {
+                    assert_eq!(annotations["readOnlyHint"], false, "{spec}");
+                    assert_eq!(annotations["destructiveHint"], false, "{spec}");
                 }
                 "write_pane" => assert_eq!(
                     *annotations,
@@ -537,6 +795,263 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("PANEFLOW_SESSION_ID"));
+    }
+
+    fn asking_bridge<'a>(
+        transport: &'a FakeTransport,
+        worker: &'a FakeTransport,
+    ) -> Bridge<'a, FakeTransport> {
+        Bridge::new(transport, BridgeScope::Session("0a9e5266".into()))
+            .with_writer(Some("0a9e5266".into()), crate::bridge::HostLink::Shared)
+            .with_worker(crate::bridge::WorkerLink::Borrowed(worker))
+    }
+
+    fn ask_text(result: &Value) -> Value {
+        assert_eq!(result["isError"], false, "{result}");
+        serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn ask_human_asks_the_worker_for_twenty_seconds_as_the_bridge_session() {
+        let transport = FakeTransport::new();
+        let worker = FakeTransport::new().with(
+            "prompt.request",
+            json!({"status": "answered", "id": 4, "answer": "Blue"}),
+        );
+        let bridge = asking_bridge(&transport, &worker);
+        let result = call(
+            &json!({"name": "ask_human", "arguments": {"question": "Which color?", "options": ["Red", "Blue"]}}),
+            &bridge,
+        );
+        assert_eq!(
+            ask_text(&result),
+            json!({"status": "answered", "answer": "Blue"})
+        );
+        assert_eq!(
+            worker.last_params("prompt.request").unwrap(),
+            json!({
+                "kind": "pick",
+                "title": "Which color?",
+                "items": ["Red", "Blue"],
+                "origin": {"kind": "agent", "session": "0a9e5266"},
+                "wait_ms": 20_000
+            })
+        );
+        assert!(transport.calls().is_empty(), "nothing reaches the window");
+
+        call(
+            &json!({"name": "ask_human", "arguments": {"question": "Name?"}}),
+            &bridge,
+        );
+        let free_text = worker.last_params("prompt.request").unwrap();
+        assert_eq!(free_text["kind"], "input");
+        assert!(free_text.get("items").is_none());
+        call(
+            &json!({"name": "ask_human", "arguments": {"question": "Which?", "options": ["a", "b"], "multiple": true}}),
+            &bridge,
+        );
+        assert_eq!(
+            worker.last_params("prompt.request").unwrap()["multiple"],
+            true
+        );
+    }
+
+    #[test]
+    fn the_question_names_the_agent_from_the_pane_then_from_the_mcp_client() {
+        let transport = FakeTransport::new();
+        let worker = FakeTransport::new().with("prompt.request", json!({"status": "busy"}));
+        let ask = |bridge: &Bridge<'_, FakeTransport>| {
+            call(
+                &json!({"name": "ask_human", "arguments": {"question": "Go?"}}),
+                bridge,
+            );
+            worker.last_params("prompt.request").unwrap()["origin"].clone()
+        };
+        let from_client = asking_bridge(&transport, &worker).with_agent(None);
+        from_client.set_client("claude-code");
+        assert_eq!(
+            ask(&from_client),
+            json!({"kind": "agent", "agent": "claude-code", "session": "0a9e5266"})
+        );
+        let from_pane = asking_bridge(&transport, &worker).with_agent(Some("codex".into()));
+        from_pane.set_client("codex-mcp-client");
+        assert_eq!(ask(&from_pane)["agent"], "codex", "the pane's agent wins");
+        let odd =
+            asking_bridge(&transport, &worker).with_agent(Some("\u{202e}evil\n\u{0007}".into()));
+        assert_eq!(ask(&odd)["agent"], "evil");
+    }
+
+    #[test]
+    fn ask_human_never_takes_the_asker_from_its_arguments() {
+        let transport = FakeTransport::new();
+        let worker = FakeTransport::new();
+        let bridge = asking_bridge(&transport, &worker);
+        for forged in [
+            json!({"question": "Deploy?", "session": "2b5e0c1e"}),
+            json!({"question": "Deploy?", "origin": {"kind": "action", "title": "Paneflow"}}),
+            json!({"question": "Deploy?", "source_session": "2b5e0c1e"}),
+        ] {
+            let result = call(&json!({"name": "ask_human", "arguments": forged}), &bridge);
+            assert_eq!(result["isError"], true, "{result}");
+        }
+        assert!(worker.calls().is_empty());
+    }
+
+    #[test]
+    fn a_pending_question_returns_its_prompt_id_and_a_later_call_resumes_it() {
+        let transport = FakeTransport::new();
+        let worker = FakeTransport::new()
+            .with("prompt.request", json!({"status": "pending", "id": 9}))
+            .with(
+                "prompt.wait",
+                json!({"status": "answered", "id": 9, "answer": ["a", "c"]}),
+            );
+        let bridge = asking_bridge(&transport, &worker);
+        let first = call(
+            &json!({"name": "ask_human", "arguments": {"question": "Pick", "options": ["a", "b", "c"], "multiple": true}}),
+            &bridge,
+        );
+        assert_eq!(
+            ask_text(&first),
+            json!({"status": "pending", "prompt_id": 9})
+        );
+        let second = call(
+            &json!({"name": "ask_human", "arguments": {"prompt_id": 9}}),
+            &bridge,
+        );
+        assert_eq!(
+            ask_text(&second),
+            json!({"status": "answered", "answer": ["a", "c"]})
+        );
+        assert_eq!(
+            worker.last_params("prompt.wait").unwrap(),
+            json!({"id": 9, "wait_ms": 20_000})
+        );
+        let mixed = call(
+            &json!({"name": "ask_human", "arguments": {"prompt_id": 9, "question": "again"}}),
+            &bridge,
+        );
+        assert_eq!(mixed["isError"], true);
+    }
+
+    #[test]
+    fn every_broker_outcome_maps_to_one_of_the_documented_statuses() {
+        let transport = FakeTransport::new();
+        for (outcome, expected) in [
+            (
+                json!({"status": "no_client"}),
+                json!({"status": "no_window"}),
+            ),
+            (
+                json!({"status": "unsupported"}),
+                json!({"status": "no_window"}),
+            ),
+            (
+                json!({"status": "cancelled", "id": 1}),
+                json!({"status": "cancelled"}),
+            ),
+            (
+                json!({"status": "timeout", "id": 1}),
+                json!({"status": "timeout"}),
+            ),
+            (json!({"status": "busy"}), json!({"status": "busy"})),
+            (
+                json!({"status": "rate_limited"}),
+                json!({"status": "rate_limited"}),
+            ),
+            (
+                json!({"status": "failed", "id": 1, "detail": "the worker stopped"}),
+                json!({"status": "failed", "detail": "the worker stopped"}),
+            ),
+            (
+                json!({"status": "surprise"}),
+                json!({"status": "failed", "detail": "the worker answered an unknown outcome: {\"status\":\"surprise\"}"}),
+            ),
+        ] {
+            let worker = FakeTransport::new().with("prompt.request", outcome.clone());
+            let bridge = asking_bridge(&transport, &worker);
+            let result = call(
+                &json!({"name": "ask_human", "arguments": {"question": "Go?"}}),
+                &bridge,
+            );
+            assert_eq!(ask_text(&result), expected, "{outcome}");
+        }
+        let statuses = [
+            "answered",
+            "pending",
+            "cancelled",
+            "timeout",
+            "no_window",
+            "busy",
+            "rate_limited",
+            "failed",
+        ];
+        let spec = &tool_specs()[3];
+        assert_eq!(spec["name"], "ask_human");
+        for status in statuses {
+            assert!(
+                spec["description"].as_str().unwrap().contains(status),
+                "{status}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_missing_or_unreachable_worker_is_a_failed_question() {
+        let transport = FakeTransport::new();
+        let bridge = Bridge::new(&transport, BridgeScope::All);
+        let result = call(
+            &json!({"name": "ask_human", "arguments": {"question": "Go?"}}),
+            &bridge,
+        );
+        let text = ask_text(&result);
+        assert_eq!(text["status"], "failed");
+        assert!(
+            text["detail"].as_str().unwrap().contains("worker"),
+            "{text}"
+        );
+        let worker = FakeTransport::new().with_err("prompt.request", "connection refused");
+        let bridge = asking_bridge(&transport, &worker);
+        let result = call(
+            &json!({"name": "ask_human", "arguments": {"question": "Go?"}}),
+            &bridge,
+        );
+        assert_eq!(ask_text(&result)["status"], "failed");
+    }
+
+    #[test]
+    fn an_oversized_question_or_option_list_is_refused_naming_its_limit() {
+        let transport = FakeTransport::new();
+        let worker = FakeTransport::new();
+        let bridge = asking_bridge(&transport, &worker);
+        let long = "x".repeat(MAX_QUESTION_BYTES + 1);
+        let result = call(
+            &json!({"name": "ask_human", "arguments": {"question": long}}),
+            &bridge,
+        );
+        assert_eq!(result["isError"], true);
+        assert!(result["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("16 KiB"));
+        let options: Vec<String> = (0..=MAX_OPTIONS).map(|index| index.to_string()).collect();
+        let result = call(
+            &json!({"name": "ask_human", "arguments": {"question": "Which?", "options": options}}),
+            &bridge,
+        );
+        assert_eq!(result["isError"], true);
+        assert!(result["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("at most 2000 options"));
+        let exact = "y".repeat(MAX_QUESTION_BYTES);
+        let worker = FakeTransport::new().with("prompt.request", json!({"status": "busy"}));
+        let bridge = asking_bridge(&transport, &worker);
+        let result = call(
+            &json!({"name": "ask_human", "arguments": {"question": exact}}),
+            &bridge,
+        );
+        assert_eq!(ask_text(&result), json!({"status": "busy"}));
     }
 
     #[test]
@@ -716,5 +1231,98 @@ mod tests {
         let text = result["content"][0]["text"].as_str().unwrap();
         assert!(text.contains("line -3: error: boom"));
         assert!(text.contains("truncated"));
+    }
+
+    #[test]
+    fn list_actions_returns_only_the_actions_marked_for_agents() {
+        let transport = FakeTransport::new();
+        let worker = FakeTransport::new().with(
+            "action.list",
+            json!({"actions": [
+                {"name": "deploy", "title": "Deploy", "description": "Ship it", "category": "Actions", "keywords": [], "args": {"type": "object"}, "agents": true, "source": "init.lua:1"},
+                {"name": "secret", "title": "Secret", "category": "Actions", "keywords": [], "args": {"type": "object"}, "agents": false, "source": "init.lua:2"}
+            ]}),
+        );
+        let bridge = asking_bridge(&transport, &worker);
+        let result = call(&json!({"name": "list_actions", "arguments": {}}), &bridge);
+        assert_eq!(
+            ask_text(&result),
+            json!({"actions": [{"name": "deploy", "title": "Deploy", "description": "Ship it", "args": {"type": "object"}}]})
+        );
+    }
+
+    #[test]
+    fn run_action_runs_as_the_agent_of_the_bridge_session_and_resumes_a_running_run() {
+        let transport = FakeTransport::new();
+        let worker = FakeTransport::new()
+            .with("action.invoke", json!({"status": "running", "run_id": 9}))
+            .with(
+                "action.wait",
+                json!({"status": "done", "result": {"ok": true}}),
+            );
+        let bridge = asking_bridge(&transport, &worker).with_agent(Some("claude".into()));
+        let started = call(
+            &json!({"name": "run_action", "arguments": {"name": "deploy", "args": {"env": "prod"}}}),
+            &bridge,
+        );
+        assert_eq!(
+            ask_text(&started),
+            json!({"status": "running", "run_id": 9})
+        );
+        assert_eq!(
+            worker.last_params("action.invoke").unwrap(),
+            json!({
+                "name": "deploy",
+                "args": {"env": "prod"},
+                "ctx": {"origin": "agent", "session": "0a9e5266", "agent": "claude"},
+                "wait_ms": 20_000
+            })
+        );
+        let resumed = call(
+            &json!({"name": "run_action", "arguments": {"run_id": 9}}),
+            &bridge,
+        );
+        assert_eq!(
+            ask_text(&resumed),
+            json!({"status": "done", "result": {"ok": true}})
+        );
+        assert_eq!(
+            worker.last_params("action.wait").unwrap(),
+            json!({"run_id": 9, "wait_ms": 20_000})
+        );
+        let mixed = call(
+            &json!({"name": "run_action", "arguments": {"run_id": 9, "name": "deploy"}}),
+            &bridge,
+        );
+        assert_eq!(mixed["isError"], true);
+        let nameless = call(&json!({"name": "run_action", "arguments": {}}), &bridge);
+        assert_eq!(nameless["isError"], true);
+        assert!(transport.calls().is_empty(), "nothing reaches the window");
+    }
+
+    #[test]
+    fn run_action_reports_a_rate_limit_and_the_workers_refusal() {
+        let transport = FakeTransport::new();
+        let limited = FakeTransport::new().with("action.invoke", json!({"status": "rate_limited"}));
+        let bridge = asking_bridge(&transport, &limited);
+        let result = call(
+            &json!({"name": "run_action", "arguments": {"name": "deploy"}}),
+            &bridge,
+        );
+        assert_eq!(ask_text(&result), json!({"status": "rate_limited"}));
+        let refusing = FakeTransport::new().with_err(
+            "action.invoke",
+            "no action named 'secret'; paneflow actions lists the actions init.lua declares",
+        );
+        let bridge = asking_bridge(&transport, &refusing);
+        let result = call(
+            &json!({"name": "run_action", "arguments": {"name": "secret"}}),
+            &bridge,
+        );
+        assert_eq!(result["isError"], true);
+        assert!(result["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("no action named 'secret'"));
     }
 }

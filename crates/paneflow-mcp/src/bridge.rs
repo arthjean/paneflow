@@ -145,12 +145,46 @@ pub enum HostLink<'a> {
     Missing(String),
 }
 
+pub enum WorkerLink<'a> {
+    #[cfg(test)]
+    Borrowed(&'a dyn IpcTransport),
+    Connect(HostConnector<'a>),
+    Missing(String),
+}
+
+pub const METHOD_ACTION_LIST: &str = "action.list";
+pub const METHOD_ACTION_INVOKE: &str = "action.invoke";
+pub const METHOD_ACTION_WAIT: &str = "action.wait";
+pub const METHOD_PROMPT_REQUEST: &str = "prompt.request";
+pub const METHOD_PROMPT_WAIT: &str = "prompt.wait";
+pub const ASK_WAIT_MS: u64 = 20_000;
+
+pub struct Question {
+    pub text: String,
+    pub options: Vec<String>,
+    pub multiple: bool,
+}
+
 pub struct Bridge<'a, T: IpcTransport + ?Sized> {
     transport: &'a T,
     scope: BridgeScope,
     source: Option<String>,
     host: HostLink<'a>,
     host_transport: RefCell<Option<Box<dyn IpcTransport>>>,
+    worker: WorkerLink<'a>,
+    agent: RefCell<Option<String>>,
+}
+
+pub const MAX_AGENT_NAME_CHARS: usize = 64;
+
+fn agent_name(raw: &str) -> Option<String> {
+    let name: String = raw
+        .trim()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ' '))
+        .take(MAX_AGENT_NAME_CHARS)
+        .collect();
+    (!name.is_empty()).then_some(name)
 }
 
 impl<'a, T: IpcTransport + ?Sized> Bridge<'a, T> {
@@ -161,6 +195,98 @@ impl<'a, T: IpcTransport + ?Sized> Bridge<'a, T> {
             source: None,
             host: HostLink::Shared,
             host_transport: RefCell::new(None),
+            worker: WorkerLink::Missing(
+                "no Paneflow worker endpoint is known, so no question can reach a window"
+                    .to_string(),
+            ),
+            agent: RefCell::new(None),
+        }
+    }
+
+    pub fn with_agent(self, agent: Option<String>) -> Self {
+        *self.agent.borrow_mut() = agent.as_deref().and_then(agent_name);
+        self
+    }
+
+    pub fn set_client(&self, client: &str) {
+        let mut agent = self.agent.borrow_mut();
+        if agent.is_none() {
+            *agent = agent_name(client);
+        }
+    }
+
+    pub fn with_worker(mut self, worker: WorkerLink<'a>) -> Self {
+        self.worker = worker;
+        self
+    }
+
+    pub fn ask(&self, question: &Question) -> Result<Value, BridgeError> {
+        let mut origin = Map::new();
+        origin.insert("kind".into(), json!("agent"));
+        if let Some(agent) = self.agent.borrow().as_ref() {
+            origin.insert("agent".into(), json!(agent));
+        }
+        if let Some(session) = &self.source {
+            origin.insert("session".into(), json!(session));
+        }
+        let mut params = Map::new();
+        params.insert("title".into(), json!(question.text));
+        if question.options.is_empty() {
+            params.insert("kind".into(), json!("input"));
+        } else {
+            params.insert("kind".into(), json!("pick"));
+            params.insert("items".into(), json!(question.options));
+            if question.multiple {
+                params.insert("multiple".into(), json!(true));
+            }
+        }
+        params.insert("origin".into(), Value::Object(origin));
+        params.insert("wait_ms".into(), json!(ASK_WAIT_MS));
+        self.call_worker(METHOD_PROMPT_REQUEST, Value::Object(params))
+    }
+
+    pub fn actions(&self) -> Result<Value, BridgeError> {
+        self.call_worker(METHOD_ACTION_LIST, json!({}))
+    }
+
+    pub fn run_action(&self, name: &str, args: Map<String, Value>) -> Result<Value, BridgeError> {
+        let mut ctx = Map::new();
+        ctx.insert("origin".into(), json!("agent"));
+        if let Some(session) = &self.source {
+            ctx.insert("session".into(), json!(session));
+        }
+        if let Some(agent) = self.agent.borrow().as_ref() {
+            ctx.insert("agent".into(), json!(agent));
+        }
+        self.call_worker(
+            METHOD_ACTION_INVOKE,
+            json!({"name": name, "args": args, "ctx": ctx, "wait_ms": ASK_WAIT_MS}),
+        )
+    }
+
+    pub fn wait_action(&self, run_id: u64) -> Result<Value, BridgeError> {
+        self.call_worker(
+            METHOD_ACTION_WAIT,
+            json!({"run_id": run_id, "wait_ms": ASK_WAIT_MS}),
+        )
+    }
+
+    pub fn resume(&self, prompt_id: u64) -> Result<Value, BridgeError> {
+        self.call_worker(
+            METHOD_PROMPT_WAIT,
+            json!({"id": prompt_id, "wait_ms": ASK_WAIT_MS}),
+        )
+    }
+
+    fn call_worker(&self, method: &'static str, params: Value) -> Result<Value, BridgeError> {
+        let transport_error = |message: String| BridgeError::Transport { method, message };
+        match &self.worker {
+            #[cfg(test)]
+            WorkerLink::Borrowed(worker) => worker.call(method, params).map_err(transport_error),
+            WorkerLink::Missing(reason) => Err(transport_error(reason.clone())),
+            WorkerLink::Connect(connect) => connect()
+                .and_then(|worker| worker.call(method, params))
+                .map_err(transport_error),
         }
     }
 

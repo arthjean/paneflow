@@ -87,6 +87,8 @@ pub struct PaneFlowConfig {
     pub ipc: Option<serde_json::Value>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub on_quit: Option<OnQuit>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub agent_prompts: Option<AgentPrompts>,
     #[serde(flatten, deserialize_with = "agent_button_visibility")]
     pub agent_button_visibility: BTreeMap<String, bool>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
@@ -617,6 +619,20 @@ impl OnQuit {
             Self::Keep => "keep",
             Self::Stop => "stop",
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentPrompts {
+    #[default]
+    Native,
+    Paneflow,
+}
+
+impl PaneFlowConfig {
+    pub fn agent_prompts_in_paneflow(&self) -> bool {
+        self.agent_prompts == Some(AgentPrompts::Paneflow)
     }
 }
 

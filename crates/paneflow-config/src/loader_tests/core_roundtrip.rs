@@ -57,6 +57,7 @@ fn test_serialization_roundtrip() {
         ai_injection_fence: None,
         ipc: Some(serde_json::json!({"scripting": true})),
         on_quit: None,
+        agent_prompts: Some(crate::schema::AgentPrompts::Paneflow),
         agent_button_visibility: BTreeMap::new(),
         telemetry: None,
         terminal: None,
