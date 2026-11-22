@@ -103,7 +103,9 @@ impl PaneFlowApp {
         let agent_status = ai_types::workspace_agent_status(tab_sessions(), &tab_agents);
         let lane = infer_lane(row_agent_status, None);
         let hover_bg = crate::app::constants::sidebar_tab_hover_background();
-        let (resting_bg, hovered_bg) = if is_active_tab && is_active_workspace {
+        let (resting_bg, hovered_bg) = if is_renaming {
+            (None, None)
+        } else if is_active_tab && is_active_workspace {
             (
                 Some(crate::app::constants::sidebar_tab_active_background()),
                 None,
@@ -206,15 +208,16 @@ impl PaneFlowApp {
                 this.close_workspace_tab(at_ws, at_tab, window, cx);
             }
         });
+        let title_line = if is_renaming {
+            titled
+        } else {
+            sidebar_title_with_trailing(titled, branch, SIDEBAR_BRANCH_GAP)
+        };
         let title_main = div()
             .when(!indent_guide && !grouped_by_status, |row| {
                 row.child(div().flex_none().w(px(SIDEBAR_FOLDER_SLOT_WIDTH)))
             })
-            .child(sidebar_title_with_trailing(
-                titled,
-                branch,
-                SIDEBAR_BRANCH_GAP,
-            ))
+            .child(title_line)
             .when(!detached_panes.is_empty(), |titled| {
                 titled.child(
                     sidebar_action_button(
