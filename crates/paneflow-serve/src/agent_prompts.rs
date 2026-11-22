@@ -2,17 +2,18 @@ use std::time::{Duration, Instant};
 
 use paneflow_api::Principal;
 use paneflow_api::methods::prompt::{
-    AGENT_PROMPT_DEADLINE_SECS, AgentPromptEvent, MAX_WAIT_MS, OriginKind, PickItem, PickItemSpec,
-    PromptAnswer, PromptKind, PromptOrigin, PromptOutcome, PromptStatus, ReplyParams,
+    AGENT_PROMPT_DEADLINE_SECS, AgentPromptEvent, MAX_BODY_BYTES, MAX_WAIT_MS, OriginKind,
+    PickItem, PickItemSpec, PromptAnswer, PromptKind, PromptOrigin, PromptOutcome, PromptStatus,
     RequestParams, ResolveParams, Resolved,
 };
 use serde_json::{Map, Value, json};
+
+use crate::layout_authority::ConnectionId;
 
 pub const ANSWER_IN_TERMINAL: &str = "Answer in the terminal";
 pub const DECIDE_IN_TERMINAL: &str = "Decide in the terminal";
 pub const ALLOW_ONCE: &str = "Allow once";
 pub const DENY: &str = "Deny";
-pub const MAX_PERMISSION_SUMMARY_CHARS: usize = 400;
 pub const DENIED_MESSAGE: &str = "The user denied this in Paneflow";
 const TERMINAL_ID: &str = "terminal";
 const ASK_USER_QUESTION: &str = "AskUserQuestion";
@@ -129,32 +130,61 @@ pub fn permission_output(allow: bool) -> Value {
     })
 }
 
-pub fn input_summary(tool_input: Option<&Value>) -> String {
-    let text = match tool_input {
-        Some(Value::Object(fields)) => ["command", "file_path", "path", "url", "pattern", "query"]
-            .iter()
-            .find_map(|key| fields.get(*key).and_then(Value::as_str))
-            .map_or_else(|| Value::Object(fields.clone()).to_string(), str::to_string),
-        Some(Value::String(text)) => text.clone(),
-        Some(other) => other.to_string(),
-        None => String::new(),
-    };
-    truncate_chars(text.trim(), MAX_PERMISSION_SUMMARY_CHARS)
+pub const TOO_LONG_TO_SHOW: &str = "The input is too long to show here, so Paneflow cannot allow it. Deny it, or decide in the terminal, where the agent shows it in full.";
+
+fn field_text(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        other => serde_json::to_string_pretty(other).unwrap_or_else(|_| other.to_string()),
+    }
 }
 
-fn truncate_chars(text: &str, limit: usize) -> String {
-    if text.chars().count() <= limit {
-        return text.to_string();
+pub fn input_text(tool_input: Option<&Value>) -> String {
+    match tool_input {
+        Some(Value::Object(fields)) => fields
+            .iter()
+            .map(|(name, value)| {
+                let text = field_text(value);
+                if text.contains('\n') {
+                    format!("{name}:\n{text}")
+                } else {
+                    format!("{name}: {text}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        Some(Value::Null) | None => String::new(),
+        Some(other) => field_text(other),
     }
-    let mut cut: String = text.chars().take(limit.saturating_sub(1)).collect();
-    cut.push('\u{2026}');
-    cut
+}
+
+pub fn shows_in_full(tool_input: Option<&Value>, text: &str) -> bool {
+    let raw = tool_input.map_or(0, |input| input.to_string().len());
+    raw <= MAX_BODY_BYTES && text.len() <= MAX_BODY_BYTES
 }
 
 fn is_codex(agent: Option<&str>) -> bool {
     agent.is_some_and(|agent| {
         crate::agent_asks::known_agent_label(agent) == crate::agent_asks::known_agent_label("codex")
     })
+}
+
+pub fn permission_choices(mut request: RequestParams, tool_input: Option<&Value>) -> RequestParams {
+    let text = input_text(tool_input);
+    let deny_or_terminal = [
+        item("deny".into(), DENY, None),
+        item(TERMINAL_ID.into(), DECIDE_IN_TERMINAL, None),
+    ];
+    if shows_in_full(tool_input, &text) {
+        request.body = (!text.trim().is_empty()).then_some(text);
+        let mut items = vec![item("allow".into(), ALLOW_ONCE, None)];
+        items.extend(deny_or_terminal);
+        request.items = Some(items);
+    } else {
+        request.body = Some(TOO_LONG_TO_SHOW.to_string());
+        request.items = Some(deny_or_terminal.to_vec());
+    }
+    request
 }
 
 struct Deadline(Instant);
@@ -211,11 +241,7 @@ impl crate::server::Worker {
                 } => {
                     let left = deadline.left();
                     if left.is_zero() {
-                        let _ = self.prompts.reply(ReplyParams {
-                            id,
-                            answer: None,
-                            cancel: Some(true),
-                        });
+                        self.prompts.withdraw(id);
                         return Asked::Declined("timeout");
                     }
                     outcome = match self
@@ -231,7 +257,12 @@ impl crate::server::Worker {
         }
     }
 
-    fn agent_origin(&self, params: &ResolveParams, principal: &Principal) -> Option<PromptOrigin> {
+    fn agent_origin(
+        &self,
+        params: &ResolveParams,
+        principal: &Principal,
+        connection: ConnectionId,
+    ) -> Option<PromptOrigin> {
         self.attribute_prompt(
             Some(PromptOrigin {
                 kind: OriginKind::Agent,
@@ -244,13 +275,20 @@ impl crate::server::Worker {
                 session: params.session.clone(),
             }),
             principal,
+            connection,
         )
     }
 
-    pub fn resolve_agent_prompt(&self, params: ResolveParams, principal: &Principal) -> Resolved {
+    pub fn resolve_agent_prompt(
+        &self,
+        params: ResolveParams,
+        principal: &Principal,
+        connection: ConnectionId,
+    ) -> Resolved {
         self.resolve_agent_prompt_within(
             params,
             principal,
+            connection,
             Duration::from_secs(AGENT_PROMPT_DEADLINE_SECS),
         )
     }
@@ -259,13 +297,14 @@ impl crate::server::Worker {
         &self,
         params: ResolveParams,
         principal: &Principal,
+        connection: ConnectionId,
         budget: Duration,
     ) -> Resolved {
         if !self.agent_prompts_in_paneflow() {
             return Resolved::declined("native");
         }
         let deadline = Deadline(Instant::now() + budget);
-        let origin = self.agent_origin(&params, principal);
+        let origin = self.agent_origin(&params, principal, connection);
         match params.event {
             AgentPromptEvent::AskUserQuestion => self.resolve_questions(&params, origin, &deadline),
             AgentPromptEvent::PermissionRequest => {
@@ -291,6 +330,7 @@ impl crate::server::Worker {
             let request = RequestParams {
                 kind: PromptKind::Pick,
                 title: question.text.clone(),
+                body: None,
                 placeholder: None,
                 value: None,
                 confirm: None,
@@ -331,31 +371,27 @@ impl crate::server::Worker {
         if tool == ASK_USER_QUESTION {
             return Resolved::declined("unsupported");
         }
-        let summary = input_summary(params.payload.get("tool_input"));
-        let title = if summary.is_empty() {
-            tool.to_string()
-        } else {
-            format!("{tool}\n{summary}")
-        };
         let request = RequestParams {
             kind: PromptKind::Pick,
-            title,
+            title: tool.to_string(),
+            body: None,
             placeholder: None,
             value: None,
             confirm: None,
             timeout: None,
-            items: Some(vec![
-                item("allow".into(), ALLOW_ONCE, None),
-                item("deny".into(), DENY, None),
-                item(TERMINAL_ID.into(), DECIDE_IN_TERMINAL, None),
-            ]),
+            items: None,
             multiple: None,
             allow_other: None,
             origin,
             wait_ms: None,
         };
+        let request = permission_choices(request, params.payload.get("tool_input"));
+        let may_allow = request
+            .items
+            .as_deref()
+            .is_some_and(|items| items.iter().any(|item| item.id() == "allow"));
         match self.ask_until(request, deadline) {
-            Asked::Answer(PromptAnswer::Text(choice)) if choice == "allow" => {
+            Asked::Answer(PromptAnswer::Text(choice)) if choice == "allow" && may_allow => {
                 Resolved::answered(permission_output(true))
             }
             Asked::Answer(PromptAnswer::Text(choice)) if choice == "deny" => {
@@ -481,20 +517,68 @@ mod tests {
         }
     }
 
+    fn permission_request() -> RequestParams {
+        RequestParams {
+            kind: PromptKind::Pick,
+            title: "Bash".into(),
+            body: None,
+            placeholder: None,
+            value: None,
+            confirm: None,
+            timeout: None,
+            items: None,
+            multiple: None,
+            allow_other: None,
+            origin: None,
+            wait_ms: None,
+        }
+    }
+
+    fn ids(request: &RequestParams) -> Vec<&str> {
+        request
+            .items
+            .as_deref()
+            .unwrap()
+            .iter()
+            .map(PickItem::id)
+            .collect()
+    }
+
     #[test]
-    fn a_permission_summary_keeps_at_most_400_characters_of_the_tool_input() {
+    fn a_permission_shows_every_field_of_the_input_by_name_with_its_line_breaks() {
+        let input = json!({
+            "command": "git status\nrm -rf ~/work",
+            "description": "Check the tree",
+            "timeout": 60000,
+            "file_path": "/a/b.rs"
+        });
+        let request = permission_choices(permission_request(), Some(&input));
+        let body = request.body.clone().unwrap();
         assert_eq!(
-            input_summary(Some(&json!({"command": "cargo test", "description": "x"}))),
-            "cargo test"
+            body,
+            "command:\ngit status\nrm -rf ~/work\ndescription: Check the tree\ntimeout: 60000\nfile_path: /a/b.rs"
         );
+        assert_eq!(ids(&request), ["allow", "deny", "terminal"]);
+        assert_eq!(request.title, "Bash", "the title stays the tool name");
+        let nested = input_text(Some(&json!({"edits": [{"old": "a"}]})));
+        assert!(nested.starts_with("edits:\n["), "{nested}");
+        assert_eq!(input_text(Some(&json!("plain"))), "plain");
+        assert_eq!(input_text(None), "");
+    }
+
+    #[test]
+    fn an_input_too_long_to_show_in_full_can_only_be_denied_or_decided_in_the_terminal() {
+        let long = json!({"command": "x".repeat(MAX_BODY_BYTES)});
+        let request = permission_choices(permission_request(), Some(&long));
+        assert_eq!(ids(&request), ["deny", "terminal"]);
+        assert_eq!(request.body.as_deref(), Some(TOO_LONG_TO_SHOW));
+        let fits = json!({"command": "x".repeat(MAX_BODY_BYTES - 32)});
         assert_eq!(
-            input_summary(Some(&json!({"file_path": "/a/b.rs", "content": "..."}))),
-            "/a/b.rs"
+            ids(&permission_choices(permission_request(), Some(&fits))),
+            ["allow", "deny", "terminal"]
         );
-        assert_eq!(input_summary(Some(&json!({"n": 1}))), "{\"n\":1}");
-        let long = input_summary(Some(&json!({"command": "é".repeat(1_000)})));
-        assert_eq!(long.chars().count(), MAX_PERMISSION_SUMMARY_CHARS);
-        assert!(long.ends_with('\u{2026}'));
-        assert_eq!(input_summary(None), "");
+        let request = permission_choices(permission_request(), None);
+        assert_eq!(request.body, None);
+        assert_eq!(ids(&request), ["allow", "deny", "terminal"]);
     }
 }

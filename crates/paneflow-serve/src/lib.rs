@@ -11,6 +11,7 @@
 pub mod action_runs;
 pub mod activity;
 pub mod agent_asks;
+pub mod agent_caller;
 pub mod agent_prompts;
 mod authority;
 pub mod bootstrap;
@@ -18,6 +19,7 @@ pub mod config_runtime;
 pub mod controller;
 pub mod core_link;
 pub mod event_log;
+pub mod handles;
 pub mod integrations;
 pub mod launcher;
 pub mod layout_authority;

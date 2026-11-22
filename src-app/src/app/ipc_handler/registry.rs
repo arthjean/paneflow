@@ -474,7 +474,11 @@ mod tests {
         };
         let mut checked = 0;
         for (column, policy) in [(3, Policy::default()), (4, open)] {
-            for row in DECISION_TABLE.lines().filter(|row| !row.starts_with('#')) {
+            for row in DECISION_TABLE
+                .lines()
+                .skip(1)
+                .take_while(|row| !row.starts_with('#'))
+            {
                 let fields: Vec<&str> = row.split_whitespace().collect();
                 let [method, owner, kind, ..] = fields[..] else {
                     continue;

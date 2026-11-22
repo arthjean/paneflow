@@ -45,6 +45,11 @@ pub(crate) struct ProcessFacts {
 #[cfg(unix)]
 pub(crate) trait ProcessTable {
     fn facts(&self, pid: u32) -> io::Result<ProcessFacts>;
+
+    fn describe(&self, pid: u32) -> (Option<String>, Option<std::path::PathBuf>) {
+        let _ = pid;
+        (None, None)
+    }
 }
 
 #[cfg(unix)]

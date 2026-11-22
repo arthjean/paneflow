@@ -1,5 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use paneflow_api::methods::prompt::{PromptAccess, PromptAsker, prompt_access};
 use paneflow_api::policy::{Policy, Section, Switches};
 use paneflow_api::{Principal, authorize};
 use serde_json::json;
@@ -54,6 +55,29 @@ pub fn rendered_table() -> String {
                 principal.kind(),
                 decisions.join(" ")
             ));
+        }
+    }
+    lines.push(
+        "# prompt.follow and prompt.reply against the prompt's asker: method principal asker decision"
+            .to_string(),
+    );
+    for method in ["prompt.follow", "prompt.reply"] {
+        for principal in principals() {
+            for asker in PromptAsker::ALL {
+                let access = prompt_access(&principal, asker);
+                let decision = match (method, access) {
+                    ("prompt.follow", PromptAccess::Hidden) => "hidden",
+                    ("prompt.follow", _) => "shown_with_a_token",
+                    (_, PromptAccess::Hidden) => "refused:not_pending",
+                    (_, PromptAccess::AnswersWithItsToken) => "allowed:with_its_token",
+                    (_, PromptAccess::Answers) => "allowed",
+                };
+                lines.push(format!(
+                    "{method} {} {} {decision}",
+                    principal.kind(),
+                    asker.label()
+                ));
+            }
         }
     }
     lines.join("\n") + "\n"

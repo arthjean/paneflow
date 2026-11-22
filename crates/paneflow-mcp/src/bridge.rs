@@ -264,7 +264,7 @@ impl<'a, T: IpcTransport + ?Sized> Bridge<'a, T> {
         )
     }
 
-    pub fn wait_action(&self, run_id: u64) -> Result<Value, BridgeError> {
+    pub fn wait_action(&self, run_id: &str) -> Result<Value, BridgeError> {
         self.call_worker(
             METHOD_ACTION_WAIT,
             json!({"run_id": run_id, "wait_ms": ASK_WAIT_MS}),

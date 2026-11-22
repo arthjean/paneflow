@@ -11,8 +11,10 @@ use paneflow_api::methods::prompt::{
 use paneflow_config::schema::SessionId;
 use paneflow_layout::State;
 
+use crate::layout_authority::ConnectionId;
 use crate::registry::ServeError;
 
+pub const AN_AGENT: &str = "an agent";
 pub const AGENT_BURST: u32 = 3;
 pub const AGENT_INTERVAL_MS: u64 = 1_000;
 pub const MAX_TRACKED_ASKERS: usize = 1_024;
@@ -171,25 +173,25 @@ fn agent_run_wait(wait_ms: Option<u64>) -> Result<Option<u64>, ServeError> {
 pub(crate) struct RunEnd {
     worker: std::sync::Arc<crate::server::Worker>,
     token: String,
-    run_id: u64,
+    run_id: String,
 }
 
 impl RunEnd {
     pub(crate) fn of(
         worker: &std::sync::Arc<crate::server::Worker>,
         token: &str,
-        run_id: u64,
+        run_id: &str,
     ) -> Self {
         Self {
             worker: std::sync::Arc::clone(worker),
             token: token.to_string(),
-            run_id,
+            run_id: run_id.to_string(),
         }
     }
 
     fn with(self, outcome: Result<Invoked, ServeError>) {
         self.worker.acting.end(&self.token);
-        self.worker.action_runs.finish(self.run_id, outcome);
+        self.worker.action_runs.finish(&self.run_id, outcome);
     }
 }
 
@@ -198,7 +200,7 @@ impl Drop for RunEnd {
         self.worker.acting.end(&self.token);
         self.worker
             .action_runs
-            .finish(self.run_id, Err(crate::config_runtime::runtime_stopped()));
+            .finish(&self.run_id, Err(crate::config_runtime::runtime_stopped()));
     }
 }
 
@@ -208,6 +210,7 @@ impl crate::server::Worker {
         name: &str,
         context: &mut InvokeContext,
         principal: &Principal,
+        recognized: Option<&str>,
     ) -> Result<Option<String>, ServeError> {
         let session = calling_session(principal)
             .map(str::to_string)
@@ -224,7 +227,14 @@ impl crate::server::Worker {
             ),
             None => (None, None),
         };
-        context.agent = claimed.as_deref().and_then(known_agent_label).or(agent);
+        context.agent = Some(
+            claimed
+                .as_deref()
+                .and_then(known_agent_label)
+                .or(agent)
+                .or_else(|| recognized.map(str::to_string))
+                .unwrap_or_else(|| AN_AGENT.to_string()),
+        );
         if let Some(place) = place {
             context.surface_id = Some(place.surface);
             context.pane_id = Some(place.pane);
@@ -239,15 +249,24 @@ impl crate::server::Worker {
         self: &std::sync::Arc<Self>,
         mut params: InvokeParams,
         principal: &Principal,
+        connection: ConnectionId,
     ) -> Result<Invoked, ServeError> {
         let mut context = params.ctx.take().unwrap_or_default();
         let wait_ms = agent_run_wait(params.wait_ms.take())?;
         let mut asker = None;
-        if calling_session(principal).is_some_and(|session| self.agent_runs_in(session)) {
+        let recognized = self.agent_caller(connection, principal);
+        if recognized.is_some()
+            || calling_session(principal).is_some_and(|session| self.agent_runs_in(session))
+        {
             context.origin = Some("agent".to_string());
         }
         if context.origin.as_deref() == Some("agent") {
-            asker = self.as_agent_run(&params.name, &mut context, principal)?;
+            asker = self.as_agent_run(
+                &params.name,
+                &mut context,
+                principal,
+                recognized.as_ref().and_then(|verdict| verdict.label()),
+            )?;
             if !self
                 .agent_limit
                 .admit(asker.as_deref().unwrap_or_default(), crate::state::now_ms())
@@ -261,20 +280,20 @@ impl crate::server::Worker {
             params.ctx = Some(context);
             return self.config.invoke(params);
         };
+        let run_id = self.action_runs.open(asker.clone())?;
         let token = self.acting.start_detached(acting, &mut context);
         params.ctx = Some(context);
-        let run_id = self.action_runs.open(asker.clone());
-        let ending = RunEnd::of(self, &token, run_id);
+        let ending = RunEnd::of(self, &token, &run_id);
         let started = self
             .config
             .begin(params, Box::new(move |outcome| ending.with(outcome)));
         if let Err(error) = started {
             self.acting.end(&token);
-            self.action_runs.discard(run_id);
+            self.action_runs.discard(&run_id);
             return Err(error);
         }
         self.action_runs
-            .wait(run_id, Some(wait_ms), asker.as_deref())
+            .wait(&run_id, Some(wait_ms), asker.as_deref())
     }
 
     pub fn wait_action(
@@ -283,7 +302,7 @@ impl crate::server::Worker {
         principal: &Principal,
     ) -> Result<Invoked, ServeError> {
         self.action_runs
-            .wait(params.run_id, params.wait_ms, calling_session(principal))
+            .wait(&params.run_id, params.wait_ms, calling_session(principal))
     }
 
     fn agent_facts(&self, session: &str) -> AgentFacts {
@@ -311,12 +330,14 @@ impl crate::server::Worker {
         &self,
         origin: Option<PromptOrigin>,
         principal: &Principal,
+        connection: ConnectionId,
     ) -> Option<PromptOrigin> {
         let claims_agent = origin
             .as_ref()
             .is_some_and(|origin| origin.kind == OriginKind::Agent);
+        let recognized = self.agent_caller(connection, principal);
         let pane_agent = calling_session(principal)
-            .filter(|session| self.agent_runs_in(session))
+            .filter(|session| recognized.is_some() || self.agent_runs_in(session))
             .map(str::to_string);
         if !claims_agent && pane_agent.is_none() {
             return origin;
@@ -343,7 +364,13 @@ impl crate::server::Worker {
                 session: None,
             });
         };
-        let facts = self.agent_facts(&session);
+        let mut facts = self.agent_facts(&session);
+        if facts.agent.is_none() {
+            facts.agent = recognized
+                .as_ref()
+                .and_then(|verdict| verdict.label())
+                .map(str::to_string);
+        }
         Some(attribute(origin, session, facts))
     }
 
@@ -351,9 +378,10 @@ impl crate::server::Worker {
         &self,
         mut params: RequestParams,
         principal: &Principal,
+        connection: ConnectionId,
     ) -> Result<PromptOutcome, ServeError> {
         check_spec(&params.spec()).map_err(ServeError::invalid_params)?;
-        params.origin = self.attribute_prompt(params.origin.take(), principal);
+        params.origin = self.attribute_prompt(params.origin.take(), principal, connection);
         if let Some(origin) = params
             .origin
             .as_ref()
@@ -377,9 +405,7 @@ impl crate::server::Worker {
             (calling_session(principal), self.prompts.asker_of(id))
             && caller != asker
         {
-            return Err(ServeError::invalid_params(format!(
-                "no prompt with id {id}; its outcome was already returned or it never existed"
-            )));
+            return Err(crate::prompts::unknown_prompt(id));
         }
         self.prompts.wait(id, wait_ms)
     }

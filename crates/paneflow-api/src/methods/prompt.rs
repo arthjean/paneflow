@@ -4,6 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::NO_FALLBACK;
+use crate::Principal;
 use crate::descriptor::{Audience, Gate, Owner, Reply};
 
 const WORKER: Owner = Owner::Worker;
@@ -14,6 +15,8 @@ pub const MAX_TIMEOUT_SECS: u64 = 3_600;
 pub const MAX_PENDING: usize = 16;
 pub const MAX_WAIT_MS: u64 = 25_000;
 pub const MAX_SPEC_BYTES: usize = 48 * 1024;
+pub const MAX_BODY_BYTES: usize = 16 * 1024;
+pub const ANSWER_TOKEN_BYTES: usize = 16;
 pub const ERR_NOT_PENDING: i64 = -32060;
 pub const NOT_PENDING: &str = "not_pending";
 
@@ -116,6 +119,9 @@ impl PickItem {
 pub struct PromptSpec {
     pub kind: PromptKind,
     pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Shown under the title, line breaks kept; at most 16384 bytes")]
+    pub body: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub placeholder: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -237,6 +243,9 @@ pub struct RequestParams {
     pub kind: PromptKind,
     pub title: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "Shown under the title, line breaks kept; at most 16384 bytes")]
+    pub body: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub placeholder: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(description = "Text the field starts with")]
@@ -275,6 +284,7 @@ impl RequestParams {
         PromptSpec {
             kind: self.kind,
             title: self.title.clone(),
+            body: self.body.clone(),
             placeholder: self.placeholder.clone(),
             value: self.value.clone(),
             confirm: self.confirm.clone(),
@@ -381,6 +391,9 @@ pub struct WaitParams {
 pub struct ReplyParams {
     pub id: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "The requested frame's token; required for an agent's prompt")]
+    pub token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(
         description = "The text, the id, the list of ids or {text}, as the prompt's kind takes"
     )]
@@ -462,6 +475,9 @@ pub struct RequestedFrame {
     pub requested_at_ms: u64,
     #[schemars(description = "Milliseconds left before the prompt ends with timeout")]
     pub remaining_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(description = "This client's token for prompt.reply")]
+    pub token: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -473,6 +489,82 @@ pub struct EndedFrame {
     pub reason: EndReason,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptAsker {
+    Agent,
+    ActionRunByAgent,
+    Action,
+    Script,
+}
+
+impl PromptAsker {
+    pub const ALL: [Self; 4] = [
+        Self::Agent,
+        Self::ActionRunByAgent,
+        Self::Action,
+        Self::Script,
+    ];
+
+    pub fn of(origin: Option<&PromptOrigin>) -> Self {
+        match origin {
+            Some(origin) => match origin.kind {
+                OriginKind::Agent => Self::Agent,
+                OriginKind::Action if origin.agent.is_some() => Self::ActionRunByAgent,
+                OriginKind::Action => Self::Action,
+                OriginKind::Script => Self::Script,
+            },
+            None => Self::Script,
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Agent => "agent",
+            Self::ActionRunByAgent => "action_run_by_agent",
+            Self::Action => "action",
+            Self::Script => "script",
+        }
+    }
+
+    pub const fn raised_by_agent(self) -> bool {
+        matches!(self, Self::Agent | Self::ActionRunByAgent)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptAccess {
+    Answers,
+    AnswersWithItsToken,
+    Hidden,
+}
+
+impl PromptAccess {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Answers => "answers",
+            Self::AnswersWithItsToken => "answers_with_its_token",
+            Self::Hidden => "hidden",
+        }
+    }
+
+    pub const fn shows(self) -> bool {
+        !matches!(self, Self::Hidden)
+    }
+}
+
+pub fn prompt_access(principal: &Principal, asker: PromptAsker) -> PromptAccess {
+    let outside_every_pane = matches!(
+        principal,
+        Principal::Window | Principal::Worker | Principal::External
+    );
+    match (asker.raised_by_agent(), outside_every_pane) {
+        (true, true) => PromptAccess::AnswersWithItsToken,
+        (true, false) => PromptAccess::Hidden,
+        (false, _) if matches!(principal, Principal::Unverified { .. }) => PromptAccess::Hidden,
+        (false, _) => PromptAccess::Answers,
+    }
+}
+
 fn present(text: Option<&str>) -> bool {
     text.is_some_and(|text| !text.trim().is_empty())
 }
@@ -480,6 +572,14 @@ fn present(text: Option<&str>) -> bool {
 pub fn check_spec(spec: &PromptSpec) -> Result<(), String> {
     if !present(Some(&spec.title)) {
         return Err("'title' must not be empty".to_string());
+    }
+    if let Some(body) = &spec.body
+        && body.len() > MAX_BODY_BYTES
+    {
+        return Err(format!(
+            "'body' is {} bytes; a prompt shows at most {MAX_BODY_BYTES} bytes of body",
+            body.len()
+        ));
     }
     if let Some(timeout) = spec.timeout {
         if !timeout.is_finite() || timeout <= 0.0 {
@@ -613,7 +713,7 @@ method! {
 method! {
     ReplyTo {
         name: "prompt.reply",
-        summary: "Answer or cancel a pending prompt. The first reply wins and every follower receives ended; a later one is refused with -32060 and data {reason: not_pending}.",
+        summary: "Answer or cancel a pending prompt. The first reply wins and every follower receives ended; a later one is refused with -32060 and data {reason: not_pending}. An agent's prompt takes a reply only with its token, from outside every pane.",
         owner: WORKER,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
@@ -631,7 +731,7 @@ method! {
 method! {
     Follow {
         name: "prompt.follow",
-        summary: "Stream the prompts this client can show: a following header, a requested frame for each pending prompt oldest first, then requested frames (id, spec, origin, remaining time) and ended frames (id, reason), keepalive frames when quiet.",
+        summary: "Stream the prompts this client can show: a following header, a requested frame for each pending prompt oldest first, then requested frames (id, spec, origin, remaining time, token) and ended frames (id, reason), keepalive frames when quiet. A pane never receives an agent's prompt.",
         owner: WORKER,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
@@ -730,6 +830,7 @@ mod tests {
         PromptSpec {
             kind: PromptKind::Pick,
             title: "Project".into(),
+            body: None,
             placeholder: None,
             value: None,
             confirm: None,
@@ -808,6 +909,58 @@ mod tests {
         assert_eq!(spec.timeout_ms(), 1_500);
         spec.timeout = Some(MAX_TIMEOUT_SECS as f64);
         assert_eq!(spec.timeout_ms(), MAX_TIMEOUT_SECS * 1000);
+    }
+
+    #[test]
+    fn only_a_client_outside_every_pane_answers_an_agent_and_only_with_its_token() {
+        let pane = Principal::Pane {
+            session: "s".into(),
+            workspace: None,
+        };
+        let unverified = Principal::Unverified {
+            reason: "gone".into(),
+        };
+        for asker in [PromptAsker::Agent, PromptAsker::ActionRunByAgent] {
+            for outside in [Principal::Window, Principal::Worker, Principal::External] {
+                assert_eq!(
+                    prompt_access(&outside, asker),
+                    PromptAccess::AnswersWithItsToken
+                );
+            }
+            assert_eq!(prompt_access(&pane, asker), PromptAccess::Hidden);
+            assert_eq!(prompt_access(&unverified, asker), PromptAccess::Hidden);
+        }
+        for asker in [PromptAsker::Action, PromptAsker::Script] {
+            assert_eq!(prompt_access(&pane, asker), PromptAccess::Answers);
+            assert_eq!(
+                prompt_access(&Principal::Window, asker),
+                PromptAccess::Answers
+            );
+        }
+        let by_agent = PromptOrigin {
+            kind: OriginKind::Action,
+            title: None,
+            name: Some("deploy".into()),
+            file: None,
+            agent: Some("Claude Code".into()),
+            surface_id: None,
+            workspace_id: None,
+            session: None,
+        };
+        assert_eq!(
+            PromptAsker::of(Some(&by_agent)),
+            PromptAsker::ActionRunByAgent
+        );
+        assert_eq!(PromptAsker::of(None), PromptAsker::Script);
+    }
+
+    #[test]
+    fn a_body_longer_than_16_kib_is_refused_naming_the_field() {
+        let mut spec = pick(plain(&["a"]));
+        spec.body = Some("x".repeat(MAX_BODY_BYTES));
+        assert_eq!(check_spec(&spec), Ok(()));
+        spec.body = Some("x".repeat(MAX_BODY_BYTES + 1));
+        assert!(check_spec(&spec).unwrap_err().starts_with("'body'"));
     }
 
     #[test]

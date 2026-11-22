@@ -63,6 +63,16 @@
       "id": "an_agent_past_its_burst_is_rate_limited_and_nothing_is_shown",
       "summary": "Three prompt.request calls with origin {kind: agent, session} are queued; a fourth from the same session within the second returns {status: rate_limited} and no follower receives a requested frame for it, while another session is still admitted.",
       "method": "prompt.request"
+    },
+    {
+      "id": "a_reply_to_an_agent_prompt_without_its_token_is_refused_and_it_stays_pending",
+      "summary": "A prompt whose origin is an agent reaches a follower outside every pane with a token of 128 bits; prompt.reply without that token, or with another, is refused with -32060 and data {reason: not_pending}, the refusal an unknown id gets, the prompt stays pending, and a reply with the token is accepted.",
+      "method": "prompt.reply"
+    },
+    {
+      "id": "a_pane_never_sees_nor_answers_an_agent_prompt_even_with_a_token",
+      "summary": "A caller running in a pane follows prompts and is given neither the agent's prompt nor a token for it; its prompt.reply carrying the token another follower received is refused with -32060 and data {reason: not_pending}, and the prompt stays pending for the client outside every pane.",
+      "method": "prompt.reply"
     }
   ]
 }

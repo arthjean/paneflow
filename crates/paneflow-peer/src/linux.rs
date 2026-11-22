@@ -143,6 +143,14 @@ impl ProcessTable for LiveKernel {
             started_at: stat.started_at,
         })
     }
+
+    fn describe(&self, pid: u32) -> (Option<String>, Option<PathBuf>) {
+        let name = std::fs::read_to_string(format!("/proc/{pid}/comm"))
+            .ok()
+            .map(|comm| comm.trim_end_matches('\n').to_string())
+            .filter(|comm| !comm.is_empty());
+        (name, self.executable(pid))
+    }
 }
 
 pub(crate) fn read(socket: BorrowedFd<'_>) -> PeerRead {

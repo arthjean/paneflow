@@ -10,6 +10,7 @@
 
 use std::path::{Path, PathBuf};
 
+mod lineage;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
@@ -19,6 +20,7 @@ mod start_time;
 #[cfg(windows)]
 mod windows;
 
+pub use lineage::{Ancestor, LeaderStamp, Lineage, LineageReader, LiveLineage};
 pub use membership::{Membership, PaneLeader, classify};
 #[cfg(unix)]
 pub use start_time::process_session;

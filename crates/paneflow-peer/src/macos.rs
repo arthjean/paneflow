@@ -223,6 +223,37 @@ impl ProcessTable for LiveTable {
             started_at: started,
         })
     }
+
+    fn describe(&self, pid: u32) -> (Option<String>, Option<PathBuf>) {
+        let Ok(signed) = i32::try_from(pid) else {
+            return (None, None);
+        };
+        let name = bsd_info(signed).ok().and_then(|info| {
+            let bytes: Vec<u8> = info
+                .pbi_comm
+                .iter()
+                .take_while(|byte| **byte != 0)
+                .map(|byte| *byte as u8)
+                .collect();
+            (!bytes.is_empty()).then(|| String::from_utf8_lossy(&bytes).into_owned())
+        });
+        let mut buffer = vec![0u8; PROC_PIDPATHINFO_MAXSIZE];
+        let written = unsafe {
+            libc::proc_pidpath(
+                signed,
+                buffer.as_mut_ptr().cast::<libc::c_void>(),
+                PROC_PIDPATHINFO_MAXSIZE as u32,
+            )
+        };
+        let executable = usize::try_from(written)
+            .ok()
+            .filter(|written| *written > 0)
+            .map(|written| {
+                buffer.truncate(written);
+                PathBuf::from(OsString::from_vec(buffer))
+            });
+        (name, executable)
+    }
 }
 
 #[cfg(test)]

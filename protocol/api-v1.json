@@ -4851,10 +4851,8 @@
             "description": "What run returned; absent when it returned nothing, nil or true"
           },
           "run_id": {
-            "format": "uint64",
-            "minimum": 0,
             "type": [
-              "integer",
+              "string",
               "null"
             ]
           },
@@ -4883,7 +4881,7 @@
       "examples": [
         {
           "params": {
-            "run_id": 3,
+            "run_id": "6f1c0e9a2b7d4c3e8f5a1b2c3d4e5f60",
             "wait_ms": 20000
           },
           "result": {
@@ -4905,9 +4903,7 @@
         "additionalProperties": false,
         "properties": {
           "run_id": {
-            "format": "uint64",
-            "minimum": 0,
-            "type": "integer"
+            "type": "string"
           },
           "wait_ms": {
             "description": "Milliseconds to wait, 0 by default, at most 25000",
@@ -4943,10 +4939,8 @@
             "description": "What run returned; absent when it returned nothing, nil or true"
           },
           "run_id": {
-            "format": "uint64",
-            "minimum": 0,
             "type": [
-              "integer",
+              "string",
               "null"
             ]
           },
@@ -5285,6 +5279,13 @@
             "description": "Accept typed text that matches no item; the answer is {text}",
             "type": [
               "boolean",
+              "null"
+            ]
+          },
+          "body": {
+            "description": "Shown under the title, line breaks kept; at most 16384 bytes",
+            "type": [
+              "string",
               "null"
             ]
           },
@@ -5682,6 +5683,13 @@
             "format": "uint64",
             "minimum": 0,
             "type": "integer"
+          },
+          "token": {
+            "description": "The requested frame's token; required for an agent's prompt",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -5727,7 +5735,7 @@
       "scope": "none",
       "scope_note": null,
       "stream": false,
-      "summary": "Answer or cancel a pending prompt. The first reply wins and every follower receives ended; a later one is refused with -32060 and data {reason: not_pending}."
+      "summary": "Answer or cancel a pending prompt. The first reply wins and every follower receives ended; a later one is refused with -32060 and data {reason: not_pending}. An agent's prompt takes a reply only with its token, from outside every pane."
     },
     {
       "audience": "anyone",
@@ -5829,7 +5837,7 @@
       "scope": "none",
       "scope_note": null,
       "stream": true,
-      "summary": "Stream the prompts this client can show: a following header, a requested frame for each pending prompt oldest first, then requested frames (id, spec, origin, remaining time) and ended frames (id, reason), keepalive frames when quiet."
+      "summary": "Stream the prompts this client can show: a following header, a requested frame for each pending prompt oldest first, then requested frames (id, spec, origin, remaining time, token) and ended frames (id, reason), keepalive frames when quiet. A pane never receives an agent's prompt."
     },
     {
       "audience": "anyone",

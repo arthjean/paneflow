@@ -55,6 +55,8 @@ pub struct Worker {
     pub layout: Arc<crate::layout_authority::LayoutAuthority>,
     pub classifier: paneflow_host::peer::PeerClassifier,
     pub principals: Mutex<std::collections::HashMap<ConnectionId, Principal>>,
+    pub agent_callers:
+        Mutex<std::collections::HashMap<ConnectionId, crate::agent_caller::CallerVerdict>>,
     pub policy: paneflow_host::policy::PolicySource,
     pub(crate) acting: crate::authority::ActingRuns,
 }
@@ -82,10 +84,52 @@ impl Worker {
             })
     }
 
+    fn lock_agent_callers(
+        &self,
+    ) -> std::sync::MutexGuard<
+        '_,
+        std::collections::HashMap<ConnectionId, crate::agent_caller::CallerVerdict>,
+    > {
+        self.agent_callers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
     fn classify_connection(&self, connection: ConnectionId, wire: &Wire) {
         let read = paneflow_host::peer::read_wire_peer(wire);
         let principal = self.classifier.principal(&read, "worker");
+        if let (Principal::Pane { session, .. }, Some(identity)) = (&principal, read.identity()) {
+            let verdict = crate::agent_caller::classify_caller(
+                &paneflow_peer::LiveLineage,
+                &crate::agent_caller::LiveProcesses,
+                (identity.pid(), identity.started_at()),
+                crate::agent_caller::leader_of_session(&self.home, session),
+            );
+            log::debug!(
+                "paneflow-serve: the caller {} in pane session {session} is {verdict:?}",
+                identity.pid()
+            );
+            self.lock_agent_callers().insert(connection, verdict);
+        }
         self.lock_principals().insert(connection, principal);
+    }
+
+    pub fn agent_caller(
+        &self,
+        connection: ConnectionId,
+        principal: &Principal,
+    ) -> Option<crate::agent_caller::CallerVerdict> {
+        if connection == ConnectionId::INTERNAL || !principal.is_pane() {
+            return None;
+        }
+        match self.lock_agent_callers().get(&connection) {
+            Some(verdict) if verdict.is_agent() => Some(verdict.clone()),
+            Some(_) => None,
+            None => Some(crate::agent_caller::CallerVerdict::Agent {
+                label: None,
+                evidence: "the caller's parents were never read".into(),
+            }),
+        }
     }
 
     fn attached_as(&self, connection: ConnectionId, client: Option<&str>) {
@@ -102,6 +146,7 @@ impl Worker {
 
     fn forget_connection(&self, connection: ConnectionId) {
         self.lock_principals().remove(&connection);
+        self.lock_agent_callers().remove(&connection);
     }
 
     pub fn lock_usage(&self) -> std::sync::MutexGuard<'_, Usage> {
@@ -812,11 +857,15 @@ pub(crate) fn register_methods(builder: RegistryBuilder) -> RegistryBuilder {
         .ready::<config::ListActions>(|worker, _| to_value(worker.config.actions()))
         .ready::<config::InvokeAction>(|worker, call| {
             worker
-                .invoke_action(call.params, &call.authority.principal)
+                .invoke_action(call.params, &call.authority.principal, call.connection)
                 .and_then(to_value)
         })
         .ready::<prompt::ResolveAgentPrompt>(|worker, call| {
-            to_value(worker.resolve_agent_prompt(call.params, &call.authority.principal))
+            to_value(worker.resolve_agent_prompt(
+                call.params,
+                &call.authority.principal,
+                call.connection,
+            ))
         })
         .ready::<config::WaitAction>(|worker, call| {
             worker
@@ -826,7 +875,7 @@ pub(crate) fn register_methods(builder: RegistryBuilder) -> RegistryBuilder {
         .ready::<config::ListKeymap>(|worker, _| to_value(worker.config.keymap()))
         .ready::<prompt::Request>(|worker, call| {
             worker
-                .request_prompt(call.params, &call.authority.principal)
+                .request_prompt(call.params, &call.authority.principal, call.connection)
                 .and_then(to_value)
         })
         .ready::<prompt::Wait>(|worker, call| {
@@ -839,7 +888,10 @@ pub(crate) fn register_methods(builder: RegistryBuilder) -> RegistryBuilder {
                 .and_then(to_value)
         })
         .ready::<prompt::ReplyTo>(|worker, call| {
-            worker.prompts.reply(call.params).and_then(to_value)
+            worker
+                .prompts
+                .reply(call.params, &call.authority.principal)
+                .and_then(to_value)
         })
         .stream::<prompt::Follow>(stream_prompts)
         .ready::<layout::ViewMethod>(|worker, call| {
@@ -966,6 +1018,7 @@ fn stream_events(
         shutdown,
         id,
         params,
+        ..
     } = stream;
     let filter = match Filter::new(params.types.as_deref(), params.workspace_id) {
         Ok(filter) => filter,
@@ -1079,6 +1132,7 @@ fn stream_prompts(
         shutdown,
         id,
         params,
+        principal,
     } = stream;
     if params.kinds.is_empty() {
         return write_error(
@@ -1087,7 +1141,9 @@ fn stream_prompts(
             &ServeError::invalid_params("'kinds' must name at least one of input and pick"),
         );
     }
-    let feed = worker.prompts.follow(params.kinds.clone());
+    let feed = worker
+        .prompts
+        .follow(params.kinds.clone(), principal.clone());
     let _following = Following {
         worker,
         id: feed.id,

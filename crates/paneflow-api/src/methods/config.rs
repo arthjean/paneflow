@@ -183,7 +183,7 @@ pub struct Invoked {
     )]
     pub status: Option<RunStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub run_id: Option<u64>,
+    pub run_id: Option<String>,
 }
 
 impl Invoked {
@@ -195,7 +195,7 @@ impl Invoked {
         }
     }
 
-    pub fn running(run_id: u64) -> Self {
+    pub fn running(run_id: String) -> Self {
         Self {
             result: None,
             status: Some(RunStatus::Running),
@@ -215,7 +215,7 @@ impl Invoked {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WaitRunParams {
-    pub run_id: u64,
+    pub run_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(description = "Milliseconds to wait, 0 by default, at most 25000")]
     pub wait_ms: Option<u64>,
@@ -382,7 +382,7 @@ method! {
         reply: Reply::Ready,
         params: WaitRunParams,
         result: Invoked,
-        examples: [({"run_id": 3, "wait_ms": 20000} => {"result": {"surface_id": 12}, "status": "done"})],
+        examples: [({"run_id": "6f1c0e9a2b7d4c3e8f5a1b2c3d4e5f60", "wait_ms": 20000} => {"result": {"surface_id": 12}, "status": "done"})],
     }
 }
 

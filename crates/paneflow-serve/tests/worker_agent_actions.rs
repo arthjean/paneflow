@@ -185,7 +185,7 @@ fn an_agent_runs_only_the_actions_marked_for_agents_and_hears_one_refusal_for_th
 }
 
 #[test]
-fn a_run_still_going_after_its_wait_answers_running_and_action_wait_returns_its_result() {
+fn a_run_still_going_after_its_wait_answers_running_with_a_handle_a_claimed_session_cannot_use() {
     let home = tempfile::tempdir().unwrap();
     let worker = open(home.path());
     let started = call(
@@ -195,7 +195,9 @@ fn a_run_still_going_after_its_wait_answers_running_and_action_wait_returns_its_
     )
     .unwrap();
     assert_eq!(started["status"], "running", "{started}");
-    let run_id = started["run_id"].as_u64().expect("a run id");
+    let run_id = started["run_id"].as_str().expect("a run id");
+    assert_eq!(run_id.len(), 32, "{started}");
+    assert!(run_id.chars().all(|c| c.is_ascii_hexdigit()), "{started}");
     assert!(
         call(
             home.path(),
@@ -205,15 +207,18 @@ fn a_run_still_going_after_its_wait_answers_running_and_action_wait_returns_its_
         .is_err(),
         "'wait_ms' is bounded"
     );
-    let done = call(
+    let outside = call(
         home.path(),
         "action.wait",
         json!({"run_id": run_id, "wait_ms": 25_000}),
     )
-    .unwrap();
-    assert_eq!(done, json!({"result": "slept", "status": "done"}));
-    let again = call(home.path(), "action.wait", json!({"run_id": run_id})).unwrap_err();
-    assert!(again.contains("no action run with id"), "{again}");
+    .unwrap_err();
+    assert!(
+        outside.contains("no action run with id"),
+        "a caller outside every pane is not the agent it names: {outside}"
+    );
+    let guessed = call(home.path(), "action.wait", json!({"run_id": "1"})).unwrap_err();
+    assert!(guessed.contains("no action run with id"), "{guessed}");
     let quick = call(
         home.path(),
         "action.invoke",
@@ -291,7 +296,7 @@ fn a_question_from_an_action_an_agent_runs_names_the_agent_and_the_action() {
     call(
         home.path(),
         "prompt.reply",
-        json!({"id": shown["id"], "answer": "yes"}),
+        json!({"id": shown["id"], "token": shown["token"], "answer": "yes"}),
     )
     .unwrap();
     assert_eq!(running.join().unwrap(), json!({"result": "yes"}));

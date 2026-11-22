@@ -5,6 +5,8 @@
     clippy::unwrap_in_result
 )]
 
+mod pane;
+
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -366,11 +368,119 @@ fn case_agent_rate_limited(endpoint: &Path) -> &'static str {
     "an_agent_past_its_burst_is_rate_limited_and_nothing_is_shown"
 }
 
+fn agent_prompt(session: &str, wait_ms: u64) -> Value {
+    json!({"kind": "input", "title": "Allow rm -rf build?", "wait_ms": wait_ms, "origin": {"kind": "agent", "agent": "claude", "session": session}})
+}
+
+fn reply_with(endpoint: &Path, id: &Value, token: Option<&str>) -> Result<Value, String> {
+    let mut params = json!({"id": id, "answer": "yes"});
+    if let Some(token) = token {
+        params["token"] = json!(token);
+    }
+    request(endpoint, "prompt.reply", params)
+}
+
+fn assert_not_pending(error: &str) {
+    assert_eq!(error_code(error), -32060, "{error}");
+    assert!(error.contains("not_pending"), "{error}");
+}
+
+fn case_reply_without_its_token(endpoint: &Path) -> &'static str {
+    let mut window = Follower::open(endpoint, &["input"]);
+    let pending = ask(endpoint, agent_prompt("a1", 0));
+    assert_eq!(pending["status"], "pending", "{pending}");
+    let shown = window.requested();
+    let token = shown["token"].as_str().expect("a token").to_string();
+    assert_eq!(token.len(), 32, "128 bits as hex");
+    assert_not_pending(&reply_with(endpoint, &shown["id"], None).unwrap_err());
+    let forged = "0".repeat(32);
+    assert_not_pending(&reply_with(endpoint, &shown["id"], Some(&forged)).unwrap_err());
+    let unknown = reply_with(endpoint, &json!(999), None).unwrap_err();
+    assert_eq!(
+        unknown.replace("999", "ID"),
+        reply_with(endpoint, &shown["id"], None)
+            .unwrap_err()
+            .replace(&shown["id"].to_string(), "ID"),
+        "the refusal reads as an unknown id"
+    );
+    let still = request(
+        endpoint,
+        "prompt.wait",
+        json!({"id": shown["id"], "wait_ms": 0}),
+    )
+    .unwrap();
+    assert_eq!(still["status"], "pending", "{still}");
+    let replied = reply_with(endpoint, &shown["id"], Some(&token)).unwrap();
+    assert_eq!(replied["reason"], "answered");
+    "a_reply_to_an_agent_prompt_without_its_token_is_refused_and_it_stays_pending"
+}
+
+const PANE_TEST: &str = "pane_client";
+
+#[test]
+fn pane_client() {
+    let Some((mode, home)) = pane::pane_mode() else {
+        return;
+    };
+    let endpoint = paneflow_home::serve_endpoint_path(&home);
+    let mut control = pane::connect(&home, "pane-client");
+    match mode.split(':').collect::<Vec<_>>().as_slice() {
+        ["reply", id, token] => {
+            let follow = pane::worker_call(
+                &mut control,
+                "prompt.follow",
+                json!({"kinds": ["input", "pick"]}),
+            );
+            pane::report("follow", &follow);
+            let id: u64 = id.parse().unwrap();
+            let replied = reply_with(&endpoint, &json!(id), Some(token)).map_err(Value::String);
+            pane::report("reply", &replied);
+        }
+        _ => panic!("unknown pane client mode {mode}"),
+    }
+    println!("{}", pane::DONE);
+}
+
+fn case_pane_refused_on_an_agent_prompt() -> &'static str {
+    let instance = pane::Instance::start(
+        &json!({"shell_integration": false, "ipc": {"scripting": false, "orchestration": false}}),
+        None,
+    );
+    let endpoint = paneflow_home::serve_endpoint_path(instance.home());
+    let mut window = Follower::open(&endpoint, &["input"]);
+    let asker = ask_later(&endpoint, agent_prompt("a1", 25_000));
+    let shown = window.requested();
+    let token = shown["token"].as_str().unwrap();
+    let lines = instance.run_in_pane(PANE_TEST, &format!("reply:{}:{token}", shown["id"]));
+    let follow = pane::labelled(&lines, "follow");
+    assert_eq!(
+        follow["ok"]["pending"], 0,
+        "a pane follower is given no agent prompt and no token: {follow}"
+    );
+    let reply = pane::labelled(&lines, "reply");
+    assert_not_pending(reply["error"].as_str().unwrap_or_default());
+    let still = request(
+        &endpoint,
+        "prompt.wait",
+        json!({"id": shown["id"], "wait_ms": 0}),
+    )
+    .unwrap();
+    assert_eq!(still["status"], "pending", "{still}");
+    let replied = reply_with(&endpoint, &shown["id"], Some(token)).unwrap();
+    assert_eq!(replied["reason"], "answered");
+    let outcome = asker.join().unwrap();
+    assert!(
+        outcome["status"] == "answered" || outcome["status"] == "pending",
+        "{outcome}"
+    );
+    "a_pane_never_sees_nor_answers_an_agent_prompt_even_with_a_token"
+}
+
 #[test]
 fn the_prompt_broker_passes_every_listed_conformance_case() {
     let mut listed = listed_cases();
     listed.sort();
-    let cases: [fn(&Path) -> &'static str; 11] = [
+    let cases: [fn(&Path) -> &'static str; 12] = [
         case_first_reply_wins,
         case_cancel,
         case_unsupported,
@@ -382,6 +492,7 @@ fn the_prompt_broker_passes_every_listed_conformance_case() {
         case_busy,
         case_timeout,
         case_agent_rate_limited,
+        case_reply_without_its_token,
     ];
     let mut ran: Vec<String> = cases
         .iter()
@@ -391,6 +502,7 @@ fn the_prompt_broker_passes_every_listed_conformance_case() {
         })
         .collect();
     ran.push(case_shutdown(start()).to_string());
+    ran.push(case_pane_refused_on_an_agent_prompt().to_string());
     ran.sort();
     assert_eq!(ran, listed, "every listed case has exactly one runner");
 }

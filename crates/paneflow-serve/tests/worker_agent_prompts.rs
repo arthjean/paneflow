@@ -53,8 +53,12 @@ fn resolve_later(home: &Path, params: Value) -> std::thread::JoinHandle<Value> {
     std::thread::spawn(move || call(&home, "agent_prompt.resolve", params))
 }
 
-fn reply(home: &Path, id: &Value, answer: Value) {
-    call(home, "prompt.reply", json!({"id": id, "answer": answer}));
+fn reply(home: &Path, shown: &Value, answer: Value) {
+    call(
+        home,
+        "prompt.reply",
+        json!({"id": shown["id"], "token": shown["token"], "answer": answer}),
+    );
 }
 
 fn questions() -> Value {
@@ -136,7 +140,7 @@ fn every_question_is_asked_in_order_and_the_answers_become_the_hook_output() {
     assert_eq!(first["spec"]["items"][0]["subtitle"], "Warm");
     assert_eq!(first["origin"]["kind"], "agent");
     assert_eq!(first["origin"]["agent"], "Claude Code");
-    reply(home.path(), &first["id"], json!("1"));
+    reply(home.path(), &first, json!("1"));
     let second = next_requested(&mut follower);
     assert_eq!(second["spec"]["title"], "Which sizes?");
     assert_eq!(second["spec"]["multiple"], true);
@@ -144,7 +148,7 @@ fn every_question_is_asked_in_order_and_the_answers_become_the_hook_output() {
         second["spec"].get("allow_other").is_none(),
         "the broker takes typed text only for a single choice"
     );
-    reply(home.path(), &second["id"], json!(["0", "2"]));
+    reply(home.path(), &second, json!(["0", "2"]));
     assert_eq!(
         resolving.join().unwrap(),
         json!({"status": "answered", "output": {"hookSpecificOutput": {
@@ -166,7 +170,7 @@ fn answering_in_the_terminal_or_cancelling_declines_and_asks_nothing_more() {
     let mut follower = window(home.path());
     let resolving = resolve_later(home.path(), ask("claude"));
     let first = next_requested(&mut follower);
-    reply(home.path(), &first["id"], json!("terminal"));
+    reply(home.path(), &first, json!("terminal"));
     assert_eq!(
         resolving.join().unwrap(),
         json!({"status": "declined", "reason": "terminal"})
@@ -176,7 +180,7 @@ fn answering_in_the_terminal_or_cancelling_declines_and_asks_nothing_more() {
     call(
         home.path(),
         "prompt.reply",
-        json!({"id": first["id"], "cancel": true}),
+        json!({"id": first["id"], "token": first["token"], "cancel": true}),
     );
     assert_eq!(
         resolving.join().unwrap(),
@@ -226,18 +230,48 @@ fn a_permission_request_offers_allow_deny_or_the_terminal_titled_with_the_tool()
             permission("Bash", json!({"command": long, "description": "print"})),
         );
         let shown = next_requested(&mut follower);
-        let title = shown["spec"]["title"].as_str().unwrap();
-        let (tool, summary) = title.split_once('\n').unwrap();
-        assert_eq!(tool, "Bash");
-        assert_eq!(summary.chars().count(), 400);
+        assert_eq!(shown["spec"]["title"], "Bash");
+        assert_eq!(
+            shown["spec"]["body"].as_str().unwrap(),
+            format!("command: {long}\ndescription: print"),
+            "the whole input, every field by name"
+        );
         assert_eq!(
             titles(&shown),
             ["Allow once", "Deny", "Decide in the terminal"]
         );
         assert!(shown["spec"].get("allow_other").is_none());
-        reply(home.path(), &shown["id"], json!(choice));
+        reply(home.path(), &shown, json!(choice));
         assert_eq!(resolving.join().unwrap(), expected, "{choice}");
     }
+    let too_long = resolve_later(
+        home.path(),
+        permission("Bash", json!({"command": "y".repeat(17 * 1024)})),
+    );
+    let shown = next_requested(&mut follower);
+    assert_eq!(titles(&shown), ["Deny", "Decide in the terminal"]);
+    assert!(
+        shown["spec"]["body"]
+            .as_str()
+            .unwrap()
+            .contains("too long to show"),
+        "{}",
+        shown["spec"]["body"]
+    );
+    let refused = HostControl::connect(&paneflow_home::serve_endpoint_path(home.path()), "window")
+        .unwrap()
+        .request_with_deadline(
+            "prompt.reply",
+            json!({"id": shown["id"], "token": shown["token"], "answer": "allow"}),
+            Duration::from_secs(30),
+        )
+        .unwrap_err();
+    assert!(refused.contains("not an item id"), "{refused}");
+    reply(home.path(), &shown, json!("deny"));
+    assert_eq!(
+        too_long.join().unwrap()["output"]["hookSpecificOutput"]["decision"]["behavior"],
+        "deny"
+    );
     assert_eq!(
         call(
             home.path(),

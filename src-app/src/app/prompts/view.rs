@@ -27,6 +27,7 @@ const PROMPT_CHROME: f32 = 112.;
 const PROMPT_BOTTOM_GAP: f32 = 16.;
 const ORIGIN_SIZE: f32 = 13.;
 const QUESTION_MAX_HEIGHT: f32 = 120.;
+const BODY_MAX_HEIGHT: f32 = 160.;
 const DETAIL_MAX_WIDTH: f32 = 200.;
 const HEADER_GAP: f32 = 2.;
 const HEADER_BOTTOM: f32 = 8.;
@@ -213,9 +214,18 @@ impl ShownPrompt {
     }
 }
 
-pub(crate) fn list_height(rows: usize, viewport_height: f32) -> Pixels {
+fn body_room(has_body: bool) -> f32 {
+    if has_body {
+        BODY_MAX_HEIGHT + HEADER_GAP
+    } else {
+        0.
+    }
+}
+
+pub(crate) fn list_height(rows: usize, viewport_height: f32, has_body: bool) -> Pixels {
     let row = ROW_HEIGHT + ROW_SPACING;
-    let room = (viewport_height - PROMPT_TOP_MARGIN - PROMPT_CHROME - PROMPT_BOTTOM_GAP).max(row);
+    let chrome = PROMPT_CHROME + body_room(has_body);
+    let room = (viewport_height - PROMPT_TOP_MARGIN - chrome - PROMPT_BOTTOM_GAP).max(row);
     px((rows as f32 * row)
         .min(f32::from(MENU_MAX_HEIGHT))
         .min(room))
@@ -334,7 +344,7 @@ impl PaneFlowApp {
         self.prompts
             .pending
             .retain(|pending| pending.id != prompt.id);
-        send_reply(prompt.id, answer);
+        send_reply(prompt.id, prompt.token, answer);
         cx.notify();
     }
 
@@ -568,6 +578,17 @@ impl PaneFlowApp {
                             .text_color(ui.text)
                             .child(SharedString::from(title)),
                     )
+                    .when_some(shown.prompt.spec.body.clone(), |header, body| {
+                        header.child(
+                            div()
+                                .id("prompt-body")
+                                .max_h(px(BODY_MAX_HEIGHT))
+                                .overflow_y_scroll()
+                                .text_size(px(LABEL_SIZE))
+                                .text_color(ui.text)
+                                .child(SharedString::from(body)),
+                        )
+                    })
                     .child(
                         div()
                             .text_size(px(ORIGIN_SIZE))
@@ -644,6 +665,7 @@ impl PaneFlowApp {
                     .h(list_height(
                         rows.len(),
                         f32::from(window.viewport_size().height),
+                        shown.prompt.spec.body.is_some(),
                     ))
                     .track_scroll(&shown.scroll),
                 )
@@ -828,11 +850,22 @@ mod tests {
     #[test]
     fn the_list_never_runs_past_the_bottom_of_the_smallest_window() {
         let row = ROW_HEIGHT + ROW_SPACING;
-        assert_eq!(list_height(3, 1000.), px(3. * row));
-        assert_eq!(list_height(2_000, 1000.), MENU_MAX_HEIGHT);
-        let short = f32::from(list_height(2_000, 500.));
+        assert_eq!(list_height(3, 1000., false), px(3. * row));
+        assert_eq!(list_height(2_000, 1000., false), MENU_MAX_HEIGHT);
+        let short = f32::from(list_height(2_000, 500., false));
         assert!(short + PROMPT_TOP_MARGIN + PROMPT_CHROME <= 500.);
-        assert_eq!(list_height(2_000, 100.), px(row), "one row stays reachable");
+        assert_eq!(
+            list_height(2_000, 100., false),
+            px(row),
+            "one row stays reachable"
+        );
+        let with_body = f32::from(list_height(3, 500., true));
+        assert!(with_body + PROMPT_TOP_MARGIN + PROMPT_CHROME + body_room(true) <= 500.);
+        assert_eq!(
+            list_height(3, 500., true),
+            px(3. * row),
+            "a permission's three choices still fit the smallest window under its input"
+        );
     }
 
     #[test]

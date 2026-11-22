@@ -25,12 +25,28 @@ const STREAM_SILENCE: Duration = Duration::from_secs(10);
 const FRAMES_PER_TICK: usize = 32;
 pub(crate) const SHOWN_KINDS: [PromptKind; 2] = [PromptKind::Input, PromptKind::Pick];
 
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct AnswerToken(String);
+
+impl AnswerToken {
+    fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for AnswerToken {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("AnswerToken(..)")
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PendingPrompt {
     pub(crate) id: u64,
     pub(crate) spec: Arc<PromptSpec>,
     pub(crate) origin: Option<PromptOrigin>,
     pub(crate) asked_at: Instant,
+    pub(crate) token: Option<AnswerToken>,
 }
 
 pub(crate) fn waited(requested_at_ms: u64, now_ms: u64) -> Duration {
@@ -58,6 +74,9 @@ pub(crate) fn plain_text(raw: &str) -> String {
 
 fn displayable(mut spec: PromptSpec) -> PromptSpec {
     spec.title = plain_text(&spec.title);
+    if let Some(body) = spec.body.as_mut() {
+        *body = plain_text(body);
+    }
     for text in [&mut spec.placeholder, &mut spec.value, &mut spec.confirm]
         .into_iter()
         .flatten()
@@ -77,6 +96,7 @@ impl PendingPrompt {
             asked_at: Instant::now()
                 .checked_sub(waited)
                 .unwrap_or_else(Instant::now),
+            token: frame.token.map(AnswerToken),
         }
     }
 
@@ -245,14 +265,26 @@ pub(crate) fn spawn_prompt_thread(
     }
 }
 
-pub(crate) fn send_reply(id: u64, answer: Option<PromptAnswer>) {
-    let Some(endpoint) = paneflow_home::serve_endpoint_path_for_current_home() else {
-        return;
-    };
-    let params = match answer {
+pub(crate) fn reply_params(
+    id: u64,
+    token: Option<&AnswerToken>,
+    answer: Option<PromptAnswer>,
+) -> Value {
+    let mut params = match answer {
         Some(answer) => json!({"id": id, "answer": answer}),
         None => json!({"id": id, "cancel": true}),
     };
+    if let (Some(token), Some(map)) = (token, params.as_object_mut()) {
+        map.insert("token".into(), Value::String(token.expose().to_string()));
+    }
+    params
+}
+
+pub(crate) fn send_reply(id: u64, token: Option<AnswerToken>, answer: Option<PromptAnswer>) {
+    let Some(endpoint) = paneflow_home::serve_endpoint_path_for_current_home() else {
+        return;
+    };
+    let params = reply_params(id, token.as_ref(), answer);
     let spawned = std::thread::Builder::new()
         .name(REPLY_THREAD_NAME.into())
         .spawn(move || {
@@ -408,6 +440,7 @@ mod tests {
         PromptSpec {
             kind: PromptKind::Input,
             title: title.into(),
+            body: None,
             placeholder: None,
             value: None,
             confirm: None,
@@ -435,6 +468,7 @@ mod tests {
             asked_at: Instant::now()
                 .checked_sub(Duration::from_secs(waited_secs))
                 .unwrap(),
+            token: None,
         }
     }
 
@@ -466,6 +500,7 @@ mod tests {
             origin: None,
             requested_at_ms: 1_000,
             remaining_ms: 299_000,
+            token: None,
         })
         .unwrap();
         let StreamLine::Frame(PromptFrame::Requested(prompt)) = parse_line(&line, 61_000) else {
@@ -500,6 +535,64 @@ mod tests {
     }
 
     #[test]
+    fn the_window_replies_with_the_token_of_its_frame_and_never_prints_it() {
+        let line = serde_json::to_string(&RequestedFrame {
+            kind: FrameKind::Requested,
+            id: 9,
+            spec: spec("Allow?"),
+            origin: None,
+            requested_at_ms: 0,
+            remaining_ms: 1,
+            token: Some("ab".repeat(16)),
+        })
+        .unwrap();
+        let StreamLine::Frame(PromptFrame::Requested(prompt)) = parse_line(&line, 0) else {
+            panic!("a requested frame");
+        };
+        assert!(!format!("{prompt:?}").contains(&"ab".repeat(16)));
+        assert_eq!(
+            reply_params(
+                9,
+                prompt.token.as_ref(),
+                Some(PromptAnswer::Text("yes".into()))
+            ),
+            json!({"id": 9, "answer": "yes", "token": "ab".repeat(16)})
+        );
+        assert_eq!(
+            reply_params(9, prompt.token.as_ref(), None),
+            json!({"id": 9, "cancel": true, "token": "ab".repeat(16)})
+        );
+        assert_eq!(
+            reply_params(3, None, None),
+            json!({"id": 3, "cancel": true})
+        );
+    }
+
+    #[test]
+    fn a_permission_input_keeps_its_line_breaks_and_loses_its_controls_and_bidi_marks() {
+        let mut permission = spec("Bash");
+        permission.body =
+            Some("command:\r\nrm -rf\u{202e}gpj.\u{1b}[2J build\ndescription: x\u{7}".into());
+        let line = serde_json::to_string(&RequestedFrame {
+            kind: FrameKind::Requested,
+            id: 5,
+            spec: permission,
+            origin: None,
+            requested_at_ms: 0,
+            remaining_ms: 1,
+            token: None,
+        })
+        .unwrap();
+        let StreamLine::Frame(PromptFrame::Requested(prompt)) = parse_line(&line, 0) else {
+            panic!("a requested frame");
+        };
+        assert_eq!(
+            prompt.spec.body.as_deref(),
+            Some("command:\nrm -rfgpj.[2J build\ndescription: x")
+        );
+    }
+
+    #[test]
     fn a_surface_resolves_to_its_oldest_prompt() {
         let view = PromptsView {
             pending: vec![
@@ -522,6 +615,7 @@ mod tests {
             origin: None,
             requested_at_ms: 0,
             remaining_ms: 1,
+            token: None,
         })
         .unwrap();
         let StreamLine::Frame(PromptFrame::Requested(prompt)) = parse_line(&line, 0) else {

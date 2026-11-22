@@ -273,7 +273,7 @@ function paneflow.ui.pick(spec) end
 
 ---@class paneflow.action.invoke.result
 ---@field result? any
----@field run_id? integer
+---@field run_id? string
 ---@field status? "done"|"running"|"rate_limited"
 
 ---Run an action of init.lua with arguments and return what it returned. Arguments are checked against its schema first; a run is stopped after 30 seconds. With wait_ms, a run still going past it answers {status: running, run_id} for action.wait. With ctx.origin agent, only an action declared with agents = true runs.
@@ -296,12 +296,12 @@ paneflow.action.invoke = function(params) end
 paneflow.action.list = function(params) end
 
 ---@class paneflow.action.wait.params
----@field run_id integer
+---@field run_id string
 ---@field wait_ms? integer Milliseconds to wait, 0 by default, at most 25000
 
 ---@class paneflow.action.wait.result
 ---@field result? any
----@field run_id? integer
+---@field run_id? string
 ---@field status? "done"|"running"|"rate_limited"
 
 ---Keep waiting on an action run that action.invoke returned as {status: running, run_id}: the run's result with status done, the same running status, or the action's error.
@@ -707,7 +707,7 @@ paneflow.prompt = {}
 ---@field pending integer
 ---@field type "following"
 
----Stream the prompts this client can show: a following header, a requested frame for each pending prompt oldest first, then requested frames (id, spec, origin, remaining time) and ended frames (id, reason), keepalive frames when quiet.
+---Stream the prompts this client can show: a following header, a requested frame for each pending prompt oldest first, then requested frames (id, spec, origin, remaining time, token) and ended frames (id, reason), keepalive frames when quiet. A pane never receives an agent's prompt.
 ---@param params paneflow.prompt.follow.params
 ---@return paneflow.prompt.follow.result? result
 ---@return string? message
@@ -718,12 +718,13 @@ paneflow.prompt.follow = function(params) end
 ---@field answer? string|string[]|table The text, the id, the list of ids or {text}, as the prompt's kind takes
 ---@field cancel? boolean Dismiss the prompt; the asker receives cancelled
 ---@field id integer
+---@field token? string The requested frame's token; required for an agent's prompt
 
 ---@class paneflow.prompt.reply.result
 ---@field id integer
 ---@field reason "answered"|"cancelled"|"timeout"|"no_client"|"failed"
 
----Answer or cancel a pending prompt. The first reply wins and every follower receives ended; a later one is refused with -32060 and data {reason: not_pending}.
+---Answer or cancel a pending prompt. The first reply wins and every follower receives ended; a later one is refused with -32060 and data {reason: not_pending}. An agent's prompt takes a reply only with its token, from outside every pane.
 ---@param params paneflow.prompt.reply.params
 ---@return paneflow.prompt.reply.result? result
 ---@return string? message
@@ -732,6 +733,7 @@ paneflow.prompt.reply = function(params) end
 
 ---@class paneflow.prompt.request.params
 ---@field allow_other? boolean Accept typed text that matches no item; the answer is {text}
+---@field body? string Shown under the title, line breaks kept; at most 16384 bytes
 ---@field confirm? string Label of the confirming row
 ---@field items? (string|table)[] The choices of a pick prompt, at most 2000: an id string or an item
 ---@field kind "input"|"pick" input asks for a line of text, pick for a choice among items

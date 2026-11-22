@@ -5009,6 +5009,7 @@ dependencies = [
 name = "paneflow-serve"
 version = "0.20.0"
 dependencies = [
+ "getrandom 0.4.3",
  "interprocess",
  "jiff",
  "log",
@@ -5023,6 +5024,7 @@ dependencies = [
  "paneflow-launch",
  "paneflow-layout",
  "paneflow-mcp-install",
+ "paneflow-peer",
  "paneflow-process",
  "paneflow-script",
  "serde",

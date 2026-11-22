@@ -307,6 +307,81 @@ pub(crate) fn classify(pid: u32, started_at: u64, leaders: &[PaneLeader]) -> Mem
     }
 }
 
+pub(crate) fn lineage(pid: u32, started_at: u64, leader: crate::LeaderStamp) -> crate::Lineage {
+    use crate::{Ancestor, Lineage};
+    let describe = |pid: u32| {
+        let executable = open_process(pid, PROCESS_QUERY_LIMITED_INFORMATION)
+            .ok()
+            .and_then(|process| image_path(process.as_raw_handle()));
+        let name = executable
+            .as_deref()
+            .and_then(std::path::Path::file_name)
+            .map(|name| name.to_string_lossy().into_owned());
+        (name, executable)
+    };
+    if crate::process_start_time(pid) != Some(started_at) {
+        return Lineage::broken(format!(
+            "process {pid} ended and its id was reused before its parents were read"
+        ));
+    }
+    let parents = match parents() {
+        Ok(parents) => parents,
+        Err(error) => return Lineage::broken(format!("the process snapshot failed: {error}")),
+    };
+    let mut current = (pid, started_at);
+    let mut chain = Vec::new();
+    for _ in 0..MAX_ANCESTORS {
+        let (name, executable) = describe(current.0);
+        chain.push(Ancestor {
+            pid: current.0,
+            started_at: current.1,
+            name,
+            executable,
+        });
+        if current.0 == leader.pid {
+            if current.1 == leader.started_at {
+                return Lineage::ToLeader(chain);
+            }
+            return Lineage::broken(format!(
+                "the pane's shell {} ended and its id was reused",
+                leader.pid
+            ));
+        }
+        let Some(&parent) = parents.get(&current.0) else {
+            return Lineage::broken(format!(
+                "process {} is missing from the process snapshot",
+                current.0
+            ));
+        };
+        if parent == 0 || parent == current.0 {
+            return Lineage::broken(format!(
+                "the parents of process {pid} end at {} without the pane's shell {}",
+                current.0, leader.pid
+            ));
+        }
+        match crate::process_start_time(parent) {
+            Some(parent_started) if parent_started <= current.1 => {
+                current = (parent, parent_started);
+            }
+            Some(_) => {
+                return Lineage::broken(format!(
+                    "the parent {parent} of process {} started after it, so its id was reused",
+                    current.0
+                ));
+            }
+            None => {
+                return Lineage::broken(format!(
+                    "cannot read the parent {parent} of process {}",
+                    current.0
+                ));
+            }
+        }
+    }
+    Lineage::broken(format!(
+        "the parents of process {pid} are more than {MAX_ANCESTORS} processes deep"
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

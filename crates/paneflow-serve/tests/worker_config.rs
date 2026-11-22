@@ -524,7 +524,7 @@ fn an_action_asks_through_the_worker_and_types_with_the_answer_of_the_first_clie
     call(
         home.path(),
         "prompt.reply",
-        json!({"id": shown["id"], "answer": "fix/login"}),
+        json!({"id": shown["id"], "token": shown["token"], "answer": "fix/login"}),
     )
     .unwrap();
     assert_eq!(

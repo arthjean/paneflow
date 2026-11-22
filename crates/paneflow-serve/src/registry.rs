@@ -57,6 +57,7 @@ pub(crate) struct Stream<'a, P> {
     pub(crate) shutdown: &'a AtomicBool,
     pub(crate) id: &'a Value,
     pub(crate) params: P,
+    pub(crate) principal: &'a Principal,
 }
 
 type Handler<P> = fn(&Arc<Worker>, Call<'_, P>) -> Result<Value, ServeError>;
@@ -67,8 +68,9 @@ type ReadyHandler = Box<
         + Sync,
 >;
 
-type StreamHandler =
-    Box<dyn Fn(&mut Wire, &Arc<Worker>, &AtomicBool, &Value, &Value) -> Flow + Send + Sync>;
+type StreamHandler = Box<
+    dyn Fn(&mut Wire, &Arc<Worker>, &AtomicBool, &Value, &Value, &Principal) -> Flow + Send + Sync,
+>;
 
 enum Serve {
     Ready(ReadyHandler),
@@ -192,13 +194,14 @@ impl RegistryBuilder {
         self.push::<M>(
             Reply::Stream,
             Serve::Stream(Box::new(
-                move |wire, worker, shutdown, id, raw| match decode::<M::Params>(raw) {
+                move |wire, worker, shutdown, id, raw, principal| match decode::<M::Params>(raw) {
                     Ok(params) => handler(Stream {
                         wire,
                         worker,
                         shutdown,
                         id,
                         params,
+                        principal,
                     }),
                     Err(error) => crate::server::write_error(wire, id, &error),
                 },
@@ -336,7 +339,14 @@ impl Registry {
             Serve::Closing(handler, after) => {
                 Served::ReplyThenClose(handler(worker, params, connection, &authority), *after)
             }
-            Serve::Stream(handler) => Served::Streamed(handler(wire, worker, shutdown, id, params)),
+            Serve::Stream(handler) => Served::Streamed(handler(
+                wire,
+                worker,
+                shutdown,
+                id,
+                params,
+                &authority.principal,
+            )),
         }
     }
 }
@@ -409,7 +419,11 @@ mod tests {
             (4, r#"{"ipc": {"scripting": true}}"#),
         ] {
             std::fs::write(&config, body).expect("the config is written");
-            for row in DECISION_TABLE.lines().filter(|row| !row.starts_with('#')) {
+            for row in DECISION_TABLE
+                .lines()
+                .skip(1)
+                .take_while(|row| !row.starts_with('#'))
+            {
                 let fields: Vec<&str> = row.split_whitespace().collect();
                 let [method, owner, kind, ..] = fields[..] else {
                     continue;

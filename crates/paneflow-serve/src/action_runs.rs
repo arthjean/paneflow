@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -19,13 +19,23 @@ enum Slot {
 
 struct Run {
     asker: Option<String>,
+    opened: u64,
     slot: Slot,
+}
+
+impl Run {
+    fn waitable_by(&self, caller: Option<&str>) -> bool {
+        match self.asker.as_deref() {
+            Some(asker) => caller == Some(asker),
+            None => true,
+        }
+    }
 }
 
 #[derive(Default)]
 struct RunsState {
-    next: u64,
-    runs: BTreeMap<u64, Run>,
+    opened: u64,
+    runs: HashMap<String, Run>,
 }
 
 impl RunsState {
@@ -34,17 +44,16 @@ impl RunsState {
             Slot::Running => true,
             Slot::Done { at_ms, .. } => now_ms.saturating_sub(at_ms) < RUN_RETENTION_MS,
         });
-        let finished: Vec<u64> = self
+        let mut finished: Vec<(u64, String)> = self
             .runs
             .iter()
             .filter(|(_, run)| matches!(run.slot, Slot::Done { .. }))
-            .map(|(id, _)| *id)
+            .map(|(id, run)| (run.opened, id.clone()))
             .collect();
-        for id in finished
-            .iter()
-            .take(finished.len().saturating_sub(MAX_FINISHED_RUNS))
-        {
-            self.runs.remove(id);
+        finished.sort();
+        let excess = finished.len().saturating_sub(MAX_FINISHED_RUNS);
+        for (_, id) in finished.into_iter().take(excess) {
+            self.runs.remove(&id);
         }
     }
 }
@@ -55,7 +64,7 @@ pub struct ActionRuns {
     changed: Condvar,
 }
 
-pub fn unknown_run(run_id: u64) -> ServeError {
+pub fn unknown_run(run_id: &str) -> ServeError {
     ServeError::invalid_params(format!(
         "no action run with id {run_id}; its result was already returned or it never existed"
     ))
@@ -70,23 +79,29 @@ impl ActionRuns {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    pub fn open(&self, asker: Option<String>) -> u64 {
+    pub fn open(&self, asker: Option<String>) -> Result<String, ServeError> {
+        let id = crate::handles::fresh_secret().map_err(|detail| ServeError {
+            code: crate::protocol::ERR_INTERNAL,
+            message: detail,
+            data: None,
+        })?;
         let mut state = self.lock();
         state.sweep(now_ms());
-        state.next += 1;
-        let id = state.next;
+        state.opened += 1;
+        let opened = state.opened;
         state.runs.insert(
-            id,
+            id.clone(),
             Run {
                 asker,
+                opened,
                 slot: Slot::Running,
             },
         );
-        id
+        Ok(id)
     }
 
-    pub fn finish(&self, run_id: u64, outcome: Result<Invoked, ServeError>) {
-        if let Some(run) = self.lock().runs.get_mut(&run_id)
+    pub fn finish(&self, run_id: &str, outcome: Result<Invoked, ServeError>) {
+        if let Some(run) = self.lock().runs.get_mut(run_id)
             && matches!(run.slot, Slot::Running)
         {
             run.slot = Slot::Done {
@@ -97,8 +112,8 @@ impl ActionRuns {
         self.changed.notify_all();
     }
 
-    pub fn discard(&self, run_id: u64) {
-        self.lock().runs.remove(&run_id);
+    pub fn discard(&self, run_id: &str) {
+        self.lock().runs.remove(run_id);
     }
 
     pub fn running(&self) -> usize {
@@ -111,7 +126,7 @@ impl ActionRuns {
 
     pub fn wait(
         &self,
-        run_id: u64,
+        run_id: &str,
         wait_ms: Option<u64>,
         caller: Option<&str>,
     ) -> Result<Invoked, ServeError> {
@@ -124,19 +139,17 @@ impl ActionRuns {
         let deadline = Instant::now() + Duration::from_millis(wait_ms);
         let mut state = self.lock();
         loop {
-            let Some(run) = state.runs.get(&run_id) else {
+            let Some(run) = state.runs.get(run_id) else {
                 return Err(unknown_run(run_id));
             };
-            if let (Some(asker), Some(caller)) = (run.asker.as_deref(), caller)
-                && asker != caller
-            {
+            if !run.waitable_by(caller) {
                 return Err(unknown_run(run_id));
             }
             if matches!(run.slot, Slot::Done { .. }) {
                 let Some(Run {
                     slot: Slot::Done { outcome, .. },
                     ..
-                }) = state.runs.remove(&run_id)
+                }) = state.runs.remove(run_id)
                 else {
                     return Err(unknown_run(run_id));
                 };
@@ -148,7 +161,7 @@ impl ActionRuns {
             }
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
-                return Ok(Invoked::running(run_id));
+                return Ok(Invoked::running(run_id.to_string()));
             }
             state = self
                 .changed
@@ -167,58 +180,97 @@ mod tests {
     #[test]
     fn a_run_answers_running_until_it_ends_then_its_result_once() {
         let runs = ActionRuns::default();
-        let id = runs.open(Some("a".into()));
+        let id = runs.open(Some("a".into())).unwrap();
+        assert_eq!(id.len(), crate::handles::SECRET_HEX_LEN, "128 random bits");
         assert_eq!(
-            runs.wait(id, None, Some("a")).unwrap(),
-            Invoked::running(id)
+            runs.wait(&id, None, Some("a")).unwrap(),
+            Invoked::running(id.clone())
         );
         assert_eq!(runs.running(), 1);
         runs.finish(
-            id,
+            &id,
             Ok(Invoked {
                 result: Some(json!({"ok": true})),
                 ..Invoked::default()
             }),
         );
         assert_eq!(
-            runs.wait(id, None, Some("a")).unwrap(),
+            runs.wait(&id, None, Some("a")).unwrap(),
             Invoked::done(Some(json!({"ok": true})))
         );
-        assert!(runs.wait(id, None, Some("a")).is_err(), "taken once");
+        assert!(runs.wait(&id, None, Some("a")).is_err(), "taken once");
     }
 
     #[test]
     fn the_first_end_of_a_run_is_the_one_its_asker_reads() {
         let runs = ActionRuns::default();
-        let id = runs.open(None);
-        runs.finish(id, Ok(Invoked::default()));
-        runs.finish(id, Err(ServeError::invalid_params("late")));
-        assert_eq!(runs.wait(id, None, None).unwrap(), Invoked::done(None));
+        let id = runs.open(None).unwrap();
+        runs.finish(&id, Ok(Invoked::default()));
+        runs.finish(&id, Err(ServeError::invalid_params("late")));
+        assert_eq!(runs.wait(&id, None, None).unwrap(), Invoked::done(None));
     }
 
     #[test]
-    fn another_agent_cannot_wait_on_a_run_and_an_error_reaches_its_asker() {
+    fn only_the_asker_waits_on_an_agent_run_and_a_caller_outside_every_pane_is_not_it() {
         let runs = ActionRuns::default();
-        let id = runs.open(Some("a".into()));
-        assert!(runs.wait(id, None, Some("b")).is_err());
-        runs.finish(id, Err(ServeError::invalid_params("boom")));
-        assert_eq!(runs.wait(id, None, None).unwrap_err().message, "boom");
+        let id = runs.open(Some("a".into())).unwrap();
+        assert!(runs.wait(&id, None, Some("b")).is_err());
         assert!(
-            runs.wait(id, Some(MAX_ACTION_WAIT_MS + 1), None).is_err(),
+            runs.wait(&id, None, None).is_err(),
+            "a caller with no pane session is not the asker"
+        );
+        runs.finish(&id, Err(ServeError::invalid_params("boom")));
+        assert!(runs.wait(&id, None, None).is_err());
+        assert_eq!(runs.wait(&id, None, Some("a")).unwrap_err().message, "boom");
+        assert!(
+            runs.wait(&id, Some(MAX_ACTION_WAIT_MS + 1), Some("a"))
+                .is_err(),
             "'wait_ms' is bounded"
         );
     }
 
     #[test]
+    fn any_other_handle_answers_no_action_run() {
+        let runs = ActionRuns::default();
+        let id = runs.open(None).unwrap();
+        let other = runs.open(None).unwrap();
+        assert_ne!(id, other);
+        for guess in ["1", "2", "", &"0".repeat(32), &id[..31]] {
+            let refused = runs.wait(guess, None, None).unwrap_err();
+            assert!(
+                refused.message.starts_with("no action run"),
+                "{}",
+                refused.message
+            );
+        }
+    }
+
+    #[test]
+    fn the_oldest_finished_runs_are_forgotten_first() {
+        let runs = ActionRuns::default();
+        let ids: Vec<String> = (0..=MAX_FINISHED_RUNS)
+            .map(|_| {
+                let id = runs.open(None).unwrap();
+                runs.finish(&id, Ok(Invoked::default()));
+                id
+            })
+            .collect();
+        let _trigger = runs.open(None).unwrap();
+        assert!(runs.wait(&ids[0], None, None).is_err(), "the oldest went");
+        assert!(runs.wait(&ids[MAX_FINISHED_RUNS], None, None).is_ok());
+    }
+
+    #[test]
     fn a_waiter_wakes_when_the_run_ends() {
         let runs = std::sync::Arc::new(ActionRuns::default());
-        let id = runs.open(None);
+        let id = runs.open(None).unwrap();
         let finisher = std::sync::Arc::clone(&runs);
+        let finishing_id = id.clone();
         let finishing = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(50));
-            finisher.finish(id, Ok(Invoked::default()));
+            finisher.finish(&finishing_id, Ok(Invoked::default()));
         });
-        let outcome = runs.wait(id, Some(MAX_ACTION_WAIT_MS), None).unwrap();
+        let outcome = runs.wait(&id, Some(MAX_ACTION_WAIT_MS), None).unwrap();
         finishing.join().unwrap();
         assert_eq!(outcome.status, Some(RunStatus::Done));
     }

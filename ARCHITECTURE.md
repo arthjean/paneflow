@@ -856,6 +856,27 @@ stale code.
   while they wait. `protocol/prompt-conformance-v1.json` lists the
   multi-client cases `crates/paneflow-serve/tests/prompt_conformance.rs` runs
   with plain protocol clients against a real worker.
+- **Only the user answers an agent.** Each `requested` frame carries a
+  `token` of 128 bits from the operating system's generator, one per prompt
+  and per follower, held in the broker's memory and nowhere else. A prompt
+  raised by an agent, or by an action an agent runs, is never sent to a
+  follower in a pane, and `prompt.reply` takes it only from a client outside
+  every pane that sends back the token it was given; any other reply gets the
+  `not_pending` refusal an unknown id gets.
+  `paneflow_api::methods::prompt::prompt_access` holds that rule, and
+  `crates/paneflow-api/tests/decision_table.txt` lists it for each principal
+  against each asker. The worker also decides who is an agent from the
+  process that calls, not from what its hooks reported: when a pane
+  connection is classified, `paneflow_peer::LiveLineage` walks the caller's
+  parents up to the pane's shell named in its session manifest, and
+  `crates/paneflow-serve/src/agent_caller.rs` compares each one (name,
+  executable, argv) with the runtime catalog. A known agent among them, a
+  parent that cannot be read, a reused pid or a chain that never reaches the
+  shell makes every `action.invoke`, `prompt.request` and
+  `agent_prompt.resolve` on that connection the agent's, whatever origin it
+  claims. A run an agent starts answers `running` with an opaque `run_id` of
+  128 bits that only the agent's own pane session can wait on, and an agent's
+  prompt stays bound to its asker after it ends.
 - **A gesture grant lets an init.lua action type for the human.** The write
   gate (`PANEFLOW_IPC_SCRIPTING=1` or `ai_unrestricted`) refuses
   `surface.send_text` and `surface.send_keystroke` from every client but the

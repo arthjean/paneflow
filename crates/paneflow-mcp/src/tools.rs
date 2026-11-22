@@ -123,7 +123,7 @@ pub fn tool_specs() -> Vec<Value> {
                 "properties": {
                     "name": { "type": "string", "minLength": 1, "description": "The action's name, from list_actions." },
                     "args": { "type": "object", "description": "The action's arguments, as its schema in list_actions describes." },
-                    "run_id": { "type": "integer", "minimum": 1, "maximum": MAX_SAFE_JSON_INTEGER, "description": "The run_id of a running action, to keep waiting for its result instead of starting a run." }
+                    "run_id": { "type": "string", "minLength": 1, "maxLength": MAX_RUN_ID_CHARS, "description": "The run_id of a running action, to keep waiting for its result instead of starting a run." }
                 },
                 "additionalProperties": false
             }
@@ -264,12 +264,14 @@ impl AskHumanArgs {
     }
 }
 
+pub const MAX_RUN_ID_CHARS: usize = 64;
+
 enum RunActionArgs {
     Start {
         name: String,
         args: Map<String, Value>,
     },
-    Resume(u64),
+    Resume(String),
 }
 
 impl RunActionArgs {
@@ -277,7 +279,7 @@ impl RunActionArgs {
         let args = Arguments::parse(arguments, &["name", "args", "run_id"])?;
         let name: Option<String> = args.optional("name")?;
         let action_args: Option<Map<String, Value>> = args.optional("args")?;
-        match (args.optional::<u64>("run_id")?, name) {
+        match (args.optional::<String>("run_id")?, name) {
             (Some(_), Some(_)) => Err(
                 "invalid arguments: 'run_id' keeps waiting on a run, so it takes no 'name' or 'args'"
                     .to_string(),
@@ -286,10 +288,10 @@ impl RunActionArgs {
                 "invalid arguments: 'run_id' keeps waiting on a run, so it takes no 'name' or 'args'"
                     .to_string(),
             ),
-            (Some(run_id), None) => {
-                validate_maximum("run_id", Some(run_id), MAX_SAFE_JSON_INTEGER)?;
-                Ok(Self::Resume(run_id))
-            }
+            (Some(run_id), None) if run_id.is_empty() || run_id.len() > MAX_RUN_ID_CHARS => Err(
+                format!("invalid arguments: 'run_id' holds 1 to {MAX_RUN_ID_CHARS} characters"),
+            ),
+            (Some(run_id), None) => Ok(Self::Resume(run_id)),
             (None, Some(name)) if !name.trim().is_empty() => Ok(Self::Start {
                 name,
                 args: action_args.unwrap_or_default(),
@@ -473,7 +475,7 @@ fn run_action<T: IpcTransport + ?Sized>(
 ) -> Result<String, String> {
     let outcome = match args {
         RunActionArgs::Start { name, args } => bridge.run_action(&name, args),
-        RunActionArgs::Resume(run_id) => bridge.wait_action(run_id),
+        RunActionArgs::Resume(run_id) => bridge.wait_action(&run_id),
     }
     .map_err(|error| match error {
         crate::bridge::BridgeError::Transport { message, .. } => message,
@@ -1251,11 +1253,13 @@ mod tests {
         );
     }
 
+    const RUN: &str = "6f1c0e9a2b7d4c3e8f5a1b2c3d4e5f60";
+
     #[test]
     fn run_action_runs_as_the_agent_of_the_bridge_session_and_resumes_a_running_run() {
         let transport = FakeTransport::new();
         let worker = FakeTransport::new()
-            .with("action.invoke", json!({"status": "running", "run_id": 9}))
+            .with("action.invoke", json!({"status": "running", "run_id": RUN}))
             .with(
                 "action.wait",
                 json!({"status": "done", "result": {"ok": true}}),
@@ -1267,7 +1271,7 @@ mod tests {
         );
         assert_eq!(
             ask_text(&started),
-            json!({"status": "running", "run_id": 9})
+            json!({"status": "running", "run_id": RUN})
         );
         assert_eq!(
             worker.last_params("action.invoke").unwrap(),
@@ -1279,7 +1283,7 @@ mod tests {
             })
         );
         let resumed = call(
-            &json!({"name": "run_action", "arguments": {"run_id": 9}}),
+            &json!({"name": "run_action", "arguments": {"run_id": RUN}}),
             &bridge,
         );
         assert_eq!(
@@ -1288,15 +1292,20 @@ mod tests {
         );
         assert_eq!(
             worker.last_params("action.wait").unwrap(),
-            json!({"run_id": 9, "wait_ms": 20_000})
+            json!({"run_id": RUN, "wait_ms": 20_000})
         );
         let mixed = call(
-            &json!({"name": "run_action", "arguments": {"run_id": 9, "name": "deploy"}}),
+            &json!({"name": "run_action", "arguments": {"run_id": RUN, "name": "deploy"}}),
             &bridge,
         );
         assert_eq!(mixed["isError"], true);
         let nameless = call(&json!({"name": "run_action", "arguments": {}}), &bridge);
         assert_eq!(nameless["isError"], true);
+        let numeric = call(
+            &json!({"name": "run_action", "arguments": {"run_id": 9}}),
+            &bridge,
+        );
+        assert_eq!(numeric["isError"], true, "a run handle is a string");
         assert!(transport.calls().is_empty(), "nothing reaches the window");
     }
 

@@ -307,6 +307,7 @@ mod tests {
             spec: std::sync::Arc::new(PromptSpec {
                 kind: PromptKind::Input,
                 title: "Name".into(),
+                body: None,
                 placeholder: None,
                 value: None,
                 confirm: None,
@@ -328,6 +329,7 @@ mod tests {
             asked_at: std::time::Instant::now()
                 .checked_sub(std::time::Duration::from_secs(waited_secs))
                 .unwrap(),
+            token: None,
         }
     }
 

@@ -399,3 +399,44 @@ agent.event host worker allowed:instance allowed:instance
 agent.event host pane allowed:instance allowed:instance
 agent.event host external allowed:instance allowed:instance
 agent.event host unverified refused:unverified_caller refused:unverified_caller
+# prompt.follow and prompt.reply against the prompt's asker: method principal asker decision
+prompt.follow window agent shown_with_a_token
+prompt.follow window action_run_by_agent shown_with_a_token
+prompt.follow window action shown_with_a_token
+prompt.follow window script shown_with_a_token
+prompt.follow worker agent shown_with_a_token
+prompt.follow worker action_run_by_agent shown_with_a_token
+prompt.follow worker action shown_with_a_token
+prompt.follow worker script shown_with_a_token
+prompt.follow pane agent hidden
+prompt.follow pane action_run_by_agent hidden
+prompt.follow pane action shown_with_a_token
+prompt.follow pane script shown_with_a_token
+prompt.follow external agent shown_with_a_token
+prompt.follow external action_run_by_agent shown_with_a_token
+prompt.follow external action shown_with_a_token
+prompt.follow external script shown_with_a_token
+prompt.follow unverified agent hidden
+prompt.follow unverified action_run_by_agent hidden
+prompt.follow unverified action hidden
+prompt.follow unverified script hidden
+prompt.reply window agent allowed:with_its_token
+prompt.reply window action_run_by_agent allowed:with_its_token
+prompt.reply window action allowed
+prompt.reply window script allowed
+prompt.reply worker agent allowed:with_its_token
+prompt.reply worker action_run_by_agent allowed:with_its_token
+prompt.reply worker action allowed
+prompt.reply worker script allowed
+prompt.reply pane agent refused:not_pending
+prompt.reply pane action_run_by_agent refused:not_pending
+prompt.reply pane action allowed
+prompt.reply pane script allowed
+prompt.reply external agent allowed:with_its_token
+prompt.reply external action_run_by_agent allowed:with_its_token
+prompt.reply external action allowed
+prompt.reply external script allowed
+prompt.reply unverified agent refused:not_pending
+prompt.reply unverified action_run_by_agent refused:not_pending
+prompt.reply unverified action refused:not_pending
+prompt.reply unverified script refused:not_pending

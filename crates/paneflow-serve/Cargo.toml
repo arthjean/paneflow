@@ -11,6 +11,7 @@ publish = false
 path = "src/lib.rs"
 
 [dependencies]
+getrandom = "0.4.3"
 interprocess.workspace = true
 jiff = { workspace = true, features = ["serde"] }
 log.workspace = true
@@ -25,6 +26,7 @@ paneflow-git.workspace = true
 paneflow-launch.workspace = true
 paneflow-layout.workspace = true
 paneflow-mcp-install.workspace = true
+paneflow-peer.workspace = true
 paneflow-process.workspace = true
 paneflow-script.workspace = true
 serde.workspace = true

@@ -20,9 +20,9 @@
       },
       "run_id": {
         "description": "The run_id of a running action, to keep waiting for its result instead of starting a run.",
-        "maximum": 9007199254740991,
-        "minimum": 1,
-        "type": "integer"
+        "maxLength": 64,
+        "minLength": 1,
+        "type": "string"
       }
     },
     "type": "object"

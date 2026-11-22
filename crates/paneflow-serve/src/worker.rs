@@ -170,6 +170,7 @@ fn open_with_build_id(
             "paneflow-serve-classify",
         ),
         principals: Mutex::new(Default::default()),
+        agent_callers: Mutex::new(Default::default()),
         policy: paneflow_host::policy::PolicySource::for_home(home),
         acting: Default::default(),
     });
@@ -777,16 +778,26 @@ mod tests {
         let home = tempfile::tempdir().expect("a temporary home");
         let running = open_with_config(home.path(), "{}");
         let worker = running.worker();
-        let window = worker.prompts.follow(vec![PromptKind::Input]);
+        let window = worker
+            .prompts
+            .follow(vec![PromptKind::Input], Principal::Window);
         for _ in 0..crate::agent_asks::AGENT_BURST {
             pending(
                 worker
-                    .request_prompt(agent_question(Some("a1"), "agent"), &Principal::External)
+                    .request_prompt(
+                        agent_question(Some("a1"), "agent"),
+                        &Principal::External,
+                        crate::layout_authority::ConnectionId::INTERNAL,
+                    )
                     .unwrap(),
             );
         }
         let refused = worker
-            .request_prompt(agent_question(Some("a1"), "agent"), &Principal::External)
+            .request_prompt(
+                agent_question(Some("a1"), "agent"),
+                &Principal::External,
+                crate::layout_authority::ConnectionId::INTERNAL,
+            )
             .unwrap();
         assert_eq!(refused.status, PromptStatus::RateLimited);
         assert_eq!(refused.id, None, "nothing was queued");
@@ -797,11 +808,19 @@ mod tests {
         );
         pending(
             worker
-                .request_prompt(agent_question(Some("a2"), "agent"), &Principal::External)
+                .request_prompt(
+                    agent_question(Some("a2"), "agent"),
+                    &Principal::External,
+                    crate::layout_authority::ConnectionId::INTERNAL,
+                )
                 .unwrap(),
         );
         let script = worker
-            .request_prompt(agent_question(None, "script"), &Principal::External)
+            .request_prompt(
+                agent_question(None, "script"),
+                &Principal::External,
+                crate::layout_authority::ConnectionId::INTERNAL,
+            )
             .unwrap();
         assert_eq!(
             script.status,
@@ -818,7 +837,9 @@ mod tests {
         let home = tempfile::tempdir().expect("a temporary home");
         let running = open_with_config(home.path(), "{}");
         let worker = running.worker();
-        let _window = worker.prompts.follow(vec![PromptKind::Input]);
+        let _window = worker
+            .prompts
+            .follow(vec![PromptKind::Input], Principal::Window);
         let exiting = paneflow_config::schema::SessionId::new();
         let removed = paneflow_config::schema::SessionId::new();
         let staying = paneflow_config::schema::SessionId::new();
@@ -835,6 +856,7 @@ mod tests {
                     .request_prompt(
                         agent_question(Some(&session.to_string()), "agent"),
                         &Principal::External,
+                        crate::layout_authority::ConnectionId::INTERNAL,
                     )
                     .unwrap(),
             )
@@ -866,14 +888,20 @@ mod tests {
         let home = tempfile::tempdir().expect("a temporary home");
         let running = open_with_config(home.path(), "{}");
         let worker = running.worker();
-        let window = worker.prompts.follow(vec![PromptKind::Input]);
+        let window = worker
+            .prompts
+            .follow(vec![PromptKind::Input], Principal::Window);
         let pane = |session: &str| Principal::Pane {
             session: session.to_string(),
             workspace: None,
         };
         let id = pending(
             worker
-                .request_prompt(agent_question(Some("forged"), "agent"), &pane("real"))
+                .request_prompt(
+                    agent_question(Some("forged"), "agent"),
+                    &pane("real"),
+                    crate::layout_authority::ConnectionId::INTERNAL,
+                )
                 .unwrap(),
         );
         let shown = window
@@ -912,6 +940,7 @@ mod tests {
             .attribute_prompt(
                 agent_question(None, "action").origin,
                 &pane(&agent.to_string()),
+                crate::layout_authority::ConnectionId::INTERNAL,
             )
             .expect("an origin");
         assert_eq!(disguised.kind, OriginKind::Agent);
@@ -927,7 +956,11 @@ mod tests {
             "{disguised:?}"
         );
         let plain = worker
-            .attribute_prompt(agent_question(None, "script").origin, &pane("a-shell"))
+            .attribute_prompt(
+                agent_question(None, "script").origin,
+                &pane("a-shell"),
+                crate::layout_authority::ConnectionId::INTERNAL,
+            )
             .expect("an origin");
         assert_eq!(
             plain.kind,
@@ -937,7 +970,11 @@ mod tests {
         let mut forged = agent_question(None, "agent").origin.expect("an origin");
         forged.agent = Some("Paneflow".into());
         let unplaced = worker
-            .attribute_prompt(Some(forged), &Principal::External)
+            .attribute_prompt(
+                Some(forged),
+                &Principal::External,
+                crate::layout_authority::ConnectionId::INTERNAL,
+            )
             .expect("an origin");
         assert_eq!(
             unplaced.agent, None,
@@ -992,11 +1029,19 @@ mod tests {
                 .expect("params")
         };
         let ran = worker
-            .invoke_action(invoke("where", "cli"), &pane)
+            .invoke_action(
+                invoke("where", "cli"),
+                &pane,
+                crate::layout_authority::ConnectionId::INTERNAL,
+            )
             .expect("a marked action runs");
         assert_eq!(ran.result.as_ref().unwrap()["origin"], "agent");
         let refused = worker
-            .invoke_action(invoke("secret", "cli"), &pane)
+            .invoke_action(
+                invoke("secret", "cli"),
+                &pane,
+                crate::layout_authority::ConnectionId::INTERNAL,
+            )
             .expect_err("an agent pane never reaches an unmarked action through the cli");
         assert!(
             refused.message.contains("no action named 'secret'"),
@@ -1009,7 +1054,11 @@ mod tests {
         };
         assert_eq!(
             worker
-                .invoke_action(invoke("secret", "cli"), &shell)
+                .invoke_action(
+                    invoke("secret", "cli"),
+                    &shell,
+                    crate::layout_authority::ConnectionId::INTERNAL
+                )
                 .expect("a pane with no agent runs every action")
                 .result,
             Some(json!("hidden"))
@@ -1028,15 +1077,15 @@ mod tests {
         let token = worker
             .acting
             .start_detached(Principal::External, &mut context);
-        let run_id = worker.action_runs.open(Some("a1".into()));
-        let dropped_uncalled = crate::agent_asks::RunEnd::of(worker, &token, run_id);
+        let run_id = worker.action_runs.open(Some("a1".into())).unwrap();
+        let dropped_uncalled = crate::agent_asks::RunEnd::of(worker, &token, &run_id);
         assert_eq!(worker.action_runs.running(), 1);
         drop(dropped_uncalled);
         assert_eq!(worker.action_runs.running(), 0);
         assert_eq!(
             worker
                 .action_runs
-                .wait(run_id, None, Some("a1"))
+                .wait(&run_id, None, Some("a1"))
                 .expect_err("the run ended without a result")
                 .message,
             crate::config_runtime::runtime_stopped().message
@@ -1057,7 +1106,9 @@ mod tests {
         let home = tempfile::tempdir().expect("a temporary home");
         let running = open_with_config(home.path(), r#"{"agent_prompts": "paneflow"}"#);
         let worker = running.worker();
-        let window = worker.prompts.follow(vec![PromptKind::Pick]);
+        let window = worker
+            .prompts
+            .follow(vec![PromptKind::Pick], Principal::Window);
         let params: ResolveParams = serde_json::from_value(json!({
             "event": "ask_user_question",
             "agent": "claude",
@@ -1070,6 +1121,7 @@ mod tests {
         let resolved = worker.resolve_agent_prompt_within(
             params,
             &Principal::External,
+            crate::layout_authority::ConnectionId::INTERNAL,
             std::time::Duration::from_millis(300),
         );
         assert_eq!(resolved.status, ResolveStatus::Declined);

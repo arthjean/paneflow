@@ -3,13 +3,16 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
+use paneflow_api::Principal;
 use paneflow_api::methods::prompt::{
     ERR_NOT_PENDING, EndReason, EndedFrame, FrameKind, MAX_PENDING, MAX_WAIT_MS, NOT_PENDING,
-    PromptAnswer, PromptKind, PromptOrigin, PromptOutcome, PromptSpec, PromptStatus, Replied,
-    ReplyParams, RequestParams, RequestedFrame, check_spec, normalize_answer,
+    PromptAccess, PromptAnswer, PromptAsker, PromptKind, PromptOrigin, PromptOutcome, PromptSpec,
+    PromptStatus, Replied, ReplyParams, RequestParams, RequestedFrame, check_spec,
+    normalize_answer, prompt_access,
 };
 use serde_json::{Value, json};
 
+use crate::handles::{fresh_secret, same_secret};
 use crate::registry::ServeError;
 
 pub const ASKER_GRACE_MS: u64 = 15_000;
@@ -21,25 +24,49 @@ pub const ASKER_GONE: &str = "the asker stopped waiting for the answer";
 struct Open {
     spec: PromptSpec,
     origin: Option<PromptOrigin>,
+    asker: PromptAsker,
+    tokens: BTreeMap<u64, String>,
     requested_at_ms: u64,
     expires_at_ms: u64,
     waiting: usize,
     idle_since_ms: u64,
 }
 
+impl Open {
+    fn asked_by(&self) -> Option<String> {
+        self.origin
+            .as_ref()
+            .and_then(|origin| origin.session.clone())
+    }
+
+    fn took(&self, offered: Option<&str>) -> bool {
+        offered.is_some_and(|offered| {
+            self.tokens
+                .values()
+                .any(|token| same_secret(token, offered))
+        })
+    }
+}
+
 struct Ended {
     outcome: PromptOutcome,
+    asked_by: Option<String>,
     at_ms: u64,
 }
 
 struct Follower {
     kinds: Vec<PromptKind>,
+    principal: Principal,
     frames: Sender<Value>,
 }
 
 impl Follower {
-    fn shows(&self, kind: PromptKind) -> bool {
-        self.kinds.contains(&kind)
+    fn shows(&self, kind: PromptKind, asker: PromptAsker) -> bool {
+        self.kinds.contains(&kind) && prompt_access(&self.principal, asker).shows()
+    }
+
+    fn shows_open(&self, open: &Open) -> bool {
+        self.shows(open.spec.kind, open.asker)
     }
 }
 
@@ -85,7 +112,7 @@ pub struct BrokerState {
     closed: bool,
 }
 
-fn requested_frame(id: u64, open: &Open, now_ms: u64) -> Value {
+fn requested_frame(id: u64, open: &Open, token: &str, now_ms: u64) -> Value {
     serde_json::to_value(RequestedFrame {
         kind: FrameKind::Requested,
         id,
@@ -93,6 +120,7 @@ fn requested_frame(id: u64, open: &Open, now_ms: u64) -> Value {
         origin: open.origin.clone(),
         requested_at_ms: open.requested_at_ms,
         remaining_ms: open.expires_at_ms.saturating_sub(now_ms),
+        token: Some(token.to_string()),
     })
     .unwrap_or(Value::Null)
 }
@@ -128,18 +156,36 @@ impl BrokerState {
         if self.closed {
             return Ok(PromptOutcome::failed(None, WORKER_STOPPED));
         }
-        if self.followers.is_empty() {
-            return Ok(PromptOutcome::ended(PromptStatus::NoClient, None));
-        }
-        if !self
+        let asker = PromptAsker::of(params.origin.as_ref());
+        let able: Vec<u64> = self
             .followers
-            .values()
-            .any(|follower| follower.shows(spec.kind))
-        {
-            return Ok(PromptOutcome::ended(PromptStatus::Unsupported, None));
+            .iter()
+            .filter(|(_, follower)| follower.shows(spec.kind, asker))
+            .map(|(id, _)| *id)
+            .collect();
+        if able.is_empty() {
+            let reachable = self
+                .followers
+                .values()
+                .any(|follower| prompt_access(&follower.principal, asker).shows());
+            let status = if reachable {
+                PromptStatus::Unsupported
+            } else {
+                PromptStatus::NoClient
+            };
+            return Ok(PromptOutcome::ended(status, None));
         }
         if self.open.len() >= MAX_PENDING {
             return Ok(PromptOutcome::ended(PromptStatus::Busy, None));
+        }
+        let mut tokens = BTreeMap::new();
+        for follower in &able {
+            match fresh_secret() {
+                Ok(token) => {
+                    tokens.insert(*follower, token);
+                }
+                Err(detail) => return Ok(PromptOutcome::failed(None, detail)),
+            }
         }
         self.next_id += 1;
         let id = self.next_id;
@@ -147,14 +193,17 @@ impl BrokerState {
             expires_at_ms: now_ms.saturating_add(spec.timeout_ms()),
             spec,
             origin: params.origin.clone(),
+            asker,
+            tokens,
             requested_at_ms: now_ms,
             waiting: 0,
             idle_since_ms: now_ms,
         };
-        let frame = requested_frame(id, &open, now_ms);
-        for follower in self.followers.values() {
-            if follower.shows(open.spec.kind) {
-                let _ = follower.frames.send(frame.clone());
+        for (follower, token) in &open.tokens {
+            if let Some(follower) = self.followers.get(follower) {
+                let _ = follower
+                    .frames
+                    .send(requested_frame(id, &open, token, now_ms));
             }
         }
         self.open.insert(id, open);
@@ -189,15 +238,18 @@ impl BrokerState {
             return;
         };
         let frame = ended_frame(id, reason);
-        for follower in self.followers.values() {
-            if follower.shows(open.spec.kind) {
-                let _ = follower.frames.send(frame.clone());
-            }
+        for follower in open
+            .tokens
+            .keys()
+            .filter_map(|follower| self.followers.get(follower))
+        {
+            let _ = follower.frames.send(frame.clone());
         }
         self.ended.insert(
             id,
             Ended {
                 outcome,
+                asked_by: open.asked_by(),
                 at_ms: now_ms,
             },
         );
@@ -206,7 +258,12 @@ impl BrokerState {
         }
     }
 
-    pub fn reply(&mut self, params: ReplyParams, now_ms: u64) -> Result<Replied, ReplyError> {
+    pub fn reply(
+        &mut self,
+        params: ReplyParams,
+        principal: &Principal,
+        now_ms: u64,
+    ) -> Result<Replied, ReplyError> {
         let cancel = params.cancel.unwrap_or(false);
         let answer = match (params.answer, cancel) {
             (Some(_), true) => {
@@ -225,6 +282,14 @@ impl BrokerState {
         let Some(open) = self.open.get(&params.id) else {
             return Err(ReplyError::NotPending(params.id));
         };
+        let admitted = match prompt_access(principal, open.asker) {
+            PromptAccess::Answers => true,
+            PromptAccess::AnswersWithItsToken => open.took(params.token.as_deref()),
+            PromptAccess::Hidden => false,
+        };
+        if !admitted {
+            return Err(ReplyError::NotPending(params.id));
+        }
         let (reason, outcome) = match answer {
             None => (
                 EndReason::Cancelled,
@@ -251,24 +316,46 @@ impl BrokerState {
         })
     }
 
-    pub fn follow(&mut self, kinds: Vec<PromptKind>, now_ms: u64) -> FollowerFeed {
+    pub fn withdraw(&mut self, id: u64, now_ms: u64) -> bool {
+        if !self.open.contains_key(&id) {
+            return false;
+        }
+        self.end(
+            id,
+            EndReason::Cancelled,
+            PromptOutcome::ended(PromptStatus::Cancelled, Some(id)),
+            now_ms,
+        );
+        true
+    }
+
+    pub fn follow(
+        &mut self,
+        kinds: Vec<PromptKind>,
+        principal: Principal,
+        now_ms: u64,
+    ) -> FollowerFeed {
         let (sender, frames) = channel();
         self.next_follower += 1;
         let id = self.next_follower;
-        let pending = self
-            .open
-            .iter()
-            .filter(|(_, open)| kinds.contains(&open.spec.kind))
-            .map(|(prompt, open)| requested_frame(*prompt, open, now_ms))
-            .collect();
+        let follower = Follower {
+            kinds,
+            principal,
+            frames: sender,
+        };
+        let mut pending = Vec::new();
         if !self.closed {
-            self.followers.insert(
-                id,
-                Follower {
-                    kinds,
-                    frames: sender,
-                },
-            );
+            for (prompt, open) in &mut self.open {
+                if !follower.shows_open(open) {
+                    continue;
+                }
+                let Ok(token) = fresh_secret() else {
+                    continue;
+                };
+                pending.push(requested_frame(*prompt, open, &token, now_ms));
+                open.tokens.insert(id, token);
+            }
+            self.followers.insert(id, follower);
         }
         FollowerFeed {
             id,
@@ -281,6 +368,9 @@ impl BrokerState {
         if self.followers.remove(&follower).is_none() {
             return;
         }
+        for open in self.open.values_mut() {
+            open.tokens.remove(&follower);
+        }
         let orphaned: Vec<u64> = self
             .open
             .iter()
@@ -288,7 +378,7 @@ impl BrokerState {
                 !self
                     .followers
                     .values()
-                    .any(|follower| follower.shows(open.spec.kind))
+                    .any(|follower| follower.shows_open(open))
             })
             .map(|(id, _)| *id)
             .collect();
@@ -336,23 +426,17 @@ impl BrokerState {
     }
 
     pub fn asker_of(&self, id: u64) -> Option<Option<String>> {
-        self.open.get(&id).map(|open| {
-            open.origin
-                .as_ref()
-                .and_then(|origin| origin.session.clone())
-        })
+        self.open
+            .get(&id)
+            .map(Open::asked_by)
+            .or_else(|| self.ended.get(&id).map(|ended| ended.asked_by.clone()))
     }
 
     pub fn cancel_asked_by(&mut self, session: &str, now_ms: u64) -> bool {
         let asked: Vec<u64> = self
             .open
             .iter()
-            .filter(|(_, open)| {
-                open.origin
-                    .as_ref()
-                    .and_then(|origin| origin.session.as_deref())
-                    == Some(session)
-            })
+            .filter(|(_, open)| open.asked_by().as_deref() == Some(session))
             .map(|(id, _)| *id)
             .collect();
         for id in &asked {
@@ -431,9 +515,7 @@ impl PromptBroker {
         let mut state = self.lock();
         state.sweep(Self::now());
         match state.lookup(id) {
-            Lookup::Unknown => Err(ServeError::invalid_params(format!(
-                "no prompt with id {id}; its outcome was already returned or it never existed"
-            ))),
+            Lookup::Unknown => Err(unknown_prompt(id)),
             Lookup::Ended(outcome) => Ok(outcome),
             Lookup::Open => {
                 drop(state);
@@ -474,14 +556,20 @@ impl PromptBroker {
         }
     }
 
-    pub fn reply(&self, params: ReplyParams) -> Result<Replied, ServeError> {
-        let replied = self.lock().reply(params, Self::now())?;
+    pub fn reply(&self, params: ReplyParams, principal: &Principal) -> Result<Replied, ServeError> {
+        let replied = self.lock().reply(params, principal, Self::now())?;
         self.changed.notify_all();
         Ok(replied)
     }
 
-    pub fn follow(&self, kinds: Vec<PromptKind>) -> FollowerFeed {
-        self.lock().follow(kinds, Self::now())
+    pub fn withdraw(&self, id: u64) {
+        if self.lock().withdraw(id, Self::now()) {
+            self.changed.notify_all();
+        }
+    }
+
+    pub fn follow(&self, kinds: Vec<PromptKind>, principal: Principal) -> FollowerFeed {
+        self.lock().follow(kinds, principal, Self::now())
     }
 
     pub fn unfollow(&self, follower: u64) {
@@ -511,6 +599,12 @@ impl PromptBroker {
     }
 }
 
+pub fn unknown_prompt(id: u64) -> ServeError {
+    ServeError::invalid_params(format!(
+        "no prompt with id {id}; its outcome was already returned or it never existed"
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -538,6 +632,7 @@ mod tests {
             id,
             answer: Some(PromptAnswer::Text(text.into())),
             cancel: None,
+            token: None,
         }
     }
 
@@ -546,7 +641,7 @@ mod tests {
         let mut state = BrokerState::default();
         let outcome = state.request(&input("Name"), 0).unwrap();
         assert_eq!(outcome, PromptOutcome::ended(PromptStatus::NoClient, None));
-        let _feed = state.follow(vec![PromptKind::Input], 0);
+        let _feed = state.follow(vec![PromptKind::Input], Principal::External, 0);
         let outcome = state.request(&pick(&["a"]), 0).unwrap();
         assert_eq!(
             outcome,
@@ -558,8 +653,12 @@ mod tests {
     #[test]
     fn the_first_reply_wins_every_follower_hears_ended_and_a_second_is_not_pending() {
         let mut state = BrokerState::default();
-        let first = state.follow(vec![PromptKind::Input], 0);
-        let second = state.follow(vec![PromptKind::Input, PromptKind::Pick], 0);
+        let first = state.follow(vec![PromptKind::Input], Principal::External, 0);
+        let second = state.follow(
+            vec![PromptKind::Input, PromptKind::Pick],
+            Principal::External,
+            0,
+        );
         let id = pending_id(&state.request(&input("Name"), 10).unwrap());
         let requested = frames(&first);
         assert_eq!(requested[0]["type"], "requested");
@@ -568,7 +667,7 @@ mod tests {
         assert_eq!(requested[0]["remaining_ms"], 300_000);
         assert_eq!(frames(&second).len(), 1);
         assert_eq!(
-            state.reply(answer(id, "  a b "), 20),
+            state.reply(answer(id, "  a b "), &Principal::External, 20),
             Ok(Replied {
                 id,
                 reason: EndReason::Answered
@@ -581,7 +680,7 @@ mod tests {
             );
         }
         assert_eq!(
-            state.reply(answer(id, "late"), 30),
+            state.reply(answer(id, "late"), &Principal::External, 30),
             Err(ReplyError::NotPending(id))
         );
         assert_eq!(
@@ -603,7 +702,7 @@ mod tests {
     #[test]
     fn a_cancel_reaches_the_asker_and_closes_the_prompt_on_the_followers() {
         let mut state = BrokerState::default();
-        let feed = state.follow(vec![PromptKind::Input], 0);
+        let feed = state.follow(vec![PromptKind::Input], Principal::External, 0);
         let id = pending_id(&state.request(&input("Name"), 0).unwrap());
         state
             .reply(
@@ -611,7 +710,9 @@ mod tests {
                     id,
                     answer: None,
                     cancel: Some(true),
+                    token: None,
                 },
+                &Principal::External,
                 1,
             )
             .unwrap();
@@ -625,7 +726,7 @@ mod tests {
     #[test]
     fn the_timeout_defaults_to_300_seconds_and_ends_the_prompt_for_everyone() {
         let mut state = BrokerState::default();
-        let feed = state.follow(vec![PromptKind::Input], 0);
+        let feed = state.follow(vec![PromptKind::Input], Principal::External, 0);
         let id = pending_id(&state.request(&input("Name"), 1_000).unwrap());
         state.begin_wait(id);
         assert!(!state.sweep(300_999));
@@ -645,7 +746,7 @@ mod tests {
     #[test]
     fn the_seventeenth_pending_prompt_is_busy() {
         let mut state = BrokerState::default();
-        let _feed = state.follow(vec![PromptKind::Input], 0);
+        let _feed = state.follow(vec![PromptKind::Input], Principal::External, 0);
         for _ in 0..MAX_PENDING {
             pending_id(&state.request(&input("Name"), 0).unwrap());
         }
@@ -658,8 +759,8 @@ mod tests {
     #[test]
     fn a_follower_leaving_keeps_the_prompt_while_another_can_show_it_and_the_last_ends_it() {
         let mut state = BrokerState::default();
-        let first = state.follow(vec![PromptKind::Input], 0);
-        let second = state.follow(vec![PromptKind::Input], 0);
+        let first = state.follow(vec![PromptKind::Input], Principal::External, 0);
+        let second = state.follow(vec![PromptKind::Input], Principal::External, 0);
         let id = pending_id(&state.request(&input("Name"), 0).unwrap());
         state.unfollow(first.id, 1);
         assert_eq!(state.pending(), 1);
@@ -674,12 +775,20 @@ mod tests {
     #[test]
     fn a_late_follower_receives_the_pending_prompts_oldest_first() {
         let mut state = BrokerState::default();
-        let _early = state.follow(vec![PromptKind::Input, PromptKind::Pick], 0);
+        let _early = state.follow(
+            vec![PromptKind::Input, PromptKind::Pick],
+            Principal::External,
+            0,
+        );
         let ids: Vec<u64> = [input("a"), pick(&["x"]), input("c")]
             .iter()
             .map(|params| pending_id(&state.request(params, 0).unwrap()))
             .collect();
-        let late = state.follow(vec![PromptKind::Input, PromptKind::Pick], 5_000);
+        let late = state.follow(
+            vec![PromptKind::Input, PromptKind::Pick],
+            Principal::External,
+            5_000,
+        );
         let listed: Vec<u64> = late
             .pending
             .iter()
@@ -687,17 +796,17 @@ mod tests {
             .collect();
         assert_eq!(listed, ids);
         assert_eq!(late.pending[0]["remaining_ms"], 295_000);
-        let inputs_only = state.follow(vec![PromptKind::Input], 0);
+        let inputs_only = state.follow(vec![PromptKind::Input], Principal::External, 0);
         assert_eq!(inputs_only.pending.len(), 2);
     }
 
     #[test]
     fn a_reply_must_match_the_prompt_kind_and_items() {
         let mut state = BrokerState::default();
-        let _feed = state.follow(vec![PromptKind::Pick], 0);
+        let _feed = state.follow(vec![PromptKind::Pick], Principal::External, 0);
         let id = pending_id(&state.request(&pick(&["a", "b"]), 0).unwrap());
         assert!(matches!(
-            state.reply(answer(id, "z"), 1),
+            state.reply(answer(id, "z"), &Principal::External, 1),
             Err(ReplyError::Invalid(_))
         ));
         assert_eq!(
@@ -710,19 +819,23 @@ mod tests {
                 ReplyParams {
                     id,
                     answer: None,
-                    cancel: None
+                    cancel: None,
+                    token: None,
                 },
+                &Principal::External,
                 1
             ),
             Err(ReplyError::Invalid(_))
         ));
-        state.reply(answer(id, "b"), 1).unwrap();
+        state
+            .reply(answer(id, "b"), &Principal::External, 1)
+            .unwrap();
     }
 
     #[test]
     fn a_shutdown_fails_every_pending_prompt_saying_the_worker_stopped() {
         let mut state = BrokerState::default();
-        let feed = state.follow(vec![PromptKind::Input], 0);
+        let feed = state.follow(vec![PromptKind::Input], Principal::External, 0);
         let id = pending_id(&state.request(&input("Name"), 0).unwrap());
         state.close(1);
         assert_eq!(
@@ -743,7 +856,7 @@ mod tests {
     #[test]
     fn an_asker_that_stopped_waiting_abandons_its_prompt_after_the_grace() {
         let mut state = BrokerState::default();
-        let _feed = state.follow(vec![PromptKind::Input], 0);
+        let _feed = state.follow(vec![PromptKind::Input], Principal::External, 0);
         let id = pending_id(&state.request(&input("Name"), 0).unwrap());
         state.begin_wait(id);
         assert!(!state.sweep(ASKER_GRACE_MS * 4), "a waiting asker keeps it");
@@ -759,7 +872,7 @@ mod tests {
     #[test]
     fn a_bad_pick_is_refused_naming_the_field_and_queues_nothing() {
         let mut state = BrokerState::default();
-        let _feed = state.follow(vec![PromptKind::Pick], 0);
+        let _feed = state.follow(vec![PromptKind::Pick], Principal::External, 0);
         let mut both = pick(&["a"]);
         both.multiple = Some(true);
         both.allow_other = Some(true);
@@ -785,7 +898,7 @@ mod tests {
     #[test]
     fn the_origin_travels_with_the_requested_frame() {
         let mut state = BrokerState::default();
-        let feed = state.follow(vec![PromptKind::Input], 0);
+        let feed = state.follow(vec![PromptKind::Input], Principal::External, 0);
         let mut params = input("Name");
         params.origin = Some(PromptOrigin {
             kind: OriginKind::Action,
@@ -821,7 +934,7 @@ mod tests {
     #[test]
     fn the_end_of_an_asking_session_cancels_only_its_own_prompts() {
         let mut state = BrokerState::default();
-        let feed = state.follow(vec![PromptKind::Input], 0);
+        let feed = state.follow(vec![PromptKind::Input], Principal::External, 0);
         let mine = pending_id(&state.request(&asked_by("s1"), 0).unwrap());
         let other = pending_id(&state.request(&asked_by("s2"), 0).unwrap());
         let unowned = pending_id(&state.request(&input("Name"), 0).unwrap());
@@ -848,19 +961,189 @@ mod tests {
     #[test]
     fn the_blocking_broker_returns_pending_then_the_answer_through_wait() {
         let broker = std::sync::Arc::new(PromptBroker::default());
-        let feed = broker.follow(vec![PromptKind::Input]);
+        let feed = broker.follow(vec![PromptKind::Input], Principal::External);
         let outcome = broker.request(&input("Name")).unwrap();
         let id = pending_id(&outcome);
         let replier = std::sync::Arc::clone(&broker);
         let answering = std::thread::spawn(move || {
             let frame = feed.frames.recv().unwrap();
             let id = frame["id"].as_u64().unwrap();
-            replier.reply(answer(id, "done")).unwrap();
+            replier
+                .reply(answer(id, "done"), &Principal::External)
+                .unwrap();
         });
         let outcome = broker.wait(id, Some(MAX_WAIT_MS)).unwrap();
         answering.join().unwrap();
         assert_eq!(outcome.status, PromptStatus::Answered);
         assert_eq!(outcome.answer, Some(PromptAnswer::Text("done".into())));
         assert!(broker.wait(id, None).is_err(), "the outcome was taken");
+    }
+
+    fn pane(session: &str) -> Principal {
+        Principal::Pane {
+            session: session.into(),
+            workspace: None,
+        }
+    }
+
+    fn run_by_agent() -> RequestParams {
+        let mut params = input("Branch name");
+        params.origin = Some(PromptOrigin {
+            kind: OriginKind::Action,
+            title: Some("New branch".into()),
+            name: Some("new_branch".into()),
+            file: None,
+            agent: Some("Claude Code".into()),
+            surface_id: Some(4),
+            workspace_id: None,
+            session: Some("s1".into()),
+        });
+        params
+    }
+
+    fn token_of(frame: &Value) -> String {
+        frame["token"].as_str().expect("a token").to_string()
+    }
+
+    fn with_token(id: u64, text: &str, token: Option<&str>) -> ReplyParams {
+        ReplyParams {
+            token: token.map(str::to_string),
+            ..answer(id, text)
+        }
+    }
+
+    #[test]
+    fn each_follower_receives_its_own_token_for_each_prompt() {
+        let mut state = BrokerState::default();
+        let first = state.follow(vec![PromptKind::Input], Principal::Window, 0);
+        let second = state.follow(vec![PromptKind::Input], Principal::External, 0);
+        state.request(&input("a"), 0).unwrap();
+        state.request(&asked_by("s1"), 0).unwrap();
+        let mut tokens: Vec<String> = frames(&first)
+            .iter()
+            .chain(frames(&second).iter())
+            .map(token_of)
+            .collect();
+        assert_eq!(tokens.len(), 4);
+        assert!(
+            tokens
+                .iter()
+                .all(|token| token.len() == crate::handles::SECRET_HEX_LEN)
+        );
+        tokens.sort();
+        tokens.dedup();
+        assert_eq!(tokens.len(), 4, "distinct per prompt and per follower");
+        let late = state.follow(vec![PromptKind::Input], Principal::External, 0);
+        let late_tokens: Vec<String> = late.pending.iter().map(token_of).collect();
+        assert_eq!(late_tokens.len(), 2);
+        assert!(late_tokens.iter().all(|token| !tokens.contains(token)));
+    }
+
+    #[test]
+    fn an_agent_prompt_refuses_a_reply_without_its_token_as_if_it_were_not_pending() {
+        for params in [asked_by("s1"), run_by_agent()] {
+            let mut state = BrokerState::default();
+            let window = state.follow(vec![PromptKind::Input], Principal::External, 0);
+            let id = pending_id(&state.request(&params, 0).unwrap());
+            let token = token_of(&frames(&window)[0]);
+            let unknown = state.reply(with_token(id + 100, "x", None), &Principal::External, 1);
+            assert_eq!(unknown, Err(ReplyError::NotPending(id + 100)));
+            for offered in [None, Some("0".repeat(32)), Some(token[..31].to_string())] {
+                assert_eq!(
+                    state.reply(
+                        with_token(id, "yes", offered.as_deref()),
+                        &Principal::External,
+                        1
+                    ),
+                    Err(ReplyError::NotPending(id))
+                );
+            }
+            let cancel_without = ReplyParams {
+                id,
+                answer: None,
+                cancel: Some(true),
+                token: None,
+            };
+            assert_eq!(
+                state.reply(cancel_without, &Principal::Window, 1),
+                Err(ReplyError::NotPending(id))
+            );
+            assert_eq!(state.lookup(id), Lookup::Open, "it stays pending");
+            assert_eq!(
+                state.reply(with_token(id, "yes", Some(&token)), &Principal::External, 2),
+                Ok(Replied {
+                    id,
+                    reason: EndReason::Answered
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn a_pane_never_sees_an_agent_prompt_and_cannot_answer_it_with_any_token() {
+        let mut state = BrokerState::default();
+        let in_pane = state.follow(vec![PromptKind::Input], pane("s2"), 0);
+        assert_eq!(
+            state.request(&asked_by("s1"), 0).unwrap(),
+            PromptOutcome::ended(PromptStatus::NoClient, None),
+            "a pane alone cannot show an agent's prompt"
+        );
+        let window = state.follow(vec![PromptKind::Input], Principal::Window, 0);
+        let agent = pending_id(&state.request(&asked_by("s1"), 0).unwrap());
+        let by_agent_run = pending_id(&state.request(&run_by_agent(), 0).unwrap());
+        assert!(frames(&in_pane).is_empty(), "no frame and no token");
+        let late_pane = state.follow(vec![PromptKind::Input], pane("s1"), 0);
+        assert!(late_pane.pending.is_empty());
+        let shown = frames(&window);
+        for (id, frame) in [(agent, &shown[0]), (by_agent_run, &shown[1])] {
+            let token = token_of(frame);
+            for caller in [pane("s1"), pane("s2")] {
+                assert_eq!(
+                    state.reply(with_token(id, "yes", Some(&token)), &caller, 1),
+                    Err(ReplyError::NotPending(id))
+                );
+            }
+            assert_eq!(state.lookup(id), Lookup::Open);
+        }
+        state.unfollow(window.id, 2);
+        assert_eq!(
+            state.lookup(agent),
+            Lookup::Ended(PromptOutcome::ended(PromptStatus::NoClient, Some(agent))),
+            "the pane follower left cannot keep an agent prompt alive"
+        );
+    }
+
+    #[test]
+    fn a_pane_still_answers_a_prompt_from_a_script_or_a_user_action_without_a_token() {
+        let mut state = BrokerState::default();
+        let in_pane = state.follow(vec![PromptKind::Input], pane("s2"), 0);
+        let mut by_user = input("Branch");
+        by_user.origin = Some(PromptOrigin {
+            agent: None,
+            ..run_by_agent().origin.unwrap()
+        });
+        for params in [input("Name"), by_user] {
+            let id = pending_id(&state.request(&params, 0).unwrap());
+            assert_eq!(frames(&in_pane).len(), 1);
+            assert_eq!(
+                state.reply(answer(id, "done"), &pane("s2"), 1),
+                Ok(Replied {
+                    id,
+                    reason: EndReason::Answered
+                })
+            );
+            frames(&in_pane);
+        }
+    }
+
+    #[test]
+    fn an_ended_prompt_still_names_its_asker_until_its_outcome_is_taken() {
+        let mut state = BrokerState::default();
+        let _window = state.follow(vec![PromptKind::Input], Principal::Window, 0);
+        let id = pending_id(&state.request(&asked_by("s1"), 0).unwrap());
+        assert!(state.withdraw(id, 1));
+        assert_eq!(state.asker_of(id), Some(Some("s1".into())));
+        assert!(matches!(state.lookup(id), Lookup::Ended(_)));
+        assert_eq!(state.asker_of(id), None);
     }
 }
