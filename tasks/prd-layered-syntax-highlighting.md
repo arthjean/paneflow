@@ -5,6 +5,7 @@
 
 | Version | Date | Author | Summary |
 |---------|------|--------|---------|
+| 1.1 | 2026-11-22 | Arthur Jean | Every Windows-only proof moves to a final epic, EP-009, run on Arthur's Windows 11 dual boot: the Windows CI leg and the PowerShell twin of US-005 and US-006, US-033 from EP-007, US-036 from EP-008, the Windows behaviors of US-020 and US-025, and the PowerShell twin of EP-001 on Windows (new US-039 and US-040). EP-007 and EP-008 keep macOS and Linux. 9 epics, 40 stories. |
 | 1.0 | 2026-11-22 | Arthur Jean | Initial PRD, from the investigation of missing Zig colors in the Files dock, a code map of t3code's highlighter, a probe of the Zig grammar under tree-sitter 0.26, a native compile of t3code's wasm2c output, a code map of the editor's highlighter, the LSP process model and the C build constraints, and two web research passes (LSP semantic tokens, wasm2c). Implements the two-layer decision of 2026-11-19 (`tasks/prd-files-experience.md`, version 1.4) with one change: layer 1 is Pierre's lexers translated to C by wasm2c instead of a hand rewrite. Adds LSP semantic tokens as layer 3. Reviewed against the PRD rubric by an independent reader in two passes; its findings are applied. 8 epics, 38 stories. |
 
 ## Problem Statement
@@ -35,7 +36,7 @@ Three layers, each painted over the one below, each usable alone.
 
 **Layer 3: LSP semantic tokens (EP-005, EP-006).** A new crate, `paneflow-lsp`, implements the part of the protocol this needs: `Content-Length` framing over stdio, server lifecycle, incremental document sync with negotiated position encoding, and the semantic token requests (`full`, `full/delta`, `range`, refresh). The feature is off by default, as in Zed (R11), resolves servers only from `PATH` or an absolute path in the user's own `paneflow.json`, never downloads anything, and asks once per project root before starting a server, because a language server can run the project's build scripts (R13). Tokens overlay layers 1 and 2 only where they map to a palette role; everything else stays transparent.
 
-**Real hardware last (EP-007, EP-008).** The C build on Windows MSVC is first exercised by the existing Windows CI job, then layers 1 and 2 are checked on Arthur's Windows 11 dual boot, on Apple Silicon and on Linux Wayland and X11 (EP-007), and the language servers in a separate epic (EP-008) so layers 1 and 2 never wait for EP-006.
+**Real hardware last (EP-007, EP-008, EP-009).** Layers 1 and 2 are checked on Apple Silicon and on Linux Wayland and X11 (EP-007), and the language servers in a separate epic (EP-008) so layers 1 and 2 never wait for EP-006. Everything that only Windows can prove, the MSVC build on the Windows CI leg, the PowerShell twins, the Windows process and path behaviors of the LSP client, and both layers on screen, is gathered in a final epic run on Arthur's Windows 11 dual boot (EP-009). The Windows code itself still lands with each story, as `AGENTS.md` requires; only its proof waits for EP-009.
 
 ## Goals
 
@@ -154,7 +155,7 @@ Modifiers: `defaultLibrary` on `function`, `type` or `variable` appends `.builti
 |---|------------|------|--------------|
 | A1 | The wasm2c translation of 0.5.2 produces the same tokens as the WASM under wasmtime. | Medium: wasm2c passes the spec tests in WABT CI (R8), but SIMD goes through SIMDe | US-009 |
 | A2 | Native lexing is at least as fast as the wasmtime figures of R10. | Medium: no native measurement yet | US-016 |
-| A3 | MSVC compiles the 5.6 MB generated C with `/std:c11`, `_Thread_local` works there, and the `Windows x86_64 libghostty check` job still finishes inside its 50-minute timeout (`.github/workflows/run_tests.yml:875`). | High (R8: not shown in WABT CI) | US-006, then US-033 |
+| A3 | MSVC compiles the 5.6 MB generated C with `/std:c11`, `_Thread_local` works there, and the `Windows x86_64 libghostty check` job still finishes inside its 50-minute timeout (`.github/workflows/run_tests.yml:875`). | High (R8: not shown in WABT CI) | US-039, then US-033 |
 | A4 | Layer 1 retains about 7 bytes per input byte (2.08 MiB for 295 KB is 7.05, R10), so a 10 MiB file needs about 70 MiB. The cap rule of US-015 allows up to 8 bytes per input byte, a 13 % margin over the one measured point; the margin itself is not evidenced. | Medium: one measured point | US-015 |
 | A5 | zls implements `textDocument/semanticTokens/full` and accepts `utf-8` position encoding. | Medium (not researched) | US-029 test against zls, US-036 |
 | A6 | rust-analyzer accepts `utf-8` position encoding. | Low (well-known, not fetched) | US-023 |
@@ -163,7 +164,7 @@ Modifiers: `defaultLibrary` on `function`, `type` or `variable` appends `.builti
 | A9 | One outstanding semantic token request per document, re-sent once when edits arrived meanwhile, keeps tokens current without a timer. | Low | US-028 |
 | A10 | Rust's `Command` runs an npm `.cmd` server shim on Windows when resolved with `which` (Rust 1.77 hardened batch argument handling). | Medium (from memory) | US-036 |
 | A11 | The first frame with layer 1 changes few enough bytes at the swap to help rather than distract. No threshold is evidenced; US-019 measures it and Arthur sets the policy (Open Question 2). | Medium | US-019, US-035 |
-| A12 | WABT 1.0.42's Windows x64 `wasm2c` emits the same C as its Linux x64 binary for the same WASM, so the PowerShell `-Check` agrees with the shell `--check`. | Medium (not researched) | US-005 on Windows, then US-033 |
+| A12 | WABT 1.0.42's Windows x64 `wasm2c` emits the same C as its Linux x64 binary for the same WASM, so the PowerShell `-Check` agrees with the shell `--check`. | Medium (not researched) | US-039 |
 | A13 | The lexer's linear memory stays under 8 bytes per input byte (A4) plus its 81,920-byte static area (`INPUT_OFFSET` in t3code's shim), so a memory ceiling of 8 × `MAX_FILE_BYTES` (80 MiB) refuses only pathological inputs. | Medium, tied to A4 | US-007, US-015 |
 
 Constraints from `AGENTS.md`: every change works on Linux, macOS and Windows, with Windows verified on hardware after a push; no comments in Rust, shell or PowerShell sources, and the same rule applies to the C shim Paneflow writes (vendored and generated files keep their upstream text); the render thread never blocks; helper binaries keep their size caps (the new crates are not linked into them); vendored query bytes change only through their sync scripts.
@@ -252,106 +253,110 @@ Zig and ZON files are colored by tree-sitter, and a shipped query with an ignore
 
 A workspace crate, `paneflow-highlights`, compiles the wasm2c translation of `@pierre/highlights` 0.5.2 on every shipping target and exposes a safe Rust API over its live tokenizer.
 
-**Definition of Done:** the regeneration scripts reproduce the vendored files byte for byte from pinned inputs; the crate builds and its tests pass on the Linux x86_64, Linux aarch64, macOS aarch64 and Windows x86_64 CI jobs; the native engine's token ids equal the wasmtime prototype's on the bench corpora; wasmtime and the `lexer-prototype` feature are gone.
+**t3code reference** (local checkout `/home/arthur/dev/t3code` at `30372d0f`): `apps/mobile/modules/t3-highlights/Vendor/` lays out the same three vendored parts this epic ships (`highlights/` for the generated C, `wasm2c/` for the runtime, `simde/` for SIMD), and `apps/mobile/modules/t3-highlights/cpp/` holds the shim. Inspiration, not a copy: see the notes on US-007.
+
+**Definition of Done:** the regeneration scripts reproduce the vendored files byte for byte from pinned inputs; the crate builds and its tests pass on the Linux x86_64, Linux aarch64 and macOS aarch64 CI jobs (the Windows leg is proven in US-039); the native engine's token ids equal the wasmtime prototype's on the bench corpora; wasmtime and the `lexer-prototype` feature are gone.
 
 #### US-004: Regenerate the vendored lexer C from pinned inputs
 **Description:** As a maintainer, I want one shell script that rebuilds every vendored lexer file from hashed inputs so that a Pierre update is a reviewed, reproducible diff.
 
 **Priority:** P0
 **Dependencies:** None
+**t3code reference** (local checkout `/home/arthur/dev/t3code` at `30372d0f`): `apps/mobile/scripts/generate-highlights.mts`: pinned wasm2c version check (`:16`, `:132-135`), the `wasm2c highlights.wasm -n highlights -o highlights.c` call (`:150-156`), the generated banner with version and WASM hash, the runtime copy from WABT's `share/wabt/wasm2c/` (`:169-173`). Paneflow adds what t3code lacks: tarball integrity, WABT download with hash, a `--check` mode.
 
 **Acceptance Criteria:**
-- [ ] Given `scripts/sync-pierre-highlights.sh`, when it runs, then it downloads the `@pierre/highlights` 0.5.2 tarball into a new empty directory
-- [ ] Given the downloaded tarball, when it is checked, then its npm `sha512` integrity is verified before extraction
-- [ ] Given the extracted package, when the script continues, then the SHA-256 of `dist/highlights.wasm` equals the value recorded in `crates/paneflow-highlights/c/MANIFEST.toml`
-- [ ] Given no `WASM2C` variable, when the script needs wasm2c, then it downloads the WABT 1.0.42 archive for the host and verifies it against the published `.sha256` file
-- [ ] Given a `WASM2C` variable pointing at a binary whose `--version` is not `1.0.42`, when the script runs, then it exits non-zero naming the expected version
-- [ ] Given the inputs, when generation completes, then `crates/paneflow-highlights/c/generated/highlights.c` and `highlights.h` start with a banner naming the package version and the WASM SHA-256
-- [ ] Given the WABT archive, when generation completes, then the wasm2c runtime files the build uses are under `crates/paneflow-highlights/c/wasm2c/`
-- [ ] Given SIMDe commit `71fd833d9666141edcd1d3c109a80e228303d8d7`, when generation completes, then `c/simde/wasm/simd128.h` is vendored and its SHA-256 recorded in the manifest
-- [ ] Given `dist/languages.js` and `dist/token-types.js`, when generation completes, then `crates/paneflow-highlights/src/tables.rs` is regenerated from them in the same run
-- [ ] Given `MANIFEST.toml`, when it is read, then it records every input's version, URL and hash and the source repository `https://github.com/pierrecomputer/pierre`
-- [ ] Given `--check`, when the vendored files match a fresh generation, then the script exits 0 and prints the package version
-- [ ] Given `--check` and one changed byte in any generated or vendored file, when it runs, then it exits 1 and names the file
-- [ ] Given a download whose hash does not match, when the script runs, then it exits non-zero and names the input
-- [ ] Given a download whose hash does not match, when the script exits, then no vendored file changed
+- [x] Given `scripts/sync-pierre-highlights.sh`, when it runs, then it downloads the `@pierre/highlights` 0.5.2 tarball into a new empty directory
+- [x] Given the downloaded tarball, when it is checked, then its npm `sha512` integrity is verified before extraction
+- [x] Given the extracted package, when the script continues, then the SHA-256 of `dist/highlights.wasm` equals the value recorded in `crates/paneflow-highlights/c/MANIFEST.toml`
+- [x] Given no `WASM2C` variable, when the script needs wasm2c, then it downloads the WABT 1.0.42 archive for the host and verifies it against the published `.sha256` file
+- [x] Given a `WASM2C` variable pointing at a binary whose `--version` is not `1.0.42`, when the script runs, then it exits non-zero naming the expected version
+- [x] Given the inputs, when generation completes, then `crates/paneflow-highlights/c/generated/highlights.c` and `highlights.h` start with a banner naming the package version and the WASM SHA-256
+- [x] Given the WABT archive, when generation completes, then the wasm2c runtime files the build uses are under `crates/paneflow-highlights/c/wasm2c/`
+- [x] Given SIMDe commit `71fd833d9666141edcd1d3c109a80e228303d8d7`, when generation completes, then `c/simde/wasm/simd128.h` is vendored and its SHA-256 recorded in the manifest
+- [x] Given `dist/languages.js` and `dist/token-types.js`, when generation completes, then `crates/paneflow-highlights/src/tables.rs` is regenerated from them in the same run
+- [x] Given `MANIFEST.toml`, when it is read, then it records every input's version, URL and hash and the source repository `https://github.com/pierrecomputer/pierre`
+- [x] Given `--check`, when the vendored files match a fresh generation, then the script exits 0 and prints the package version
+- [x] Given `--check` and one changed byte in any generated or vendored file, when it runs, then it exits 1 and names the file
+- [x] Given a download whose hash does not match, when the script runs, then it exits non-zero and names the input
+- [x] Given a download whose hash does not match, when the script exits, then no vendored file changed
 
-#### US-005: Windows twin of the generator, and the license files
-**Description:** As a maintainer on Windows, I want the same generator in PowerShell and every license that travels with the vendored code so that the crate can be regenerated on any platform and redistributed lawfully.
+#### US-005: PowerShell twin of the generator, and the license files
+**Description:** As a maintainer on any platform, I want the same generator in PowerShell and every license that travels with the vendored code so that the crate can be regenerated on any platform and redistributed lawfully.
 
 **Priority:** P0
 **Dependencies:** Blocked by US-004
+**t3code reference** (local checkout `/home/arthur/dev/t3code` at `30372d0f`): `apps/mobile/modules/t3-highlights/Vendor/wasm2c/LICENSE` and `apps/mobile/modules/t3-highlights/Vendor/simde/LICENSE`: the license files t3code vendors next to the runtime and SIMDe.
 
 **Acceptance Criteria:**
-- [ ] Given `scripts/sync-pierre-highlights.ps1` under PowerShell 7 on Windows, when it runs without `-Check`, then it writes the same files as the shell script (assumption A12)
-- [ ] Given the same script with `-Check`, when the vendored files match, then it exits 0 and prints the package version
-- [ ] Given `-Check` and one changed byte, when it runs, then it exits 1 and names the file
-- [ ] Given `crates/paneflow-highlights/c/NOTICE`, when it is read, then it reproduces Pierre's `NOTICE.md`
-- [ ] Given the same file, when it is read, then it names Apache-2.0 as the license of the generated code
-- [ ] Given `c/wasm2c/LICENSE`, when it is read, then it holds WABT's Apache-2.0 text
-- [ ] Given `c/simde/LICENSE`, when it is read, then it holds SIMDe's MIT text
-- [ ] Given `THIRD_PARTY_NOTICES.md`, when it is read, then it lists `@pierre/highlights`, the wasm2c runtime and SIMDe with their licenses and vendored paths
-- [ ] Given a vendored file listed in the manifest but missing on disk, when either script runs `--check`, then it exits 1 and names the file
+- [x] Given `scripts/sync-pierre-highlights.ps1` with `-Check` under PowerShell 7, when the vendored files match, then it exits 0 and prints the package version
+- [x] Given `-Check` and one changed byte, when it runs, then it exits 1 and names the file
+- [x] Given `crates/paneflow-highlights/c/NOTICE`, when it is read, then it reproduces Pierre's `NOTICE.md`
+- [x] Given the same file, when it is read, then it names Apache-2.0 as the license of the generated code
+- [x] Given `c/wasm2c/LICENSE`, when it is read, then it holds WABT's Apache-2.0 text
+- [x] Given `c/simde/LICENSE`, when it is read, then it holds SIMDe's MIT text
+- [x] Given `THIRD_PARTY_NOTICES.md`, when it is read, then it lists `@pierre/highlights`, the wasm2c runtime and SIMDe with their licenses and vendored paths
+- [x] Given a vendored file listed in the manifest but missing on disk, when either script runs `--check`, then it exits 1 and names the file
 
 #### US-006: Compile the lexers on every shipping target
-**Description:** As a maintainer, I want the vendored C built by `cargo` on Linux, macOS and Windows so that layer 1 ships on every platform with no extra toolchain.
+**Description:** As a maintainer, I want the vendored C built by `cargo` on Linux, macOS and Windows so that layer 1 ships on every platform with no extra toolchain. The Windows leg is proven in US-039.
 
 **Priority:** P0
 **Dependencies:** Blocked by US-004
+**t3code reference** (local checkout `/home/arthur/dev/t3code` at `30372d0f`): `apps/mobile/modules/t3-highlights/android/CMakeLists.txt:31-32` and `apps/mobile/modules/t3-highlights/T3HighlightsNative.podspec:27`: the three `WASM_RT_*` defines on Android and iOS. Paneflow adds `-std=c11` / `/std:c11`, which t3code does not set (R8).
 
 **Acceptance Criteria:**
-- [ ] Given the workspace `Cargo.toml`, when it is read, then `crates/paneflow-highlights` is a member with `license.workspace = true`, `publish = false` and the workspace lints
-- [ ] Given the crate's `build.rs`, when it compiles the C with `cc`, then it defines `WASM_RT_USE_MMAP=0`, `WASM_RT_MEMCHECK_BOUNDS_CHECK=1` and `WASM_RT_SKIP_SIGNAL_RECOVERY=1` on every target
-- [ ] Given a gcc or clang target, when `build.rs` compiles, then it passes `-std=c11`
-- [ ] Given an MSVC target, when `build.rs` compiles, then it passes `/std:c11`
+- [x] Given the workspace `Cargo.toml`, when it is read, then `crates/paneflow-highlights` is a member with `license.workspace = true`, `publish = false` and the workspace lints
+- [x] Given the crate's `build.rs`, when it compiles the C with `cc`, then it defines `WASM_RT_USE_MMAP=0`, `WASM_RT_MEMCHECK_BOUNDS_CHECK=1` and `WASM_RT_SKIP_SIGNAL_RECOVERY=1` on every target
+- [x] Given a gcc or clang target, when `build.rs` compiles, then it passes `-std=c11`
+- [x] Given an MSVC target, when `build.rs` compiles, then it passes `/std:c11`
 - [ ] Given the `Tests (Linux x86_64)` job on the story's commit, when it runs, then the crate's tests pass
 - [ ] Given the Linux aarch64 job on the story's commit, when it runs, then the crate's tests pass
 - [ ] Given the `macos_check` job on the story's commit, when it runs, then the crate's tests pass
-- [ ] Given the `Windows x86_64 libghostty check` job on the story's commit, when it runs, then the crate's tests pass
-- [ ] Given that job's run, when its duration is read, then it finished inside its 50-minute timeout (assumption A3)
-- [ ] Given a target outside the four shipping targets, when the crate builds, then `build.rs` fails with a message naming the target, as `src-app/build.rs` does for libghostty
-- [ ] Given stripped release builds of `paneflow` with and without the crate on Linux x86_64, when their sizes are compared, then the delta is recorded in this PRD
-- [ ] Given the recorded delta, when it is compared, then it is below 9.67 MiB
-- [ ] Given a release build on Linux x86_64, when its build log is read, then the compile time of `highlights.c` is recorded in this PRD
-- [ ] Given `paneflow-shim`, `paneflow-ai-hook` and `paneflow-mcp`, when their dependency trees are read, then none depends on `paneflow-highlights`
+- [x] Given a target outside the four shipping targets, when the crate builds, then `build.rs` fails with a message naming the target, as `src-app/build.rs` does for libghostty
+- [x] Given stripped release builds of `paneflow` with and without the crate on Linux x86_64, when their sizes are compared, then the delta is recorded in this PRD
+- [x] Given the recorded delta, when it is compared, then it is below 9.67 MiB
+- [x] Given a release build on Linux x86_64, when its build log is read, then the compile time of `highlights.c` is recorded in this PRD
+- [x] Given `paneflow-shim`, `paneflow-ai-hook` and `paneflow-mcp`, when their dependency trees are read, then none depends on `paneflow-highlights`
 
 #### US-007: A safe Rust API over the live tokenizer, with traps contained in C
 **Description:** As a developer of the editor, I want a Rust type that owns one lexer instance and its document so that the editor lexes, edits and queries lines without touching C.
 
 **Priority:** P0
 **Dependencies:** Blocked by US-006
+**t3code reference** (local checkout `/home/arthur/dev/t3code` at `30372d0f`): `apps/mobile/modules/t3-highlights/cpp/t3_highlights.c`: trap catch with `WASM_RT_SAVE_STACK_DEPTH` and `WASM_RT_SETJMP` around the generated call, instance reset after a trap or after memory grew past `RESET_AFTER_PAGES`, memory growth before staging, the host imports `w2c_env_is_id_start`/`w2c_env_is_id_continue`, and `apps/mobile/modules/t3-highlights/cpp/generated/id_ranges.inc` for their Unicode tables. Do not copy two choices: t3code keeps one static instance (Paneflow needs one per document, on several threads) and uses the one-shot UTF-16 line-record mode (Paneflow uses the live API with byte ranges, as `lexer_prototype.rs` does).
 
 **Acceptance Criteria:**
-- [ ] Given `Lexer::new()`, when it is called, then it allocates one wasm2c instance on the heap through the C shim
-- [ ] Given a `Lexer`, when it is dropped, then its instance is freed (checked by an instance counter in a test build)
-- [ ] Given a `LexDocument` built from a text and a language id, when it is settled, then `line_tokens(line)` returns token ids with byte ranges into the line, not UTF-16 columns
-- [ ] Given an edit with a byte range and new text, when it is applied, then the document re-lexes until its state matches the old one
-- [ ] Given that edit, when it completes, then the document reports the range of lines whose tokens changed
-- [ ] Given two documents on two threads, when both are lexed concurrently, then both results equal their single-threaded results
-- [ ] Given `LexDocument`, when a compile-time assertion checks it, then it is `Send` and not `Sync`
-- [ ] Given the host imports `is_id_start` and `is_id_continue`, when the lexer calls them, then they answer from `unicode-ident` with the prototype's rules (XID, plus ZWNJ and ZWJ for continuation)
-- [ ] Given the host-import functions, when their source is read, then they are `extern "C"` Rust functions that call no shim entry point
-- [ ] Given the C shim, when its source is read, then every exported function that runs lexer code calls `WASM_RT_SETJMP` before entering the generated code
-- [ ] Given a test-only shim entry that forces a trap, when it is called, then it returns an error whose variant names a trap
-- [ ] Given that trap, when a new `Lexer` lexes a document afterwards, then its tokens equal a clean run
-- [ ] Given an input whose staging would pass `MAX_MEMORY_BYTES` = 8 × `MAX_FILE_BYTES` (assumption A13), when it is staged, then the call returns an error and memory does not grow
-- [ ] Given the C shim written for Paneflow, when it is read, then it has no comments, per `AGENTS.md`
+- [x] Given `Lexer::new()`, when it is called, then it allocates one wasm2c instance on the heap through the C shim
+- [x] Given a `Lexer`, when it is dropped, then its instance is freed (checked by an instance counter in a test build)
+- [x] Given a `LexDocument` built from a text and a language id, when it is settled, then `line_tokens(line)` returns token ids with byte ranges into the line, not UTF-16 columns
+- [x] Given an edit with a byte range and new text, when it is applied, then the document re-lexes until its state matches the old one
+- [x] Given that edit, when it completes, then the document reports the range of lines whose tokens changed
+- [x] Given two documents on two threads, when both are lexed concurrently, then both results equal their single-threaded results
+- [x] Given `LexDocument`, when a compile-time assertion checks it, then it is `Send` and not `Sync`
+- [x] Given the host imports `is_id_start` and `is_id_continue`, when the lexer calls them, then they answer from `unicode-ident` with the prototype's rules (XID, plus ZWNJ and ZWJ for continuation)
+- [x] Given the host-import functions, when their source is read, then they are `extern "C"` Rust functions that call no shim entry point
+- [x] Given the C shim, when its source is read, then every exported function that runs lexer code calls `WASM_RT_SETJMP` before entering the generated code
+- [x] Given a test-only shim entry that forces a trap, when it is called, then it returns an error whose variant names a trap
+- [x] Given that trap, when a new `Lexer` lexes a document afterwards, then its tokens equal a clean run
+- [x] Given an input whose staging would pass `MAX_MEMORY_BYTES` = 8 × `MAX_FILE_BYTES` (assumption A13), when it is staged, then the call returns an error and memory does not grow
+- [x] Given the C shim written for Paneflow, when it is read, then it has no comments, per `AGENTS.md`
 
 #### US-008: Language and token tables generated from the pinned release
 **Description:** As a user opening any file, I want layer 1 to know every language Pierre ships so that a language without a grammar is still colored.
 
 **Priority:** P0
 **Dependencies:** Blocked by US-004
+**t3code reference** (local checkout `/home/arthur/dev/t3code` at `30372d0f`): `apps/mobile/src/lib/highlights.generated.ts` (language and token id tables generated from the same package version as the C, `zig: 152`, `zon: 152` at `highlights.generated.ts:351-352`) and `node_modules/.pnpm/@pierre+diffs@1.7.0-beta.4_patch_hash=b24b206d14c79de95be10322b96490b82e41cc13c8a02c737_31f9dca5c277eb0b5b13f052c5640fbe/node_modules/@pierre/diffs/dist/utils/getFiletypeFromFileName.js` (extension and file-name lookup, no `zon` entry at `:359`, fallback to `text` at `:363-380`), which Paneflow's `language_for_path` improves on.
 
 **Acceptance Criteria:**
-- [ ] Given `tables.rs`, when it is read, then it maps every key of the pinned `languages.js` to its id
-- [ ] Given `tables.rs`, when it is read, then it holds every name of `token-types.js` in the file's order
-- [ ] Given `language_for_path`, when it is called with `foo.zig`, `build.zig.zon`, `main.kt`, `init.lua` and `query.sql`, then it returns the ids of `zig`, `zon`, `kt`, `lua` and `sql`
-- [ ] Given `language_for_path` with `Dockerfile` and `Makefile`, when it is called, then it matches the lowercased file name and returns ids 35 and 86
-- [ ] Given `README.unknownext`, when it is called, then it returns `None`
-- [ ] Given every id from 1 to 152, when the coverage test runs, then each is reachable from at least one key
-- [ ] Given every token name, when it is resolved through `DiffSyntax::color_for_capture`, then it gets a color or is in an explicit, tested list of uncolored names
-- [ ] Given a generated token table whose length differs from the count the WASM reports, when the crate's tests run, then a test fails naming both counts
+- [x] Given `tables.rs`, when it is read, then it maps every key of the pinned `languages.js` to its id
+- [x] Given `tables.rs`, when it is read, then it holds every name of `token-types.js` in the file's order
+- [x] Given `language_for_path`, when it is called with `foo.zig`, `build.zig.zon`, `main.kt`, `init.lua` and `query.sql`, then it returns the ids of `zig`, `zon`, `kt`, `lua` and `sql`
+- [x] Given `language_for_path` with `Dockerfile` and `Makefile`, when it is called, then it matches the lowercased file name and returns ids 35 and 86
+- [x] Given `README.unknownext`, when it is called, then it returns `None`
+- [x] Given every id from 1 to 152, when the coverage test runs, then each is reachable from at least one key
+- [x] Given every token name, when it is resolved through `DiffSyntax::color_for_capture`, then it gets a color or is in an explicit, tested list of uncolored names
+- [x] Given a generated token table whose length differs from the count the WASM reports, when the crate's tests run, then a test fails naming both counts
 
 #### US-009: Prove the native build matches the wasmtime prototype
 **Description:** As a maintainer, I want evidence that wasm2c changed nothing in the lexers' output so that the prototype's measurements carry over to the native engine.
@@ -360,10 +365,10 @@ A workspace crate, `paneflow-highlights`, compiles the wasm2c translation of `@p
 **Dependencies:** Blocked by US-007, US-008
 
 **Acceptance Criteria:**
-- [ ] Given the 0.5.2 `highlights.wasm` loaded by the existing prototype through `PANEFLOW_HIGHLIGHTS_WASM`, and the native crate, when both lex the bench corpora (Rust 300 KB, Markdown, TypeScript, Python, HTML) and `sample.zig`, then every line's list of (byte range, token id) is identical
-- [ ] Given the comparison, when it completes, then its per-corpus line and token counts are recorded in this PRD
-- [ ] Given a mismatch, when the comparison runs, then it reports the first differing line, its byte column and both token ids
-- [ ] Given the comparison, when its code is read, then it compares token ids and does not use the prototype's 0.5.1 `TOKEN_NAMES`
+- [x] Given the 0.5.2 `highlights.wasm` loaded by the existing prototype through `PANEFLOW_HIGHLIGHTS_WASM`, and the native crate, when both lex the bench corpora (Rust 300 KB, Markdown, TypeScript, Python, HTML) and `sample.zig`, then every line's list of (byte range, token id) is identical
+- [x] Given the comparison, when it completes, then its per-corpus line and token counts are recorded in this PRD
+- [x] Given a mismatch, when the comparison runs, then it reports the first differing line, its byte column and both token ids
+- [x] Given the comparison, when its code is read, then it compares token ids and does not use the prototype's 0.5.1 `TOKEN_NAMES`
 
 #### US-010: Retire wasmtime and move the lexer bench to the native crate
 **Description:** As a maintainer, I want one lexer engine in the tree so that the bench and the oracle measure what ships.
@@ -372,13 +377,36 @@ A workspace crate, `paneflow-highlights`, compiles the wasm2c translation of `@p
 **Dependencies:** Blocked by US-009
 
 **Acceptance Criteria:**
-- [ ] Given `src-app/src/app/diff_dock/code/`, when the story is done, then `lexer_prototype.rs` no longer exists
-- [ ] Given `src-app/Cargo.toml`, when it is read, then the `lexer-prototype` feature is gone
-- [ ] Given `src-app/Cargo.toml`, when it is read, then the optional `wasmtime` and `unicode-ident` entries are gone
-- [ ] Given `lexer_compare.rs`, when it runs, then it uses `paneflow-highlights`
-- [ ] Given the editor bench's lexer scenarios, when the default suite runs, then they run on `paneflow-highlights` with no feature flag
-- [ ] Given `scripts/bench-editor.sh --lexer-prototype`, when it runs, then it exits non-zero with a message saying the lexer metrics are part of the default suite
-- [ ] Given `scripts/bench-editor.ps1 -LexerPrototype`, when it runs, then it exits non-zero with the same message
+- [x] Given `src-app/src/app/diff_dock/code/`, when the story is done, then `lexer_prototype.rs` no longer exists
+- [x] Given `src-app/Cargo.toml`, when it is read, then the `lexer-prototype` feature is gone
+- [x] Given `src-app/Cargo.toml`, when it is read, then the optional `wasmtime` and `unicode-ident` entries are gone
+- [x] Given `lexer_compare.rs`, when it runs, then it uses `paneflow-highlights`
+- [x] Given the editor bench's lexer scenarios, when the default suite runs, then they run on `paneflow-highlights` with no feature flag
+- [x] Given `scripts/bench-editor.sh --lexer-prototype`, when it runs, then it exits non-zero with a message saying the lexer metrics are part of the default suite
+- [x] Given `scripts/bench-editor.ps1 -LexerPrototype`, when it runs, then it exits non-zero with the same message
+
+**EP-002 implementation notes (2026-11-22, awaiting review):**
+
+- **Inputs, all verified before anything is written.** npm tarball `sha512-CV+yFa8d...` (integrity), `highlights.wasm` SHA-256 `ee1152cd...`, the WABT 1.0.42 archive of the host against its published `.sha256` and the value pinned in `c/MANIFEST.toml` (all four hosts pinned), SIMDe from the `simde-amalgamated-0.8.2.tar.xz` release asset (its `wasm/simd128.h` is byte-identical to t3code's copy and names commit `71fd833d` on line 2), WABT `LICENSE` at tag `1.0.42` and SIMDe `COPYING` at `71fd833d`. A clean regeneration takes 1.6 s. The manifest's pins are hand-edited; its `[[files]]` list is written by the scripts.
+- **PowerShell twin.** `sync-pierre-highlights.ps1` ran under PowerShell 7.4.2 in a Linux container: `-Check` passes, a full write is byte-identical to the shell output, a changed byte, a missing file and a wrong `WASM2C` version each exit 1 naming the cause. Its Windows run is US-039 (A12). It normalizes CRLF in wasm2c's output to LF, so a Windows wasm2c that writes CRLF cannot make `-Check` fail on line endings alone. `.gitattributes` pins LF for the vendored files and both scripts.
+- **CI.** The Windows leg and the 50-minute bound (A3) moved to US-039 with PRD 1.1. Every job already runs `cargo nextest run --workspace` and the `rust` path filter covers `crates/**`, so no workflow change was needed. MSVC is the open risk: `/std:c11` makes `wasm-rt.h` choose `_Thread_local`; the fallbacks of the Risks table apply if `cl.exe` refuses it.
+- **Measured on Linux x86_64 (2026-11-22, gcc, `-O2`).** Stripped release `paneflow` with a probe that links the crate: 101,137,992 bytes; without it: 100,383,048 bytes; delta **754,944 bytes (0.72 MiB)**, below 9.67 MiB. The `paneflow-highlights` build-script run, which compiles `highlights.c` with the runtime and the shim, took **11.3 s** in that release build (`cargo --timings`). The crate is a dev-dependency of `paneflow-app` until EP-003 links it, so today's release binary does not carry it.
+- **Shim design.** The host imports are Rust `extern "C"` functions passed to the shim as function pointers; the C `w2c_env_is_id_start` / `w2c_env_is_id_continue` only bounds-check the pointer and forward. That avoids a link-order cycle between the C archive and the Rust crate and keeps every `longjmp` inside C frames. The memory ceiling is enforced twice: `max_pages` is lowered to `MAX_MEMORY_BYTES` after instantiation, and a staging that would pass it is refused before `liveStage` runs. `paneflow_hl_probe_trap` is compiled into the archive but only declared by the crate's tests.
+- **Per-call cost.** `wasm-rt.h` uses `sigsetjmp(buf, 1)` on Unix, which saves the signal mask through a system call on every shim entry: the bench measured 274 ns per empty call. The first bench run read rows one call each and gave 23.2 us per keystroke and 18.7 us per 60-row viewport, against 4.5 us and 3.6 us under wasmtime (R10). `paneflow_hl_read_lines` and `LexDocument::for_each_line_tokens` now read up to 64 rows under one `setjmp`. Final run (`scripts/bench-editor.sh`, release, cpu_share 0.995, a dirty tree so not a baseline): `lexer_full_color_300kb` 3.04 ms (wasmtime 3.40 ms), `lexer_keystroke_mid_file` 6.2 us (4.5 us), `lexer_viewport_query_60_rows` 2.1 us (3.6 us), `lexer_retained_bytes` 2.19 MiB (2.08 MiB), `lexer_instantiate` 10.1 us, `lexer_call_ns` 274 ns. The keystroke still pays about seven shim entries (edit, settle, changes, line remap); US-016 owns the A2 comparison. EP-003 should read rows through `for_each_line_tokens`.
+- **Line model for EP-003.** The lexer breaks lines on `\r\n`, `\n` and a lone `\r`; the editor's ropey breaks on `\n` only (`src-app/Cargo.toml`, ropey comment). `LexDocument` therefore takes edits as document byte ranges and exposes `line_start(line)` in its own line numbering; EP-003 must map editor rows to lexer lines through byte offsets when a file contains a lone `\r`. Tokens cover whitespace with the neighboring token's id (`"    "` before `let` is `punctuation.bracket` when the previous line ended on `{`), so a consumer that compares roles should skip whitespace as `lexer_compare.rs` does.
+- **US-008 uncolored token types.** 14 of the 75 names resolve to no palette role: `none`, `diff.minus`, `diff.plus`, `embedded`, `predictive`, `primary`, `selector`, `text.jsx`, `enum`, `hint`, `markup.strikethrough`, `variant`, `background`, `foreground` (`UNCOLORED_LEXER_TOKENS`, `src-app/src/diff/syntax.rs`). `enum` and `variant` staying uncolored may matter to the US-018 floors.
+- **US-009 parity, 2026-11-22.** The wasmtime prototype loaded the 0.5.2 `highlights.wasm` and the native crate lexed the same texts; every line's (byte range, token id) list was identical:
+
+| Corpus | Lines | Tokens |
+|---|---|---|
+| Rust, the 300 KB bench corpus | 9,246 | 67,175 |
+| Markdown, the bench corpus | 2,733 | 7,606 |
+| TypeScript, `scripts/generate-file-icons.ts` | 202 | 1,909 |
+| Python fixture | 43 | 244 |
+| HTML with script and style | 26 | 200 |
+| Zig, `sample.zig` | 22 | 164 |
+
+  The comparison was deleted with wasmtime in US-010. `lexer_correctness_report`, now on the native crate, reproduces R10's agreement figures exactly: Rust 84.1 %, TypeScript 96.6 %, Python 92.1 %, Markdown 67.3 %, HTML 49.8 %. Its result survives as `RECORDED_WASMTIME_FINGERPRINTS` (`src-app/src/app/diff_dock/code/lexer_parity.rs`): line count, token count and an FNV-1a hash of every (line, range, id) per corpus, which `native_tokens_match_the_fingerprints_recorded_from_the_wasmtime_prototype` checks on every CI run.
 
 ---
 
@@ -393,6 +421,7 @@ The editor paints layer 1 wherever layer 2 is not ready or not available, and ke
 
 **Priority:** P0
 **Dependencies:** Blocked by US-007, US-008
+**t3code reference** (local checkout `/home/arthur/dev/t3code` at `30372d0f`): `apps/web/src/lib/syntaxHighlighting.ts:13-44`: extension overrides for dialects the lexers lack (`luau`, `xsl`, `xslt`) and the fallback to `"text"` when a language fails to load.
 
 **Acceptance Criteria:**
 - [ ] Given a file at or under its tree-sitter cap with a known lexer language, when `open_blocking` builds the highlighter off the render thread (R18), then it lexes the whole document before the document is shown
@@ -422,6 +451,7 @@ The editor paints layer 1 wherever layer 2 is not ready or not available, and ke
 
 **Priority:** P0
 **Dependencies:** Blocked by US-011
+**t3code reference** (local checkout `/home/arthur/dev/t3code` at `30372d0f`): `apps/web/src/lib/syntaxHighlighting.ts:35-41`: an unknown or failing language degrades to plain text, never to an error.
 
 **Acceptance Criteria:**
 - [ ] Given a file with a lexer language and no grammar, when it opens, then the highlighter is enabled with layer 1 only
@@ -530,16 +560,15 @@ Layer 1's agreement with tree-sitter and the visible change at the layer swap ar
 
 Paneflow can start a language server for a project root after consent, keep its open documents in sync, and stop it cleanly.
 
-**Definition of Done:** `paneflow-lsp` passes its tests against the fake server on all four CI targets; with `editor.semantic_tokens` false, no test path or UI path starts a server; on the reference machine with rust-analyzer installed, opening two Rust files of this repository after consent starts one rust-analyzer process, and closing both tabs stops it.
+**Definition of Done:** `paneflow-lsp` passes its tests against the fake server on the Linux x86_64, Linux aarch64 and macOS CI targets (Windows in US-040); with `editor.semantic_tokens` false, no test path or UI path starts a server; on the reference machine with rust-analyzer installed, opening two Rust files of this repository after consent starts one rust-analyzer process, and closing both tabs stops it.
 
 #### US-020: A byte-stream stdio child in paneflow-process
-**Description:** As a developer of the LSP client, I want a child process with raw stdin and stdout so that I can frame messages by `Content-Length`.
+**Description:** As a developer of the LSP client, I want a child process with raw stdin and stdout so that I can frame messages by `Content-Length`. Its Windows path (`CREATE_NO_WINDOW`, Job Object) is written here and proven in US-040.
 
 **Priority:** P1
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given `spawn_stdio_session` on Windows, when it starts a child, then it applies `CREATE_NO_WINDOW` and the Job Object setup of `spawn_line_session`
 - [ ] Given `spawn_stdio_session` on Unix, when it starts a child, then the child gets its own process group as in `spawn_line_session`
 - [ ] Given the session, when it is read, then stdout is a byte reader with no newline framing
 - [ ] Given the session, when it is written, then stdin is a byte writer with no newline framing
@@ -629,14 +658,13 @@ Paneflow can start a language server for a project root after consent, keep its 
 - [ ] Given `editor.semantic_tokens` false, when a Rust file opens, then no language server process starts
 
 #### US-025: Resolve server commands, and the Missing state
-**Description:** As a user, I want servers found only where I put them so that a repository can never choose what Paneflow runs.
+**Description:** As a user, I want servers found only where I put them so that a repository can never choose what Paneflow runs. The Windows `PATHEXT` resolution is written here and proven in US-040.
 
 **Priority:** P1
 **Dependencies:** Blocked by US-024
 
 **Acceptance Criteria:**
 - [ ] Given a `command` without a path separator, when it resolves, then it is searched on `PATH` with `which`
-- [ ] Given Windows, when such a command resolves, then `PATHEXT` extensions are tried
 - [ ] Given a `command` with an absolute path, when it resolves, then that path is used
 - [ ] Given a `command` with a relative path, when it resolves, then it is rejected with a log line
 - [ ] Given a command that does not resolve, when a matching file opens, then the server enters the `Missing` state and no process starts
@@ -772,26 +800,11 @@ Tokens from the server color the editor over layers 1 and 2, stay aligned throug
 
 ---
 
-### EP-007: Real-hardware validation of layers 1 and 2
+### EP-007: Real-hardware validation of layers 1 and 2 on macOS and Linux
 
-What CI cannot show for the lexical and tree-sitter layers, colors on screen and the MSVC and Apple builds, is checked on each platform.
+What CI cannot show for the lexical and tree-sitter layers, colors on screen and the Apple build, is checked on macOS and Linux. Windows is EP-009.
 
 **Definition of Done:** each story below has its report written as a section of this PRD; every defect found is fixed or recorded as a blocker on the story it belongs to.
-
-#### US-033: Validate layers 1 and 2 on Windows 11
-**Description:** As the maintainer, I want the lexical and tree-sitter layers run on Arthur's Windows 11 dual boot so that the MSVC build is a fact.
-
-**Priority:** P0
-**Dependencies:** Blocked by US-005, US-006, US-013, US-014, US-016
-
-**Acceptance Criteria:**
-- [ ] Given a release build from the story's commit, when a Zig file opens, then its first frame is colored, with a screenshot in the report
-- [ ] Given the same build, when a Kotlin file opens, then its first frame is colored, with a screenshot
-- [ ] Given the same build, when a Markdown file with a Rust fence opens, then the fence body is colored after the tree arrives, with a screenshot
-- [ ] Given the CI log of the `Windows x86_64 libghostty check` job, when the report is written, then it records the compile time of `highlights.c` (assumption A3)
-- [ ] Given `scripts/sync-pierre-highlights.ps1 -Check` on this machine, when it runs, then the report records its verdict (assumption A12)
-- [ ] Given a file of 10,001-character lines, when it opens, then the report states that it opened read-only and colored
-- [ ] Given that file, when it is scrolled to its end, then the report states that Paneflow stayed responsive and did not crash
 
 #### US-034: Validate layers 1 and 2 on macOS Apple Silicon
 **Description:** As the maintainer, I want the lexical and tree-sitter layers run on Apple Silicon so that the C11 thread-local build works there.
@@ -821,26 +834,11 @@ What CI cannot show for the lexical and tree-sitter layers, colors on screen and
 
 ---
 
-### EP-008: Real-hardware validation of the language servers
+### EP-008: Real-hardware validation of the language servers on macOS and Linux
 
-What CI cannot show for layer 3, real servers on real machines, is checked on each platform.
+What CI cannot show for layer 3, real servers on real machines, is checked on macOS and Linux. Windows is EP-009.
 
 **Definition of Done:** each story below has its report written as a section of this PRD; every defect found is fixed or recorded as a blocker on the story it belongs to.
-
-#### US-036: Validate language servers on Windows 11
-**Description:** As the maintainer, I want rust-analyzer and zls run from Paneflow on Windows so that spawning, consent and crash handling are facts there.
-
-**Priority:** P1
-**Dependencies:** Blocked by US-031, US-032
-
-**Acceptance Criteria:**
-- [ ] Given rust-analyzer installed as an `.exe`, semantic tokens on and consent given, when a Rust file opens, then its process starts
-- [ ] Given that process running, when the file paints, then layer-3 colors appear, with a screenshot in the report
-- [ ] Given that server, when the last Rust tab closes, then the report states that the process is gone
-- [ ] Given zls installed as an `.exe`, when a Zig file opens with consent, then the report records whether its process started (assumption A5)
-- [ ] Given zls running, when the Zig file paints, then the report records whether layer-3 colors appeared
-- [ ] Given a server installed by npm as a `.cmd` shim and declared in `language_servers`, when its file opens, then the report states whether it started (assumption A10)
-- [ ] Given a server killed from Task Manager twice, when it dies the second time, then the crash banner appears
 
 #### US-037: Validate language servers on macOS Apple Silicon
 **Description:** As the maintainer, I want rust-analyzer and zls run from Paneflow on macOS so that spawning and the lifecycle are facts there.
@@ -865,6 +863,70 @@ What CI cannot show for layer 3, real servers on real machines, is checked on ea
 - [ ] Given fast typing in that file, when the report is written, then it states whether any token was seen on the wrong bytes
 - [ ] Given the server killed while the file is open, when the next frame paints, then the report states that no layer-3 color remains
 
+---
+
+### EP-009: Windows validation on the Windows 11 dual boot
+
+Every proof that only Windows can give, for every epic of this PRD, gathered in one pass on Arthur's Windows 11 dual boot (x64), after a push and a reboot. The Windows code ships with each story; this epic runs it.
+
+**Definition of Done:** each story below has its report written as a section of this PRD, with the commit it ran on; every defect found is fixed or recorded as a blocker on the story it belongs to.
+
+#### US-039: Windows proof of the generators and the native lexer build
+**Description:** As the maintainer, I want the MSVC build of `paneflow-highlights` and both PowerShell generators run on Windows so that A3 and A12 are facts.
+
+**Priority:** P0
+**Dependencies:** Blocked by US-005, US-006, US-001
+
+**Acceptance Criteria:**
+- [ ] Given the `Windows x86_64 libghostty check` job on the commit that adds the crate or a later one, when it runs, then the crate's tests pass
+- [ ] Given that job's run, when its duration is read, then it finished inside its 50-minute timeout, and the report records it (assumption A3)
+- [ ] Given that job's log, when the report is written, then it records the compile time of `highlights.c` under MSVC (assumption A3)
+- [ ] Given `cargo nextest run -p paneflow-highlights --locked` on the dual boot, when it runs, then every test passes
+- [ ] Given `scripts/sync-pierre-highlights.ps1` under PowerShell 7 on the dual boot, when it runs without `-Check`, then `git status` shows no change under `crates/paneflow-highlights/` (assumption A12)
+- [ ] Given the same script with `-Check`, when it runs, then it exits 0 and prints the package version
+- [ ] Given `ZED_DIR` and `ZED_ZIG_DIR` checkouts on the dual boot, when `scripts/sync-zed-queries.ps1 -Check` runs, then it exits 0 with the message of US-001 (EP-001 ran it only in a Linux container)
+- [ ] Given `scripts/bench-editor.ps1 -LexerPrototype` on the dual boot, when it runs, then it exits non-zero with the message of US-010
+
+#### US-040: Windows behaviors of the LSP client
+**Description:** As the maintainer, I want the Windows paths of the process and command-resolution code run on Windows so that a language server starts there the way it does on Unix.
+
+**Priority:** P1
+**Dependencies:** Blocked by US-020, US-025
+
+**Acceptance Criteria:**
+- [ ] Given the `Windows x86_64 libghostty check` job on a commit after US-020 and US-025, when it runs, then `paneflow-lsp` and `paneflow-process` pass their tests against the fake server
+- [ ] Given `spawn_stdio_session` on Windows, when it starts a child, then it applies `CREATE_NO_WINDOW` and the Job Object setup of `spawn_line_session`
+- [ ] Given that session dropped on Windows, when the drop completes, then the child and its descendants are gone from Task Manager
+- [ ] Given Windows, when a `command` without a path separator resolves, then `PATHEXT` extensions are tried
+
+#### US-033: Validate layers 1 and 2 on Windows 11
+**Description:** As the maintainer, I want the lexical and tree-sitter layers run on Arthur's Windows 11 dual boot so that the MSVC build is a fact.
+
+**Priority:** P0
+**Dependencies:** Blocked by US-039, US-013, US-014, US-016
+
+**Acceptance Criteria:**
+- [ ] Given a release build from the story's commit, when a Zig file opens, then its first frame is colored, with a screenshot in the report
+- [ ] Given the same build, when a Kotlin file opens, then its first frame is colored, with a screenshot
+- [ ] Given the same build, when a Markdown file with a Rust fence opens, then the fence body is colored after the tree arrives, with a screenshot
+- [ ] Given a file of 10,001-character lines, when it opens, then the report states that it opened read-only and colored
+- [ ] Given that file, when it is scrolled to its end, then the report states that Paneflow stayed responsive and did not crash
+
+#### US-036: Validate language servers on Windows 11
+**Description:** As the maintainer, I want rust-analyzer and zls run from Paneflow on Windows so that spawning, consent and crash handling are facts there.
+
+**Priority:** P1
+**Dependencies:** Blocked by US-040, US-031, US-032
+
+**Acceptance Criteria:**
+- [ ] Given rust-analyzer installed as an `.exe`, semantic tokens on and consent given, when a Rust file opens, then its process starts
+- [ ] Given that process running, when the file paints, then layer-3 colors appear, with a screenshot in the report
+- [ ] Given that server, when the last Rust tab closes, then the report states that the process is gone
+- [ ] Given zls installed as an `.exe`, when a Zig file opens with consent, then the report records whether its process started (assumption A5)
+- [ ] Given zls running, when the Zig file paints, then the report records whether layer-3 colors appeared
+- [ ] Given a server installed by npm as a `.cmd` shim and declared in `language_servers`, when its file opens, then the report states whether it started (assumption A10)
+- [ ] Given a server killed from Task Manager twice, when it dies the second time, then the crash banner appears
+
 ## Edge Cases & Error States
 
 | Scenario | Trigger | Expected behavior | User message |
@@ -887,7 +949,7 @@ What CI cannot show for layer 3, real servers on real machines, is checked on ea
 
 | Risk | Probability | Impact | Mitigation |
 |------|-------------|--------|------------|
-| MSVC chokes on the 5.6 MB generated file (time, memory, `_Thread_local`) | Medium | Windows build blocked | The existing Windows CI job builds it on the first commit of US-006; fallbacks are `/O1` for that file or dropping `/std:c11` so `wasm-rt.h` picks `__declspec(thread)` (R8) |
+| MSVC chokes on the 5.6 MB generated file (time, memory, `_Thread_local`) | Medium | Windows build blocked | The existing Windows CI job builds it on the first commit of US-006, proven in US-039; fallbacks are `/O1` for that file or dropping `/std:c11` so `wasm-rt.h` picks `__declspec(thread)` (R8) |
 | Pierre ships often and shifts token ids | High (15 releases in 7 weeks, ids moved in 0.5.2, R9) | Wrong colors after a bump | Pinned inputs, tables generated in the same run (US-004, US-008), oracle floors (US-018) |
 | The public Pierre source lags npm | Certain today | No source for 0.5.2 | Pin the npm artifact by hash; record the repository; fixes go upstream (TD-03) |
 | A language server runs a malicious repository's build scripts | Medium | Code execution as the user | Off by default, consent per server and root, never from project files, no downloads (TD-10, US-024, US-025, US-027) |

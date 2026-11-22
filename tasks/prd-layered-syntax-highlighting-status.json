@@ -17,7 +17,7 @@
     {
       "id": "EP-002",
       "title": "Pierre's lexers as a native crate",
-      "status": "TODO",
+      "status": "BLOCKED",
       "priority": "P0",
       "stories_total": 7,
       "stories_done": 0
@@ -56,18 +56,26 @@
     },
     {
       "id": "EP-007",
-      "title": "Real-hardware validation of layers 1 and 2",
+      "title": "Real-hardware validation of layers 1 and 2 on macOS and Linux",
       "status": "TODO",
       "priority": "P0",
-      "stories_total": 3,
+      "stories_total": 2,
       "stories_done": 0
     },
     {
       "id": "EP-008",
-      "title": "Real-hardware validation of the language servers",
+      "title": "Real-hardware validation of the language servers on macOS and Linux",
       "status": "TODO",
       "priority": "P1",
-      "stories_total": 3,
+      "stories_total": 2,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-009",
+      "title": "Windows validation on the Windows 11 dual boot",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 4,
       "stories_done": 0
     }
   ],
@@ -111,23 +119,23 @@
       "id": "US-004",
       "title": "Regenerate the vendored lexer C from pinned inputs",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "blocked_by": [],
-      "started_at": null,
+      "started_at": "2026-11-22",
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-005",
-      "title": "Windows twin of the generator, and the license files",
+      "title": "PowerShell twin of the generator, and the license files",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "blocked_by": [
         "US-004"
       ],
-      "started_at": null,
+      "started_at": "2026-11-22",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -135,12 +143,12 @@
       "id": "US-006",
       "title": "Compile the lexers on every shipping target",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "BLOCKED",
       "priority": "P0",
       "blocked_by": [
         "US-004"
       ],
-      "started_at": null,
+      "started_at": "2026-11-22",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -148,12 +156,12 @@
       "id": "US-007",
       "title": "A safe Rust API over the live tokenizer, with traps contained in C",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "blocked_by": [
         "US-006"
       ],
-      "started_at": null,
+      "started_at": "2026-11-22",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -161,12 +169,12 @@
       "id": "US-008",
       "title": "Language and token tables generated from the pinned release",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "blocked_by": [
         "US-004"
       ],
-      "started_at": null,
+      "started_at": "2026-11-22",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -174,13 +182,13 @@
       "id": "US-009",
       "title": "Prove the native build matches the wasmtime prototype",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "blocked_by": [
         "US-007",
         "US-008"
       ],
-      "started_at": null,
+      "started_at": "2026-11-22",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -188,12 +196,12 @@
       "id": "US-010",
       "title": "Retire wasmtime and move the lexer bench to the native crate",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "blocked_by": [
         "US-009"
       ],
-      "started_at": null,
+      "started_at": "2026-11-22",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -495,23 +503,6 @@
       "reviewed_at": null
     },
     {
-      "id": "US-033",
-      "title": "Validate layers 1 and 2 on Windows 11",
-      "epic": "EP-007",
-      "status": "TODO",
-      "priority": "P0",
-      "blocked_by": [
-        "US-005",
-        "US-006",
-        "US-013",
-        "US-014",
-        "US-016"
-      ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
-    },
-    {
       "id": "US-034",
       "title": "Validate layers 1 and 2 on macOS Apple Silicon",
       "epic": "EP-007",
@@ -542,20 +533,6 @@
       "reviewed_at": null
     },
     {
-      "id": "US-036",
-      "title": "Validate language servers on Windows 11",
-      "epic": "EP-008",
-      "status": "TODO",
-      "priority": "P1",
-      "blocked_by": [
-        "US-031",
-        "US-032"
-      ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
-    },
-    {
       "id": "US-037",
       "title": "Validate language servers on macOS Apple Silicon",
       "epic": "EP-008",
@@ -576,6 +553,66 @@
       "status": "TODO",
       "priority": "P1",
       "blocked_by": [
+        "US-031",
+        "US-032"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-039",
+      "title": "Windows proof of the generators and the native lexer build",
+      "epic": "EP-009",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-005",
+        "US-006",
+        "US-001"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-040",
+      "title": "Windows behaviors of the LSP client",
+      "epic": "EP-009",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-020",
+        "US-025"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-033",
+      "title": "Validate layers 1 and 2 on Windows 11",
+      "epic": "EP-009",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-039",
+        "US-013",
+        "US-014",
+        "US-016"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-036",
+      "title": "Validate language servers on Windows 11",
+      "epic": "EP-009",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-040",
         "US-031",
         "US-032"
       ],
