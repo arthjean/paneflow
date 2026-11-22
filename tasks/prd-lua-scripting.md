@@ -8,6 +8,7 @@
 | 1.0 | 2026-11-19 | Arthur Jean | Initial PRD, from the exploration of 2026-11-19 (Rex documentation, eleven code maps of Paneflow, an mlua probe) and a second research pass the same day (routing, layout mutations, worker and approval broker, palette and events, mlua and schemars, agent client timeouts). One typed registry, a plain-data layout model, a gap-free event log, Lua scripts and `init.lua`, prompts, the layout authority in the worker, headless layout, agent prompts and actions, Windows validation. 10 epics, 75 stories. |
 | 1.1 | 2026-11-21 | Arthur Jean | EP-006 review: US-047 gains a criterion for the gesture grant, which lets an action started from a key or the palette type into the window with the write gate closed, while every other caller stays gated. |
 | 1.2 | 2026-11-21 | Arthur Jean | EP-007 implementation and review: US-056 and US-057 move from EP-007 to EP-008 and become P1, so that the structural methods are written once on top of `paneflow-launch`; EP-007 keeps US-050 to US-055. US-056 gains two criteria (the worktree through the git CLI boundary, the keyboard focus on an attached window). |
+| 1.3 | 2026-11-22 | Arthur Jean | EP-009 review: a security pass on the pushed epic found that a pane can answer an agent's prompt, its own permission request included, through `prompt.reply`. New epic EP-010 (US-071 to US-075, P0) closes it before EP-011: an answer token per prompt, an agent recognized by the ancestry of the calling process, a permission prompt that shows the whole input, and unguessable run and prompt handles. EP-011 now starts after EP-010 and US-078 gains one criterion. A12, FR-17 to FR-19, risk 13 and one open question are added. The new epic takes the number EP-010 and the Windows validation becomes EP-011 with US-076 to US-080, so that numbers follow the order of execution. |
 
 ## Problem Statement
 
@@ -106,13 +107,14 @@ Paneflow facts, each read in the code on 2026-11-19 at `31d8ce34`:
 - **A2.** The host's `agent.follow` stream covers plain shells as well as agent sessions, so the worker can derive terminal events for every pane. Read from the snapshot type, not tested. Validated by US-023.
 - **A3.** A local-socket round trip to the worker is short enough that a client-predicted layout op never shows a correction to the user. Not measured. Validated by US-050, which records the numbers; the design does not depend on the result because every op is applied locally first (D7).
 - **A4.** A `PreToolUse` hook that answers `AskUserQuestion` works in an interactive Claude Code session, not only in the non-interactive mode whose documentation section describes it. Validated by US-064 before any hook work.
-- **A5.** Streams on the worker's named pipe behave on Windows as they do on Linux. Read on Linux only. Validated by US-071.
+- **A5.** Streams on the worker's named pipe behave on Windows as they do on Linux. Read on Linux only. Validated by US-076.
 - **A6.** Session launch can move out of the window crate without behavior change. `spawn_env.rs`, `host_link.rs` and `agent_launcher.rs` were located, not read in depth. Validated by US-058.
 - **A7.** Design constants chosen for this version, each a named constant with a test, none a performance target: the event ring keeps 1,024 events (the bound already used by `src-app/src/ipc_events.rs:12` and `crates/paneflow-serve/src/core_link.rs`); a follower more than 8 MiB behind is disconnected (R7); at most 16 prompts wait at once; an id lease holds 1,024 ids; `ask_human` waits at most 20 s per call (below the 30 s of R16 and the 60 s of R17); the worker's Lua state is capped at 256 MiB; the window keeps at most 1,024 unsent layout events; a permission prompt shows at most 400 characters of the tool's input.
 - **A8.** The operation inventory of 2026-11-19 is complete for user-triggered paths and incomplete for IPC split, `workspace.close`, workspace creation with the picker and templates. Completed by US-007.
 - **A9.** `serve/owner.lock` (`OwnerLock`, `crates/paneflow-serve/src/worker.rs:103-111`, test at `:656`) is seen as free as soon as its worker dies, with or without a clean shutdown. The lock's behavior after a crash was not read. Validated by US-051.
 - **A10.** GPUI accepts, at runtime, a key binding to an action that carries data (an action name and its arguments), through the `cx.bind_keys` call that `apply_keybindings` already makes. Not tried. Validated by the first criterion of US-041.
 - **A11.** `paneflow-ai-hook` can call a second endpoint and print a reply while staying under its 384,000-byte cap. Not built. Validated by US-064.
+- **A12.** The worker can read the pid of the process behind a connection on the three platforms (peer credentials on Linux and macOS, the pipe's client process on Windows) and walk its parents to the pane's shell. The IPC caller identity work classifies a caller as a pane; whether it keeps the pid was not read. Validated by the first criterion of US-072.
 
 ### Hard Constraints
 
@@ -138,7 +140,7 @@ These commands must pass for every user story:
 - `cargo deny check advisories licenses sources` - when `Cargo.toml`, `Cargo.lock` or `deny.toml` changes
 - `bash scripts/check-helper-sizes.sh` - on Linux x86_64 after the test run, when a helper crate or a crate it depends on changes
 
-Every story is validated locally on Fedora. Real-hardware Windows checks are grouped in EP-010; until then each story writes its Windows path, reviews its `cfg(windows)` items by inspection and says so.
+Every story is validated locally on Fedora. Real-hardware Windows checks are grouped in EP-011; until then each story writes its Windows path, reviews its `cfg(windows)` items by inspection and says so.
 
 For stories that change a latency-sensitive path (EP-002, EP-007), additional gate:
 - `bash scripts/perf-gates.sh` - the perf gates on the calibrated Linux x86_64 runner class
@@ -1328,13 +1330,13 @@ A coding agent in a pane can ask the user a question through Paneflow, have its 
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given a throwaway hook script outside the repository and an interactive Claude Code session in a pane of a tagged debug home, when the agent calls `AskUserQuestion` and the hook returns the `updatedInput` of R15 with an `answers` object, then the report states whether the agent proceeded with that answer and no native prompt appeared
-- [ ] Given the same hook exiting 0 with no output, when the agent calls `AskUserQuestion`, then the report states whether the native prompt appeared unchanged
-- [ ] Given a `PermissionRequest` hook returning `decision.behavior` `allow`, then `deny`, when a tool needs permission, then the report states the observed result for each, for Claude Code and for Codex
-- [ ] Given the hook sleeping 120 s before answering, when the agent waits, then the report states whether the answer was still accepted and what the agent's UI showed meanwhile
-- [ ] Given a throwaway build of `paneflow-ai-hook` that makes one extra request to the worker endpoint and prints the reply, when it is built under the `release-min` profile, then the report records its size beside the 384,000-byte cap (validates A11)
-- [ ] Given the section "Hook answer validation" added to this PRD by this story, when it is read, then it holds the agent versions tested, each result, and a go or no-go for US-067 and for US-068, each of which becomes CANCELLED on a no-go
-- [ ] No production code changes in this story
+- [x] Given a throwaway hook script outside the repository and an interactive Claude Code session in a pane of a tagged debug home, when the agent calls `AskUserQuestion` and the hook returns the `updatedInput` of R15 with an `answers` object, then the report states whether the agent proceeded with that answer and no native prompt appeared
+- [x] Given the same hook exiting 0 with no output, when the agent calls `AskUserQuestion`, then the report states whether the native prompt appeared unchanged
+- [x] Given a `PermissionRequest` hook returning `decision.behavior` `allow`, then `deny`, when a tool needs permission, then the report states the observed result for each, for Claude Code and for Codex
+- [x] Given the hook sleeping 120 s before answering, when the agent waits, then the report states whether the answer was still accepted and what the agent's UI showed meanwhile
+- [x] Given a throwaway build of `paneflow-ai-hook` that makes one extra request to the worker endpoint and prints the reply, when it is built under the `release-min` profile, then the report records its size beside the 384,000-byte cap (validates A11)
+- [x] Given the section "Hook answer validation" added to this PRD by this story, when it is read, then it holds the agent versions tested, each result, and a go or no-go for US-067 and for US-068, each of which becomes CANCELLED on a no-go
+- [x] No production code changes in this story
 
 #### US-065: The `ask_human` tool
 **Description:** As a coding agent, I want to ask the user a question and get the answer as a tool result so that I can continue with a decision that is theirs.
@@ -1346,15 +1348,15 @@ A coding agent in a pane can ask the user a question through Paneflow, have its 
 **Paneflow sites:** `crates/paneflow-mcp/src/tools.rs:33-92,269-291,478-484`, `bridge.rs:191-214`, `main.rs:33-43`; `crates/paneflow-host/src/agent_write.rs:25-28,37-69,422-424`.
 
 **Acceptance Criteria:**
-- [ ] Given the MCP tool `ask_human` with `question`, an optional `options` list, `multiple`, and an optional `prompt_id`, when an agent calls it, then the bridge calls `prompt.request` on the worker with `wait_ms` of 20,000 and an origin built from `PANEFLOW_SESSION_ID` in the bridge's environment
-- [ ] Given an answer within the wait, when the call returns, then the result is `{status: "answered", answer}`; otherwise it is `{status: "pending", prompt_id}`, and a later call with that `prompt_id` continues the same prompt
-- [ ] Given a tool argument that names another session as the asker, when the tool is called, then it is ignored, as the forged-source test of `write_pane` requires
-- [ ] Given the broker's outcome, when the tool returns, then `status` is one of `answered`, `pending`, `cancelled`, `timeout`, `no_window` (the broker's `no_client` and `unsupported`), `busy`, `rate_limited` or `failed`, and no other value
-- [ ] Given no window attached, when the tool is called, then the result is `{status: "no_window"}` at once
-- [ ] Given more than 3 requests in a burst or more than 1 per second after it from the same agent session, when the tool is called, then the worker refuses it before the broker is asked, the result is `{status: "rate_limited"}`, and nothing is shown
-- [ ] Given the agent's session ending while its prompt is pending, when the worker observes it, then the prompt ends with reason `cancelled`
-- [ ] Given a question longer than 16 KiB (the relay limit of `agent_write.rs:25`) or more than 2,000 options, when the tool is called, then it is refused with a message naming the limit
-- [ ] Given `paneflow-mcp` built under the `release-min` profile, when its size is read, then it is under 524,288 bytes, and the bridge links neither `paneflow-api`, `schemars` nor `mlua`
+- [x] Given the MCP tool `ask_human` with `question`, an optional `options` list, `multiple`, and an optional `prompt_id`, when an agent calls it, then the bridge calls `prompt.request` on the worker with `wait_ms` of 20,000 and an origin built from `PANEFLOW_SESSION_ID` in the bridge's environment
+- [x] Given an answer within the wait, when the call returns, then the result is `{status: "answered", answer}`; otherwise it is `{status: "pending", prompt_id}`, and a later call with that `prompt_id` continues the same prompt
+- [x] Given a tool argument that names another session as the asker, when the tool is called, then it is ignored, as the forged-source test of `write_pane` requires
+- [x] Given the broker's outcome, when the tool returns, then `status` is one of `answered`, `pending`, `cancelled`, `timeout`, `no_window` (the broker's `no_client` and `unsupported`), `busy`, `rate_limited` or `failed`, and no other value
+- [x] Given no window attached, when the tool is called, then the result is `{status: "no_window"}` at once
+- [x] Given more than 3 requests in a burst or more than 1 per second after it from the same agent session, when the tool is called, then the worker refuses it before the broker is asked, the result is `{status: "rate_limited"}`, and nothing is shown
+- [x] Given the agent's session ending while its prompt is pending, when the worker observes it, then the prompt ends with reason `cancelled`
+- [x] Given a question longer than 16 KiB (the relay limit of `agent_write.rs:25`) or more than 2,000 options, when the tool is called, then it is refused with a message naming the limit
+- [x] Given `paneflow-mcp` built under the `release-min` profile, when its size is read, then it is under 524,288 bytes, and the bridge links neither `paneflow-api`, `schemars` nor `mlua`
 
 #### US-066: Show who is asking
 **Description:** As a user, I want a question from an agent to say which agent and which pane so that a manipulated agent cannot pass for Paneflow itself.
@@ -1364,11 +1366,11 @@ A coding agent in a pane can ask the user a question through Paneflow, have its 
 **Dependencies:** Blocked by US-065, US-049
 
 **Acceptance Criteria:**
-- [ ] Given a prompt whose origin is an agent, when it is shown, then the origin line reads the agent's tool name and its pane title, is drawn by Paneflow, and cannot be altered by the question's text
-- [ ] Given the question text, when it is shown, then control characters and bidirectional override characters are stripped as the markdown viewer strips them, and it is drawn as plain text
-- [ ] Given a prompt from an agent, when it is pending, then its attention item sits on the agent's pane (US-049) and activating it shows the prompt and focuses nothing else
-- [ ] Given a prompt from an action or a script, when it is shown, then its origin line never uses the agent wording
-- [ ] Given an agent prompt and a user-initiated prompt pending together, when the window picks one to show, then the user-initiated one is shown first
+- [x] Given a prompt whose origin is an agent, when it is shown, then the origin line reads the agent's tool name and its pane title, is drawn by Paneflow, and cannot be altered by the question's text
+- [x] Given the question text, when it is shown, then control characters and bidirectional override characters are stripped as the markdown viewer strips them, and it is drawn as plain text
+- [x] Given a prompt from an agent, when it is pending, then its attention item sits on the agent's pane (US-049) and activating it shows the prompt and focuses nothing else
+- [x] Given a prompt from an action or a script, when it is shown, then its origin line never uses the agent wording
+- [x] Given an agent prompt and a user-initiated prompt pending together, when the window picks one to show, then the user-initiated one is shown first
 
 #### US-067: Answer an agent's own question from Paneflow
 **Description:** As a user who opted in, I want the question Claude Code asks with its own tool to appear in Paneflow so that I can answer it from whichever pane I am in.
@@ -1380,15 +1382,15 @@ A coding agent in a pane can ask the user a question through Paneflow, have its 
 **Paneflow sites:** `crates/paneflow-ai-hook/src/event.rs:154-186`, `runtime.rs:20-108`, `transport.rs:9-41`, `main.rs:5`; `crates/paneflow-mcp-install/src/integrations.rs:1077-1104`.
 
 **Acceptance Criteria:**
-- [ ] Given the configuration key `agent_prompts` in `paneflow.json` with values `native` (default) and `paneflow`, when it is absent, then every agent behaves exactly as today
-- [ ] Given `agent_prompts = "paneflow"` and a `PreToolUse` hook call for `AskUserQuestion`, when the helper runs, then it first sends `agent.event` to the host as today, then calls the worker method `agent_prompt.resolve { event: "ask_user_question", agent, session, payload }`, where `payload` is the hook's input JSON
-- [ ] Given `agent_prompt.resolve`, when it replies, then the reply is `{status: "answered", output}`, where `output` is the exact JSON for the helper to print, or `{status: "declined", reason}`; the worker holds one deadline of 300 s (the prompt default of R5) for the whole call, shared by all its questions and below the 600 s hook timeout (R15); when it elapses, the open prompt ends and the reply is `declined`
-- [ ] Given the questions, when the worker receives them, then it requests one `pick` prompt per question, in order, with each option's label and description, `multiple` from `multiSelect`, `allow_other` on, and one extra item "Answer in the terminal"
-- [ ] Given every question answered, when the worker replies, then `output` is the JSON of R15 (`permissionDecision: "allow"`, the original `questions`, and `answers` mapping each question text to the chosen label, labels joined by commas for a multiple choice), and the helper prints it unchanged and exits 0
-- [ ] Given "Answer in the terminal", a cancel, a timeout, no window, the worker unreachable, or `agent_prompts = "native"`, when the helper returns, then it writes nothing to stdout and exits 0, so the agent shows its own prompt
-- [ ] Given the worker unreachable, when the helper tries it, then it gives up within the connection deadline the helper already uses for the host (350 ms, `crates/paneflow-ai-hook/src/transport.rs:9`) and never delays the agent beyond that
-- [ ] Given `paneflow-ai-hook` built under the `release-min` profile, when its size is read, then it is under 384,000 bytes
-- [ ] Given Codex, when its hooks run, then no question is intercepted (R17 documents no such hook), and this is stated in the changelog entry
+- [x] Given the configuration key `agent_prompts` in `paneflow.json` with values `native` (default) and `paneflow`, when it is absent, then every agent behaves exactly as today
+- [x] Given `agent_prompts = "paneflow"` and a `PreToolUse` hook call for `AskUserQuestion`, when the helper runs, then it first sends `agent.event` to the host as today, then calls the worker method `agent_prompt.resolve { event: "ask_user_question", agent, session, payload }`, where `payload` is the hook's input JSON
+- [x] Given `agent_prompt.resolve`, when it replies, then the reply is `{status: "answered", output}`, where `output` is the exact JSON for the helper to print, or `{status: "declined", reason}`; the worker holds one deadline of 300 s (the prompt default of R5) for the whole call, shared by all its questions and below the 600 s hook timeout (R15); when it elapses, the open prompt ends and the reply is `declined`
+- [x] Given the questions, when the worker receives them, then it requests one `pick` prompt per question, in order, with each option's label and description, `multiple` from `multiSelect`, `allow_other` on, and one extra item "Answer in the terminal"
+- [x] Given every question answered, when the worker replies, then `output` is the JSON of R15 (`permissionDecision: "allow"`, the original `questions`, and `answers` mapping each question text to the chosen label, labels joined by commas for a multiple choice), and the helper prints it unchanged and exits 0
+- [x] Given "Answer in the terminal", a cancel, a timeout, no window, the worker unreachable, or `agent_prompts = "native"`, when the helper returns, then it writes nothing to stdout and exits 0, so the agent shows its own prompt
+- [x] Given the worker unreachable, when the helper tries it, then it gives up within the connection deadline the helper already uses for the host (350 ms, `crates/paneflow-ai-hook/src/transport.rs:9`) and never delays the agent beyond that
+- [x] Given `paneflow-ai-hook` built under the `release-min` profile, when its size is read, then it is under 384,000 bytes
+- [x] Given Codex, when its hooks run, then no question is intercepted (R17 documents no such hook), and this is stated in the changelog entry
 
 #### US-068: Answer a permission request from Paneflow
 **Description:** As a user who opted in, I want an agent's permission request to appear in Paneflow so that I can allow or deny it without finding its pane.
@@ -1398,12 +1400,12 @@ A coding agent in a pane can ask the user a question through Paneflow, have its 
 **Dependencies:** Blocked by US-067
 
 **Acceptance Criteria:**
-- [ ] Given `agent_prompts = "paneflow"` and a `PermissionRequest` hook call, when the helper calls `agent_prompt.resolve` with `event: "permission_request"`, then the worker requests one `pick` prompt with the items "Allow once", "Deny" and "Decide in the terminal", titled with the tool name
-- [ ] Given the tool's input, when the prompt is shown, then a summary of at most 400 characters is shown as plain text, with the stripping rule of US-066
-- [ ] Given "Allow once" or "Deny", when the worker replies, then `output` is the `decision.behavior` JSON of R15 for Claude Code and of R17 for Codex, and the helper prints it unchanged and exits 0
-- [ ] Given "Decide in the terminal", a cancel, a timeout or any failure, when the helper returns, then it writes nothing and exits 0
-- [ ] Given any choice, when the helper returns, then it never writes a permission rule, an `updatedInput` or anything that allows a later call
-- [ ] Given an agent whose pane is focused and visible, when it requests a permission, then the same prompt is shown (no visibility heuristic in this version), and this is listed in Open Questions
+- [x] Given `agent_prompts = "paneflow"` and a `PermissionRequest` hook call, when the helper calls `agent_prompt.resolve` with `event: "permission_request"`, then the worker requests one `pick` prompt with the items "Allow once", "Deny" and "Decide in the terminal", titled with the tool name
+- [x] Given the tool's input, when the prompt is shown, then a summary of at most 400 characters is shown as plain text, with the stripping rule of US-066
+- [x] Given "Allow once" or "Deny", when the worker replies, then `output` is the `decision.behavior` JSON of R15 for Claude Code and of R17 for Codex, and the helper prints it unchanged and exits 0
+- [x] Given "Decide in the terminal", a cancel, a timeout or any failure, when the helper returns, then it writes nothing and exits 0
+- [x] Given any choice, when the helper returns, then it never writes a permission rule, an `updatedInput` or anything that allows a later call
+- [x] Given an agent whose pane is focused and visible, when it requests a permission, then the same prompt is shown (no visibility heuristic in this version), and this is listed in Open Questions
 
 #### US-069: Actions as agent tools
 **Description:** As a user, I want an agent to run the workflows I prepared, and only those, so that I delegate without handing over the whole API.
@@ -1413,14 +1415,14 @@ A coding agent in a pane can ask the user a question through Paneflow, have its 
 **Dependencies:** Blocked by US-037, US-065, US-066
 
 **Acceptance Criteria:**
-- [ ] Given the MCP tool `list_actions`, when an agent calls it, then it returns only the actions declared with `agents = true`, each with name, title, description and argument schema
-- [ ] Given the MCP tool `run_action` with `name` and `args`, when the action is marked for agents and the arguments match its schema, then it runs with `ctx.origin = "agent"` and the agent's surface ids, and the tool returns its result
-- [ ] Given an action not marked for agents, or an unknown name, when `run_action` is called, then both are refused with the same "no action named" message, so the tool does not reveal unmarked actions
-- [ ] Given an action that asks a prompt while run by an agent, when the prompt is shown, then its origin line names the agent and the action
-- [ ] Given `action.invoke` with `wait_ms`, when the action is still running after it, then the method returns `{status: "running", run_id}`, and `action.wait { run_id, wait_ms }` returns the result or the same status
-- [ ] Given `run_action` still running after 20 s, when the wait elapses, then the tool returns `{status: "running", run_id}` and a later call with `run_id` returns the result or the same status
-- [ ] Given the rate limit of US-065, when an agent exceeds it with `run_action`, then the result is `{status: "rate_limited"}`
-- [ ] Given `PANEFLOW_MCP_SCOPE` and the existing four tools, when they are used, then their behavior is unchanged
+- [x] Given the MCP tool `list_actions`, when an agent calls it, then it returns only the actions declared with `agents = true`, each with name, title, description and argument schema
+- [x] Given the MCP tool `run_action` with `name` and `args`, when the action is marked for agents and the arguments match its schema, then it runs with `ctx.origin = "agent"` and the agent's surface ids, and the tool returns its result
+- [x] Given an action not marked for agents, or an unknown name, when `run_action` is called, then both are refused with the same "no action named" message, so the tool does not reveal unmarked actions
+- [x] Given an action that asks a prompt while run by an agent, when the prompt is shown, then its origin line names the agent and the action
+- [x] Given `action.invoke` with `wait_ms`, when the action is still running after it, then the method returns `{status: "running", run_id}`, and `action.wait { run_id, wait_ms }` returns the result or the same status
+- [x] Given `run_action` still running after 20 s, when the wait elapses, then the tool returns `{status: "running", run_id}` and a later call with `run_id` returns the result or the same status
+- [x] Given the rate limit of US-065, when an agent exceeds it with `run_action`, then the result is `{status: "rate_limited"}`
+- [x] Given `PANEFLOW_MCP_SCOPE` and the existing four tools, when they are used, then their behavior is unchanged
 
 #### US-070: Install and retire the new integrations
 **Description:** As a user, I want `paneflow mcp install` and the automatic hook refresh to set up the new pieces and remove them cleanly so that my agent configuration stays correct.
@@ -1432,22 +1434,113 @@ A coding agent in a pane can ask the user a question through Paneflow, have its 
 **Paneflow sites:** `crates/paneflow-mcp-install/src/integrations.rs:1077-1157`, `agents/claude_code.rs:174-195`; `crates/paneflow-serve/src/worker.rs:182-262`.
 
 **Acceptance Criteria:**
-- [ ] Given the Claude Code hook entries for `PreToolUse` on `AskUserQuestion` and for `PermissionRequest`, when the integration is written with `agent_prompts = "paneflow"`, then their `timeout` is 600; with `native` it stays 5
-- [ ] Given `agent_prompts` changing in `paneflow.json`, when the worker observes the reload, then it rewrites the managed hook entries, and entries not marked as managed are untouched
-- [ ] Given the Codex integration, when it is written, then only `PermissionRequest` follows the opt-in, with `command_windows` kept
-- [ ] Given a settings file that is invalid JSON or read-only, when the integration is written, then it is left untouched and the existing failure report is used
-- [ ] Given an agent configuration written by this build, when the previous release refreshes it, then it restores its own entries without error (the managed marker is unchanged)
-- [ ] Given the installed MCP server entry, when it is read, then its per-server timeout is unchanged at 30,000 ms, because no tool call waits longer than 20 s
+- [x] Given the Claude Code hook entries for `PreToolUse` on `AskUserQuestion` and for `PermissionRequest`, when the integration is written with `agent_prompts = "paneflow"`, then their `timeout` is 600; with `native` it stays 5
+- [x] Given `agent_prompts` changing in `paneflow.json`, when the worker observes the reload, then it rewrites the managed hook entries, and entries not marked as managed are untouched
+- [x] Given the Codex integration, when it is written, then only `PermissionRequest` follows the opt-in, with `command_windows` kept
+- [x] Given a settings file that is invalid JSON or read-only, when the integration is written, then it is left untouched and the existing failure report is used
+- [x] Given an agent configuration written by this build, when the previous release refreshes it, then it restores its own entries without error (the managed marker is unchanged)
+- [x] Given the installed MCP server entry, when it is read, then its per-server timeout is unchanged at 30,000 ms, because no tool call waits longer than 20 s
 
 ---
 
-### EP-010: Windows validation and release readiness
+### EP-010: Agent prompts only the user can answer
 
-Everything the earlier epics wrote for Windows by inspection is run on Arthur's Windows 11 machine, every defect is fixed, and the release records are written. The epic starts once every epic that will ship has reached IN_REVIEW. EP-008 and EP-009 are P1: a check about an epic that was cancelled is recorded as not applicable, and nothing here waits for it.
+The review of EP-009 found that the prompt broker lets any caller answer any prompt: `prompt.reply` is open to a caller in a pane, so an agent, or an agent in another pane, can approve its own permission request with `paneflow api call prompt.reply`. This epic makes an agent-raised prompt answerable only from outside every pane, recognizes an agent by the process that calls rather than by what its hooks reported, and shows a permission's whole input. It is P0 because EP-009 shipped the opt-in it protects, and it runs before EP-011. Until it is done, `agent_prompts` stays `native` by default and the changelog entry of EP-009 is not released.
 
-**Definition of Done:** every check of US-071 to US-073 has a recorded result on Windows 11 x64 with the build's commit, every defect they found is fixed and re-verified, the four CI legs are green on the final commit, and `CHANGELOG.md` and `ARCHITECTURE.md` describe the shipped state.
+**Definition of Done:** in a debug build, a Claude Code session in a pane that calls `paneflow api call prompt.reply` on its own pending permission request is refused and the request stays pending; the same reply from a client outside every pane, with the prompt's token, is accepted; an agent whose hooks are not installed is still refused an action without `agents = true`; a permission whose input does not fit the prompt offers no "Allow once"; the decision table covers every principal against every prompt origin.
 
-#### US-071: Windows: scripts, events and commands
+**Boundary:** unchanged from Hard Constraints. This protects from a confused or manipulated agent in a pane, not from a hostile process of the same user started outside every pane.
+
+#### US-071: An answer token per prompt
+**Description:** As a user who opted in, I want only a client that was shown a prompt to be able to answer it so that an agent cannot approve its own request.
+
+**Priority:** P0
+**Size:** L (5 pts)
+**Dependencies:** Blocked by US-068
+
+**Paneflow sites:** `crates/paneflow-serve/src/prompts.rs` (`BrokerState::request`, `reply`, `follow`), `crates/paneflow-serve/src/server.rs` (`prompt::ReplyTo`, `stream_prompts`), `crates/paneflow-api/src/methods/prompt.rs` (`ReplyParams`, `RequestedFrame`), `src-app/src/app/prompts/mod.rs`.
+
+**Acceptance Criteria:**
+- [x] Given a prompt delivered to a follower, when its `requested` frame is written, then it carries a `token` of 128 random bits from the operating system's generator, distinct per prompt and per follower
+- [x] Given `prompt.reply` on a prompt whose origin is an agent, or an action run by an agent, when the call carries no token or a token the broker did not give for that prompt, then it is refused with the same "not pending" error an unknown id gets, and the prompt stays pending
+- [x] Given a caller whose principal is a pane, when it calls `prompt.follow`, then it receives no frame for a prompt whose origin is an agent or an action run by an agent, and no token for one
+- [x] Given a caller whose principal is a pane, when it calls `prompt.reply` on such a prompt with any token, then it is refused
+- [x] Given the window, or a client outside every pane that follows prompts, when it replies with the token it was given, then the reply is accepted and the first reply wins as before
+- [x] Given a prompt raised by a script or by an action the user started, when a pane replies to it, then the behavior of EP-006 is unchanged
+- [x] Given a token, when it is logged, written to `session.json` or returned by any method other than the `requested` frame, then a test fails
+- [x] Given `crates/paneflow-api/tests/decision_table.txt`, when it is read, then it lists `prompt.reply` and `prompt.follow` for each principal against each prompt origin (`agent`, `action` run by an agent, `action`, `script`)
+- [x] Given `protocol/prompt-conformance-v1.json`, when it is read, then it has a case for a pane refused on an agent prompt and a case for a reply without its token
+
+#### US-072: Recognize an agent by the process that calls
+**Description:** As a user, I want a call made by an agent's process to be treated as the agent's whatever its hooks reported so that an agent without hooks cannot reach my unmarked actions.
+
+**Priority:** P0
+**Size:** L (5 pts)
+**Dependencies:** Blocked by US-069
+
+**Paneflow sites:** `crates/paneflow-serve/src/agent_asks.rs` (`agent_runs_in`, `invoke_action`, `attribute_prompt`), `crates/paneflow-host/src/peer.rs` (`PeerClassifier`), `crates/paneflow-agent-config` (`runtime_catalog`).
+
+**Acceptance Criteria:**
+- [x] Given a connection from a pane, when the worker classifies it, then it has the caller's pid and the report of this story states how each platform reads it (validates A12); on a no-go the story records the platform and falls back to the pane's observed foreground runtime for that platform
+- [x] Given a caller whose parents, up to the pane's shell, include a process whose executable is a known agent runtime, when it calls `action.invoke` or `prompt.request`, then the call has origin `agent` whatever `ctx.origin` or `origin.kind` it claims and whether or not that agent's hooks have reported
+- [x] Given `paneflow do` or `paneflow api call` typed by the user in a pane's shell, when it runs, then no parent is an agent runtime and every action runs as today
+- [x] Given a pid that ended and was reused between the classification and the walk, when the walk runs, then the start time recorded with the pid no longer matches and the caller is treated as an agent
+- [x] Given a parent that cannot be read (access refused, process gone), when the walk reaches it, then the caller is treated as an agent, and the user's own shell case of the previous criterion still passes on the three platforms
+- [x] Given the walk, when it runs, then it happens once per connection, off the render thread, and its result is kept with the connection's principal
+- [x] Given the Linux, macOS and Windows implementations, when the file is read, then each sits behind one trait, `cfg(windows)` items are declared before any `mod tests`, and the Windows and macOS paths are stated as reviewed by inspection until EP-011
+
+#### US-073: A permission prompt shows the whole input
+**Description:** As a user, I want to see everything I am allowing so that a long or multi-line input cannot hide the part that matters.
+
+**Priority:** P0
+**Size:** M (3 pts)
+**Dependencies:** Blocked by US-068, US-066
+
+**Acceptance Criteria:**
+- [x] Given a permission request, when its prompt is shown, then the tool name is the title and the tool's input is shown in full under it, as plain text with the stripping rule of US-066, line breaks kept and drawn, in an area that scrolls
+- [x] Given an input with several fields, when it is shown, then every field is shown with its name, not only the first of `command`, `file_path`, `path`, `url`, `pattern` or `query`
+- [x] Given an input longer than 16 KiB (the relay limit of US-065), when the prompt is requested, then it offers only "Deny" and "Decide in the terminal", and says the input is too long to show
+- [x] Given the 400-character summary of A7, when the epic ends, then it is used only for the attention item's one-line text
+- [x] Given the `DESIGN.md` UI delivery gate, when the story ends, then it lists the surfaces and states it changed for Arthur's visual pass
+
+#### US-074: Run and prompt handles nobody can guess
+**Description:** As a user, I want the result of an agent's run or question to reach only that agent so that one agent cannot read another's answer.
+
+**Priority:** P1
+**Size:** M (3 pts)
+**Dependencies:** Blocked by US-069, US-065
+
+**Acceptance Criteria:**
+- [x] Given `action.invoke` answering `running`, when it replies, then `run_id` is an opaque string holding 128 random bits, and `action.wait` with any other value answers "no action run"
+- [x] Given a run started by an agent, when `action.wait` is called by a pane that is not the asker, then it is refused even with the right `run_id`; a caller with no pane session is no longer accepted in the asker's place
+- [x] Given a prompt asked by an agent that ended before its asker read the outcome, when another pane calls `prompt.wait` with its id, then it is refused as an unknown id
+- [x] Given the MCP tools `run_action` and `ask_human`, when they return `running` or `pending`, then the handle they return resumes the same run or question, and their other results are unchanged
+- [x] Given `protocol/api-v1.json` and `protocol/paneflow.d.lua`, when the suite runs, then their drift tests pass with the new handle type
+
+#### US-075: Prove an agent cannot approve itself
+**Description:** As the maintainer, I want the refusal observed with a real agent so that the fix does not rest on unit tests alone.
+
+**Priority:** P0
+**Size:** S (2 pts)
+**Dependencies:** Blocked by US-071, US-072, US-073
+
+**Acceptance Criteria:**
+- [ ] Given a Claude Code session in a pane of a tagged debug home with `agent_prompts = "paneflow"`, when a background command it started calls `paneflow api call prompt.reply` with `allow` on its own pending permission request, then the report records the refusal and that the request is still pending
+- [ ] Given a second agent in another pane, when it tries the same reply, then the report records the refusal
+- [ ] Given a client outside every pane that follows prompts, when it replies with its token, then the report records that the agent proceeded
+- [ ] Given an agent started with no Paneflow hooks, when it calls `paneflow api call action.invoke` on an action without `agents = true`, then the report records the "no action named" refusal
+- [ ] Given the section "Hook answer validation", when it is read, then it holds these results with the agent versions and the commit
+- [ ] No production code changes in this story
+
+---
+
+### EP-011: Windows validation and release readiness
+
+Everything the earlier epics wrote for Windows by inspection is run on Arthur's Windows 11 machine, every defect is fixed, and the release records are written. The epic starts once every epic that will ship has reached IN_REVIEW, EP-010 included. EP-008 and EP-009 are P1: a check about an epic that was cancelled is recorded as not applicable, and nothing here waits for it.
+
+**Definition of Done:** every check of US-076 to US-078 has a recorded result on Windows 11 x64 with the build's commit, every defect they found is fixed and re-verified, the four CI legs are green on the final commit, and `CHANGELOG.md` and `ARCHITECTURE.md` describe the shipped state.
+
+#### US-076: Windows: scripts, events and commands
 **Description:** As Arthur, I want the scripting CLI verified on Windows hardware so that the first user-visible epic works on the three platforms.
 
 **Priority:** P0
@@ -1460,9 +1553,9 @@ Everything the earlier epics wrote for Windows by inspection is run on Arthur's 
 - [ ] Given `paneflow.exec{ "git", "status" }` and a program resolved through `PATHEXT`, when they run, then they return the output with `\r\n` normalized unless `text = false`
 - [ ] Given `paneflow.exec` with a `timeout` on a program that starts a child, when the timeout expires, then the whole process tree is gone
 - [ ] Given Ctrl-C on a `paneflow do` script in a busy loop, when it is pressed in Windows Terminal and in a Paneflow pane, then the script stops
-- [ ] Given a failing check, when it is recorded, then it becomes an item of US-074 with its reproduction
+- [ ] Given a failing check, when it is recorded, then it becomes an item of US-079 with its reproduction
 
-#### US-072: Windows: configuration, keys and prompts
+#### US-077: Windows: configuration, keys and prompts
 **Description:** As Arthur, I want `init.lua`, key bindings and prompts verified on Windows hardware.
 
 **Priority:** P0
@@ -1475,44 +1568,45 @@ Everything the earlier epics wrote for Windows by inspection is run on Arthur's 
 - [ ] Given an app update that replaces the worker (the runtime copy under `serve\runtime\<build-id>\`), when it completes, then `init.lua` is loaded by the new worker and its bindings work without restarting the window
 - [ ] Given a key bound in `init.lua` with a Windows-specific modifier spelling, when it is pressed, then it triggers, and the report lists the spellings tried
 - [ ] Given the prompt UI, when it is shown at 100 %, 150 % and 200 % display scale, then the report attaches one screenshot per scale for Arthur's visual pass
-- [ ] Given a failing check, when it is recorded, then it becomes an item of US-074
+- [ ] Given a failing check, when it is recorded, then it becomes an item of US-079
 
-#### US-073: Windows: layout authority, headless and agents
+#### US-078: Windows: layout authority, headless and agents
 **Description:** As Arthur, I want the moved layout, the headless mode and the agent integrations verified on Windows hardware.
 
 **Priority:** P0
 **Size:** M (3 pts)
-**Dependencies:** Blocked by US-055, and by US-057 for its EP-008 checks
+**Dependencies:** Blocked by US-055, by US-057 for its EP-008 checks, and by US-075 for its EP-010 check
 
 **Acceptance Criteria:**
 - [ ] Given the US-020 checklist, when it is run on Windows, then every gesture gives its expected result
 - [ ] Given the worker replaced during a series of splits and closes, when it returns, then the layout on screen and the worker's view are equal
 - [ ] Given EP-008 shipped and no window, when `paneflow up` then `paneflow split` run and the window is opened, then the layout shows with live ConPTY terminals at the right size
 - [ ] Given EP-009 shipped, and Claude Code and Codex in panes with the integrations installed, when `ask_human` is called and, with the opt-in on, a native question and a permission request are raised, then each is answered from Paneflow, and declining shows the agent's own prompt
+- [ ] Given EP-010 shipped, when an agent in a pane replies to its own pending permission request, then it is refused on Windows as on Linux, and the report records how the caller's parents were read
 - [ ] Given the helper binaries built for Windows, when their sizes are read, then the report records them beside the caps
 - [ ] Given EP-008 or EP-009 cancelled, when the story ends, then its checks are recorded as not applicable with the cancellation named
-- [ ] Given a failing check, when it is recorded, then it becomes an item of US-074
+- [ ] Given a failing check, when it is recorded, then it becomes an item of US-079
 
-#### US-074: Fix what Windows found
+#### US-079: Fix what Windows found
 **Description:** As Arthur, I want every defect found on Windows fixed and re-verified so that the feature ships on three platforms.
 
 **Priority:** P0
 **Size:** L (5 pts)
-**Dependencies:** Blocked by US-071, US-072, US-073
+**Dependencies:** Blocked by US-076, US-077, US-078
 
 **Acceptance Criteria:**
-- [ ] Given the defects recorded by US-071, US-072 and US-073, when the story ends, then each is fixed with a test where one can be written, or listed as accepted with Arthur's decision
+- [ ] Given the defects recorded by US-076, US-077 and US-078, when the story ends, then each is fixed with a test where one can be written, or listed as accepted with Arthur's decision
 - [ ] Given each fix, when it is made, then the check that found it is re-run on Windows hardware and its new result is recorded
 - [ ] Given a fix that touches shared code, when it lands, then the US-001 and US-048 conformance cases pass unchanged on Linux
 - [ ] Given `cfg(windows)` items added to a file with a `mod tests`, when the file is read, then each is declared before that module
 - [ ] Given no defect found, when the story ends, then it records that and changes no code
 
-#### US-075: Release records
+#### US-080: Release records
 **Description:** As Arthur, I want the changelog, the architecture document and the generated reference to describe what shipped so that the release and the site documentation can be written from them.
 
 **Priority:** P0
 **Size:** M (3 pts)
-**Dependencies:** Blocked by US-074
+**Dependencies:** Blocked by US-079
 
 **Acceptance Criteria:**
 - [ ] Given `CHANGELOG.md`, when it is read, then it has an entry for each of these that shipped: the `paneflow api`, `paneflow do`, `paneflow events`, `paneflow actions` and `paneflow config` verbs, for `init.lua`, for prompts, for stable ids, for headless layout, and for the three agent tools and the `agent_prompts` key
@@ -1644,6 +1738,71 @@ Written by US-058 on 2026-11-21 from the code at `a5c1552e`. Paths are under `sr
 
 **Scope of US-059**, the functions that move into `crates/paneflow-launch` with their tests: `assemble_pty_env`, `inject_ai_hook_env`, `prepend_bin_dir_to_path`, `reassert_paneflow_bin_dir_first`, `needs_default_lang`, the WSL helpers and `resolve_spawn_launch_in` from `terminal/pty_session/spawn_env.rs`; `resolve_shell_for_spawn`, `setup_shell_integration` and the script constants they write from `terminal/shell.rs`; `space_env::{space_env, resolve_env, layered_env, config_dirs, ensure_dir, ensure_config_dirs, platform_key}`; `launch_cwd::implicit_launch_cwd`; `SpawnCwd` and its resolution; `create_request` from `terminal/host_link.rs`. The window keeps the GPUI inputs (size, cell, appearance), the id source, the attach state machine and `ShellQuoting::for_shell` (in `terminal/types.rs`, a file this PRD does not modify, and not part of the host request), and passes the helper and shell-integration directories in as values.
 
+## Hook answer validation
+
+Written by US-064 on 2026-11-22 at `cb07226f`, on Fedora (Linux x86_64). The hook was a throwaway Python script outside the repository that logged each input and printed the answer of the mode it was set to; its logs and the probe builds are local evidence, not tracked. The agents ran interactively in a pane of the tagged debug home `~/.paneflow-dev-ep009-live` with no window attached (EP-008), driven through the host's `session.input` and read with `paneflow read`.
+
+**Agent versions:** Claude Code 2.1.330 (model Haiku 5.5, `--setting-sources project`, permission mode `default`, so no user rule allowed a tool); Codex CLI 0.165.0 (model GPT-6.1-Sol, `-a on-request -s read-only`, hooks given with `-c` and `--dangerously-bypass-hook-trust` so that nothing was written to `~/.codex/hooks.json`).
+
+| # | Check | Observed |
+|---|-------|----------|
+| 1 | Claude Code, `PreToolUse` on `AskUserQuestion` returns `permissionDecision: "allow"` and `updatedInput` with the original `questions` and `answers` (R15) | The agent proceeded with the hook's answer ("Answered Claude's questions: Which color should the banner be? → Blue") and no native prompt appeared. |
+| 1b | Same, two questions, the first with `multiSelect: true`, answered `"Cheese,Ham"` | Both answers were accepted as given: the transcript shows `Cheese,Ham` and `Thick`. |
+| 2 | Same hook exiting 0 with no output | The native question appeared unchanged (header, options with descriptions, "Type something", "Chat about this"). Claude Code then also called the `PermissionRequest` hook with `tool_name: "AskUserQuestion"` and the questions as `tool_input`; with no output from it, the native question stayed on screen. |
+| 3 | Claude Code, `PermissionRequest` returns `decision.behavior` `allow`, then `deny` with a `message`, for `Bash(date +%s > stamp.txt)` | `allow`: the command ran with no native prompt, marked "Allowed by PermissionRequest hook". `deny`: the tool failed with the hook's message, marked "Denied by PermissionRequest hook", and the agent did not retry. |
+| 3b | Codex, `PermissionRequest` returns `decision.behavior` `allow`, then `deny`, then nothing, for an escalated `date +%s > stamp.txt` | `allow`: the command ran with no approval prompt. `deny`: "Blocked by hook" with the hook's message. No output: Codex showed its own approval prompt ("Would you like to run the following command?"). The input carried `tool_name: "Bash"` and `tool_input.command` and `tool_input.description` (the agent's stated reason). |
+| 4 | Claude Code, the `AskUserQuestion` hook sleeps 120 s before answering (hook timeout 600) | The answer was accepted after 2 min 2 s. Meanwhile the agent showed its spinner with "running PreToolUse hook · 39s", kept the input line, and offered "esc to interrupt". |
+| 5 | `paneflow-ai-hook` under `release-min`, plus one request to the worker endpoint derived from `PANEFLOW_HOST_ENDPOINT` and the reply's `output` written to stdout | Unchanged helper: 376,808 bytes (the embedded build at `target/embed-build` measured 377,912 on 2026-11-21, so the embedded target adds about 1.1 KB). A naive probe (`json!` params, `str::replacen`, `std::io::stdout()`): 389,280 bytes, over the 384,000-byte cap. A lean probe (the existing connect and request path behind one shared function, `strip_prefix` for the endpoint name, the output written to stdout without `std::io::Stdout`): 383,552 bytes, 448 bytes under the cap, which the embedded build would exceed. Without the copy of the hook input: 381,640 bytes. `std::io::stdout()` alone costs about 2.9 KB and `str::replacen` about 0.5 KB. |
+
+Codex also ran its own background memory task during the session, whose `PreToolUse` calls (`Bash`, `apply_patch` under `~/.codex/memories`) reached the same hooks; none of them raised a `PermissionRequest`.
+
+**A4 holds:** an interactive Claude Code session accepts an answer supplied by a `PreToolUse` hook, and a silent hook leaves the native prompt unchanged. **A11 holds only with work:** a second request fits under the cap only if US-067 reclaims room in the helper first (at least the cost of its own logic plus a 4 KB margin, the warning threshold of `scripts/check-helper-sizes.sh`); writing to stdout must avoid `std::io::Stdout`, and the hook input must be parsed twice from the bytes already read rather than cloned.
+
+**US-067: GO.** Three constraints for its implementation: the size work above; the `PermissionRequest` that Claude Code raises for `AskUserQuestion` after a declined question must write nothing (US-068 must never turn it into an "Allow AskUserQuestion?" prompt); answers for a multiple choice are the labels joined by commas.
+
+**US-068: GO.** `allow` and `deny` are honored by both agents, and a silent hook falls back to each agent's own prompt.
+
+**Corrections found while implementing EP-009:**
+
+- `allow_other` is on for a single-choice question only. The prompt broker refuses `allow_other` with `multiple` (`check_spec`), so a multiple-choice question offers its options and "Answer in the terminal", without typed text.
+- R16 is inaccurate: the installer writes no per-server MCP `timeout`. The `30000` at `crates/paneflow-mcp-install/src/agents/claude_code.rs:174` is a user key a test fixture keeps. US-070 proves the installer leaves the entry's timeout as it finds it, opted in or not.
+- The worker only accepts an agent's own name when it maps to a known runtime label, so a question can never be shown as asked by "Paneflow" or another made-up name.
+- The installer writes the extra hook argument `answer` only when `agent_prompts` is `paneflow`. Without it the helper never contacts the worker, so `native` costs no connection attempt, and the worker also declines with `native` when an entry is stale.
+- `paneflow-config` requires every public `paneflow.json` key in `docs/user/configuration/schema.md` (`public_configuration_schema_doc_mentions_schema_keys`), so `agent_prompts` adds one row to that mirror despite the rule on `docs/user/**`. The site repository needs the same row.
+
+**Found while reviewing EP-009 (2026-11-22):**
+
+- A run started with `wait_ms` whose completion callback was dropped uncalled (the configuration runtime halting or reloading mid-run) stayed `running` forever and kept its acting grant. The run now ends with the "configuration runtime stopped" error and its grant is revoked (`RunEnd` in `crates/paneflow-serve/src/agent_asks.rs`).
+- Live check on Fedora with the production helper and bridge, Claude Code 2.1.330 (Haiku 5.5, `--setting-sources project`, permission mode `default`) in a headless pane of a tagged debug home, prompts answered through `prompt.reply`: `ask_human` returned `{"answer": "Blue", "status": "answered"}`; `list_actions` showed only the action marked `agents = true`; `run_action` ran it with `origin = "agent"` and the pane's surface id, and refused the unmarked one with "no action named"; a two-question `AskUserQuestion` was answered from Paneflow with no native prompt; "Answer in the terminal" showed the agent's own prompt and raised no second Paneflow prompt; "Allow once" and "Deny" were reported by Claude Code as "Allowed by PermissionRequest hook" and "Denied by PermissionRequest hook". The logs are local evidence, not tracked.
+- A multiple choice is sent as the labels joined by a comma and a space (`Cheese, Olives`), which the live check above shows Claude Code accepts, as it accepted `Cheese,Ham` in US-064.
+- Not run with the production helper: Codex. Its permission output is the JSON US-064 observed Codex honor; EP-011 runs it on Windows.
+- A security pass on the pushed commits found four defects this review missed, tracked by EP-010: any caller, a pane included, can answer an agent's prompt through `prompt.reply` (US-071); an agent whose hooks have not reported is taken at its word on `ctx.origin` (US-072); a permission prompt shows 400 characters of one field of the input (US-073); run ids are sequential and a caller with no pane session can wait on any run (US-074).
+- `cargo deny check advisories` fails on RUSTSEC-2026-0592 (`url` 2.5.8, through GPUI), which this epic neither added nor touches; the epic's lockfile change adds no crate.
+
+## Agent prompt hardening notes
+
+Written by EP-010 on 2026-11-22, on Fedora (Linux x86_64).
+
+**US-071, who answers.** `paneflow_api::methods::prompt::prompt_access` is the single rule: a prompt whose origin is `agent`, or `action` with an agent named (an action an agent runs), is hidden from a follower in a pane and from an unverified one, and answered only with the token its requested frame gave; any other prompt keeps the EP-006 behavior. The worker always names the agent of a run it starts (`AN_AGENT` when no name is known), so such a prompt is never mistaken for a user's action. The open question "Who may answer an agent's prompt with no window" stays open: this epic implements the token rule, which keeps a headless client outside every pane able to answer.
+
+**US-072, how each platform reads a caller's parents (A12).** The worker already had the caller's pid and start time from the IPC caller identity work (`paneflow_peer::PeerIdentity`), so A12 holds and no platform falls back to the observed foreground runtime. When a connection is classified as a pane, `paneflow_peer::LiveLineage` walks from the caller to the pane's shell, whose pid and start time the worker reads from the session manifest. Linux: `SO_PEERPIDFD` or `SO_PEERCRED` for the caller, `/proc/<pid>/stat` for the parent and start time, `/proc/<pid>/comm` and `/proc/<pid>/exe` for the name and executable, `/proc/<pid>/cmdline` for argv; proven by `crates/paneflow-serve/tests/agent_callers.rs` in real panes of a real host. macOS: the `LOCAL_PEERTOKEN` audit token for the caller, `proc_pidinfo(PROC_PIDTBSDINFO)` for the parent and start time (the kernel process record when it is refused), `pbi_comm` and `proc_pidpath` for the name and executable, `KERN_PROCARGS2` for argv; reviewed by inspection, and the macOS CI leg runs the same tests. Windows: `GetNamedPipeClientProcessId` and the creation time for the caller, a Toolhelp snapshot for the parents with `GetProcessTimes` to refuse a reused parent id, `QueryFullProcessImageNameW` for the executable, the process command line for argv; reviewed by inspection until EP-011. Each platform sits behind `paneflow_peer::LineageReader`. A process reparented away from the pane's shell (a double fork such as `(paneflow do x.lua &)`) cannot prove its parents and counts as an agent; the hook-based rule of EP-009 is kept beside the walk, so a session whose hooks reported an agent stays an agent.
+
+**US-073, scope correction.** The attention queue draws no text for any item: an item is a pane marker with a waiting time. The 400-character summary of A7 therefore has no consumer once the permission prompt shows the whole input, and it was removed rather than kept as dead code. A7's "a permission prompt shows at most 400 characters of the tool's input" no longer describes the product: a permission shows its whole input up to 16 KiB, and nothing over it can be allowed.
+
+**US-073, surfaces and states for Arthur's visual pass** (`DESIGN.md` UI delivery gate: Dark, Light and one other preset, `reduce_motion` on and off, the 800 by 500 window, every control state), in a debug build on a tagged home with `agent_prompts = "paneflow"`:
+
+- The permission prompt with a short input (one field): the tool name as the title, the field under it as `name: value`, the origin line, then **Allow once**, **Deny**, **Decide in the terminal**.
+- The permission prompt with a multi-line input and several fields (for example a `Bash` command with line breaks and a `description`): every field by name, line breaks drawn, the body area scrolling past 160 px while the title, the origin line and the three rows stay in place.
+- The permission prompt with an input over 16 KiB: the "too long to show" text in the body and only **Deny** and **Decide in the terminal**.
+- At 800 by 500, the three rows stay above the bottom edge under a full body area.
+- Bidirectional overrides and control characters in the input are not drawn.
+
+**US-074, run handles.** `run_id` is now an opaque string of 32 hexadecimal characters (128 bits from the operating system's generator) in `action.invoke`, `action.wait` and the MCP `run_action` tool, and a run an agent started can be waited on only by a caller in the same pane session: a caller outside every pane no longer passes for its asker. An agent's prompt keeps its asker after it ends, so `prompt.wait` from another pane is refused then too. Proven in real panes by `only_the_agent_that_started_a_run_or_asked_a_prompt_reads_its_outcome` in `crates/paneflow-serve/tests/agent_callers.rs`.
+
+**Found while validating EP-010: the worker's `system.describe` sits at the host frame cap.** The full reply of the worker's `system.describe` must fit in one control frame of 64 KiB (`MAX_CONTROL_FRAME_BYTES`, shared with the frozen host protocol), and `system_describe_on_the_worker_lists_exactly_the_worker_methods` fails when it does not. Before this epic it took about 64,900 bytes; with the schema text this epic adds, kept short for that reason, it takes about 65,170, which leaves about 360 bytes. The next worker method or description will cross it. Deciding how the worker's describe grows past one frame (paging, a compact list without examples, or a larger cap on worker connections only) is left to Arthur.
+
+**US-075, live proof: BLOCKED (proof only Arthur can run).** The four observations need a real Claude Code session, signed in to Arthur's account, in a pane of a tagged debug home, plus a second agent in another pane. Running them spends that account and drives a live agent, so this run did not start it. Everything the story checks is proven against real panes of a real host by `crates/paneflow-serve/tests/agent_callers.rs`, `prompt_conformance.rs` (`a_pane_never_sees_nor_answers_an_agent_prompt_even_with_a_token`) and `prompt_tokens.rs`, with an agent stood in by a process named `claude`. The live procedure, for when Arthur runs it on commit `b58dd4e4` plus this epic's change: `scripts/dev.sh --tag ep010` with `"agent_prompts": "paneflow"` in that home's `paneflow.json`; in pane A, Claude Code with the Paneflow hooks asks to run a command, and while its permission is pending a command it runs in the background calls `paneflow api call prompt.reply id=<id> answer=allow` (expected: `not_pending`, the prompt still shown); in pane B, a second agent makes the same call (expected: `not_pending`); the window then answers Allow (expected: the agent proceeds); finally an agent started with no Paneflow hooks calls `paneflow api call action.invoke name=<an action without agents = true>` (expected: "no action named"). Record each result here with the agent versions and the commit.
+
 ## Functional Requirements
 
 - FR-01: The system must declare each method once, with typed parameters, a typed result, a summary, an example, an owner and a gate, and must derive dispatch, validation, `system.capabilities` and `system.describe` from that declaration.
@@ -1662,6 +1821,9 @@ Written by US-058 on 2026-11-21 from the code at `a5c1552e`. Paths are under `sr
 - FR-14: When `init.lua` fails to load, the system must keep the previous configuration active and must show the file and line in the app.
 - FR-15: A prompt or an action run raised by an agent must show the agent and its pane, must be rate limited to 1 per second with a burst of 3 per agent session, and must reach only actions declared with `agents = true`.
 - FR-16: When `agent_prompts` is `native` or absent, the hook helper must write nothing to stdout and must exit 0, as it does today.
+- FR-17: A prompt raised by an agent, or by an action an agent runs, must be answerable only by a client outside every pane that presents the token it was given for that prompt.
+- FR-18: A call from a process whose parents include a known agent runtime must be treated as the agent's, whatever origin it claims and whether or not the agent's hooks reported.
+- FR-19: A permission prompt must show the tool's whole input, and must NOT offer to allow an input it cannot show in full.
 
 ## Edge Cases & Error States
 
@@ -1701,7 +1863,8 @@ Written by US-058 on 2026-11-21 from the code at `a5c1552e`. Paths are under `sr
 | 9 | Session launch cannot leave the window crate cleanly | Med | Med | Inventory first (US-058), which may block US-059; EP-008 is P1 and nothing after it in EP-009 depends on it |
 | 10 | The scope is too large to land as one stream | High | Med | Each epic delivers on its own and leaves the app shippable; EP-004 gives user value after three epics; EP-008 and EP-009 are P1 |
 | 11 | Scripts written against this version break when the API changes | Med | Med | `protocol/api-v1.json` and its drift test make every API change explicit in review |
-| 12 | Windows defects pile up in the last epic | Med | Med | Every story writes and reviews its Windows path; the worker endpoint already streams on Windows (P4); US-074 is sized for a batch |
+| 12 | Windows defects pile up in the last epic | Med | Med | Every story writes and reviews its Windows path; the worker endpoint already streams on Windows (P4); US-079 is sized for a batch |
+| 13 | Reading a caller's parents differs per platform or is refused | Med | High | US-072 fails closed (an unreadable parent means agent), proves the user's own shell case on each platform, and falls back to the observed foreground runtime where the pid is not available; EP-011 runs it on Windows |
 
 ## Non-Goals
 
@@ -1715,7 +1878,7 @@ Written by US-058 on 2026-11-21 from the code at `a5c1552e`. Paths are under `sr
 - **Moving the dock (git, files, editor) or the diff view into the layout model.** They read the local disk and stay window state.
 - **Arbitrating terminal size between several clients.** With one window, the last resize wins as today (`crates/paneflow-host/src/host.rs:2318-2325`).
 - **Answering Codex questions through a hook, or answering MCP elicitation.** No documented Codex hook answers a question (R17).
-- **Editing `docs/user/**`.** It is a mirror generated from the site repository; US-075 produces the source material.
+- **Editing `docs/user/**`.** It is a mirror generated from the site repository; US-080 produces the source material.
 - **A marketplace, a package manager or a plugin format for scripts.**
 - **Settings in Lua.** `init.lua` declares actions, key bindings, handlers and timers. Theme, fonts, shell and every other setting stay in `paneflow.json` and the Settings screen.
 - **Changing how undo restores a pane that held several surfaces.** If US-007 confirms that only one surface comes back, the model keeps that behavior. The other suspected defect (a non-active surface that does not resolve to its pane) disappears with US-019, where every lookup goes through the model.
@@ -1757,6 +1920,7 @@ Each decision names the options considered and the evidence for the choice.
 - **Budget for the layout round trip.** US-050 proposes a number from its measurements. Arthur decides whether it becomes a perf gate.
 - **Default of `agent_prompts`.** `native` in this PRD. Should it become `paneflow` once US-064 and a period of use confirm it? Arthur, after EP-009.
 - **Permission prompts when the agent's pane is visible.** US-068 shows the Paneflow prompt regardless. A rule such as "only when the pane is not visible" needs a definition of visible. Arthur, at US-068.
+- **Who may answer an agent's prompt with no window.** EP-010 lets a client outside every pane answer with its token, which keeps headless use (EP-006, EP-008). The stricter rule is the window only. Arthur, at US-071.
 - **Memory cap of the worker's Lua state.** 256 MiB is a chosen constant (A7), not a measured need. Arthur, at US-035.
 - **Undo of a pane with several surfaces.** If US-007 confirms that only one surface is restored, is that kept for parity (this PRD) or fixed? Arthur, after US-007.
 - **Rex in operation.** Rex was read, not run, and its demonstration videos were not watched. A behavior the documentation does not state (session persistence across a server restart, the exact shape of `session.view`) may differ from what this PRD assumes it inspires.

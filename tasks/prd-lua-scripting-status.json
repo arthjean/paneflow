@@ -73,13 +73,21 @@
     {
       "id": "EP-009",
       "title": "Agents ask and act",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 7,
-      "stories_done": 0
+      "stories_done": 7
     },
     {
       "id": "EP-010",
+      "title": "Agent prompts only the user can answer",
+      "status": "BLOCKED",
+      "priority": "P0",
+      "stories_total": 5,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-011",
       "title": "Windows validation and release readiness",
       "status": "TODO",
       "priority": "P0",
@@ -930,101 +938,170 @@
       "id": "US-064",
       "title": "Prove that a hook can answer",
       "epic": "EP-009",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-22",
+      "completed_at": "2026-11-22",
+      "reviewed_at": "2026-11-22"
     },
     {
       "id": "US-065",
       "title": "The `ask_human` tool",
       "epic": "EP-009",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-048"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-22",
+      "completed_at": "2026-11-22",
+      "reviewed_at": "2026-11-22"
     },
     {
       "id": "US-066",
       "title": "Show who is asking",
       "epic": "EP-009",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-065",
         "US-049"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-22",
+      "completed_at": "2026-11-22",
+      "reviewed_at": "2026-11-22"
     },
     {
       "id": "US-067",
       "title": "Answer an agent's own question from Paneflow",
       "epic": "EP-009",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-064",
         "US-066",
         "US-046"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-22",
+      "completed_at": "2026-11-22",
+      "reviewed_at": "2026-11-22"
     },
     {
       "id": "US-068",
       "title": "Answer a permission request from Paneflow",
       "epic": "EP-009",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "blocked_by": [
         "US-067"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-22",
+      "completed_at": "2026-11-22",
+      "reviewed_at": "2026-11-22"
     },
     {
       "id": "US-069",
       "title": "Actions as agent tools",
       "epic": "EP-009",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-037",
         "US-065",
         "US-066"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-22",
+      "completed_at": "2026-11-22",
+      "reviewed_at": "2026-11-22"
     },
     {
       "id": "US-070",
       "title": "Install and retire the new integrations",
       "epic": "EP-009",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-067",
         "US-069"
+      ],
+      "started_at": "2026-11-22",
+      "completed_at": "2026-11-22",
+      "reviewed_at": "2026-11-22"
+    },
+    {
+      "id": "US-071",
+      "title": "An answer token per prompt",
+      "epic": "EP-010",
+      "status": "IN_REVIEW",
+      "priority": "P0",
+      "blocked_by": [
+        "US-068"
+      ],
+      "started_at": "2026-11-22",
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-072",
+      "title": "Recognize an agent by the process that calls",
+      "epic": "EP-010",
+      "status": "IN_REVIEW",
+      "priority": "P0",
+      "blocked_by": [
+        "US-069"
+      ],
+      "started_at": "2026-11-22",
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-073",
+      "title": "A permission prompt shows the whole input",
+      "epic": "EP-010",
+      "status": "IN_REVIEW",
+      "priority": "P0",
+      "blocked_by": [
+        "US-068",
+        "US-066"
+      ],
+      "started_at": "2026-11-22",
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-074",
+      "title": "Run and prompt handles nobody can guess",
+      "epic": "EP-010",
+      "status": "IN_REVIEW",
+      "priority": "P1",
+      "blocked_by": [
+        "US-069",
+        "US-065"
+      ],
+      "started_at": "2026-11-22",
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-075",
+      "title": "Prove an agent cannot approve itself",
+      "epic": "EP-010",
+      "status": "BLOCKED",
+      "priority": "P0",
+      "blocked_by": [
+        "US-071",
+        "US-072",
+        "US-073"
       ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
-      "id": "US-071",
+      "id": "US-076",
       "title": "Windows: scripts, events and commands",
-      "epic": "EP-010",
+      "epic": "EP-011",
       "status": "TODO",
       "priority": "P0",
       "blocked_by": [
@@ -1038,9 +1115,9 @@
       "reviewed_at": null
     },
     {
-      "id": "US-072",
+      "id": "US-077",
       "title": "Windows: configuration, keys and prompts",
-      "epic": "EP-010",
+      "epic": "EP-011",
       "status": "TODO",
       "priority": "P0",
       "blocked_by": [
@@ -1053,42 +1130,43 @@
       "reviewed_at": null
     },
     {
-      "id": "US-073",
+      "id": "US-078",
       "title": "Windows: layout authority, headless and agents",
-      "epic": "EP-010",
+      "epic": "EP-011",
       "status": "TODO",
       "priority": "P0",
       "blocked_by": [
         "US-055",
-        "US-057"
+        "US-057",
+        "US-075"
       ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
-      "id": "US-074",
+      "id": "US-079",
       "title": "Fix what Windows found",
-      "epic": "EP-010",
+      "epic": "EP-011",
       "status": "TODO",
       "priority": "P0",
       "blocked_by": [
-        "US-071",
-        "US-072",
-        "US-073"
+        "US-076",
+        "US-077",
+        "US-078"
       ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
-      "id": "US-075",
+      "id": "US-080",
       "title": "Release records",
-      "epic": "EP-010",
+      "epic": "EP-011",
       "status": "TODO",
       "priority": "P0",
       "blocked_by": [
-        "US-074"
+        "US-079"
       ],
       "started_at": null,
       "completed_at": null,
