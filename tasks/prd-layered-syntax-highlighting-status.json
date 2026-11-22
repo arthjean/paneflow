@@ -17,10 +17,10 @@
     {
       "id": "EP-002",
       "title": "Pierre's lexers as a native crate",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 7,
-      "stories_done": 0
+      "stories_done": 7
     },
     {
       "id": "EP-003",
@@ -119,91 +119,91 @@
       "id": "US-004",
       "title": "Regenerate the vendored lexer C from pinned inputs",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [],
       "started_at": "2026-11-22",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-22",
+      "reviewed_at": "2026-11-22"
     },
     {
       "id": "US-005",
       "title": "PowerShell twin of the generator, and the license files",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-004"
       ],
       "started_at": "2026-11-22",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-22",
+      "reviewed_at": "2026-11-22"
     },
     {
       "id": "US-006",
       "title": "Compile the lexers on every shipping target",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-004"
       ],
       "started_at": "2026-11-22",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-22",
+      "reviewed_at": "2026-11-22"
     },
     {
       "id": "US-007",
       "title": "A safe Rust API over the live tokenizer, with traps contained in C",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-006"
       ],
       "started_at": "2026-11-22",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-22",
+      "reviewed_at": "2026-11-22"
     },
     {
       "id": "US-008",
       "title": "Language and token tables generated from the pinned release",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-004"
       ],
       "started_at": "2026-11-22",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-22",
+      "reviewed_at": "2026-11-22"
     },
     {
       "id": "US-009",
       "title": "Prove the native build matches the wasmtime prototype",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-007",
         "US-008"
       ],
       "started_at": "2026-11-22",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-22",
+      "reviewed_at": "2026-11-22"
     },
     {
       "id": "US-010",
       "title": "Retire wasmtime and move the lexer bench to the native crate",
       "epic": "EP-002",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-009"
       ],
       "started_at": "2026-11-22",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-22",
+      "reviewed_at": "2026-11-22"
     },
     {
       "id": "US-011",
