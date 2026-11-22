@@ -285,8 +285,18 @@ pub fn log_classification(
     by: ClassifiedBy,
     took: Duration,
 ) {
+    log::debug!("{}", classification_line(server, read, principal, by, took));
+}
+
+fn classification_line(
+    server: &str,
+    read: &PeerRead,
+    principal: &Principal,
+    by: ClassifiedBy,
+    took: Duration,
+) -> String {
     match read {
-        PeerRead::Identified(identity) => log::debug!(
+        PeerRead::Identified(identity) => format!(
             "paneflow {server}: process {} ({}) classified {} through {} in {} us",
             identity.pid(),
             identity.source().label(),
@@ -294,7 +304,7 @@ pub fn log_classification(
             by.label(),
             took.as_micros()
         ),
-        PeerRead::Unverified { reason } => log::debug!(
+        PeerRead::Unverified { reason } => format!(
             "paneflow {server}: caller classified {} in {} us: {reason}",
             principal.kind(),
             took.as_micros()
@@ -444,5 +454,39 @@ mod tests {
         assert!(PaneContainment::of(u32::MAX - 3).job.is_none());
         assert!(JOB_FAILURE_LOGGED.load(std::sync::atomic::Ordering::Acquire));
         assert!(PaneContainment::of(u32::MAX - 3).job.is_none());
+    }
+
+    #[test]
+    fn a_classification_line_records_the_principal_and_how_long_it_took() {
+        let unverified = PeerRead::Unverified {
+            reason: "no peer".into(),
+        };
+        let line = classification_line(
+            "worker",
+            &unverified,
+            &Principal::Unverified {
+                reason: "no peer".into(),
+            },
+            ClassifiedBy::UnidentifiedPeer,
+            Duration::from_micros(1234),
+        );
+        assert!(line.contains("classified unverified in 1234 us"), "{line}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_classification_line_names_the_process_and_its_identity_source() {
+        let read = identified_self();
+        let line = classification_line(
+            "host",
+            &read,
+            &Principal::External,
+            ClassifiedBy::Local,
+            Duration::from_micros(42),
+        );
+        let pid = std::process::id();
+        assert!(line.contains(&format!("process {pid} (")), "{line}");
+        assert!(line.contains("classified external through"), "{line}");
+        assert!(line.ends_with("in 42 us"), "{line}");
     }
 }
