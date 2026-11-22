@@ -17,7 +17,7 @@
     {
       "id": "EP-002",
       "title": "Pierre's lexers as a native crate",
-      "status": "BLOCKED",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "stories_total": 7,
       "stories_done": 0
@@ -143,7 +143,7 @@
       "id": "US-006",
       "title": "Compile the lexers on every shipping target",
       "epic": "EP-002",
-      "status": "BLOCKED",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "blocked_by": [
         "US-004"
