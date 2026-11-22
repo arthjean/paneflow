@@ -343,19 +343,11 @@ mod tests {
         manifest
     }
 
+    #[cfg(unix)]
     fn identified_self() -> PeerRead {
-        #[cfg(unix)]
-        {
-            let (client, _server) = std::os::unix::net::UnixStream::pair().unwrap();
-            use std::os::fd::AsFd;
-            paneflow_peer::read_unix_peer(client.as_fd())
-        }
-        #[cfg(not(unix))]
-        {
-            PeerRead::Unverified {
-                reason: "not used on this platform".into(),
-            }
-        }
+        use std::os::fd::AsFd;
+        let (client, _server) = std::os::unix::net::UnixStream::pair().unwrap();
+        paneflow_peer::read_unix_peer(client.as_fd())
     }
 
     #[test]
