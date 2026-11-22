@@ -159,25 +159,20 @@ impl TerminalState {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::collections::HashMap;
     use std::path::{Path, PathBuf};
 
-    #[cfg(unix)]
     const LAUNCH_CASES_CHILD: &str = "PANEFLOW_LAUNCH_CASES_CHILD";
-    #[cfg(unix)]
     const LAUNCH_CASES_ROOT: &str = "PANEFLOW_LAUNCH_CASES_ROOT";
-    #[cfg(unix)]
     const LAUNCH_CASES_RECORD: &str = "PANEFLOW_LAUNCH_CASES_RECORD";
 
-    #[cfg(unix)]
     fn launch_cases_dir() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/launch-requests")
     }
 
-    #[cfg(unix)]
     fn fixed_appearance() -> paneflow_host::SessionAppearance {
         paneflow_host::SessionAppearance {
             foreground: [220, 220, 220],
@@ -188,7 +183,6 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
     struct LaunchCase<'a> {
         config: &'a paneflow_config::schema::PaneFlowConfig,
         spawn: crate::workspace::SpawnCwd,
@@ -201,7 +195,6 @@ mod tests {
         cell: Option<paneflow_host::CellSize>,
     }
 
-    #[cfg(unix)]
     fn recorded_request(root: &Path, case: LaunchCase<'_>) -> String {
         let (mut params, _) = TerminalState::resolve_spawn_launch_in(
             case.config,
@@ -245,7 +238,6 @@ mod tests {
         text.replace(env!("CARGO_PKG_VERSION"), "{version}")
     }
 
-    #[cfg(unix)]
     fn launch_cases(root: &Path) -> Vec<(&'static str, String)> {
         let work = root.join("work");
         let worktree = root.join("worktree");
@@ -374,7 +366,6 @@ mod tests {
         ]
     }
 
-    #[cfg(unix)]
     #[test]
     fn launch_requests_match_the_recorded_cases() {
         if std::env::var_os(LAUNCH_CASES_CHILD).is_some() {
