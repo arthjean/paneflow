@@ -92,3 +92,13 @@ name = "cpp"
 source = "crates/grammars/src/cpp/highlights.scm"
 sha256 = "ca6d083485941e628e76705e3967c5214785272e0ce6abae94cd942bf340582d"
 deviations = []
+
+[[queries]]
+name = "zig"
+repository = "https://github.com/zed-extensions/zig"
+commit = "996432e66cb5bb2eed5a30ad2afaaa90349a3817"
+source = "languages/zig/highlights.scm"
+sha256 = "8f7f115b4a48a3336609ee8a087e634290131816d18d00fc11ef840be880df8e"
+license = "Apache-2.0"
+license_evidence = "LICENSE; Cargo.toml declares Apache-2.0"
+deviations = ["Uses the tree-sitter-zig 1.1.2 crate parser instead of the grammar commit the extension pins"]

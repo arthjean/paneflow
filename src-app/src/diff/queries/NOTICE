@@ -10,3 +10,11 @@ GPL-3.0-or-later with Paneflow; see the repository LICENSE.
 
 Only highlighting queries are imported. Injections and font styles are outside
 this integration. JavaScript uses Paneflow's existing TSX grammar.
+
+The Zig highlighting query comes from the Zed Zig extension, Copyright Zed
+Industries and contributors, licensed under Apache-2.0.
+Source: https://github.com/zed-extensions/zig
+Revision: 996432e66cb5bb2eed5a30ad2afaaa90349a3817
+
+Imported byte for byte from languages/zig/highlights.scm; zig/LICENSE holds
+the extension's Apache-2.0 text. It applies to .zig and .zon files.

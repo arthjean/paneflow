@@ -5,6 +5,10 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+### Added
+
+- **Zig files are syntax highlighted.** `.zig` and `.zon` files, `build.zig.zon` included, are colored in the Files dock editor and in the diff view, with the highlighting rules of Zed's Zig extension: types, functions, builtins such as `@import`, constants, fields, and `///` and `//!` doc comments in the doc comment color.
+
 ### Changed
 
 - **Settings › Keyboard Shortcuts now looks and works like the other Settings pages, with a search built for shortcuts.** Shortcuts sit in one card per section, each row showing its action and a button with its keys: click the button and press the new shortcut. The line under the title says what to do while a shortcut records (Escape cancels, Backspace removes it, `Delete` on macOS) and names the action that already uses a combination, which a second press reassigns. A changed shortcut shows `Reset` beside its button, and `Restore defaults` beside the title resets them all. The search field at the top finds a shortcut by its name, its section, its action id or its keys, in any order and spelling (`shift+ctrl+d`, `cmd-k`, `⌘⇧D`, or `ctrl+alt` for every chord that holds both), puts the best matches first and highlights what matched. Results fold away and unfold as you type, like the sidebar filter, and change at once with Reduce motion on. The list scrolls without a scrollbar, and a mouse wheel or an arrow key glides it instead of making it jump. Every Settings page now scrolls this way. Its keyboard button looks a combination up as you press it, and says so when nothing uses it yet. Start typing anywhere on the page to search, use `Ctrl+F` (`⌘F` on macOS) to jump to the field, Up and Down to pick a result, and Enter to change it. The Settings search in the sidebar finds shortcuts too and opens the page with its query.

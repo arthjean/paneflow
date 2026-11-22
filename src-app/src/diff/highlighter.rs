@@ -134,6 +134,11 @@ pub(crate) fn grammar_for_ext(ext: &str) -> Option<&'static Grammar> {
             tree_sitter_ruby::LANGUAGE,
             tree_sitter_ruby::HIGHLIGHTS_QUERY
         ),
+        "zig" | "zon" => grammar!(
+            ZIG,
+            tree_sitter_zig::LANGUAGE,
+            include_str!("queries/zig/highlights.scm")
+        ),
         _ => None,
     }
 }
@@ -482,7 +487,7 @@ mod tests {
     fn malformed_and_empty_inputs_never_panic() {
         let syn = DiffSyntax::from_theme(&paneflow_dark());
         let exts = [
-            "go", "yaml", "yml", "css", "html", "c", "cpp", "java", "rb", "md",
+            "go", "yaml", "yml", "css", "html", "c", "cpp", "java", "rb", "md", "zig", "zon",
         ];
         for ext in exts {
             let _ = highlight_lines("", ext, &syn);

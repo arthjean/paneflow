@@ -129,19 +129,41 @@ highlights only the sides whose text changed. A path that contains a newline,
 or a batch git refuses, falls back to `git show`.
 
 `diff/queries/MANIFEST.toml` records the upstream commit, source paths, SHA-256
-hashes, license evidence and the JavaScript grammar deviation. `NOTICE`
-attributes Zed Industries. Git preserves LF bytes for these imports.
+hashes, license evidence and the grammar deviations. `NOTICE` attributes Zed
+Industries. Git preserves LF bytes for these imports.
 
-Set `ZED_DIR` to a local Zed checkout, then run
+The queries have two sources. Fifteen come from the Zed repository
+(GPL-3.0-or-later), described by the manifest's top-level `repository`,
+`commit`, `license` and `license_evidence`. The Zig query, which also colors
+`.zon` files, comes from the Zed Zig extension,
+`https://github.com/zed-extensions/zig` (Apache-2.0, text in
+`diff/queries/zig/LICENSE`): its `[[queries]]` entry carries its own
+`repository`, `commit`, `license` and `license_evidence`, which override the
+top-level values for that entry only. The `tree-sitter-zig` crate ships a query
+written for Neovim, whose `#lua-match?` predicates the Rust runtime never
+evaluates, so it is not used.
+
+Set `ZED_DIR` to a local Zed checkout and `ZED_ZIG_DIR` to a local
+zed-extensions/zig checkout, then run
 `scripts/sync-zed-queries.sh --check` on Linux/macOS, or
 `scripts/sync-zed-queries.ps1 -Check` in PowerShell 7 on Windows. Check mode
-compares every query and the manifest byte for byte with the pinned Git
-objects, checks the provenance notice and lists any drift. Omit the check
-option to restore those bytes, including the notice's revision.
-To resync, pass `--commit <revision>` or `-Commit <revision>`, then review the
-upstream license evidence, compile the queries, run the parity tests and the
-editor benchmark. Both scripts resolve revisions to an immutable full SHA.
-No source checkout files or runtime configuration are read by the app.
+compares every query, the Zig license and the manifest byte for byte with the
+pinned Git objects, checks the provenance notice and lists any drift. Omit the
+check option to restore those bytes, including the notice's revisions. Either
+variable missing stops the script before it writes anything.
+To resync, pass `--commit <revision>` or `-Commit <revision>` for Zed, and
+`--zig-commit <revision>` or `-ZigCommit <revision>` for the extension, then
+review the upstream license evidence, compile the queries, run the parity tests
+and the editor benchmark. Both scripts resolve revisions to an immutable full
+SHA. No source checkout files or runtime configuration are read by the app.
+
+Two tests in `diff/query_guard.rs` run without a checkout or the network. One
+hashes every vendored query against the manifest and fails on a drifted byte or
+on a `highlights.scm` the manifest does not list. The other fails when a
+shipped query, vendored or taken from a grammar crate, carries a predicate the
+tree-sitter runtime does not evaluate, since such a predicate never filters and
+the query colors wrongly without an error. Its one named exception is the
+`#has-ancestor?` of Zed's C++ query, which Zed ignores as well.
 
 ## Files tree
 
