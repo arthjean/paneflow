@@ -15,6 +15,8 @@ macro_rules! method {
             owner: $owner:expr,
             fallback: $fallback:expr,
             gate: $gate:expr,
+            audience: $audience:expr,
+            $(scope: $scope:expr,)?
             reply: $reply:expr,
             $(capabilities: $capabilities:expr,)?
             params: $params:ty,
@@ -33,6 +35,8 @@ macro_rules! method {
                 owner: $owner,
                 fallback: $fallback,
                 gate: $gate,
+                audience: $audience,
+                scope: method!(@scope $($scope)?),
                 reply: $reply,
                 capabilities: method!(@capabilities $($capabilities)?),
             };
@@ -44,6 +48,12 @@ macro_rules! method {
                 }),+]
             }
         }
+    };
+    (@scope) => {
+        $crate::descriptor::ScopeRule::Unscoped
+    };
+    (@scope $scope:expr) => {
+        $scope
     };
     (@capabilities) => {
         false
@@ -58,6 +68,7 @@ pub mod events;
 pub mod host;
 pub mod layout;
 pub mod prompt;
+pub mod session;
 pub mod surface;
 pub mod system;
 pub mod tmux;
@@ -245,6 +256,33 @@ pub fn host_declarations() -> Vec<Descriptor> {
     ]
 }
 
+pub fn host_protocol_declarations() -> Vec<Descriptor> {
+    vec![
+        Descriptor::of::<session::HostHello>(),
+        Descriptor::of::<session::HostStatus>(),
+        Descriptor::of::<session::HostShutdown>(),
+        Descriptor::of::<session::SessionList>(),
+        Descriptor::of::<session::SessionCreate>(),
+        Descriptor::of::<session::SessionInspect>(),
+        Descriptor::of::<session::SessionStop>(),
+        Descriptor::of::<session::SessionRestart>(),
+        Descriptor::of::<session::SessionRemove>(),
+        Descriptor::of::<session::SessionInput>(),
+        Descriptor::of::<session::SessionRuntimeBind>(),
+        Descriptor::of::<session::SessionResize>(),
+        Descriptor::of::<session::SessionAppearance>(),
+        Descriptor::of::<session::SessionWorkspace>(),
+        Descriptor::of::<session::SessionClearHistory>(),
+        Descriptor::of::<session::SessionReset>(),
+        Descriptor::of::<session::SessionText>(),
+        Descriptor::of::<session::SessionAttach>(),
+        Descriptor::of::<session::SessionOutput>(),
+        Descriptor::of::<session::ApprovalFollow>(),
+        Descriptor::of::<session::ApprovalDecide>(),
+        Descriptor::of::<session::AgentEvent>(),
+    ]
+}
+
 pub fn worker_declarations() -> Vec<Descriptor> {
     vec![
         Descriptor::of::<worker::Hello>(),
@@ -286,6 +324,12 @@ pub fn declarations() -> Vec<Descriptor> {
 
 pub fn catalog() -> Result<Catalog, DuplicateMethod> {
     Catalog::build(declarations())
+}
+
+pub fn host_catalog() -> Result<Catalog, DuplicateMethod> {
+    let mut all = declarations();
+    all.extend(host_protocol_declarations());
+    Catalog::build(all)
 }
 
 #[cfg(test)]

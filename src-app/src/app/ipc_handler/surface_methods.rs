@@ -651,7 +651,6 @@ impl PaneFlowApp {
         &self,
         params: &serde_json::Value,
         surface_id: u64,
-        unrestricted: bool,
         cx: &App,
     ) -> Result<(), JsonRpcError> {
         let target = self
@@ -660,7 +659,7 @@ impl PaneFlowApp {
             .map(|workspace| (workspace.id, workspace.title.as_str()));
         authorize_write_scope(
             params,
-            ipc_orchestration_enabled() || unrestricted,
+            self.ipc_gates.orchestration,
             |session| session_workspace_id(&self.workspaces, session, cx),
             surface_id,
             target,
@@ -1022,7 +1021,7 @@ impl PaneFlowApp {
             return JsonRpcError::invalid_params("No active terminal").into_value();
         };
         let wrote_sid = terminal.read(cx).surface_id();
-        if let Err(error) = self.authorize_surface_write(params, wrote_sid, unrestricted, cx) {
+        if let Err(error) = self.authorize_surface_write(params, wrote_sid, cx) {
             return error.into_value();
         }
         let forced = matches!(opt_bool(params, "force"), Ok(Some(true)));
@@ -1116,8 +1115,7 @@ impl PaneFlowApp {
             None
         };
         if let Some(t) = &terminal
-            && let Err(error) =
-                self.authorize_surface_write(params, t.read(cx).surface_id(), unrestricted, cx)
+            && let Err(error) = self.authorize_surface_write(params, t.read(cx).surface_id(), cx)
         {
             return error.into_value();
         }

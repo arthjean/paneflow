@@ -2,7 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::{NO_FALLBACK, WriteScope};
-use crate::descriptor::{Gate, Owner, Reply};
+use crate::descriptor::{Audience, Gate, Owner, Reply, ScopeRule};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PaneWriteParams {
@@ -39,6 +39,8 @@ method! {
         owner: Owner::Host,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
+        scope: ScopeRule::WorkspaceUnlessAll,
         reply: Reply::Ready,
         params: PaneWriteParams,
         result: PaneWritten,
@@ -85,6 +87,7 @@ method! {
         owner: Owner::Host,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::NotPane,
         reply: Reply::Ready,
         params: PeerClassifyParams,
         result: PeerClass,

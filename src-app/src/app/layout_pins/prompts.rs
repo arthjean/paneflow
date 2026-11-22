@@ -369,6 +369,7 @@ fn send_text_with(
         state: std::sync::Arc::new(crate::ipc::RequestState::default()),
         caller_pid: None,
         grant,
+        gates: paneflow_api::Gates::CLOSED,
     };
     cx.update(|_, cx| app.update(cx, |app, cx| app.process_ipc_requests(vec![request], cx)));
     cx.run_until_parked();
@@ -400,9 +401,6 @@ fn pin_only_a_grant_the_window_minted_and_still_holds_opens_the_write_gate(
         !refused_by_the_write_gate(&admitted),
         "a live grant passes the write gate: {admitted}"
     );
-    if std::env::var("PANEFLOW_IPC_SCRIPTING").as_deref() == Ok("1") {
-        return;
-    }
     for (what, other) in [
         ("no grant", None),
         (

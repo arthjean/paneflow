@@ -69,19 +69,6 @@ pub struct ControlPermissions {
     pub fenced_reads: bool,
 }
 
-impl ControlPermissions {
-    pub fn from_environment(unrestricted: bool, fenced_reads: bool) -> Self {
-        let scripting = std::env::var("PANEFLOW_IPC_SCRIPTING").as_deref() == Ok("1");
-        let orchestration =
-            scripting || std::env::var("PANEFLOW_IPC_ORCHESTRATION").as_deref() == Ok("1");
-        Self {
-            scripting: scripting || unrestricted,
-            orchestration: orchestration || unrestricted,
-            fenced_reads,
-        }
-    }
-}
-
 #[derive(Debug, Default)]
 pub struct ConnectionAliases {
     aliases: Vec<(u64, SessionId)>,
@@ -281,16 +268,13 @@ fn input_gate(permissions: ControlPermissions) -> Result<(), ControlError> {
 
 pub fn authorize_session_write(
     host: &SessionHost,
-    attaches: bool,
     permissions: ControlPermissions,
     method: &str,
     params: &Value,
 ) -> Result<(), ControlError> {
     match method {
         "session.input" => {
-            if !attaches {
-                input_gate(permissions)?;
-            }
+            input_gate(permissions)?;
             match params
                 .get("session")
                 .and_then(Value::as_str)
@@ -300,7 +284,7 @@ pub fn authorize_session_write(
                 _ => Ok(()),
             }
         }
-        "session.create" if !attaches => create_gate(params, permissions),
+        "session.create" => create_gate(params, permissions),
         _ => Ok(()),
     }
 }
@@ -1027,10 +1011,6 @@ mod tests {
                 ..closed
             }),
             Ok(())
-        );
-        assert!(
-            ControlPermissions::from_environment(true, true).scripting,
-            "free access opens the gate without the env switch"
         );
     }
 }

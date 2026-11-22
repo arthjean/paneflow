@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::{HOST_FALLBACK, NO_FALLBACK, NoParams, WINDOW};
-use crate::descriptor::{Gate, Reply};
+use crate::descriptor::{Audience, Gate, Reply};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -71,6 +71,7 @@ method! {
         owner: WINDOW,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Inline,
         capabilities: true,
         params: NoParams,
@@ -86,6 +87,7 @@ method! {
         owner: WINDOW,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Inline,
         capabilities: true,
         params: NoParams,
@@ -101,6 +103,7 @@ method! {
         owner: WINDOW,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Inline,
         capabilities: true,
         params: NoParams,
@@ -124,6 +127,7 @@ method! {
         owner: WINDOW,
         fallback: HOST_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         capabilities: true,
         params: NoParams,
@@ -191,6 +195,7 @@ method! {
         owner: WINDOW,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Inline,
         params: DescribeParams,
         result: Description,
@@ -235,6 +240,7 @@ method! {
         owner: WINDOW,
         fallback: HOST_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Inline,
         params: NoParams,
         result: WhoAmIResult,

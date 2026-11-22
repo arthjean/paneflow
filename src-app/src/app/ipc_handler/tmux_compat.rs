@@ -245,7 +245,7 @@ impl PaneFlowApp {
                     "surface.send_text",
                     &params,
                     caller_pid,
-                    false,
+                    self.ipc_gates,
                     cx,
                 ) {
                     IpcReply::Ready(reply) => reply,

@@ -62,6 +62,7 @@ struct Core {
     attached: BTreeMap<ConnectionId, String>,
     leases: HashMap<String, Vec<IdBlock>>,
     reload_before_next: bool,
+    live_sweep_due: bool,
     file_stamp: Option<FileStamp>,
     writing: bool,
     write_failure: Option<String>,
@@ -314,6 +315,7 @@ impl LayoutAuthority {
         let path = paneflow_home::session_path_in(home);
         let (model, loaded) = model_from_file(&path);
         let aside_pending = matches!(loaded, Loaded::Unreadable(_));
+        let live_sweep_due = !aside_pending;
         let stamp = file_stamp(&path);
         Self {
             home: home.to_path_buf(),
@@ -330,6 +332,7 @@ impl LayoutAuthority {
                 attached: BTreeMap::new(),
                 leases: HashMap::new(),
                 reload_before_next: false,
+                live_sweep_due,
                 file_stamp: stamp,
                 writing: false,
                 write_failure: None,
@@ -468,6 +471,7 @@ impl LayoutAuthority {
         let revision = core.model.revision().max(model.revision()) + 1;
         model.set_revision(revision);
         core.aside_pending = matches!(loaded, Loaded::Unreadable(_));
+        core.live_sweep_due = !core.aside_pending;
         core.loaded = loaded;
         core.model = model;
         core.file_stamp = file_stamp(&self.path);
@@ -494,6 +498,7 @@ impl LayoutAuthority {
         let floor = core.model.next_id();
         model.ids().claim(floor.saturating_sub(1));
         core.aside_pending = matches!(loaded, Loaded::Unreadable(_));
+        core.live_sweep_due = !core.aside_pending;
         core.loaded = loaded;
         core.model = model;
         core.dirty_since = None;
@@ -523,6 +528,7 @@ impl LayoutAuthority {
         op: Value,
         ids_from: Option<u64>,
         now_ms: u64,
+        may_spawn: bool,
     ) -> Result<ApplyOutcome, ServeError> {
         let op: Op = serde_json::from_value(op)
             .map_err(|error| invalid_params(format!("the op is not a layout op: {error}")))?;
@@ -573,8 +579,7 @@ impl LayoutAuthority {
                 Vec::new()
             };
             if !spawns.is_empty() {
-                let gated = connection != ConnectionId::INTERNAL
-                    && !crate::launcher::orchestration_enabled()
+                let gated = !may_spawn
                     && spawns.iter().any(|surface| {
                         trial.state().surface(*surface).is_some_and(|known| {
                             crate::launcher::surface_needs_orchestration(&known.definition)
@@ -717,6 +722,7 @@ impl LayoutAuthority {
         &self,
         connection: ConnectionId,
         params: LaunchParams,
+        may_spawn: bool,
     ) -> Result<Launched, ServeError> {
         if connection == ConnectionId::INTERNAL || !self.is_attached(connection) {
             return Err(refused(
@@ -725,7 +731,7 @@ impl LayoutAuthority {
             ));
         }
         let carries_env = params.env.as_ref().is_some_and(|env| !env.is_empty());
-        if carries_env && !crate::launcher::orchestration_enabled() {
+        if carries_env && !may_spawn {
             return Err(orchestration_refused("layout.launch"));
         }
         let session: SessionId = params
@@ -807,7 +813,11 @@ impl LayoutAuthority {
             });
             held.extend(core.launching.keys().cloned());
             held.extend(core.model.undo_history().held_sessions());
-            let sweep_live = params.live && !matches!(core.loaded, Loaded::Unreadable(_));
+            let sweep_live =
+                params.live && core.live_sweep_due && !matches!(core.loaded, Loaded::Unreadable(_));
+            if sweep_live {
+                core.live_sweep_due = false;
+            }
             (held, sweep_live)
         };
         let mut held = held;
@@ -912,6 +922,7 @@ impl LayoutAuthority {
             revision,
             ..snapshot
         });
+        core.live_sweep_due = true;
         let kept = session_sessions(&core.model);
         let mut gone: Vec<SessionId> = previous.difference(&kept).cloned().collect();
         gone.sort_by_key(ToString::to_string);

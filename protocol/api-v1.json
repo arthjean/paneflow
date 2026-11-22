@@ -3,6 +3,7 @@
   "description": "Every Paneflow method, generated from crates/paneflow-api. A test fails when this file and the declarations differ; regenerate it with PANEFLOW_API_SNAPSHOT=write cargo test -p paneflow-api snapshot.",
   "methods": [
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {},
@@ -37,10 +38,13 @@
         "title": "Pong",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Check that the endpoint answers."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {},
@@ -93,10 +97,13 @@
         "title": "CapabilitySet",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "List the methods this endpoint serves and whether its gates are open."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {},
@@ -141,10 +148,13 @@
         "title": "Identity",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Name the running app, its version and its wire protocol."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {},
@@ -301,10 +311,13 @@
         "title": "WorkCounters",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Read the app's work counters: renders, git spawns, process spawns."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {},
@@ -412,10 +425,13 @@
         "title": "WorkspaceList",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "List every workspace with its title, directory, pane count and space."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {
@@ -430,7 +446,7 @@
       ],
       "fallback": null,
       "gate": "orchestration",
-      "gate_note": "A request that sets a command, a prompt or an env is refused with -32601 unless PANEFLOW_IPC_ORCHESTRATION=1 or PANEFLOW_IPC_SCRIPTING=1.",
+      "gate_note": "A request that sets a command, a prompt or an env is refused with -32601 unless ipc.orchestration, ipc.scripting or ai_unrestricted is true in paneflow.json.",
       "in_capabilities": true,
       "name": "workspace.create",
       "owner": "worker",
@@ -506,10 +522,13 @@
         "title": "Created",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Open a workspace with one terminal, or with a layout document."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {
@@ -559,10 +578,13 @@
         "title": "Selected",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Show the workspace at an index."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {
@@ -612,10 +634,13 @@
         "title": "Closed",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Close the workspace at an index; the last workspace cannot be closed."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {},
@@ -733,10 +758,13 @@
         ],
         "title": "Nullable_CurrentWorkspace"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Describe the shown workspace with its layout document, or null when none is shown."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {
@@ -767,7 +795,7 @@
       ],
       "fallback": null,
       "gate": "orchestration",
-      "gate_note": "A request that sets a command, a prompt or an env is refused with -32601 unless PANEFLOW_IPC_ORCHESTRATION=1 or PANEFLOW_IPC_SCRIPTING=1.",
+      "gate_note": "A request that sets a command, a prompt or an env is refused with -32601 unless ipc.orchestration, ipc.scripting or ai_unrestricted is true in paneflow.json.",
       "in_capabilities": true,
       "name": "workspace.restore_layout",
       "owner": "worker",
@@ -806,10 +834,13 @@
         "title": "Restored",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Conform the shown tab to a layout document, reusing its panes."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {
@@ -840,7 +871,7 @@
       ],
       "fallback": null,
       "gate": "orchestration",
-      "gate_note": "A request that sets a command, a prompt or an env is refused with -32601 unless PANEFLOW_IPC_ORCHESTRATION=1 or PANEFLOW_IPC_SCRIPTING=1.",
+      "gate_note": "A request that sets a command, a prompt or an env is refused with -32601 unless ipc.orchestration, ipc.scripting or ai_unrestricted is true in paneflow.json.",
       "in_capabilities": true,
       "name": "workspace.up",
       "owner": "worker",
@@ -1110,10 +1141,13 @@
         "title": "Opened",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Open a workspace from pane specs, each with its own directory, command or prompt."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {},
@@ -1310,10 +1344,13 @@
         "title": "SurfaceList",
         "type": "object"
       },
+      "scope": "claimed_session",
+      "scope_note": "A caller in a pane that sends scope_session is scoped to its own session instead.",
       "stream": false,
       "summary": "List the surfaces of the shown workspace, or of one workspace, with their identity."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {
@@ -1442,10 +1479,13 @@
         "title": "SurfaceText",
         "type": "object"
       },
+      "scope": "claimed_session",
+      "scope_note": "A caller in a pane that sends scope_session is scoped to its own session instead.",
       "stream": false,
       "summary": "Read a surface's trailing scrollback lines."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {
@@ -1563,10 +1603,13 @@
         "title": "SearchResult",
         "type": "object"
       },
+      "scope": "claimed_session",
+      "scope_note": "A caller in a pane that sends scope_session is scoped to its own session instead.",
       "stream": false,
       "summary": "Find the scrollback lines of a surface that contain a pattern."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {
@@ -1636,10 +1679,13 @@
         "title": "Renamed",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Give a surface a custom name, or clear it."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {
@@ -1660,7 +1706,7 @@
       ],
       "fallback": "host",
       "gate": "scripting",
-      "gate_note": "Refused with -32601 unless PANEFLOW_IPC_SCRIPTING=1 or ai_unrestricted is on.",
+      "gate_note": "Refused with -32601 unless ipc.scripting or ai_unrestricted is true in paneflow.json.",
       "in_capabilities": true,
       "name": "surface.send_text",
       "owner": "window",
@@ -1798,10 +1844,13 @@
         "title": "SentText",
         "type": "object"
       },
+      "scope": "workspace_unless_all",
+      "scope_note": "A caller in a pane reaches only its own workspace unless it sends scope \"all\" with orchestration open for it.",
       "stream": false,
       "summary": "Write text into a surface, submitting it only when asked."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {
@@ -1815,7 +1864,7 @@
       ],
       "fallback": null,
       "gate": "scripting",
-      "gate_note": "Refused with -32601 unless PANEFLOW_IPC_SCRIPTING=1 or ai_unrestricted is on.",
+      "gate_note": "Refused with -32601 unless ipc.scripting or ai_unrestricted is true in paneflow.json.",
       "in_capabilities": true,
       "name": "surface.send_keystroke",
       "owner": "window",
@@ -1881,10 +1930,13 @@
         "title": "Sent",
         "type": "object"
       },
+      "scope": "workspace_unless_all",
+      "scope_note": "A caller in a pane reaches only its own workspace unless it sends scope \"all\" with orchestration open for it.",
       "stream": false,
       "summary": "Send a named key such as escape or ctrl-c to a surface."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {
@@ -1901,7 +1953,7 @@
       ],
       "fallback": null,
       "gate": "orchestration",
-      "gate_note": "A request that sets a command, a prompt or an env is refused with -32601 unless PANEFLOW_IPC_ORCHESTRATION=1 or PANEFLOW_IPC_SCRIPTING=1.",
+      "gate_note": "A request that sets a command, a prompt or an env is refused with -32601 unless ipc.orchestration, ipc.scripting or ai_unrestricted is true in paneflow.json.",
       "in_capabilities": true,
       "name": "surface.split",
       "owner": "worker",
@@ -2129,10 +2181,13 @@
         "title": "SplitDone",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Split the pane holding a surface and start a terminal in the new pane."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {
@@ -2198,10 +2253,13 @@
         "title": "Focused",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Reveal a surface and give it the keyboard focus."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {
@@ -2335,10 +2393,13 @@
         "title": "SurfaceStatus",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Read a surface's agent state, hook status and output generation."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {},
@@ -2491,10 +2552,13 @@
         "title": "Fleet",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "List the agents running in every workspace."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {
@@ -2572,10 +2636,13 @@
         "title": "Subscribed",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": true,
       "summary": "Stream surface and agent events as JSON lines: a subscribed frame, then events, heartbeat and dropped frames."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {
@@ -2659,10 +2726,13 @@
         "title": "Outcome",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Run a tmux command for an agent team, as the paneflow tmux shim does."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {},
@@ -2726,10 +2796,13 @@
         "title": "BuiltinActions",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "List the window's built-in actions: the names key bindings and client.dispatch_action accept."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {
@@ -2780,10 +2853,13 @@
         "title": "Dispatched",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Dispatch a built-in action in the window as the command palette does, and reply once it is dispatched."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {
@@ -2959,10 +3035,13 @@
         ],
         "title": "Description"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Describe every method, or one: owner, gate, params and result schemas, examples."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {},
@@ -3027,10 +3106,13 @@
         "title": "WhoAmIResult",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Say how the answering process identifies the caller: window, worker, pane, external or unverified."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {
@@ -3147,10 +3229,13 @@
         "title": "PaneWritten",
         "type": "object"
       },
+      "scope": "workspace_unless_all",
+      "scope_note": "A caller in a pane reaches only its own workspace unless it sends scope \"all\" with orchestration open for it.",
       "stream": false,
       "summary": "Relay a message from one agent's pane into another's, once a human allows the pair."
     },
     {
+      "audience": "not_pane",
       "examples": [
         {
           "params": {
@@ -3246,10 +3331,13 @@
         "title": "PeerClass",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Say whether a process runs inside one of the host's panes, and which one."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {},
@@ -3341,10 +3429,13 @@
         "title": "WorkerIdentity",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Open a worker connection and read the worker's identity and capabilities."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {},
@@ -3429,10 +3520,13 @@
         "title": "WorkerStatus",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Read the worker's pid, version, session count and counters."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {},
@@ -3473,10 +3567,13 @@
         "title": "Stopping",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Ask the worker to stop; terminals keep running in the host."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {},
@@ -3614,10 +3711,13 @@
         "title": "AgentSnapshot",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Read every session's reduced agent row and the usage frame."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {},
@@ -3756,10 +3856,13 @@
         "title": "AgentSnapshot",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": true,
       "summary": "Stream the session projection: a snapshot header, then one frame per reduced transition."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {
@@ -3807,10 +3910,13 @@
         "title": "ActivityLog",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Read the most recent agent activity entries."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {
@@ -3871,10 +3977,13 @@
         "title": "Acknowledged",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Clear the unread mark of sessions and publish the lowered rows."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {},
@@ -3899,10 +4008,13 @@
         "title": "Map_of_AnyValue",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Read the usage ledger snapshot."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {
@@ -3971,10 +4083,13 @@
         "title": "Map_of_AnyValue",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Read fresh usage for the running agents and the listed accounts."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {
@@ -4038,10 +4153,13 @@
         "title": "Map_of_AnyValue",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Start importing past activity from the agents' local logs."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {
@@ -4141,10 +4259,13 @@
         "title": "FollowHeader",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": true,
       "summary": "Stream the worker's numbered event log: a following header, then every event with consecutive seq values, keepalive frames when quiet, and an end frame when the worker closes the stream. A since that left the ring, or an epoch from another worker start, is refused with -32040 and data {reason: evicted, seq, epoch}."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {},
@@ -4299,10 +4420,13 @@
         "title": "ConfigStatus",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Read the state of init.lua: its path, whether it was found, when it loaded, what it declared and its load problems."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {},
@@ -4449,10 +4573,13 @@
         "title": "ConfigStatus",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Load init.lua again now and return the status; a failed load keeps the previous configuration active."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {},
@@ -4560,10 +4687,13 @@
         "title": "ActionList",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "List the actions init.lua declared, with their titles, argument schemas and sources."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {
@@ -4691,10 +4821,13 @@
         "title": "Invoked",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Run an action of init.lua with arguments and return what it returned. Arguments are checked against its schema first; a run is stopped after 30 seconds."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {},
@@ -4811,10 +4944,13 @@
         "title": "Keymap",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "List the key bindings init.lua declared and the keys it unbound, for the window to apply."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {
@@ -5166,10 +5302,13 @@
         "title": "PromptOutcome",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Ask the user through every attached client that can show the prompt; the first answer wins. Returns {status: answered, answer} within wait_ms, {status: pending, id} when wait_ms passes first, or the reason it ended: cancelled, timeout, no_client, unsupported, busy or failed with a detail."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {
@@ -5299,10 +5438,13 @@
         "title": "PromptOutcome",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Keep waiting on a pending prompt by id, with the same outcomes as prompt.request."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {
@@ -5429,10 +5571,13 @@
         "title": "Replied",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Answer or cancel a pending prompt. The first reply wins and every follower receives ended; a later one is refused with -32060 and data {reason: not_pending}."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {
@@ -5528,10 +5673,13 @@
         "title": "FollowHeader",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": true,
       "summary": "Stream the prompts this client can show: a following header, a requested frame for each pending prompt oldest first, then requested frames (id, spec, origin, remaining time) and ended frames (id, reason), keepalive frames when quiet."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {},
@@ -5623,10 +5771,13 @@
         "title": "View",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Return the layout model the worker holds, with its revision and the worker's epoch."
     },
     {
+      "audience": "not_pane",
       "examples": [
         {
           "params": {
@@ -5698,10 +5849,13 @@
         "title": "Attached",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Attach this connection as a layout client until it closes, and return the view, its revision and the worker's epoch."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {},
@@ -5747,10 +5901,13 @@
         "title": "Lease",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Grant this connection a contiguous block of 1,024 ids for the elements it creates; the worker never grants an id twice, across restarts included."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {
@@ -5782,8 +5939,8 @@
         }
       ],
       "fallback": null,
-      "gate": "none",
-      "gate_note": null,
+      "gate": "orchestration",
+      "gate_note": "A request that sets a command, a prompt or an env is refused with -32601 unless ipc.orchestration, ipc.scripting or ai_unrestricted is true in paneflow.json.",
       "in_capabilities": false,
       "name": "layout.apply",
       "owner": "worker",
@@ -5899,10 +6056,13 @@
         "title": "AppliedOp",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Apply one layout op to the worker's model and return the new revision and its events. A refused op fails with -32070 and data {reason}: not_found, zoomed, pane_limit, tab_limit, surface_limit, ids_exhausted, invalid, or window_owns_layout while a window of an earlier build owns the layout."
     },
     {
+      "audience": "anyone",
       "examples": [
         {
           "params": {
@@ -5997,10 +6157,13 @@
         "title": "Adopted",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Hand the worker a client's model after an outage. The worker takes it when its own revision is not greater than the revision it last acknowledged to the client, and otherwise returns its own view."
     },
     {
+      "audience": "paneflow_only",
       "examples": [
         {
           "params": {
@@ -6025,8 +6188,8 @@
         }
       ],
       "fallback": null,
-      "gate": "none",
-      "gate_note": null,
+      "gate": "orchestration",
+      "gate_note": "A request that sets a command, a prompt or an env is refused with -32601 unless ipc.orchestration, ipc.scripting or ai_unrestricted is true in paneflow.json.",
       "in_capabilities": false,
       "name": "layout.launch",
       "owner": "worker",
@@ -6200,10 +6363,13 @@
         "title": "Launched",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Start the terminal of a surface for the attached layout client that created it: the worker builds the launch from its configuration and the layout and creates the session under the id the client chose, which the client binds with bind_session. The surface must have no session or this one. Fails with -32070 and data {reason}: not_attached, not_found, invalid, host_unreachable or launch_failed with the host's message."
     },
     {
+      "audience": "paneflow_only",
       "examples": [
         {
           "params": {
@@ -6272,6 +6438,8 @@
         "title": "Swept",
         "type": "object"
       },
+      "scope": "none",
+      "scope_note": null,
       "stream": false,
       "summary": "Remove the records of ended sessions that no surface of the layout, no undo hold and no pending launch names, and with live, also stop the live sessions this host started that nothing holds. The attached layout client calls it after it restores; the worker runs the host requests. Fails with -32070 and data {reason}: not_attached or host_unreachable."
     }

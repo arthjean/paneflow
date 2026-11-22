@@ -6,7 +6,7 @@ use serde_json::{Map, Value};
 
 use super::NO_FALLBACK;
 use super::events::PublishedEvent;
-use crate::descriptor::{Gate, Owner, Reply};
+use crate::descriptor::{Audience, Gate, Owner, Reply};
 
 const WORKER: Owner = Owner::Worker;
 
@@ -217,6 +217,7 @@ method! {
         owner: WORKER,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         params: ViewParams,
         result: View,
@@ -231,6 +232,7 @@ method! {
         owner: WORKER,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::NotPane,
         reply: Reply::Ready,
         params: AttachParams,
         result: Attached,
@@ -245,6 +247,7 @@ method! {
         owner: WORKER,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         params: LeaseParams,
         result: Lease,
@@ -258,7 +261,8 @@ method! {
         summary: "Apply one layout op to the worker's model and return the new revision and its events. A refused op fails with -32070 and data {reason}: not_found, zoomed, pane_limit, tab_limit, surface_limit, ids_exhausted, invalid, or window_owns_layout while a window of an earlier build owns the layout.",
         owner: WORKER,
         fallback: NO_FALLBACK,
-        gate: Gate::Open,
+        gate: Gate::OrchestrationWhenSpawning,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         params: ApplyParams,
         result: AppliedOp,
@@ -273,6 +277,7 @@ method! {
         owner: WORKER,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         params: AdoptParams,
         result: Adopted,
@@ -286,7 +291,8 @@ method! {
         summary: "Start the terminal of a surface for the attached layout client that created it: the worker builds the launch from its configuration and the layout and creates the session under the id the client chose, which the client binds with bind_session. The surface must have no session or this one. Fails with -32070 and data {reason}: not_attached, not_found, invalid, host_unreachable or launch_failed with the host's message.",
         owner: WORKER,
         fallback: NO_FALLBACK,
-        gate: Gate::Open,
+        gate: Gate::OrchestrationWhenSpawning,
+        audience: Audience::PaneflowOnly,
         reply: Reply::Ready,
         params: LaunchParams,
         result: Launched,
@@ -301,6 +307,7 @@ method! {
         owner: WORKER,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::PaneflowOnly,
         reply: Reply::Ready,
         params: SweepParams,
         result: Swept,

@@ -86,6 +86,7 @@ impl WorkspaceUpRequest {
 
 pub(crate) fn workspace_up_request(
     params: &serde_json::Value,
+    gates: paneflow_api::Gates,
 ) -> Result<WorkspaceUpRequest, JsonRpcError> {
     let name = opt_str(params, "name")?.unwrap_or("Workspace").to_string();
     let space = opt_str(params, "space")?.map(str::to_string);
@@ -139,7 +140,7 @@ pub(crate) fn workspace_up_request(
         .flatten()
         .any(super::worktree_requests::runs_setup);
     if (setup_runs || pane_specs.iter().any(pane_spec_requires_orchestration))
-        && !spawn_gate_open(&spec)
+        && !spawn_gate_open(&spec, gates)
     {
         return Err(spawn_gate_refusal(&spec));
     }
@@ -164,13 +165,15 @@ pub(crate) struct WorkspaceCreateRequest {
 
 pub(crate) fn workspace_create_request(
     params: &serde_json::Value,
+    gates: paneflow_api::Gates,
 ) -> Result<WorkspaceCreateRequest, JsonRpcError> {
     let name = opt_str(params, "name")?.unwrap_or("Terminal").to_string();
     let space = opt_str(params, "space")?.map(str::to_string);
     let cwd = opt_str(params, "cwd")?.map(str::to_string);
     let layout = parse_layout_param(params)?;
     let spec = paneflow_api::methods::workspace::Create::SPEC;
-    if layout.as_ref().is_some_and(layout_requires_orchestration) && !spawn_gate_open(&spec) {
+    if layout.as_ref().is_some_and(layout_requires_orchestration) && !spawn_gate_open(&spec, gates)
+    {
         return Err(spawn_gate_refusal(&spec));
     }
     Ok(WorkspaceCreateRequest {
@@ -362,7 +365,7 @@ impl PaneFlowApp {
         params: &serde_json::Value,
         cx: &mut Context<Self>,
     ) -> IpcReply {
-        let request = match workspace_up_request(params) {
+        let request = match workspace_up_request(params, self.ipc_gates) {
             Ok(request) => request,
             Err(error) => return IpcReply::Ready(error.into_value()),
         };
@@ -407,7 +410,7 @@ impl PaneFlowApp {
             space,
             cwd,
             layout,
-        } = match workspace_create_request(params) {
+        } = match workspace_create_request(params, self.ipc_gates) {
             Ok(request) => request,
             Err(error) => return IpcReply::Ready(error.into_value()),
         };
@@ -815,7 +818,7 @@ impl PaneFlowApp {
             Err(error) => return error.into_value(),
         };
         let spec = paneflow_api::methods::workspace::RestoreLayout::SPEC;
-        if layout_requires_orchestration(&layout) && !spawn_gate_open(&spec) {
+        if layout_requires_orchestration(&layout) && !spawn_gate_open(&spec, self.ipc_gates) {
             return spawn_gate_refusal(&spec).into_value();
         }
         let needed = layout.leaf_count();
@@ -922,9 +925,12 @@ mod tests {
         } else {
             "/paneflow-nonexistent-9d1f/sub"
         };
-        let request = workspace_up_request(&serde_json::json!({
-            "panes": [{}, {"cwd": bogus}]
-        }))
+        let request = workspace_up_request(
+            &serde_json::json!({
+                "panes": [{}, {"cwd": bogus}]
+            }),
+            paneflow_api::Gates::OPEN,
+        )
         .expect("parsing never touches the filesystem");
         let error = request
             .resolve_cwds()
@@ -934,9 +940,12 @@ mod tests {
         assert!(error.message.starts_with("pane 1:"), "{}", error.message);
 
         let tmp = tempfile::tempdir().unwrap();
-        let resolved = workspace_up_request(&serde_json::json!({
-            "panes": [{"cwd": tmp.path().to_str().unwrap()}]
-        }))
+        let resolved = workspace_up_request(
+            &serde_json::json!({
+                "panes": [{"cwd": tmp.path().to_str().unwrap()}]
+            }),
+            paneflow_api::Gates::OPEN,
+        )
         .unwrap()
         .resolve_cwds()
         .expect("an existing folder resolves");
@@ -950,10 +959,13 @@ mod tests {
 
     #[test]
     fn a_workspace_create_request_defers_its_cwd() {
-        let request = workspace_create_request(&serde_json::json!({
-            "name": "api",
-            "cwd": "/paneflow-nonexistent-9d1f"
-        }))
+        let request = workspace_create_request(
+            &serde_json::json!({
+                "name": "api",
+                "cwd": "/paneflow-nonexistent-9d1f"
+            }),
+            paneflow_api::Gates::OPEN,
+        )
         .expect("parsing never touches the filesystem");
         assert_eq!(request.cwd.as_deref(), Some("/paneflow-nonexistent-9d1f"));
         assert_eq!(request.name, "api");
@@ -965,7 +977,7 @@ mod tests {
             serde_json::json!({"name": 5, "layout": {"type": "pane", "surfaces": [{"env": {"A": "1"}}]}}),
             serde_json::json!({"cwd": ["/tmp"], "layout": {"type": "pane", "surfaces": [{"command": "make"}]}}),
         ] {
-            let error = workspace_create_request(&params)
+            let error = workspace_create_request(&params, paneflow_api::Gates::OPEN)
                 .err()
                 .unwrap_or_else(|| panic!("{params} must be refused"));
             assert_eq!(error.code, JsonRpcError::INVALID_PARAMS, "{params}");
@@ -1139,10 +1151,13 @@ mod tests {
         let repo = tmp.path().join("repo");
         crate::git_fixture::committed_repo(&repo, &[("README.md", "init\n")]);
 
-        let request = workspace_up_request(&serde_json::json!({"panes": [
-            {"cwd": repo, "worktree": {"branch": "feat/window", "copy_env": false}},
-            {"cwd": repo}
-        ]}))
+        let request = workspace_up_request(
+            &serde_json::json!({"panes": [
+                {"cwd": repo, "worktree": {"branch": "feat/window", "copy_env": false}},
+                {"cwd": repo}
+            ]}),
+            paneflow_api::Gates::OPEN,
+        )
         .expect("a worktree request parses");
         let (request, prepared) = request
             .prepare_worktrees()
@@ -1169,14 +1184,12 @@ mod tests {
 
     #[test]
     fn a_window_workspace_up_refuses_a_worktree_setup_without_orchestration() {
-        if crate::app::ipc_handler::registry::spawn_gate_open(
-            &paneflow_api::methods::workspace::Up::SPEC,
-        ) {
-            return;
-        }
-        let refused = workspace_up_request(&serde_json::json!({"panes": [
-            {"cwd": "/tmp", "worktree": {"branch": "feat/x", "setup": "make"}}
-        ]}))
+        let refused = workspace_up_request(
+            &serde_json::json!({"panes": [
+                {"cwd": "/tmp", "worktree": {"branch": "feat/x", "setup": "make"}}
+            ]}),
+            paneflow_api::Gates::CLOSED,
+        )
         .err()
         .expect("a setup runs a command");
         assert!(
@@ -1184,9 +1197,12 @@ mod tests {
             "{}",
             refused.message
         );
-        let exclusive = workspace_up_request(&serde_json::json!({"panes": [
-            {"worktree": {"branch": "feat/x"}, "managed_worktree": {"path": "/tmp"}}
-        ]}))
+        let exclusive = workspace_up_request(
+            &serde_json::json!({"panes": [
+                {"worktree": {"branch": "feat/x"}, "managed_worktree": {"path": "/tmp"}}
+            ]}),
+            paneflow_api::Gates::OPEN,
+        )
         .err()
         .expect("the two forms are exclusive");
         assert!(
@@ -1262,18 +1278,26 @@ mod tests {
     #[test]
     fn a_created_workspace_lands_in_the_requested_space_or_the_active_one() {
         let config = spaced_config();
-        let request = workspace_create_request(&serde_json::json!({ "space": "WORK" })).unwrap();
+        let request = workspace_create_request(
+            &serde_json::json!({ "space": "WORK" }),
+            paneflow_api::Gates::OPEN,
+        )
+        .unwrap();
         assert_eq!(
             resolve_target_space(&config, None, request.space.as_deref()),
             Ok(Some(space(1)))
         );
-        let up = workspace_up_request(&serde_json::json!({ "space": "Default", "panes": [{}] }))
-            .unwrap();
+        let up = workspace_up_request(
+            &serde_json::json!({ "space": "Default", "panes": [{}] }),
+            paneflow_api::Gates::OPEN,
+        )
+        .unwrap();
         assert_eq!(
             resolve_target_space(&config, Some(&space(1)), up.space.as_deref()),
             Ok(None)
         );
-        let absent = workspace_create_request(&serde_json::json!({})).unwrap();
+        let absent =
+            workspace_create_request(&serde_json::json!({}), paneflow_api::Gates::OPEN).unwrap();
         assert_eq!(
             resolve_target_space(&config, Some(&space(1)), absent.space.as_deref()),
             Ok(Some(space(1)))
@@ -1286,9 +1310,12 @@ mod tests {
             .expect_err("no space is named Client");
         assert_eq!(error.code, JsonRpcError::INVALID_PARAMS);
         assert_eq!(error.message, "unknown space: Client");
-        let error = workspace_create_request(&serde_json::json!({ "space": 3 }))
-            .err()
-            .expect("a space is named by a string");
+        let error = workspace_create_request(
+            &serde_json::json!({ "space": 3 }),
+            paneflow_api::Gates::OPEN,
+        )
+        .err()
+        .expect("a space is named by a string");
         assert_eq!(error.message, "'space' must be a string");
     }
 }

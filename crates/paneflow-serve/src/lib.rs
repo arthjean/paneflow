@@ -9,6 +9,7 @@
 )]
 
 pub mod activity;
+mod authority;
 pub mod bootstrap;
 pub mod config_runtime;
 pub mod controller;

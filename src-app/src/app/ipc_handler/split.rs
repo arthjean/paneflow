@@ -310,7 +310,7 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) -> IpcReply {
         let spec = paneflow_api::methods::surface::Split::SPEC;
-        match self.prepare_split(params, spawn_gate_open(&spec), cx) {
+        match self.prepare_split(params, spawn_gate_open(&spec, self.ipc_gates), cx) {
             Ok(task) => IpcReply::Async(task),
             Err(error) => IpcReply::Ready(error.into_value()),
         }

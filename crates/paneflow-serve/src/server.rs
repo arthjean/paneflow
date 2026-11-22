@@ -52,6 +52,8 @@ pub struct Worker {
     pub layout: Arc<crate::layout_authority::LayoutAuthority>,
     pub classifier: paneflow_host::peer::PeerClassifier,
     pub principals: Mutex<std::collections::HashMap<ConnectionId, Principal>>,
+    pub policy: paneflow_host::policy::PolicySource,
+    pub(crate) acting: crate::authority::ActingRuns,
 }
 
 pub const WINDOW_LAYOUT_CLIENT: &str = "window";
@@ -801,7 +803,12 @@ pub(crate) fn register_methods(builder: RegistryBuilder) -> RegistryBuilder {
         .ready::<config::Reload>(|worker, _| to_value(worker.config.reload(worker)))
         .ready::<config::ListActions>(|worker, _| to_value(worker.config.actions()))
         .ready::<config::InvokeAction>(|worker, call| {
-            worker.config.invoke(call.params).and_then(to_value)
+            let mut params = call.params;
+            let mut context = params.ctx.take().unwrap_or_default();
+            let acting = crate::authority::acting_principal(&call.authority.principal, &context);
+            let _run = worker.acting.start(acting, &mut context);
+            params.ctx = Some(context);
+            worker.config.invoke(params).and_then(to_value)
         })
         .ready::<config::ListKeymap>(|worker, _| to_value(worker.config.keymap()))
         .ready::<prompt::Request>(|worker, call| {
@@ -833,6 +840,7 @@ pub(crate) fn register_methods(builder: RegistryBuilder) -> RegistryBuilder {
                 serde_json::Value::Object(call.params.op.0),
                 call.params.ids_from,
                 crate::state::now_ms(),
+                call.authority.may_spawn(),
             )?;
             worker.append_layout_events(outcome.events);
             match outcome.launch_error {
@@ -849,7 +857,11 @@ pub(crate) fn register_methods(builder: RegistryBuilder) -> RegistryBuilder {
         .ready::<workspace::Close>(crate::structural::workspace_close)
         .ready::<workspace::RestoreLayout>(crate::structural::workspace_restore_layout)
         .ready::<layout::Launch>(|worker, call| {
-            let launched = worker.layout.launch(call.connection, call.params)?;
+            let launched = worker.layout.launch(
+                call.connection,
+                call.params,
+                call.authority.switch_open_for_variables(),
+            )?;
             worker.append_layout_events(launched.events.clone());
             to_value(launched)
         })

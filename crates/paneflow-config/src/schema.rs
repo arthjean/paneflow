@@ -1,6 +1,7 @@
 mod agent_panel;
 mod config;
 mod identity;
+mod ipc;
 mod layout;
 mod session;
 mod space;
@@ -9,6 +10,7 @@ mod terminal;
 pub use agent_panel::*;
 pub use config::*;
 pub use identity::*;
+pub use ipc::*;
 pub use layout::*;
 pub use session::*;
 pub use space::*;
@@ -113,6 +115,7 @@ mod tests {
             claude_code_bypass_permissions: Some(false),
             ai_unrestricted: Some(true),
             ai_injection_fence: Some(false),
+            ipc: None,
             on_quit: Some(OnQuit::Stop),
             agent_button_visibility: [
                 "claude_code_button_visible",

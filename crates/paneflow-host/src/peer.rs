@@ -14,6 +14,8 @@ pub const METHOD_PEER_CLASSIFY: &str =
 
 pub const WORKER_CLIENT_PREFIX: &str = "paneflow-serve";
 
+pub const WINDOW_CLIENT_PREFIX: &str = "paneflow-desktop";
+
 const CLASSIFY_DEADLINE: Duration = Duration::from_secs(4);
 
 const _: () = assert!(
@@ -124,7 +126,7 @@ fn not_in_pane_or(membership: Membership, otherwise: Principal) -> Principal {
 pub fn host_principal(membership: Membership, hello: &ClientHello) -> Principal {
     let declared = if hello.client.starts_with(WORKER_CLIENT_PREFIX) {
         Principal::Worker
-    } else if hello.attaches() {
+    } else if hello.attaches() || hello.client.starts_with(WINDOW_CLIENT_PREFIX) {
         Principal::Window
     } else {
         Principal::External
@@ -509,6 +511,20 @@ mod tests {
         assert_eq!(
             host_principal(Membership::NotInPane, &ClientHello::control("cli")),
             Principal::External
+        );
+        assert_eq!(
+            host_principal(
+                Membership::NotInPane,
+                &ClientHello::control("paneflow-desktop-bootstrap")
+            ),
+            Principal::Window
+        );
+        assert_eq!(
+            host_principal(pane, &ClientHello::control("paneflow-desktop")),
+            Principal::Pane {
+                session: "s".into(),
+                workspace: None
+            }
         );
     }
 

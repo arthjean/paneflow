@@ -99,35 +99,88 @@ paneflow key backend ctrl-c
 ```
 
 Writing is guarded because any same-UID process that can write to a
-PTY can drive an agent or shell. There are two relevant controls:
+PTY can drive an agent or shell.
 
-| Control | Default | Effect |
+### Who is calling?
+
+Every connection to the window, the background process (`paneflow
+serve`) or the session host is given one principal before its first
+request is answered. `paneflow api call system.whoami` prints it.
+
+| Principal | Who it is |
+| --- | --- |
+| `window` | The Paneflow window |
+| `worker` | The background process, including `init.lua` timers and event handlers |
+| `pane` | A process the session host started in a pane, or one of its descendants |
+| `external` | A process of your user outside every pane, such as a script in another terminal |
+| `unverified` | A process Paneflow could not identify; it may only call `system.whoami`, `system.capabilities` and `system.describe` |
+
+The session host decides pane membership, because it started every
+pane; the window and the background process ask it with `peer.classify`.
+An `init.lua` action started from a key or the command palette acts as
+the window, and one started by `paneflow actions run` acts as its
+caller.
+
+A `pane` caller never reaches the methods reserved to Paneflow itself
+(`layout.launch`, `layout.sweep`, `approval.follow`, `approval.decide`,
+`session.runtime.bind`, `session.workspace`, `host.shutdown`) nor
+`layout.attach` and
+`peer.classify`, so an agent cannot approve its own writes or stop the
+host. A `scope_session` it sends is replaced by its own session, a
+`source_session` other than its own is refused, and a pane-scoped write
+or stop stays inside its own workspace unless the orchestration gate is
+open for it.
+
+### Which gates can I open?
+
+The gates live in `paneflow.json` and apply to the next request after
+you save the file:
+
+| Key | Default | Effect |
 | --- | --- | --- |
-| `PANEFLOW_IPC_SCRIPTING=1` | Off | Enables text and keystroke writes for the running Paneflow process |
-| `ai_unrestricted` | `false` | Allows trusted AI automation to submit text without the env gate |
+| `ipc.scripting` | `false` | Opens text and keystroke writes (`surface.send_text`, `surface.send_keystroke`, `session.input`); implies `ipc.orchestration` |
+| `ipc.orchestration` | `false` | Lets a request launch a command, a prompt or environment variables, and lets `--scope all` reach every workspace |
+| `ai_unrestricted` | `false` | Opens both gates for every caller |
 | `ai_injection_fence` | `true` | Wraps peer terminal output as untrusted text on the `read` path |
 
-The window and the detached host apply the same gates. A client that
-attaches a terminal engine, the Paneflow window itself, types for the
-human and is not gated. Every other control client, such as
-`paneflow send` with no window open, the MCP bridge, or a custom socket
-client, needs `PANEFLOW_IPC_SCRIPTING=1` for `session.input`.
-`session.create` needs `PANEFLOW_IPC_ORCHESTRATION=1` (or scripting,
-which includes it) when the request launches a command, a prompt, or
-environment variables, and scripting otherwise. The host logs each
+```json
+{
+  "ipc": {"scripting": true}
+}
+```
+
+The window and the background process always pass the gates, since they
+act for you. A malformed `ipc` section (a value that is not `true` or
+`false`) is logged with its key when the configuration loads, for
+example `invalid config key ipc.scripting: expected true or false`, and
+keeps both gates closed for every caller in a pane.
+
+`PANEFLOW_IPC_SCRIPTING=1` and `PANEFLOW_IPC_ORCHESTRATION=1` are
+deprecated. They still open the gates for an `external` caller. For a
+`pane` caller they apply only while `paneflow.json` has no `ipc`
+section, and the first such request logs a warning naming the key that
+replaces them; once the section exists, only the section decides. A
+refused request still answers with its former message, for example
+`surface.send_text disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable`:
+set `ipc.scripting` instead.
+
+The host logs each
 accepted `session.input` from a control client at info level with the
 client name, the target session, and the byte count, never the content.
 Hook delivery (`agent.event`) stays ungated: the host accepts an event
 only for the live launch generation of its session. These gates protect
 a pane from a confused agent, not from a hostile process running as
-your user.
+your user: a process of your user outside a sandbox can leave its pane
+(for instance by starting a new session and detaching from its parent)
+and be classified `external`, or write to a PTY directly. Run untrusted
+agents in a sandbox or as another user when that matters.
 
 Inside a Paneflow pane, `send`, `key`, and the `send` steps of
 `flow run` that target a pane the flow did not spawn pass the pane's
 `PANEFLOW_SESSION_ID`, and the instance refuses a write into a pane of
 another workspace with a message that names that workspace. Pass
 `--scope all` to reach every workspace; it needs
-`PANEFLOW_IPC_ORCHESTRATION=1`. A caller session the instance does not
+`ipc.orchestration`. A caller session the instance does not
 know is refused. A script run from a terminal outside Paneflow keeps
 the instance scope.
 
@@ -277,7 +330,8 @@ or control a pane in any other way.
   open, the tool says that no window can approve the write.
 - An agent cannot write into its own pane. A write stays inside the
   workspace of the calling pane unless the bridge runs with
-  `PANEFLOW_MCP_SCOPE=all` and the host has `PANEFLOW_IPC_ORCHESTRATION=1`.
+  `PANEFLOW_MCP_SCOPE=all` and `ipc.orchestration` is `true` in
+  `paneflow.json`.
 - The host prefixes each message with
   `[Paneflow: message from <name>, surface <number>]`, strips every control
   character except newline and tab (bracketed paste markers included),

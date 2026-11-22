@@ -2,7 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::{NO_FALLBACK, WINDOW};
-use crate::descriptor::{Gate, Reply};
+use crate::descriptor::{Audience, Gate, Reply};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CompatParams {
@@ -30,6 +30,7 @@ method! {
         owner: WINDOW,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Async,
         capabilities: true,
         params: CompatParams,

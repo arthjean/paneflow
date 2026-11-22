@@ -573,6 +573,51 @@ the text with its provenance (`crates/paneflow-host/src/agent_write.rs`). The
 bridge binary ships embedded in the main binary and is extracted to a stable
 path at launch, so there is nothing extra to install.
 
+### Caller identity and authorization
+
+The window's socket, the worker's endpoint and the session host each give a
+connection one principal before its first request: `Window`, `Worker`,
+`Pane { session, workspace }`, `External` or `Unverified`. The peer is read
+from the OS (`crates/paneflow-peer`), bound to the process rather than a
+reusable PID. The host decides pane membership, since it spawned every pane
+and records their leaders; the window and the worker ask it with
+`peer.classify`, a query they make for themselves, and fall back to the
+session manifests in the home when it does not answer (Linux, macOS) or to
+`Unverified` (Windows). A connection is never assumed to be outside every
+pane.
+
+Every request then goes through one pure function,
+`paneflow_api::authorize(principal, descriptor, params, policy)`
+(`crates/paneflow-api/src/authorize.rs`), which reads no file, socket or
+environment and returns `Allowed { scope, gates }` or `Refused { reason }`.
+Each descriptor declares an audience and a scope rule:
+
+| Family | Audience | Scope |
+| --- | --- | --- |
+| `system.*`, `session.list`, `session.text` and the other reads | `Anyone` | none |
+| `surface.list`, `surface.read`, `surface.search` | `Anyone` | the claimed session, if any |
+| `layout.attach`, `peer.classify` | `NotPane` | none |
+| `layout.launch`, `layout.sweep`, `approval.follow`, `approval.decide`, `session.runtime.bind`, `session.workspace`, `host.shutdown` | `PaneflowOnly` (window and worker) | none |
+| `session.input`, `stop`, `restart`, `remove`, `reset`, `clear_history`, `resize`, `appearance` | `Anyone` | the caller's workspace |
+| `surface.send_text`, `surface.send_keystroke`, `pane.write` | `Anyone` | the caller's workspace unless `scope: "all"` with orchestration |
+
+The policy comes from the `ipc` section of `paneflow.json`
+(`paneflow_host::policy::PolicySource`, re-read when the file's mtime or
+size changes) plus `ai_unrestricted`. `Window` and `Worker` pass every gate.
+The deprecated `PANEFLOW_IPC_*` variables, read only in
+`crates/paneflow-api/src/policy.rs`, still open the gates for `External`, and
+for `Pane` only while the section is absent. For a `Pane` caller,
+`authorize` rewrites `scope_session` to its own session; the host then
+checks the target session's workspace (`scope_refused`). The window runs
+`authorize` on the connection thread, before a request reaches the GPUI
+thread, and hands the resulting gates to the handler; the worker runs it in
+its registry before every handler, and an `init.lua` action acts as the
+window when started from a key or the palette and as its caller otherwise.
+A closed gate keeps the error each method returned before, so scripts see
+no new codes. `crates/paneflow-api/tests/decision_table.txt` pins every
+decision for every method and principal, and the host, the worker and the
+window each check their dispatch against the same table.
+
 Ingress is treated as untrusted: session and config files are validated
 structurally (layout budgets, ratio clamps, id alphabets) before they touch
 app state.

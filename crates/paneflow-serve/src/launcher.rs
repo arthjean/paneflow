@@ -117,11 +117,6 @@ pub fn surface_needs_orchestration(
         || non_empty(&definition.prompt)
 }
 
-pub fn orchestration_enabled() -> bool {
-    let set = |key: &str| std::env::var(key).ok().as_deref() == Some("1");
-    set("PANEFLOW_IPC_ORCHESTRATION") || set("PANEFLOW_IPC_SCRIPTING")
-}
-
 pub fn socket_path(home: &Path) -> Option<String> {
     let process_home = paneflow_home::paneflow_home().is_some_and(|own| {
         paneflow_home::home_fingerprint(&own) == paneflow_home::home_fingerprint(home)

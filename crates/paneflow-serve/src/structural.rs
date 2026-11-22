@@ -26,10 +26,6 @@ fn invalid(message: impl Into<String>) -> ServeError {
     ServeError::invalid_params(message)
 }
 
-fn orchestration_open() -> bool {
-    crate::launcher::orchestration_enabled()
-}
-
 fn non_empty(value: Option<&String>) -> bool {
     value.is_some_and(|text| !text.is_empty())
 }
@@ -285,6 +281,7 @@ fn apply(worker: &Arc<Worker>, op: Op) -> Result<Built, ServeError> {
         value,
         None,
         crate::state::now_ms(),
+        true,
     )?;
     worker.append_layout_events(outcome.events);
     Ok(Built {
@@ -357,7 +354,7 @@ pub(crate) fn surface_split(
     let spawning = non_empty(params.command.as_ref())
         || non_empty(params.prompt.as_ref())
         || env_has_strings(params.env.as_ref());
-    if spawning && !orchestration_open() {
+    if spawning && !call.authority.may_spawn() {
         return Err(orchestration_refused("surface.split"));
     }
     if params.worktree.is_some() && params.managed_worktree.is_some() {
@@ -376,6 +373,7 @@ pub(crate) fn surface_split(
         ws.space.as_ref(),
         vec![request],
         "surface.split",
+        call.authority.may_spawn(),
     )?;
     let created = match prepared.plans.first().and_then(Option::as_ref) {
         Some(plan) => Some((created_worktree(plan)?, created_worktree_cwd(plan)?)),
@@ -701,7 +699,7 @@ pub(crate) fn workspace_create(
     let params = call.params;
     let name = params.name.unwrap_or_else(|| "Terminal".to_string());
     let layout = layout_param(params.layout)?;
-    if layout.as_ref().is_some_and(layout_needs_orchestration) && !orchestration_open() {
+    if layout.as_ref().is_some_and(layout_needs_orchestration) && !call.authority.may_spawn() {
         return Err(orchestration_refused("workspace.create"));
     }
     let cwd = params.cwd.as_deref().map(canonical_cwd).transpose()?;
@@ -781,7 +779,7 @@ pub(crate) fn workspace_restore_layout(
     let Some(layout) = layout_param(call.params.layout)? else {
         return Err(invalid("missing 'layout' parameter"));
     };
-    if layout_needs_orchestration(&layout) && !orchestration_open() {
+    if layout_needs_orchestration(&layout) && !call.authority.may_spawn() {
         return Err(orchestration_refused("workspace.restore_layout"));
     }
     let needed = layout.leaf_count();
@@ -873,7 +871,7 @@ pub(crate) fn workspace_up(
             || non_empty(pane.prompt.as_ref())
             || env_has_strings(pane.env.as_ref())
     });
-    if spawning && !orchestration_open() {
+    if spawning && !call.authority.may_spawn() {
         return Err(orchestration_refused("workspace.up"));
     }
     let mut taken = HashSet::new();
@@ -921,8 +919,14 @@ pub(crate) fn workspace_up(
         state.active_space.as_ref(),
         params.space.as_deref(),
     )?;
-    let mut prepared =
-        crate::worktrees::prepare(&config, &state, space.as_ref(), requests, "workspace.up")?;
+    let mut prepared = crate::worktrees::prepare(
+        &config,
+        &state,
+        space.as_ref(),
+        requests,
+        "workspace.up",
+        call.authority.may_spawn(),
+    )?;
     for (i, plan) in prepared.plans.iter().enumerate() {
         let Some(plan) = plan else {
             continue;

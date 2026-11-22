@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::Duration;
 
-use paneflow_api::{Catalog, Owner};
+use paneflow_api::{Catalog, Owner, Principal};
 use paneflow_ipc_client::host_control::{ControlTarget, HostTransport, resolve_control_target};
 use paneflow_ipc_client::{IpcClient, IpcTransport};
 use paneflow_script::{
@@ -87,14 +87,44 @@ impl WorkerBackend {
             .map_err(|message| wire_error(&message))
     }
 
-    fn call_worker(&self, method: &str, params: &Value) -> Result<Value, CallError> {
+    fn call_worker(
+        &self,
+        method: &str,
+        params: &Value,
+        acting: &Principal,
+    ) -> Result<Value, CallError> {
         let worker = self.worker.upgrade().ok_or_else(|| {
             CallError::new("the Paneflow worker is stopping", CallError::UNAVAILABLE)
         })?;
         let registry = crate::registry::registry()
             .map_err(|error| CallError::new(error.message, error.code))?;
         registry
-            .call(&worker, method, params)
+            .call(&worker, method, params, acting)
+            .map_err(|error| CallError::new(error.message, error.code))
+    }
+
+    fn acting(&self, grant: Option<&str>) -> Result<(Principal, Option<String>), CallError> {
+        let worker = self.worker.upgrade().ok_or_else(|| {
+            CallError::new("the Paneflow worker is stopping", CallError::UNAVAILABLE)
+        })?;
+        let (principal, window) = worker.acting.resolve(grant);
+        Ok((principal, window.map(str::to_string)))
+    }
+
+    fn authorize_forward(
+        &self,
+        descriptor: &paneflow_api::Descriptor,
+        acting: &Principal,
+        params: &mut Value,
+    ) -> Result<(), CallError> {
+        if matches!(acting, Principal::Worker) {
+            return Ok(());
+        }
+        let worker = self.worker.upgrade().ok_or_else(|| {
+            CallError::new("the Paneflow worker is stopping", CallError::UNAVAILABLE)
+        })?;
+        crate::authority::authorize_call(&worker, acting, descriptor, params)
+            .map(drop)
             .map_err(|error| CallError::new(error.message, error.code))
     }
 
@@ -173,15 +203,20 @@ impl Backend for WorkerBackend {
                 CallError::METHOD_NOT_FOUND,
             ));
         };
+        let (acting, window_grant) = self.acting(grant)?;
+        if descriptor.spec.owner == Owner::Worker {
+            return self.call_worker(method, &params, &acting);
+        }
+        let mut params = params;
+        self.authorize_forward(descriptor, &acting, &mut params)?;
         match descriptor.spec.owner {
-            Owner::Worker => self.call_worker(method, &params),
             Owner::Window => self.call_window(
                 method,
                 params,
                 descriptor.spec.fallback == Some(Owner::Host),
-                grant,
+                window_grant.as_deref(),
             ),
-            Owner::Host => {
+            Owner::Host | Owner::Worker => {
                 let endpoint = paneflow_home::host_endpoint_path(&self.home);
                 self.call_host(&endpoint, method, params)
             }

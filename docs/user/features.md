@@ -142,7 +142,7 @@ pane, next to the lead's pane, instead of inside the lead's terminal. Claude
 Code drives those panes through `tmux` commands, which Paneflow answers
 itself for that pane only: every other pane keeps your real `tmux` and
 `PATH`. A team can only open, list, rename, and close its own panes. Typing
-into a teammate with `send-keys` follows the same `PANEFLOW_IPC_SCRIPTING`
+into a teammate with `send-keys` follows the same `ipc.scripting`
 rule as `paneflow send`. Closing the lead's pane leaves the teammates open
 as ordinary panes. The entry does not exist on Windows: Claude Code's
 terminal team mode needs tmux and a POSIX shell there, so on Windows

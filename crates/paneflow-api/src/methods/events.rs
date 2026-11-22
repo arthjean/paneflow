@@ -2,7 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::{NO_FALLBACK, WINDOW};
-use crate::descriptor::{Gate, Owner, Reply};
+use crate::descriptor::{Audience, Gate, Owner, Reply};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SubscribeParams {
@@ -35,6 +35,7 @@ method! {
         owner: WINDOW,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Stream,
         capabilities: true,
         params: SubscribeParams,
@@ -149,6 +150,7 @@ method! {
         owner: Owner::Worker,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Stream,
         params: FollowParams,
         result: FollowHeader,

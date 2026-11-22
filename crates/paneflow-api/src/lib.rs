@@ -1,11 +1,17 @@
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
+
+pub mod authorize;
 pub mod descriptor;
 #[macro_use]
 pub mod methods;
+pub mod policy;
 pub mod principal;
 pub mod schema;
 
-pub use descriptor::{Descriptor, Example, Gate, Method, Owner, Reply, Spec};
-pub use methods::{Catalog, DuplicateMethod, catalog, declarations};
+pub use authorize::{Decision, Refusal, Scope, authorize};
+pub use descriptor::{Audience, Descriptor, Example, Gate, Method, Owner, Reply, ScopeRule, Spec};
+pub use methods::{Catalog, DuplicateMethod, catalog, declarations, host_catalog};
+pub use policy::{Gates, Policy};
 pub use principal::Principal;
 
 pub const SNAPSHOT_VERSION: u32 = 1;
@@ -55,6 +61,120 @@ mod tests {
                     .any(|line| line.trim_start().starts_with(banned)),
                 "{banned} in {dependencies}"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod audience_tests {
+    const MACRO: &str = include_str!("methods/mod.rs");
+    const DESCRIPTOR: &str = include_str!("descriptor.rs");
+
+    #[test]
+    fn a_declaration_must_state_its_audience_to_compile() {
+        let rule = MACRO
+            .split("macro_rules! method")
+            .nth(1)
+            .and_then(|rest| rest.split("=> {").next())
+            .expect("the method! rule");
+        let line = rule
+            .lines()
+            .find(|line| line.contains("audience:"))
+            .expect("the rule names an audience");
+        assert_eq!(line.trim(), "audience: $audience:expr,");
+        assert!(
+            !rule.contains("$(audience"),
+            "the audience is not optional: {rule}"
+        );
+        let spec = DESCRIPTOR
+            .split("pub struct Spec")
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .expect("the Spec struct");
+        assert!(spec.contains("pub audience: Audience,"), "{spec}");
+        let derives = DESCRIPTOR
+            .split("pub struct Spec")
+            .next()
+            .and_then(|before| before.lines().rev().find(|line| line.contains("derive")))
+            .expect("the derive line of Spec");
+        assert!(!derives.contains("Default"), "{derives}");
+    }
+
+    #[test]
+    fn describe_lists_the_audience_and_the_gate_of_every_method() {
+        let catalog = super::host_catalog().expect("the catalog builds");
+        for descriptor in catalog.iter() {
+            let described = descriptor.describe();
+            assert!(described["audience"].is_string(), "{}", descriptor.name());
+            assert!(described["gate"].is_string(), "{}", descriptor.name());
+            assert!(described["scope"].is_string(), "{}", descriptor.name());
+        }
+        let audience = |name: &str| catalog.get(name).expect(name).spec.audience;
+        for name in [
+            "layout.launch",
+            "layout.sweep",
+            "approval.follow",
+            "approval.decide",
+            "session.runtime.bind",
+            "host.shutdown",
+            "session.workspace",
+        ] {
+            assert_eq!(audience(name), super::Audience::PaneflowOnly, "{name}");
+        }
+        for name in ["layout.attach", "peer.classify"] {
+            assert_eq!(audience(name), super::Audience::NotPane, "{name}");
+        }
+        for name in [
+            "session.input",
+            "session.stop",
+            "session.restart",
+            "session.remove",
+            "session.reset",
+            "session.clear_history",
+            "session.resize",
+            "session.appearance",
+        ] {
+            assert_eq!(
+                catalog.get(name).expect(name).spec.scope,
+                super::ScopeRule::Workspace,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_method_the_host_dispatches_has_a_descriptor() {
+        let catalog = super::host_catalog().expect("the catalog builds");
+        for name in [
+            "system.whoami",
+            "peer.classify",
+            "session.attach",
+            "session.output",
+            "approval.follow",
+            "approval.decide",
+            "agent.follow",
+            "host.shutdown",
+            "agent.event",
+            "host.hello",
+            "host.status",
+            "session.list",
+            "session.create",
+            "session.inspect",
+            "session.stop",
+            "session.restart",
+            "session.remove",
+            "session.input",
+            "session.runtime.bind",
+            "session.resize",
+            "session.appearance",
+            "session.workspace",
+            "session.clear_history",
+            "session.reset",
+            "session.text",
+            "agent.snapshot",
+            "pane.write",
+        ] {
+            assert!(catalog.get(name).is_some(), "{name}");
         }
     }
 }

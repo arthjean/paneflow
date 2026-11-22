@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::NO_FALLBACK;
-use crate::descriptor::{Gate, Owner, Reply};
+use crate::descriptor::{Audience, Gate, Owner, Reply};
 
 const WORKER: Owner = Owner::Worker;
 
@@ -571,6 +571,7 @@ method! {
         owner: WORKER,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         params: RequestParams,
         result: PromptOutcome,
@@ -588,6 +589,7 @@ method! {
         owner: WORKER,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         params: WaitParams,
         result: PromptOutcome,
@@ -602,6 +604,7 @@ method! {
         owner: WORKER,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         params: ReplyParams,
         result: Replied,
@@ -619,6 +622,7 @@ method! {
         owner: WORKER,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Stream,
         params: FollowParams,
         result: FollowHeader,

@@ -14,7 +14,7 @@ use paneflow_config::schema::{SessionGeneration, SessionId, WorkspaceId};
 use serde_json::{Value, json};
 
 use crate::agent::AgentEvent;
-use crate::agent_write::{Decision, METHOD_APPROVAL_DECIDE, METHOD_APPROVAL_FOLLOW};
+use crate::agent_write::{METHOD_APPROVAL_DECIDE, METHOD_APPROVAL_FOLLOW};
 use crate::control::{ConnectionAliases, ControlError};
 use crate::host::{CellSize, CreateSession, HostError, SessionAppearance, SessionHost};
 use crate::manifest::now_ms;
@@ -31,8 +31,8 @@ use crate::protocol::{
     result_envelope,
 };
 use crate::runtime::RuntimeError;
-use paneflow_api::Principal;
 use paneflow_api::methods::host::PeerClassifyParams;
+use paneflow_api::{Decision, Principal, Refusal, Scope, ScopeRule};
 use paneflow_ipc_client::line_wire::{LineRead, Wire};
 use paneflow_peer::{Membership, PeerRead};
 
@@ -514,7 +514,7 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
             }
             continue;
         };
-        let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
+        let mut params = request.get("params").cloned().unwrap_or_else(|| json!({}));
         if !greeted {
             if method != "host.hello" {
                 let _ = wire.write_json(&error_envelope(
@@ -542,6 +542,16 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
             }
             continue;
         }
+        let permissions = match authorize_request(&host, &principal, &id, method, &mut params) {
+            Ok(permissions) => permissions,
+            Err(envelope) => {
+                if wire.write_json(&envelope).is_err() {
+                    return;
+                }
+                continue;
+            }
+        };
+        let typed_input = attaches && !principal.is_pane();
         let flow = match method {
             METHOD_WHOAMI => match wire.write_json(&result_envelope(&id, principal.whoami_value()))
             {
@@ -686,8 +696,7 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
             _ => {
                 let envelope = match crate::control::authorize_session_write(
                     &host,
-                    attaches,
-                    host.permissions(),
+                    permissions,
                     method,
                     &params,
                 ) {
@@ -696,7 +705,7 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
                         let answered = crate::control::dispatch(
                             &host,
                             &mut aliases,
-                            host.permissions(),
+                            permissions,
                             method,
                             &params,
                             now_ms(),
@@ -704,9 +713,9 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
                         match answered {
                             Some(Ok(result)) => result_envelope(&id, result),
                             Some(Err(error)) => control_error_to_envelope(&id, error),
-                            None => match dispatch(&host, method, &params, attaches) {
+                            None => match dispatch(&host, method, &params, typed_input) {
                                 Ok(result) => {
-                                    if method == "session.input" && !attaches {
+                                    if method == "session.input" && !typed_input {
                                         audit_control_input(&client, &params, &result);
                                     }
                                     fit_control_frame(&id, result_envelope(&id, result))
@@ -728,6 +737,139 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
         };
         if matches!(flow, Flow::Close) {
             return;
+        }
+    }
+}
+
+static CATALOG: std::sync::LazyLock<Option<paneflow_api::Catalog>> =
+    std::sync::LazyLock::new(|| paneflow_api::host_catalog().ok());
+
+fn refusal_envelope(id: &Value, method: &str, principal: &Principal, refusal: Refusal) -> Value {
+    let data = paneflow_api::authorize::refusal_data(principal, refusal);
+    match refusal {
+        Refusal::PrincipalRefused
+            if method == METHOD_APPROVAL_FOLLOW || method == METHOD_APPROVAL_DECIDE =>
+        {
+            error_envelope(
+                id,
+                ERR_ENGINE_REQUIRED,
+                format!(
+                    "{method} belongs to the Paneflow window: only the window sees or decides write approvals; this caller is identified as {}",
+                    principal.kind()
+                ),
+                Some(data),
+            )
+        }
+        Refusal::PrincipalRefused => {
+            let (code, message, data) = principal.refusal(method);
+            error_envelope(id, code, message, Some(data))
+        }
+        Refusal::UnverifiedCaller => error_envelope(
+            id,
+            paneflow_api::principal::ERR_PRINCIPAL_REFUSED,
+            paneflow_api::authorize::unverified_message(method, principal),
+            Some(data),
+        ),
+        Refusal::SourceMismatch => error_envelope(
+            id,
+            ERR_INVALID_PARAMS,
+            paneflow_api::authorize::source_mismatch_message(method),
+            Some(data),
+        ),
+        Refusal::ScopeRefused | Refusal::GateClosed { .. } => error_envelope(
+            id,
+            ERR_INVALID_PARAMS,
+            format!("{method} refused: {}", refusal.reason()),
+            Some(data),
+        ),
+    }
+}
+
+fn check_target_scope(
+    host: &SessionHost,
+    scope: &Scope,
+    id: &Value,
+    method: &str,
+    principal: &Principal,
+    params: &Value,
+) -> Result<(), Value> {
+    let claimed;
+    let scope = match scope {
+        Scope::Instance => return Ok(()),
+        Scope::Claimed { .. } if method == "session.input" => return Ok(()),
+        Scope::Pane { .. } => scope,
+        Scope::Claimed { session } => {
+            let workspace = SessionId::parse(session).ok().and_then(|claimed| {
+                host.list(None)
+                    .into_iter()
+                    .find(|summary| summary.manifest.session == claimed)
+                    .map(|summary| summary.manifest.workspace.map(|w| w.to_string()))
+            });
+            let Some(workspace) = workspace else {
+                return Ok(());
+            };
+            claimed = Scope::Pane {
+                session: session.clone(),
+                workspace,
+            };
+            &claimed
+        }
+    };
+    let Some(target) = params
+        .get("session")
+        .and_then(Value::as_str)
+        .and_then(|raw| SessionId::parse(raw).ok())
+    else {
+        return Ok(());
+    };
+    let Ok(summary) = host.inspect(&target) else {
+        return Ok(());
+    };
+    let workspace = summary
+        .manifest
+        .workspace
+        .map(|workspace| workspace.to_string());
+    scope
+        .check(target.as_str(), workspace.as_deref())
+        .map_err(|refusal| {
+            error_envelope(
+                id,
+                ERR_INVALID_PARAMS,
+                paneflow_api::authorize::scope_refusal_message(
+                    method,
+                    target.as_str(),
+                    workspace.as_deref(),
+                ),
+                Some(paneflow_api::authorize::refusal_data(principal, refusal)),
+            )
+        })
+}
+
+pub(crate) fn authorize_request(
+    host: &SessionHost,
+    principal: &Principal,
+    id: &Value,
+    method: &str,
+    params: &mut Value,
+) -> Result<crate::control::ControlPermissions, Value> {
+    let policy = host.policy();
+    let Some(descriptor) = CATALOG.as_ref().and_then(|catalog| catalog.get(method)) else {
+        return Ok(host.permissions_for(policy.gates_for(principal)));
+    };
+    match paneflow_api::authorize(principal, descriptor, params, &policy) {
+        Decision::Refused {
+            reason: Refusal::GateClosed { .. },
+        } => Ok(host.permissions_for(policy.gates_for(principal))),
+        Decision::Refused { reason } => Err(refusal_envelope(id, method, principal, reason)),
+        Decision::Allowed { scope, gates } => {
+            if let Some(notice) = paneflow_api::policy::deprecation_notice(&policy, &gates) {
+                log::warn!("paneflow-host: {notice}");
+            }
+            scope.bind(principal, params);
+            if descriptor.spec.scope == ScopeRule::Workspace {
+                check_target_scope(host, &scope, id, method, principal, params)?;
+            }
+            Ok(host.permissions_for(gates))
         }
     }
 }
@@ -1241,7 +1383,7 @@ fn decide_approval(host: &SessionHost, client: &str, params: &Value) -> Result<V
     let decision = params
         .get("decision")
         .and_then(Value::as_str)
-        .and_then(Decision::parse)
+        .and_then(crate::agent_write::Decision::parse)
         .ok_or_else(|| "'decision' must be \"allow\" or \"deny\"".to_string())?;
     host.write_approvals()
         .decide(request, decision, std::time::Instant::now())?;
@@ -1506,6 +1648,79 @@ mod tests {
         let host = SessionHost::open(home.path(), &endpoint).unwrap();
         let server = ServerHandle::spawn(Arc::clone(&host), endpoint).unwrap();
         (home, host, server)
+    }
+
+    const DECISION_TABLE: &str = include_str!("../../paneflow-api/tests/decision_table.txt");
+
+    fn table_principal(kind: &str) -> Option<Principal> {
+        match kind {
+            "window" => Some(Principal::Window),
+            "worker" => Some(Principal::Worker),
+            "pane" => Some(Principal::Pane {
+                session: "s-caller".into(),
+                workspace: Some("w-caller".into()),
+            }),
+            "external" => Some(Principal::External),
+            "unverified" => Some(Principal::Unverified {
+                reason: "the peer exited".into(),
+            }),
+            _ => None,
+        }
+    }
+
+    fn served_decision(host: &SessionHost, principal: &Principal, method: &str) -> String {
+        let mut params = json!({"scope_session": "s-claimed"});
+        match authorize_request(host, principal, &json!(1), method, &mut params) {
+            Err(envelope) => format!(
+                "refused:{}",
+                envelope["error"]["data"]["reason"]
+                    .as_str()
+                    .unwrap_or("none")
+            ),
+            Ok(permissions) => {
+                let descriptor = CATALOG.as_ref().unwrap().get(method).unwrap();
+                match descriptor.spec.gate {
+                    paneflow_api::Gate::Scripting { .. } if !permissions.scripting => {
+                        "refused:gate_closed".to_string()
+                    }
+                    _ => "allowed".to_string(),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_host_method_is_authorized_as_the_checked_in_decision_table_says() {
+        let (_home, host, server) = start();
+        let mut checked = 0;
+        for (column, open) in [(3, false), (4, true)] {
+            host.override_permissions(granted(open, open));
+            for row in DECISION_TABLE.lines().filter(|row| !row.starts_with('#')) {
+                let fields: Vec<&str> = row.split_whitespace().collect();
+                let [method, owner, kind, ..] = fields[..] else {
+                    continue;
+                };
+                if owner != "host" {
+                    continue;
+                }
+                let principal = table_principal(kind).expect("a known principal");
+                let expected = fields[column];
+                let expected = if expected.starts_with("allowed") {
+                    "allowed"
+                } else {
+                    expected
+                };
+                assert_eq!(
+                    served_decision(&host, &principal, method),
+                    expected,
+                    "{method} as {kind} with every gate {}",
+                    if open { "open" } else { "closed" }
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked >= 2 * 5 * 20, "{checked}");
+        server.stop().unwrap();
     }
 
     #[test]

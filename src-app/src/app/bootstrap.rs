@@ -330,6 +330,7 @@ impl PaneFlowApp {
             session_exit_pending: false,
             session_save_error_shown: false,
             cached_config,
+            ipc_gates: paneflow_api::Gates::CLOSED,
             app_wake,
             ipc_status,
             event_bus,

@@ -234,7 +234,8 @@ pub struct SessionHost {
     agent_snapshots: crate::work_counters::Counter,
     write_approvals: crate::agent_write::WriteApprovals,
     helper_dir: Option<PathBuf>,
-    permissions: crate::control::ControlPermissions,
+    fenced_reads: bool,
+    policy: crate::policy::PolicySource,
     submit_paste_delay: std::time::Duration,
     xt_checksum: Mutex<crate::runtime::XtChecksum>,
     next_operation: AtomicU64,
@@ -246,7 +247,7 @@ pub struct SessionHost {
     #[cfg(test)]
     checkpoint_estimate_floor: AtomicUsize,
     #[cfg(test)]
-    permission_override: Mutex<Option<crate::control::ControlPermissions>>,
+    fence_override: Mutex<Option<bool>>,
     weak: Weak<Self>,
     _owner: OwnerLock,
 }
@@ -345,7 +346,7 @@ impl SessionHost {
                 None
             }
         };
-        let (permissions, submit_paste_delay) = load_control_settings(home);
+        let (fenced_reads, submit_paste_delay) = load_control_settings(home);
         let persistence = Persistence::start(home).map_err(|error| {
             HostError::Storage(format!("cannot start the persistence service: {error}"))
         })?;
@@ -363,7 +364,8 @@ impl SessionHost {
             agent_snapshots: crate::work_counters::Counter::new(),
             write_approvals: crate::agent_write::WriteApprovals::default(),
             helper_dir,
-            permissions,
+            fenced_reads,
+            policy: crate::policy::PolicySource::for_home(home),
             submit_paste_delay,
             xt_checksum: Mutex::new(crate::runtime::XtChecksum::default()),
             next_operation: AtomicU64::new(1),
@@ -375,7 +377,7 @@ impl SessionHost {
             #[cfg(test)]
             checkpoint_estimate_floor: AtomicUsize::new(0),
             #[cfg(test)]
-            permission_override: Mutex::new(None),
+            fence_override: Mutex::new(None),
             weak: weak.clone(),
             _owner: owner,
         });
@@ -585,24 +587,46 @@ impl SessionHost {
         self.helper_dir.as_deref()
     }
 
-    pub fn permissions(&self) -> crate::control::ControlPermissions {
+    pub fn policy(&self) -> paneflow_api::Policy {
+        self.policy.current()
+    }
+
+    pub fn fenced_reads(&self) -> bool {
         #[cfg(test)]
-        if let Some(permissions) = *self
-            .permission_override
+        if let Some(fenced) = *self
+            .fence_override
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
         {
-            return permissions;
+            return fenced;
         }
-        self.permissions
+        self.fenced_reads
+    }
+
+    pub fn permissions_for(
+        &self,
+        gates: paneflow_api::Gates,
+    ) -> crate::control::ControlPermissions {
+        crate::control::ControlPermissions {
+            scripting: gates.scripting,
+            orchestration: gates.orchestration,
+            fenced_reads: self.fenced_reads(),
+        }
     }
 
     #[cfg(test)]
     pub(crate) fn override_permissions(&self, permissions: crate::control::ControlPermissions) {
         *self
-            .permission_override
+            .fence_override
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(permissions);
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(permissions.fenced_reads);
+        self.policy.pin(Some(paneflow_api::Policy {
+            environment: paneflow_api::policy::Switches {
+                scripting: permissions.scripting,
+                orchestration: permissions.orchestration,
+            },
+            ..paneflow_api::Policy::default()
+        }));
     }
 
     pub fn home(&self) -> &Path {
@@ -3091,14 +3115,10 @@ fn payload_text(event: &AgentEvent, key: &str) -> Option<String> {
         })
 }
 
-fn load_control_settings(home: &Path) -> (crate::control::ControlPermissions, std::time::Duration) {
+fn load_control_settings(home: &Path) -> (bool, std::time::Duration) {
     let config = paneflow_config::loader::load_config_from_path(&home.join("paneflow.json"));
-    let permissions = crate::control::ControlPermissions::from_environment(
-        config.ai_unrestricted_enabled(),
-        config.ai_injection_fence_enabled(),
-    );
     let delay = std::time::Duration::from_millis(config.resolved_submit_paste_delay_ms());
-    (permissions, delay)
+    (config.ai_injection_fence_enabled(), delay)
 }
 
 fn read_xt_checksum(home: &Path) -> Option<crate::runtime::XtChecksum> {

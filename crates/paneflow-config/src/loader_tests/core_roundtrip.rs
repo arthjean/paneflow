@@ -55,6 +55,7 @@ fn test_serialization_roundtrip() {
         claude_code_bypass_permissions: None,
         ai_unrestricted: None,
         ai_injection_fence: None,
+        ipc: Some(serde_json::json!({"scripting": true})),
         on_quit: None,
         agent_button_visibility: BTreeMap::new(),
         telemetry: None,

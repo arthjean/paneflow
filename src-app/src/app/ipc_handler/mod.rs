@@ -41,7 +41,9 @@ mod worktree_requests;
 use gates::*;
 pub(crate) use jsonrpc::*;
 use params::*;
-pub(crate) use registry::{Call, Route, registry};
+#[cfg(test)]
+pub(crate) use registry::gate_refusal;
+pub(crate) use registry::{Admission, Call, Route, admit, registry};
 use registry::{RegistryBuilder, spawn_gate_open, spawn_gate_refusal};
 pub(crate) use surface_methods::*;
 use transcript::*;
@@ -131,22 +133,26 @@ impl PaneFlowApp {
                 .grant
                 .as_deref()
                 .is_some_and(|grant| self.lua_config.grants.admits(grant, Instant::now()));
-            let result =
-                match self.handle_ipc(&req.method, &req.params, req.caller_pid, granted, cx) {
-                    IpcReply::Ready(result) => result,
-                    IpcReply::Deferred(job) => {
-                        answer_off_thread(job, req.response_tx).detach();
-                        continue;
-                    }
-                    IpcReply::Async(task) => {
-                        let response_tx = req.response_tx;
-                        cx.spawn(async move |_, _| {
-                            let _ = response_tx.send(task.await);
-                        })
-                        .detach();
-                        continue;
-                    }
-                };
+            let gates = paneflow_api::Gates {
+                scripting: req.gates.scripting || granted,
+                ..req.gates
+            };
+            let result = match self.handle_ipc(&req.method, &req.params, req.caller_pid, gates, cx)
+            {
+                IpcReply::Ready(result) => result,
+                IpcReply::Deferred(job) => {
+                    answer_off_thread(job, req.response_tx).detach();
+                    continue;
+                }
+                IpcReply::Async(task) => {
+                    let response_tx = req.response_tx;
+                    cx.spawn(async move |_, _| {
+                        let _ = response_tx.send(task.await);
+                    })
+                    .detach();
+                    continue;
+                }
+            };
             let _ = req.response_tx.send(result);
         }
     }
@@ -179,10 +185,10 @@ impl PaneFlowApp {
         method: &str,
         params: &serde_json::Value,
         caller_pid: Option<i64>,
-        granted: bool,
+        gates: paneflow_api::Gates,
         cx: &mut Context<Self>,
     ) -> IpcReply {
-        registry().serve(self, method, params, caller_pid, granted, cx)
+        registry().serve(self, method, params, caller_pid, gates, cx)
     }
 }
 
@@ -202,13 +208,7 @@ fn register_methods(builder: RegistryBuilder) -> RegistryBuilder {
         .inline::<system::Identify>(|_| identity())
         .inline::<system::Counters>(|_| crate::work_counters::counters())
         .ready::<system::Capabilities>(|app, _, _| {
-            capabilities_value(
-                send_text_gate_open(
-                    ipc_scripting_enabled(),
-                    app.cached_config.ai_unrestricted_enabled(),
-                ),
-                ipc_orchestration_enabled(),
-            )
+            capabilities_value(app.ipc_gates.scripting, app.ipc_gates.orchestration)
         })
         .ready::<workspace::List>(PaneFlowApp::workspace_list)
         .asynchronous::<workspace::Create>(|app, call, cx| app.workspace_create_reply(call.raw, cx))
@@ -296,6 +296,7 @@ mod tests {
             },
             caller_pid: None,
             grant: None,
+            gates: paneflow_api::Gates::CLOSED,
         }
     }
 

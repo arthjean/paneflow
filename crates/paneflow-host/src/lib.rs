@@ -23,6 +23,7 @@ pub mod manifest;
 pub mod owner_watch;
 pub mod peer;
 pub mod persistence;
+pub mod policy;
 pub mod process;
 mod process_listing;
 pub mod program_status;

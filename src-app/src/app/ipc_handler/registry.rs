@@ -1,10 +1,12 @@
 use std::sync::{LazyLock, OnceLock};
 
 use gpui::Context;
-use paneflow_api::{Descriptor, Gate, Method, Owner, Principal, Reply, Spec};
+use paneflow_api::{
+    Decision, Descriptor, Gate, Gates, Method, Owner, Policy, Principal, Refusal, Reply, Spec,
+};
 use serde_json::Value;
 
-use super::{IpcReply, JsonRpcError, ipc_orchestration_enabled, ipc_scripting_enabled};
+use super::{IpcReply, JsonRpcError};
 use crate::PaneFlowApp;
 
 pub(crate) struct Call<'a, P> {
@@ -70,19 +72,84 @@ fn decode<P: serde::de::DeserializeOwned>(raw: &Value) -> Result<P, JsonRpcError
         .map_err(|error| JsonRpcError::invalid_params(format!("invalid params: {error}")))
 }
 
-pub(crate) fn gate_refusal(gate: Gate, ai_unrestricted: bool) -> Option<JsonRpcError> {
+pub(crate) fn gate_refusal(gate: Gate, scripting_open: bool) -> Option<JsonRpcError> {
     match gate {
-        Gate::Scripting { refusal }
-            if !super::send_text_gate_open(ipc_scripting_enabled(), ai_unrestricted) =>
-        {
+        Gate::Scripting { refusal } if !scripting_open => {
             Some(JsonRpcError::method_not_enabled(refusal))
         }
         Gate::Open | Gate::Scripting { .. } | Gate::OrchestrationWhenSpawning => None,
     }
 }
 
-pub(crate) fn spawn_gate_open(spec: &Spec) -> bool {
-    !matches!(spec.gate, Gate::OrchestrationWhenSpawning) || ipc_orchestration_enabled()
+pub(crate) fn spawn_gate_open(spec: &Spec, gates: Gates) -> bool {
+    !matches!(spec.gate, Gate::OrchestrationWhenSpawning) || gates.orchestration
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Admission {
+    Allowed(Gates),
+    Refused {
+        code: i64,
+        message: String,
+        data: Value,
+    },
+}
+
+pub(crate) fn admit(
+    principal: &Principal,
+    method: &str,
+    params: &mut Value,
+    policy: &Policy,
+) -> Admission {
+    let Some(entry) = registry().get(method) else {
+        return Admission::Allowed(policy.gates_for(principal));
+    };
+    let refused = |refusal: Refusal, code: i64, message: String| Admission::Refused {
+        code,
+        message,
+        data: paneflow_api::authorize::refusal_data(principal, refusal),
+    };
+    let mut typed_gate_check = entry.descriptor;
+    typed_gate_check.spec.gate = Gate::Open;
+    match paneflow_api::authorize(principal, &typed_gate_check, params, policy) {
+        Decision::Allowed { scope, gates } => {
+            if let Some(notice) = paneflow_api::policy::deprecation_notice(policy, &gates) {
+                tracing::warn!("{notice}");
+            }
+            scope.bind(principal, params);
+            Admission::Allowed(gates)
+        }
+        Decision::Refused {
+            reason: Refusal::GateClosed { .. },
+        } => Admission::Allowed(policy.gates_for(principal)),
+        Decision::Refused {
+            reason: reason @ Refusal::PrincipalRefused,
+        } => {
+            let (code, message, _) = principal.refusal(method);
+            refused(reason, code, message)
+        }
+        Decision::Refused {
+            reason: reason @ Refusal::UnverifiedCaller,
+        } => refused(
+            reason,
+            paneflow_api::principal::ERR_PRINCIPAL_REFUSED,
+            paneflow_api::authorize::unverified_message(method, principal),
+        ),
+        Decision::Refused {
+            reason: reason @ Refusal::SourceMismatch,
+        } => refused(
+            reason,
+            i64::from(JsonRpcError::INVALID_PARAMS),
+            paneflow_api::authorize::source_mismatch_message(method),
+        ),
+        Decision::Refused {
+            reason: reason @ Refusal::ScopeRefused,
+        } => refused(
+            reason,
+            i64::from(JsonRpcError::INVALID_PARAMS),
+            format!("{method} refused: {}", reason.reason()),
+        ),
+    }
 }
 
 pub(crate) fn spawn_gate_refusal(spec: &Spec) -> JsonRpcError {
@@ -309,7 +376,7 @@ impl Registry {
         method: &str,
         params: &Value,
         caller_pid: Option<i64>,
-        granted: bool,
+        gates: Gates,
         cx: &mut Context<PaneFlowApp>,
     ) -> IpcReply {
         let Some(entry) = self.get(method) else {
@@ -320,14 +387,16 @@ impl Registry {
         if let Err(error) = entry.validate(params) {
             return IpcReply::Ready(error.into_value());
         }
-        if let Some(refusal) = gate_refusal(
-            entry.spec().gate,
-            app.cached_config.ai_unrestricted_enabled() || granted,
-        ) {
+        if let Some(refusal) = gate_refusal(entry.spec().gate, gates.scripting) {
             return IpcReply::Ready(refusal.into_value());
         }
         match &entry.serve {
-            Serve::App(handler) => handler(app, params, caller_pid, cx),
+            Serve::App(handler) => {
+                let outer = std::mem::replace(&mut app.ipc_gates, gates);
+                let reply = handler(app, params, caller_pid, cx);
+                app.ipc_gates = outer;
+                reply
+            }
             Serve::Inline(answer) => IpcReply::Ready(answer(params, &Principal::Window)),
             Serve::Stream => IpcReply::Ready(
                 JsonRpcError::method_not_found(format!(
@@ -376,6 +445,69 @@ mod tests {
                 "{name} is owned by the worker and still answered by the window"
             );
         }
+    }
+
+    const DECISION_TABLE: &str =
+        include_str!("../../../../crates/paneflow-api/tests/decision_table.txt");
+
+    fn table_principal(kind: &str) -> Principal {
+        match kind {
+            "window" => Principal::Window,
+            "worker" => Principal::Worker,
+            "pane" => Principal::Pane {
+                session: "s-caller".into(),
+                workspace: Some("w-caller".into()),
+            },
+            "external" => Principal::External,
+            "unverified" => Principal::Unverified {
+                reason: "the peer exited".into(),
+            },
+            other => panic!("the decision table names an unknown principal {other}"),
+        }
+    }
+
+    #[test]
+    fn every_window_method_is_admitted_as_the_checked_in_decision_table_says() {
+        let open = Policy {
+            section: paneflow_api::policy::Section::Set(paneflow_api::policy::Switches::OPEN),
+            ..Policy::default()
+        };
+        let mut checked = 0;
+        for (column, policy) in [(3, Policy::default()), (4, open)] {
+            for row in DECISION_TABLE.lines().filter(|row| !row.starts_with('#')) {
+                let fields: Vec<&str> = row.split_whitespace().collect();
+                let [method, owner, kind, ..] = fields[..] else {
+                    continue;
+                };
+                if owner != "window" {
+                    continue;
+                }
+                let entry = registry()
+                    .get(method)
+                    .unwrap_or_else(|| panic!("the window serves {method}"));
+                let principal = table_principal(kind);
+                let mut params = serde_json::json!({"scope_session": "s-claimed"});
+                let served = match admit(&principal, method, &mut params, &policy) {
+                    Admission::Refused { data, .. } => {
+                        format!("refused:{}", data["reason"].as_str().unwrap_or("none"))
+                    }
+                    Admission::Allowed(gates) => {
+                        match gate_refusal(entry.spec().gate, gates.scripting) {
+                            Some(_) => "refused:gate_closed".to_string(),
+                            None => "allowed".to_string(),
+                        }
+                    }
+                };
+                let expected = if fields[column].starts_with("allowed") {
+                    "allowed"
+                } else {
+                    fields[column]
+                };
+                assert_eq!(served, expected, "{method} as {kind} in column {column}");
+                checked += 1;
+            }
+        }
+        assert!(checked >= 2 * 5 * 15, "{checked}");
     }
 
     #[test]
@@ -450,18 +582,10 @@ mod tests {
         let Gate::Scripting { refusal } = spec.gate else {
             panic!("surface.send_keystroke is scripting gated");
         };
-        let error = gate_refusal(spec.gate, false);
-        if ipc_scripting_enabled() {
-            assert!(error.is_none());
-        } else {
-            let error = error.expect("closed gate");
-            assert_eq!(error.code, -32601);
-            assert_eq!(error.message, refusal);
-        }
-        assert!(
-            gate_refusal(spec.gate, true).is_none(),
-            "free access opens it"
-        );
+        let error = gate_refusal(spec.gate, false).expect("closed gate");
+        assert_eq!(error.code, -32601);
+        assert_eq!(error.message, refusal);
+        assert!(gate_refusal(spec.gate, true).is_none(), "an open gate");
     }
 }
 

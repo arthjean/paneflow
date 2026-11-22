@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{NO_FALLBACK, NoParams};
-use crate::descriptor::{Gate, Owner, Reply};
+use crate::descriptor::{Audience, Gate, Owner, Reply};
 
 const WORKER: Owner = Owner::Worker;
 
@@ -101,6 +101,7 @@ method! {
         owner: WORKER,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         params: NoParams,
         result: WorkerIdentity,
@@ -126,6 +127,7 @@ method! {
         owner: WORKER,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         params: NoParams,
         result: WorkerStatus,
@@ -150,6 +152,7 @@ method! {
         owner: WORKER,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         params: NoParams,
         result: Stopping,
@@ -164,6 +167,7 @@ method! {
         owner: WORKER,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         params: NoParams,
         result: AgentSnapshot,
@@ -189,6 +193,7 @@ method! {
         owner: WORKER,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Stream,
         params: NoParams,
         result: AgentSnapshot,
@@ -215,6 +220,7 @@ method! {
         owner: WORKER,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         params: ActivityLogParams,
         result: ActivityLog,
@@ -229,6 +235,7 @@ method! {
         owner: WORKER,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         params: AcknowledgeParams,
         result: Acknowledged,
@@ -245,6 +252,7 @@ method! {
         owner: WORKER,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         params: NoParams,
         result: UsageSnapshot,
@@ -259,6 +267,7 @@ method! {
         owner: WORKER,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         params: UsageParams,
         result: UsageSnapshot,
@@ -273,6 +282,7 @@ method! {
         owner: WORKER,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         params: UsageParams,
         result: UsageSnapshot,

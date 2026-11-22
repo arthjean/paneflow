@@ -5,9 +5,11 @@ use paneflow_api::{Descriptor, Method, Owner, Reply};
 use paneflow_ipc_client::line_wire::Wire;
 use serde_json::{Value, json};
 
+use crate::authority::{Authority, authorize_call};
 use crate::layout_authority::ConnectionId;
 use crate::protocol::{ERR_INTERNAL, ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND};
 use crate::server::{Flow, Worker};
+use paneflow_api::Principal;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ServeError {
@@ -46,6 +48,7 @@ pub(crate) struct Call<'a, P> {
     pub(crate) params: P,
     pub(crate) raw: &'a Value,
     pub(crate) connection: ConnectionId,
+    pub(crate) authority: &'a Authority,
 }
 
 pub(crate) struct Stream<'a, P> {
@@ -58,8 +61,11 @@ pub(crate) struct Stream<'a, P> {
 
 type Handler<P> = fn(&Arc<Worker>, Call<'_, P>) -> Result<Value, ServeError>;
 
-type ReadyHandler =
-    Box<dyn Fn(&Arc<Worker>, &Value, ConnectionId) -> Result<Value, ServeError> + Send + Sync>;
+type ReadyHandler = Box<
+    dyn Fn(&Arc<Worker>, &Value, ConnectionId, &Authority) -> Result<Value, ServeError>
+        + Send
+        + Sync,
+>;
 
 type StreamHandler =
     Box<dyn Fn(&mut Wire, &Arc<Worker>, &AtomicBool, &Value, &Value) -> Flow + Send + Sync>;
@@ -136,7 +142,7 @@ impl RegistryBuilder {
     }
 
     fn ready_handler<M: Method>(handler: Handler<M::Params>) -> ReadyHandler {
-        Box::new(move |worker, raw, connection| {
+        Box::new(move |worker, raw, connection, authority| {
             let params = decode::<M::Params>(raw)?;
             handler(
                 worker,
@@ -144,6 +150,7 @@ impl RegistryBuilder {
                     params,
                     raw,
                     connection,
+                    authority,
                 },
             )
         })
@@ -275,15 +282,19 @@ impl Registry {
         worker: &Arc<Worker>,
         method: &str,
         params: &Value,
+        acting: &Principal,
     ) -> Result<Value, ServeError> {
         let entry = self
             .get(method)
             .ok_or_else(|| ServeError::method_not_found(method))?;
         entry.validate(params)?;
+        let mut params = params.clone();
+        let authority = authorize_call(worker, acting, &entry.descriptor, &mut params)?;
+        let params = &params;
         match &entry.serve {
-            Serve::Ready(handler) => handler(worker, params, ConnectionId::INTERNAL),
+            Serve::Ready(handler) => handler(worker, params, ConnectionId::INTERNAL, &authority),
             Serve::Closing(handler, after) => {
-                let answer = handler(worker, params, ConnectionId::INTERNAL);
+                let answer = handler(worker, params, ConnectionId::INTERNAL, &authority);
                 after(worker);
                 answer
             }
@@ -313,10 +324,17 @@ impl Registry {
         if let Err(error) = entry.validate(params) {
             return Served::Reply(Err(error));
         }
+        let principal = worker.principal_of(connection);
+        let mut params = params.clone();
+        let authority = match authorize_call(worker, &principal, &entry.descriptor, &mut params) {
+            Ok(authority) => authority,
+            Err(error) => return Served::Reply(Err(error)),
+        };
+        let params = &params;
         match &entry.serve {
-            Serve::Ready(handler) => Served::Reply(handler(worker, params, connection)),
+            Serve::Ready(handler) => Served::Reply(handler(worker, params, connection, &authority)),
             Serve::Closing(handler, after) => {
-                Served::ReplyThenClose(handler(worker, params, connection), *after)
+                Served::ReplyThenClose(handler(worker, params, connection, &authority), *after)
             }
             Serve::Stream(handler) => Served::Streamed(handler(wire, worker, shutdown, id, params)),
         }
@@ -353,6 +371,89 @@ mod tests {
         served.sort_unstable();
         expected.sort_unstable();
         assert_eq!(served, expected);
+    }
+
+    const DECISION_TABLE: &str = include_str!("../../paneflow-api/tests/decision_table.txt");
+
+    fn table_principal(kind: &str) -> Principal {
+        match kind {
+            "window" => Principal::Window,
+            "worker" => Principal::Worker,
+            "pane" => Principal::Pane {
+                session: "s-caller".into(),
+                workspace: Some("w-caller".into()),
+            },
+            "external" => Principal::External,
+            "unverified" => Principal::Unverified {
+                reason: "the peer exited".into(),
+            },
+            other => panic!("the decision table names an unknown principal {other}"),
+        }
+    }
+
+    #[test]
+    fn every_worker_method_is_authorized_as_the_checked_in_decision_table_says() {
+        if std::env::var_os(paneflow_api::policy::SCRIPTING_ENV).is_some()
+            || std::env::var_os(paneflow_api::policy::ORCHESTRATION_ENV).is_some()
+        {
+            return;
+        }
+        let home = tempfile::tempdir().expect("a temporary home");
+        let config = home.path().join("paneflow.json");
+        let running = crate::open(home.path()).expect("a worker takes the home");
+        let worker = running.worker();
+        let registry = registry().expect("the worker registry builds");
+        let mut checked = 0;
+        for (column, body) in [
+            (3, r#"{"ipc": {}}"#),
+            (4, r#"{"ipc": {"scripting": true}}"#),
+        ] {
+            std::fs::write(&config, body).expect("the config is written");
+            for row in DECISION_TABLE.lines().filter(|row| !row.starts_with('#')) {
+                let fields: Vec<&str> = row.split_whitespace().collect();
+                let [method, owner, kind, ..] = fields[..] else {
+                    continue;
+                };
+                if owner != "worker" {
+                    continue;
+                }
+                let entry = registry
+                    .get(method)
+                    .unwrap_or_else(|| panic!("the worker serves {method}"));
+                let principal = table_principal(kind);
+                let mut params = json!({"scope_session": "s-claimed"});
+                let served =
+                    match authorize_call(worker, &principal, &entry.descriptor, &mut params) {
+                        Ok(_) => "allowed".to_string(),
+                        Err(error) => format!(
+                            "refused:{}",
+                            error
+                                .data
+                                .as_ref()
+                                .and_then(|data| data["reason"].as_str())
+                                .unwrap_or("none")
+                        ),
+                    };
+                let keeps_the_unattached_reason = principal == Principal::External
+                    && matches!(method, "layout.launch" | "layout.sweep");
+                let served = if keeps_the_unattached_reason
+                    && served == format!("refused:{}", paneflow_api::methods::layout::NOT_ATTACHED)
+                {
+                    "refused:principal_refused".to_string()
+                } else {
+                    served
+                };
+                let expected = if fields[column].starts_with("allowed") {
+                    "allowed"
+                } else {
+                    fields[column]
+                };
+                assert_eq!(served, expected, "{method} as {kind} under {body}");
+                checked += 1;
+            }
+        }
+        assert!(checked >= 2 * 5 * 30, "{checked}");
+        running.stop();
     }
 
     #[test]

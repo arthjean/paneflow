@@ -241,7 +241,7 @@ pub fn resolve_host_executable(controller_exe: &Path) -> Result<PathBuf, Bootstr
 }
 
 pub fn stop_incompatible_host(home: &Path, endpoint: &Path) -> Result<(), String> {
-    let hello = ClientHello::control("paneflow-bootstrap");
+    let hello = ClientHello::control("paneflow-desktop-bootstrap");
     let mut client =
         HostClient::connect(endpoint, &hello).map_err(|error| format!("host.hello: {error}"))?;
     if paneflow_home::home_fingerprint(Path::new(&client.identity().home))

@@ -398,3 +398,70 @@ fn a_pane_cannot_write_into_another_workspace_without_scope_all() {
 
     instance.stop(&[&caller, &target]);
 }
+
+#[cfg(unix)]
+#[test]
+fn an_agent_pane_submits_to_its_workspace_with_the_migration_lines_and_is_refused_without_them() {
+    if std::env::var_os("PANEFLOW_IPC_SCRIPTING").is_some()
+        || std::env::var_os("PANEFLOW_IPC_ORCHESTRATION").is_some()
+    {
+        return;
+    }
+    let mut instance = Instance::open();
+    let workspace = WorkspaceId::new();
+    let (target, _) = instance.create("migration-target", Some(&workspace));
+    instance.start_worker();
+    let config = instance.home.path().join("paneflow.json");
+    let send_from_a_pane = |instance: &mut Instance, marker: &str| -> String {
+        let script = format!(
+            "'{}' send migration-target {marker} --submit --force; echo {marker}-exit=$?; sleep 30",
+            env!("CARGO_BIN_EXE_paneflow")
+        );
+        let created: SessionSummary = serde_json::from_value(
+            instance
+                .owner
+                .call(
+                    "session.create",
+                    json!({
+                        "shell": "/bin/sh",
+                        "args": ["-c", script],
+                        "cwd": std::env::temp_dir().display().to_string(),
+                        "cols": 240,
+                        "rows": 24,
+                        "title": "migration-agent",
+                        "workspace": workspace,
+                        "env": {paneflow_home::HOME_ENV: instance.home.path().display().to_string()},
+                    }),
+                )
+                .expect("the agent pane starts"),
+        )
+        .expect("a session summary");
+        let agent = created.manifest.session;
+        let exit = format!("{marker}-exit=");
+        assert!(
+            instance.shows(&agent, &exit),
+            "the send never finished: {}",
+            instance.text(&agent)
+        );
+        let text = instance.text(&agent);
+        let _ = instance.core.stop(&agent, None);
+        text
+    };
+
+    std::fs::write(&config, r#"{"ipc": {"scripting": true}}"#).unwrap();
+    let migrated = send_from_a_pane(&mut instance, "pf-migrated");
+    assert!(migrated.contains("pf-migrated-exit=0"), "{migrated}");
+    assert!(instance.shows(&target, "pf-migrated"));
+
+    std::fs::write(&config, "{}").unwrap();
+    let refused = send_from_a_pane(&mut instance, "pf-unmigrated");
+    assert!(!refused.contains("pf-unmigrated-exit=0"), "{refused}");
+    let joined: String = refused.lines().map(str::trim_end).collect();
+    assert!(
+        joined.contains("disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable"),
+        "{refused}"
+    );
+    assert!(!instance.text(&target).contains("pf-unmigrated\n"));
+
+    instance.stop(&[&target]);
+}

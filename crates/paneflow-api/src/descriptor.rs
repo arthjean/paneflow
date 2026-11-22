@@ -41,11 +41,62 @@ impl Gate {
         match self {
             Self::Open => None,
             Self::Scripting { .. } => Some(
-                "Refused with -32601 unless PANEFLOW_IPC_SCRIPTING=1 or ai_unrestricted is on.",
+                "Refused with -32601 unless ipc.scripting or ai_unrestricted is true in paneflow.json.",
             ),
             Self::OrchestrationWhenSpawning => Some(
                 "A request that sets a command, a prompt or an env is refused with -32601 unless \
-                 PANEFLOW_IPC_ORCHESTRATION=1 or PANEFLOW_IPC_SCRIPTING=1.",
+                 ipc.orchestration, ipc.scripting or ai_unrestricted is true in paneflow.json.",
+            ),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Audience {
+    Anyone,
+    NotPane,
+    PaneflowOnly,
+}
+
+impl Audience {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Anyone => "anyone",
+            Self::NotPane => "not_pane",
+            Self::PaneflowOnly => "paneflow_only",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScopeRule {
+    Unscoped,
+    ClaimedSession,
+    Workspace,
+    WorkspaceUnlessAll,
+}
+
+impl ScopeRule {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Unscoped => "none",
+            Self::ClaimedSession => "claimed_session",
+            Self::Workspace => "workspace",
+            Self::WorkspaceUnlessAll => "workspace_unless_all",
+        }
+    }
+
+    pub const fn note(self) -> Option<&'static str> {
+        match self {
+            Self::Unscoped => None,
+            Self::ClaimedSession => Some(
+                "A caller in a pane that sends scope_session is scoped to its own session instead.",
+            ),
+            Self::Workspace => Some(
+                "A caller in a pane reaches only sessions of its own workspace unless orchestration is open for it.",
+            ),
+            Self::WorkspaceUnlessAll => Some(
+                "A caller in a pane reaches only its own workspace unless it sends scope \"all\" with orchestration open for it.",
             ),
         }
     }
@@ -79,6 +130,8 @@ pub struct Spec {
     pub owner: Owner,
     pub fallback: Option<Owner>,
     pub gate: Gate,
+    pub audience: Audience,
+    pub scope: ScopeRule,
     pub reply: Reply,
     pub capabilities: bool,
 }
@@ -174,6 +227,9 @@ impl Descriptor {
             "fallback": spec.fallback.map(Owner::label),
             "gate": spec.gate.label(),
             "gate_note": spec.gate.note(),
+            "audience": spec.audience.label(),
+            "scope": spec.scope.label(),
+            "scope_note": spec.scope.note(),
             "reply": spec.reply.label(),
             "stream": self.is_stream(),
             "in_capabilities": spec.capabilities,

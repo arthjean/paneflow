@@ -167,6 +167,8 @@ fn open_with_build_id(
             "paneflow-serve-classify",
         ),
         principals: Mutex::new(Default::default()),
+        policy: paneflow_host::policy::PolicySource::for_home(home),
+        acting: Default::default(),
     });
     let server = ServerHandle::spawn(Arc::clone(&worker), endpoint.clone()).map_err(|source| {
         WorkerError::Endpoint {

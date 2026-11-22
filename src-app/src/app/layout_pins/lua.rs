@@ -308,7 +308,7 @@ fn ipc(
 ) -> Value {
     let reply = cx.update(|_, cx| {
         app.update(cx, |app, cx| {
-            app.handle_ipc(method, &params, None, false, cx)
+            app.handle_ipc(method, &params, None, paneflow_api::Gates::CLOSED, cx)
         })
     });
     let slot: Rc<RefCell<Option<Value>>> = Rc::default();

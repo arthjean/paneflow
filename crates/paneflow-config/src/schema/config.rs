@@ -83,6 +83,8 @@ pub struct PaneFlowConfig {
     pub ai_unrestricted: Option<bool>,
     #[serde(default, deserialize_with = "lenient_opt_bool")]
     pub ai_injection_fence: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ipc: Option<serde_json::Value>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub on_quit: Option<OnQuit>,
     #[serde(flatten, deserialize_with = "agent_button_visibility")]

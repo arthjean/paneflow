@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
 use super::{NO_FALLBACK, NoParams, WINDOW};
-use crate::descriptor::{Gate, Owner, Reply};
+use crate::descriptor::{Audience, Gate, Owner, Reply};
 
 const WORKER: Owner = Owner::Worker;
 
@@ -211,6 +211,7 @@ method! {
         owner: WORKER,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         params: NoParams,
         result: ConfigStatus,
@@ -237,6 +238,7 @@ method! {
         owner: WORKER,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         params: NoParams,
         result: ConfigStatus,
@@ -262,6 +264,7 @@ method! {
         owner: WORKER,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         params: NoParams,
         result: ActionList,
@@ -284,6 +287,7 @@ method! {
         owner: WORKER,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         params: InvokeParams,
         result: Invoked,
@@ -298,6 +302,7 @@ method! {
         owner: WORKER,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         params: NoParams,
         result: Keymap,
@@ -315,6 +320,7 @@ method! {
         owner: WINDOW,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Inline,
         params: NoParams,
         result: BuiltinActions,
@@ -329,6 +335,7 @@ method! {
         owner: WINDOW,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Async,
         params: DispatchParams,
         result: Dispatched,

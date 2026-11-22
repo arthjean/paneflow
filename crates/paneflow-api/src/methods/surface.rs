@@ -5,7 +5,7 @@ use super::{
     EnvMap, HOST_FALLBACK, ManagedWorktreeSpec, NO_FALLBACK, NoParams, SpaceRef, SurfaceProfile,
     WINDOW, WorktreeRequestSpec, WriteScope,
 };
-use crate::descriptor::{Gate, Reply};
+use crate::descriptor::{Audience, Gate, Reply, ScopeRule};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ListParams {
@@ -295,6 +295,8 @@ method! {
         owner: WINDOW,
         fallback: HOST_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
+        scope: ScopeRule::ClaimedSession,
         reply: Reply::Ready,
         capabilities: true,
         params: ListParams,
@@ -327,6 +329,8 @@ method! {
         owner: WINDOW,
         fallback: HOST_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
+        scope: ScopeRule::ClaimedSession,
         reply: Reply::Deferred,
         capabilities: true,
         params: ReadParams,
@@ -349,6 +353,8 @@ method! {
         owner: WINDOW,
         fallback: HOST_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
+        scope: ScopeRule::ClaimedSession,
         reply: Reply::Deferred,
         capabilities: true,
         params: SearchParams,
@@ -367,6 +373,7 @@ method! {
         owner: WINDOW,
         fallback: HOST_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         capabilities: true,
         params: TargetParams,
@@ -395,6 +402,7 @@ method! {
         owner: WINDOW,
         fallback: HOST_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         capabilities: true,
         params: NoParams,
@@ -424,6 +432,7 @@ method! {
         owner: crate::descriptor::Owner::Worker,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         capabilities: true,
         params: RenameParams,
@@ -439,6 +448,7 @@ method! {
         owner: crate::descriptor::Owner::Worker,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         capabilities: true,
         params: FocusParams,
@@ -456,6 +466,8 @@ method! {
         gate: Gate::Scripting {
             refusal: "surface.send_text disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable",
         },
+        audience: Audience::Anyone,
+        scope: ScopeRule::WorkspaceUnlessAll,
         reply: Reply::Ready,
         capabilities: true,
         params: SendTextParams,
@@ -482,6 +494,8 @@ method! {
         gate: Gate::Scripting {
             refusal: "surface.send_keystroke disabled; set PANEFLOW_IPC_SCRIPTING=1 or enable ai_unrestricted to use",
         },
+        audience: Audience::Anyone,
+        scope: ScopeRule::WorkspaceUnlessAll,
         reply: Reply::Ready,
         capabilities: true,
         params: SendKeystrokeParams,
@@ -497,6 +511,7 @@ method! {
         owner: crate::descriptor::Owner::Worker,
         fallback: NO_FALLBACK,
         gate: Gate::OrchestrationWhenSpawning,
+        audience: Audience::Anyone,
         reply: Reply::Async,
         capabilities: true,
         params: SplitParams,

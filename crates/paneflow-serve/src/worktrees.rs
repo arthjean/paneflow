@@ -55,6 +55,7 @@ pub(crate) fn prepare(
     space: Option<&SpaceId>,
     requests: Vec<Option<Request>>,
     method: &str,
+    may_spawn: bool,
 ) -> Result<Prepared, ServeError> {
     let mut prepared = Prepared {
         plans: requests.iter().map(|_| None).collect(),
@@ -77,7 +78,7 @@ pub(crate) fn prepare(
         );
     }
     worktree_plan::resolve_conflicts(&mut plans).map_err(ServeError::invalid_params)?;
-    if plans.iter().flatten().any(Plan::runs_setup) && !crate::launcher::orchestration_enabled() {
+    if plans.iter().flatten().any(Plan::runs_setup) && !may_spawn {
         return Err(orchestration_refused(method));
     }
     publish_git_env(config, state, &plans, space);

@@ -5,7 +5,7 @@ use super::{
     EnvMap, LayoutDocument, ManagedWorktreeSpec, NO_FALLBACK, NoParams, SpaceRef, SurfaceProfile,
     WINDOW, WorktreeRequestSpec,
 };
-use crate::descriptor::{Gate, Reply};
+use crate::descriptor::{Audience, Gate, Reply};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -136,6 +136,7 @@ method! {
         owner: WINDOW,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         capabilities: true,
         params: NoParams,
@@ -158,6 +159,7 @@ method! {
         owner: WINDOW,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         capabilities: true,
         params: NoParams,
@@ -180,6 +182,7 @@ method! {
         owner: crate::descriptor::Owner::Worker,
         fallback: NO_FALLBACK,
         gate: Gate::OrchestrationWhenSpawning,
+        audience: Audience::Anyone,
         reply: Reply::Async,
         capabilities: true,
         params: CreateParams,
@@ -195,6 +198,7 @@ method! {
         owner: crate::descriptor::Owner::Worker,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         capabilities: true,
         params: IndexParams,
@@ -210,6 +214,7 @@ method! {
         owner: crate::descriptor::Owner::Worker,
         fallback: NO_FALLBACK,
         gate: Gate::Open,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         capabilities: true,
         params: IndexParams,
@@ -225,6 +230,7 @@ method! {
         owner: crate::descriptor::Owner::Worker,
         fallback: NO_FALLBACK,
         gate: Gate::OrchestrationWhenSpawning,
+        audience: Audience::Anyone,
         reply: Reply::Ready,
         capabilities: true,
         params: RestoreLayoutParams,
@@ -243,6 +249,7 @@ method! {
         owner: crate::descriptor::Owner::Worker,
         fallback: NO_FALLBACK,
         gate: Gate::OrchestrationWhenSpawning,
+        audience: Audience::Anyone,
         reply: Reply::Async,
         capabilities: true,
         params: UpParams,
