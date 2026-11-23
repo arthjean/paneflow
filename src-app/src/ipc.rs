@@ -217,6 +217,14 @@ pub fn start_server() -> (
             let classifier = Arc::new(window_classifier());
             let policy = Arc::clone(&policy);
             let grants = Arc::clone(&grants);
+            let pane_serve = pane_connection_server(
+                tx.clone(),
+                Arc::clone(&thread_event_bus),
+                Arc::clone(&active_subscriptions),
+                Arc::clone(&classifier),
+                (Arc::clone(&policy), Arc::clone(&grants)),
+            );
+            crate::ipc_panes::start(pane_serve);
 
             loop {
                 match listener.accept() {
@@ -254,6 +262,7 @@ pub fn start_server() -> (
                                     subscriptions,
                                     &classifier,
                                     (&policy, &grants),
+                                    None,
                                 );
                             })
                         {
@@ -324,6 +333,32 @@ pub fn start_server() -> (
     }
 
     (rx, status, event_bus)
+}
+
+pub(crate) fn pane_connection_server(
+    tx: smol::channel::Sender<IpcRequest>,
+    bus: Arc<crate::ipc_events::EventBus>,
+    subscriptions: Arc<AtomicUsize>,
+    classifier: Arc<paneflow_host::peer::PeerClassifier>,
+    (policy, grants): (
+        Arc<paneflow_host::policy::PolicySource>,
+        Arc<crate::ipc_grants::WindowGrants>,
+    ),
+) -> paneflow_host::pane_endpoint::ServeStream {
+    Arc::new(move |stream, principal| {
+        let Ok(stream) = blocking_connection(stream) else {
+            return;
+        };
+        handle_connection(
+            stream,
+            tx.clone(),
+            Arc::clone(&bus),
+            Arc::clone(&subscriptions),
+            &classifier,
+            (&policy, &grants),
+            Some(principal),
+        );
+    })
 }
 
 fn multiple_instances_allowed(value: Option<&str>) -> bool {
@@ -853,6 +888,7 @@ fn handle_connection(
         &paneflow_host::policy::PolicySource,
         &crate::ipc_grants::WindowGrants,
     ),
+    fixed: Option<paneflow_api::Principal>,
 ) {
     let Ok(writer_stream) = stream.try_clone() else {
         return;
@@ -898,7 +934,7 @@ fn handle_connection(
     #[cfg(not(windows))]
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
-    let mut principal: Option<paneflow_api::Principal> = None;
+    let mut principal: Option<paneflow_api::Principal> = fixed;
 
     loop {
         match read_request_line(&mut reader, &mut line) {
@@ -975,6 +1011,23 @@ fn handle_connection(
                                     continue;
                                 }
                             };
+                        if let Err(message) =
+                            crate::ipc_panes::confine_spawn(&caller, &method, &mut params)
+                        {
+                            let envelope = refusal_envelope(
+                                paneflow_api::principal::ERR_PRINCIPAL_REFUSED,
+                                message,
+                                json!({"reason": paneflow_api::principal::REASON_PRINCIPAL_REFUSED}),
+                                response_id.clone(),
+                            );
+                            if !suppress_reply && !write_envelope(&mut writer, &envelope) {
+                                break;
+                            }
+                            #[cfg(windows)]
+                            break;
+                            #[cfg(not(windows))]
+                            continue;
+                        }
                         let route = crate::app::ipc_handler::registry().route(&method);
                         if let crate::app::ipc_handler::Route::Stream(entry) = route {
                             if let Err(error) = entry.validate(&params) {
@@ -2306,6 +2359,7 @@ mod counters_tests {
                 Arc::new(AtomicUsize::new(0)),
                 &classifier,
                 (&window_policy(), &crate::ipc_grants::detached_grants()),
+                None,
             );
         });
         let name = path
@@ -2522,6 +2576,7 @@ mod caller_identity_tests {
                 Arc::new(AtomicUsize::new(0)),
                 &classifier,
                 (&policy, &crate::ipc_grants::detached_grants()),
+                None,
             );
         });
         let mut client = paneflow_host::HostClient::connect(
@@ -2645,6 +2700,7 @@ mod caller_identity_tests {
                         Arc::new(AtomicUsize::new(0)),
                         &classifier,
                         (&window_policy(), &crate::ipc_grants::detached_grants()),
+                        None,
                     );
                 });
             }

@@ -61,6 +61,7 @@ pub struct Worker {
     pub(crate) acting: crate::authority::ActingRuns,
     pub pane_grants: crate::pane_grants::PaneGrantStore,
     pub grant_profiles: crate::grant_methods::ProfileSource,
+    pub pane_endpoints: paneflow_host::pane_endpoint::PaneEndpoints,
 }
 
 pub const WINDOW_LAYOUT_CLIENT: &str = "window";
@@ -97,9 +98,12 @@ impl Worker {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn classify_connection(&self, connection: ConnectionId, wire: &Wire) {
+    fn classify_connection(&self, connection: ConnectionId, wire: &Wire, fixed: Option<Principal>) {
         let read = paneflow_host::peer::read_wire_peer(wire);
-        let principal = self.classifier.principal(&read, "worker");
+        let principal = match fixed {
+            Some(pane) => pane,
+            None => self.classifier.principal(&read, "worker"),
+        };
         if let (Principal::Pane { session, .. }, Some(identity)) = (&principal, read.identity()) {
             let verdict = crate::agent_caller::classify_caller(
                 &paneflow_peer::LiveLineage,
@@ -143,6 +147,42 @@ impl Worker {
             && *principal == Principal::External
         {
             *principal = Principal::Window;
+        }
+    }
+
+    pub fn reconcile_pane_endpoints(self: &Arc<Self>) {
+        let wanted = self.lock_state().sandboxed_panes();
+        let ended = self
+            .pane_endpoints
+            .retain(|session| wanted.iter().any(|pane| pane.session == session));
+        for session in ended {
+            log::debug!("paneflow-serve: closed the endpoint of ended sandboxed pane {session}");
+        }
+        let weak = Arc::downgrade(self);
+        let serve: paneflow_host::pane_endpoint::ServeStream =
+            Arc::new(move |stream, principal| {
+                if let Some(worker) = weak.upgrade() {
+                    serve_pane_stream(worker, stream, principal);
+                }
+            });
+        for pane in wanted {
+            if self.pane_endpoints.is_open(&pane.session) {
+                continue;
+            }
+            if let Err(error) = self.pane_endpoints.ensure(
+                &self.home,
+                paneflow_home::PaneServer::Worker,
+                paneflow_host::pane_endpoint::PaneIdentity {
+                    session: pane.session.clone(),
+                    workspace: pane.workspace.clone(),
+                },
+                &serve,
+            ) {
+                log::debug!(
+                    "paneflow-serve: cannot open the endpoint of sandboxed pane {}: {error}",
+                    pane.session
+                );
+            }
         }
     }
 
@@ -664,7 +704,7 @@ fn serve_connections(listener: &Listener, worker: Arc<Worker>, shutdown: Arc<Ato
                         wire.set_max_write(
                             paneflow_ipc_client::host_control::MAX_REPLY_FRAME_BYTES,
                         );
-                        handle_connection(wire, worker, shutdown);
+                        handle_connection(wire, worker, shutdown, None);
                     }
                     Err(error) => log::debug!("paneflow-serve: connection setup failed: {error}"),
                 }
@@ -709,7 +749,24 @@ fn next_connection() -> crate::layout_authority::ConnectionId {
     crate::layout_authority::ConnectionId(NEXT.fetch_add(1, Ordering::Relaxed))
 }
 
-fn handle_connection(mut wire: Wire, worker: Arc<Worker>, shutdown: Arc<AtomicBool>) {
+fn serve_pane_stream(worker: Arc<Worker>, stream: Stream, principal: Principal) {
+    match Wire::new(stream, MAX_CONTROL_FRAME_BYTES) {
+        Ok(mut wire) => {
+            wire.set_max_write(paneflow_ipc_client::host_control::MAX_REPLY_FRAME_BYTES);
+            let shutdown = Arc::clone(&worker.shutdown);
+            handle_connection(wire, worker, shutdown, Some(principal));
+        }
+        Err(error) => log::debug!("paneflow-serve: pane connection setup failed: {error}"),
+    }
+}
+
+fn handle_connection(
+    mut wire: Wire,
+    worker: Arc<Worker>,
+    shutdown: Arc<AtomicBool>,
+    fixed: Option<Principal>,
+) {
+    let mut fixed = fixed;
     let mut greeted = false;
     let attachment = Attachment {
         worker: &worker,
@@ -776,7 +833,7 @@ fn handle_connection(mut wire: Wire, worker: Arc<Worker>, shutdown: Arc<AtomicBo
                 return;
             }
             greeted = true;
-            worker.classify_connection(attachment.connection, &wire);
+            worker.classify_connection(attachment.connection, &wire, fixed.take());
             if wire
                 .write_json(&result_envelope(&id, worker.identity_value()))
                 .is_err()

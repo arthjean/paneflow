@@ -598,6 +598,57 @@ impl AgentLaunch {
             }
         }
     }
+
+    pub fn answers_to_profile(&self, profile: &str) -> bool {
+        let agent = self.agent();
+        let runtime = agent.runtime();
+        let named = |name: &str| name.eq_ignore_ascii_case(profile);
+        matches!(self, AgentLaunch::Profile(launched) if named(&launched.name))
+            || named(agent.tag())
+            || named(runtime.id)
+            || named(runtime.slug)
+            || paneflow_agent_config::runtime_for_tool(profile)
+                .is_some_and(|resolved| resolved.id == runtime.id)
+    }
+
+    pub fn sandbox(
+        &self,
+        config: &PaneFlowConfig,
+    ) -> Result<Option<paneflow_config::schema::ProfileSandbox>, String> {
+        let profiles = config.agent_sandbox_profiles();
+        if let AgentLaunch::Profile(launched) = self
+            && let Some(own) =
+                profiles.sandbox_matching(|name| name.eq_ignore_ascii_case(&launched.name))
+        {
+            return own.map(Some);
+        }
+        profiles
+            .sandbox_matching(|name| self.answers_to_profile(name))
+            .transpose()
+    }
+
+    pub fn launch_env(
+        &self,
+        config: &PaneFlowConfig,
+    ) -> Result<Option<HashMap<String, String>>, String> {
+        self.with_sandbox_request(config, self.process_env())
+    }
+
+    pub fn with_sandbox_request(
+        &self,
+        config: &PaneFlowConfig,
+        env: Option<HashMap<String, String>>,
+    ) -> Result<Option<HashMap<String, String>>, String> {
+        let Some(sandbox) = self.sandbox(config)? else {
+            return Ok(env);
+        };
+        let mut launched = env.unwrap_or_default();
+        launched.insert(
+            paneflow_config::schema::SANDBOX_REQUEST_ENV.to_string(),
+            sandbox.request_value().to_string(),
+        );
+        Ok(Some(launched))
+    }
 }
 
 #[cfg(test)]
@@ -1125,5 +1176,36 @@ mod tests {
             let config: PaneFlowConfig = serde_json::from_value(json).unwrap();
             assert!(!agent.is_visible(&config), "{}", agent.display_name());
         }
+    }
+
+    #[test]
+    fn an_agent_whose_profile_asks_for_the_sandbox_launches_with_the_request() {
+        let config: PaneFlowConfig = serde_json::from_str(
+            r#"{"agents": {"claude": {"sandbox": "paneflow", "sandbox_unix_scope": true}}}"#,
+        )
+        .unwrap();
+        let claude = AgentLaunch::Builtin(TerminalAgent::from_binary("claude").unwrap());
+        if !paneflow_config::schema::SANDBOX_SUPPORTED_PLATFORMS.contains(&std::env::consts::OS) {
+            let refused = claude.launch_env(&config).unwrap_err();
+            assert!(refused.contains("is not available on"), "{refused}");
+            return;
+        }
+        let env = claude.launch_env(&config).unwrap().unwrap();
+        assert_eq!(
+            env.get(paneflow_config::schema::SANDBOX_REQUEST_ENV)
+                .map(String::as_str),
+            Some(paneflow_config::schema::SANDBOX_REQUEST_PANEFLOW_UNIX_SCOPE)
+        );
+        let codex = AgentLaunch::Builtin(TerminalAgent::from_binary("codex").unwrap());
+        assert_eq!(codex.launch_env(&config).unwrap(), None);
+    }
+
+    #[test]
+    fn an_agent_whose_sandbox_cannot_be_honored_refuses_to_launch() {
+        let config: PaneFlowConfig =
+            serde_json::from_str(r#"{"agents": {"claude": {"sandbox": "docker"}}}"#).unwrap();
+        let claude = AgentLaunch::Builtin(TerminalAgent::from_binary("claude").unwrap());
+        let refused = claude.launch_env(&config).unwrap_err();
+        assert!(refused.contains("claude"), "{refused}");
     }
 }

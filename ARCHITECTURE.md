@@ -660,6 +660,47 @@ revision or the one in `serve/grants.json` is newer than the one it holds; a
 stale mirror applies no grant and refuses what would need one with
 `grants_unsynced`.
 
+A sandboxed pane carries its identity in the endpoint it connects to, after
+Wayland's `security-context-v1`. An agent profile with `sandbox: "paneflow"`
+makes the window put `PANEFLOW_SANDBOX` in the launch env; `host.create`
+turns it into `CreateSession.sandbox` (and `sandbox_unix_scope`), strips it,
+refuses an unknown value, and persists both in `SessionLaunch`, so a restart
+re-sandboxes the pane and the window's `session.json` keeps the request for a
+restore. Before the spawn the host opens `panes/<session>/host.sock`
+(`crates/paneflow-host/src/pane_endpoint.rs`; a pipe with an SDDL granting the
+per-pane SID on Windows) and is the only process that creates that directory;
+the worker (`Worker::reconcile_pane_endpoints`) and the window
+(`src-app/src/ipc_panes.rs`) open `serve.sock` and `window.sock` there for every
+live sandboxed row the host lists, and all three close them when the row goes.
+Every connection on such an endpoint gets the fixed principal
+`Principal::Pane { session, workspace }` without `peer.classify`.
+`paneflow_home` honors `PANEFLOW_PANE_*_ENDPOINT` only for a path under the
+home's `panes/<session>/`. `crates/paneflow-host/src/sandbox.rs` wraps the shell:
+bubblewrap plus Landlock applied by `paneflow-host sandbox-exec` on Linux
+(the runtime directory comes back with only `linux::KEPT_ENTRIES`,
+`KEPT_ENTRY_PREFIXES` and the SSH agent, so the session bus and the systemd
+sockets, which would start a process outside the sandbox, stay out),
+`sandbox-exec` with a generated Seatbelt profile on macOS, and on Windows the
+same helper re-launching the shell with a write-restricted token whose
+restricting SIDs are the per-pane SID and the shared sandbox SID
+`S-1-9-1347-0`, which the host grants on the working directory, `%TEMP%` and
+the session data. A wrap that cannot start fails the launch; nothing falls back
+to an unsandboxed shell. The config offers the sandbox only on
+`SANDBOX_SUPPORTED_PLATFORMS` (Linux today): macOS and Windows join the list
+when their hardware reports exist, and until then only `paneflow-host session
+create --sandbox` reaches their wraps. A pane a sandboxed caller spawns inherits the request, never weakened, at
+each of the three servers: the worker for `surface.split`, `workspace.up`,
+`workspace.create` and `workspace.restore_layout`
+(`structural::inherit_sandbox`); the host for `session.create`
+(`SessionHost::confine_spawn`, after authorization); and the window for
+`surface.split` and `workspace.up` (`ipc_panes::confine_spawn`, which
+refuses `workspace.create`, `workspace.restore_layout` and
+`client.dispatch_action` from a sandboxed pane), while a `tmux.compat` split
+inherits the sandbox of its team anchor. The worker refuses `layout.apply`,
+`layout.adopt` and `action.invoke` to a sandboxed pane
+(`authority::REFUSED_IN_SANDBOX`): those either carry surface definitions it
+does not rewrite or run code that reaches the window under another identity.
+
 Ingress is treated as untrusted: session and config files are validated
 structurally (layout budgets, ratio clamps, id alphabets) before they touch
 app state.

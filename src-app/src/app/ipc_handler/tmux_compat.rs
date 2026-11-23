@@ -317,6 +317,13 @@ impl PaneFlowApp {
         if !title.is_empty() {
             params["name"] = serde_json::Value::String(title);
         }
+        if let Some(request) = self
+            .terminal_for_surface(anchor)
+            .and_then(|terminal| terminal.read(cx).sandbox_request())
+        {
+            params["env"][paneflow_config::schema::SANDBOX_REQUEST_ENV] =
+                serde_json::Value::String(request);
+        }
         if let Some(cwd) = cwd {
             params["cwd"] = serde_json::Value::String(cwd);
         }

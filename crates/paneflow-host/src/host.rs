@@ -237,6 +237,8 @@ pub struct SessionHost {
     fenced_reads: bool,
     policy: crate::policy::PolicySource,
     pane_grants: crate::pane_grants::GrantMirror,
+    pane_endpoints: crate::pane_endpoint::PaneEndpoints,
+    sandbox_helper: Mutex<Option<PathBuf>>,
     submit_paste_delay: std::time::Duration,
     xt_checksum: Mutex<crate::runtime::XtChecksum>,
     next_operation: AtomicU64,
@@ -368,6 +370,8 @@ impl SessionHost {
             fenced_reads,
             policy: crate::policy::PolicySource::for_home(home),
             pane_grants: crate::pane_grants::GrantMirror::for_home(home),
+            pane_endpoints: crate::pane_endpoint::PaneEndpoints::default(),
+            sandbox_helper: Mutex::new(None),
             submit_paste_delay,
             xt_checksum: Mutex::new(crate::runtime::XtChecksum::default()),
             next_operation: AtomicU64::new(1),
@@ -383,6 +387,9 @@ impl SessionHost {
             weak: weak.clone(),
             _owner: owner,
         });
+        for stale in crate::pane_endpoint::pane_dir_sessions(home) {
+            crate::pane_endpoint::remove_pane_dir(home, &stale);
+        }
         host.adopt_previous_records();
         host.trim_terminated_records();
         host.write_instance_record()?;
@@ -938,7 +945,11 @@ impl SessionHost {
                     .get(&summary.manifest.session)
                     .copied()
                     .unwrap_or_default();
+                let sandboxed = summary.manifest.launch.sandbox
+                    && self.pane_endpoint_open(&summary.manifest.session);
                 AgentSnapshotEntry {
+                    sandboxed,
+                    sandbox_unix_scope: sandboxed && summary.manifest.launch.sandbox_unix_scope,
                     output_changed_at_ms,
                     bell_at_ms,
                     input_at_ms,
@@ -972,8 +983,9 @@ impl SessionHost {
         generation: SessionGeneration,
         workspace: Option<&WorkspaceId>,
         user: &BTreeMap<String, String>,
+        sandbox: bool,
     ) -> BTreeMap<String, String> {
-        launch_env(
+        let mut env = launch_env(
             session,
             generation,
             workspace,
@@ -981,7 +993,98 @@ impl SessionHost {
             Path::new(&self.identity.endpoint),
             self.helper_dir.as_deref(),
             user,
+        );
+        if sandbox {
+            sandbox_env(&mut env, &self.home, session);
+        }
+        env
+    }
+
+    fn sandbox_plan(
+        &self,
+        session: &SessionId,
+        cwd: &Path,
+        user: &BTreeMap<String, String>,
+    ) -> crate::sandbox::SandboxPlan {
+        let window = user.get(paneflow_home::SOCKET_PATH_ENV).map(String::as_str);
+        let mut plan = crate::sandbox::SandboxPlan::new(
+            &self.home,
+            session.as_str(),
+            cwd,
+            crate::sandbox::shared_endpoints_for(
+                &self.home,
+                Path::new(&self.identity.endpoint),
+                window,
+            ),
+        );
+        if let Some(helper) = self
+            .sandbox_helper
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+        {
+            plan.helper = Ok(helper);
+        }
+        plan
+    }
+
+    pub fn confine_spawn(&self, caller: &paneflow_api::Principal, params: &mut serde_json::Value) {
+        let paneflow_api::Principal::Pane { session, .. } = caller else {
+            return;
+        };
+        let Ok(parent) = SessionId::parse(session) else {
+            return;
+        };
+        let Ok(summary) = self.inspect(&parent) else {
+            return;
+        };
+        let launched = &summary.manifest.launch;
+        let Some(object) = params.as_object_mut().filter(|_| launched.sandbox) else {
+            return;
+        };
+        object.insert("sandbox".into(), serde_json::Value::Bool(true));
+        if launched.sandbox_unix_scope {
+            object.insert("sandbox_unix_scope".into(), serde_json::Value::Bool(true));
+        }
+    }
+
+    pub fn use_sandbox_helper(&self, helper: PathBuf) {
+        *self
+            .sandbox_helper
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(helper);
+    }
+
+    fn open_pane_endpoint(
+        &self,
+        session: &SessionId,
+        workspace: Option<&WorkspaceId>,
+    ) -> std::io::Result<()> {
+        let weak = self.weak_self();
+        let serve: crate::pane_endpoint::ServeStream =
+            std::sync::Arc::new(move |stream, principal| {
+                if let Some(host) = weak.upgrade() {
+                    crate::server::serve_pane_stream(host, stream, principal);
+                }
+            });
+        self.pane_endpoints.ensure(
+            &self.home,
+            paneflow_home::PaneServer::Host,
+            crate::pane_endpoint::PaneIdentity {
+                session: session.to_string(),
+                workspace: workspace.map(ToString::to_string),
+            },
+            &serve,
         )
+    }
+
+    pub fn close_pane_endpoint(&self, session: &SessionId) {
+        self.pane_endpoints.close(session.as_str());
+        crate::pane_endpoint::remove_pane_dir(&self.home, session.as_str());
+    }
+
+    pub fn pane_endpoint_open(&self, session: &SessionId) -> bool {
+        self.pane_endpoints.is_open(session.as_str())
     }
 
     pub fn attribute_agent_tool(&self, params: &Value) -> Result<Value, &'static str> {
@@ -1239,8 +1342,22 @@ impl SessionHost {
         Ok(json!({"accepted": true}))
     }
 
-    pub fn create(&self, request: CreateSession) -> Result<SessionSummary, HostError> {
+    pub fn create(&self, mut request: CreateSession) -> Result<SessionSummary, HostError> {
         let requested = Instant::now();
+        if let Some(asked) = request
+            .env
+            .remove(paneflow_config::schema::SANDBOX_REQUEST_ENV)
+        {
+            let Some(sandbox) = paneflow_config::schema::ProfileSandbox::from_request(&asked)
+            else {
+                return Err(HostError::InvalidRequest(format!(
+                    "{} names an unknown sandbox {asked:?}; the pane does not start unsandboxed",
+                    paneflow_config::schema::SANDBOX_REQUEST_ENV
+                )));
+            };
+            request.sandbox = true;
+            request.sandbox_unix_scope |= sandbox.unix_scope;
+        }
         if request.args.len() > MAX_LAUNCH_ARGS {
             return Err(HostError::InvalidRequest(format!(
                 "at most {MAX_LAUNCH_ARGS} launch arguments are accepted"
@@ -1279,7 +1396,12 @@ impl SessionHost {
             SessionGeneration::FIRST,
             request.workspace.as_ref(),
             &request.env,
+            request.sandbox,
         );
+        let sandbox = request.sandbox.then(|| {
+            self.sandbox_plan(&session, &cwd, &request.env)
+                .with_pathname_unix_scope(request.sandbox_unix_scope)
+        });
         let launch = SessionLaunch {
             shell: shell.clone(),
             args: request.args.clone(),
@@ -1292,6 +1414,8 @@ impl SessionHost {
                 .collect(),
             cols,
             rows,
+            sandbox: request.sandbox,
+            sandbox_unix_scope: request.sandbox && request.sandbox_unix_scope,
         };
         let created = now_ms();
         let manifest = Arc::new(Mutex::new(SessionManifest {
@@ -1390,6 +1514,7 @@ impl SessionHost {
             cell: request.cell,
             xt_checksum: self.current_xt_checksum(),
             session: Some(session.clone()),
+            sandbox,
         };
         let created = self.launch(
             session,
@@ -1553,7 +1678,12 @@ impl SessionHost {
                 next,
                 guard.workspace.as_ref(),
                 &guard.launch.env,
+                guard.launch.sandbox,
             );
+            let sandbox = guard.launch.sandbox.then(|| {
+                self.sandbox_plan(&guard.session, &cwd, &guard.launch.env)
+                    .with_pathname_unix_scope(guard.launch.sandbox_unix_scope)
+            });
             let spec = SpawnSpec {
                 shell: guard.launch.shell.clone(),
                 args: Vec::new(),
@@ -1566,6 +1696,7 @@ impl SessionHost {
                 cell: record.cell,
                 xt_checksum,
                 session: Some(guard.session.clone()),
+                sandbox,
             };
             drop(guard);
             record.launch = Some(PendingLaunch {
@@ -1676,6 +1807,20 @@ impl SessionHost {
                 .map(|record| Arc::clone(&record.durability))
                 .unwrap_or_default()
         };
+        if spec.sandbox.is_some() {
+            let workspace = manifest
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .workspace
+                .clone();
+            if let Err(error) = self.open_pane_endpoint(&session, workspace.as_ref()) {
+                return Err(self.fail_launch(
+                    &session,
+                    operation,
+                    format!("cannot create the sandboxed pane's endpoint: {error}"),
+                ));
+            }
+        }
         let observer = self.observer_for(Arc::clone(&manifest), durability, generation);
         let handle = match SessionRuntime::launch(spec, generation, observer) {
             Ok(handle) => handle,
@@ -1842,6 +1987,7 @@ impl SessionHost {
         operation: OperationId,
         reason: String,
     ) -> HostError {
+        self.close_pane_endpoint(session);
         let snapshot = {
             let mut sessions = self.lock_sessions();
             let Some(record) = sessions.get_mut(session) else {
@@ -2116,6 +2262,7 @@ impl SessionHost {
         seed.lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .removed = true;
+        self.close_pane_endpoint(session);
         self.agent_bus
             .broadcast(&json!({"type": "session_removed", "session": session}));
         self.persistence
@@ -2920,6 +3067,7 @@ impl SessionHost {
             );
             if lifecycle_settled {
                 host.release_retired_runtime(&session, generation);
+                host.close_pane_endpoint(&session);
             }
         })
     }

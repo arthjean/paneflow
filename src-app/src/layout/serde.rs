@@ -38,7 +38,7 @@ impl LayoutTree {
                                 prompt: None,
                                 cwd,
                                 path: None,
-                                env: None,
+                                env: tv_ref.persisted_env(),
                                 focus: Some(index == active),
                                 scrollback: None,
                                 agent: tv_ref.terminal.detected_agent.map(|a| a.tag().to_string()),

@@ -2236,6 +2236,44 @@ mod tests {
         assert!(written.contains(&format!("\"session\":\"{expected}\"")));
     }
 
+    #[gpui::test]
+    fn a_sandboxed_terminal_keeps_only_its_sandbox_request_in_the_layout(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use gpui::AppContext;
+
+        let cx = cx.add_empty_window();
+        let key = paneflow_config::schema::SANDBOX_REQUEST_ENV;
+        let terminal = cx.new(|cx| {
+            let mut view = crate::terminal::TerminalView::display_only_for_test(1, cx);
+            view.launched_with_env_for_test(std::collections::HashMap::from([
+                (
+                    key.to_string(),
+                    paneflow_config::schema::SANDBOX_REQUEST_PANEFLOW_UNIX_SCOPE.to_string(),
+                ),
+                (
+                    "AGENT_TOKEN".to_string(),
+                    "kept-out-of-session-json".to_string(),
+                ),
+            ]));
+            view
+        });
+        let pane = cx.new(|cx| Pane::new(terminal, 1, cx));
+        let node = cx.update(|_, cx| LayoutTree::Leaf(pane).serialize_without_scrollback(cx));
+
+        let LayoutNode::Pane { surfaces } = node else {
+            panic!("expected a pane");
+        };
+        assert_eq!(
+            surfaces[0].env,
+            Some(std::collections::HashMap::from([(
+                key.to_string(),
+                paneflow_config::schema::SANDBOX_REQUEST_PANEFLOW_UNIX_SCOPE.to_string(),
+            )])),
+            "the restore relaunches the pane sandboxed, and no other launch variable reaches the disk"
+        );
+    }
+
     #[test]
     fn v1_session_is_migrated_not_rejected() {
         let tmp = tempfile::tempdir().expect("tempdir");

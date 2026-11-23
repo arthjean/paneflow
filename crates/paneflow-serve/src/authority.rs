@@ -101,12 +101,37 @@ pub(crate) fn refusal_error(method: &str, principal: &Principal, refusal: Refusa
     }
 }
 
+pub const REFUSED_IN_SANDBOX: &[&str] = &["layout.apply", "layout.adopt", "action.invoke"];
+
+fn refused_in_sandbox(worker: &Worker, principal: &Principal, method: &str) -> Option<ServeError> {
+    let Principal::Pane { session, .. } = principal else {
+        return None;
+    };
+    if !REFUSED_IN_SANDBOX.contains(&method) {
+        return None;
+    }
+    worker.lock_state().sandbox_request_of(session)?;
+    Some(ServeError {
+        code: ERR_PRINCIPAL_REFUSED,
+        message: format!(
+            "{method} is not available to a sandboxed pane: Paneflow cannot keep what it starts in the sandbox"
+        ),
+        data: Some(serde_json::json!({
+            "reason": paneflow_api::principal::REASON_PRINCIPAL_REFUSED,
+            "principal": principal.kind(),
+        })),
+    })
+}
+
 pub(crate) fn authorize_call(
     worker: &Worker,
     principal: &Principal,
     descriptor: &Descriptor,
     params: &mut Value,
 ) -> Result<Authority, ServeError> {
+    if let Some(refused) = refused_in_sandbox(worker, principal, descriptor.name()) {
+        return Err(refused);
+    }
     let policy = worker.policy.current();
     let (grants, generation) = worker.caller_grants(principal);
     let view = paneflow_api::grants::GrantView {

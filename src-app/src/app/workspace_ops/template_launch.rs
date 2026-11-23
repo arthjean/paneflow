@@ -211,7 +211,19 @@ impl PaneFlowApp {
             if let Some(true) = pane.focus {
                 spec.insert("focus".to_string(), Value::Bool(true));
             }
-            if let Some(env) = pane.env.as_ref().filter(|env| !env.is_empty()) {
+            let agent_launch = pane
+                .agent
+                .as_deref()
+                .filter(|tag| !tag.trim().is_empty())
+                .and_then(TerminalAgent::from_tag)
+                .map(crate::agent_launcher::AgentLaunch::Builtin);
+            let env = match &agent_launch {
+                Some(launch) => {
+                    launch.with_sandbox_request(&self.cached_config, pane.env.clone())?
+                }
+                None => pane.env.clone(),
+            };
+            if let Some(env) = env.as_ref().filter(|env| !env.is_empty()) {
                 spec.insert("env".to_string(), json!(env));
             }
             if let Some(agent_tag) = pane.agent.as_deref().filter(|tag| !tag.trim().is_empty()) {

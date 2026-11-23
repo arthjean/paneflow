@@ -34,7 +34,12 @@ pub fn up(client: &impl IpcTransport, file: &str, dry_run: bool) -> Result<i32, 
     let mut panes = Vec::with_capacity(spec.panes.len());
     for (idx, pane) in spec.panes.iter().enumerate() {
         let command = resolve_command(idx, pane, &config)?;
-        let env = substitute_env(pane.env.as_ref(), offsets[idx]);
+        let env = sandbox_env(
+            idx,
+            pane,
+            &config,
+            substitute_env(pane.env.as_ref(), offsets[idx]),
+        )?;
         let mut pane_params = json!({
             "cwd": pane.cwd,
             "command": command,
@@ -329,6 +334,20 @@ pub(super) fn resolve_command(
         )));
     }
     Ok(Some(resolved.launch_command(config)))
+}
+
+pub(super) fn sandbox_env(
+    idx: usize,
+    pane: &PaneSpec,
+    config: &PaneFlowConfig,
+    env: Option<HashMap<String, String>>,
+) -> Result<Option<HashMap<String, String>>, CliError> {
+    let Some(agent) = pane.agent.as_deref().and_then(resolve_agent) else {
+        return Ok(env);
+    };
+    crate::agent_launcher::AgentLaunch::Builtin(agent)
+        .with_sandbox_request(config, env)
+        .map_err(|reason| CliError::runtime(format!("pane {idx}: {reason}")))
 }
 
 fn resolve_agent(name: &str) -> Option<TerminalAgent> {

@@ -114,7 +114,15 @@ impl EndpointEnv {
 }
 
 pub fn ipc_endpoint() -> Option<IpcEndpoint> {
-    ipc_endpoint_in(&EndpointEnv::from_process())
+    let env = EndpointEnv::from_process();
+    match crate::pane_endpoint_for_current_home(crate::PaneServer::Window) {
+        Some(path) => Some(IpcEndpoint {
+            path,
+            owned_parent: false,
+            home_is_isolated: env.isolated_ipc_endpoint().is_some(),
+        }),
+        None => ipc_endpoint_in(&env),
+    }
 }
 
 pub fn ipc_endpoint_in(env: &EndpointEnv) -> Option<IpcEndpoint> {

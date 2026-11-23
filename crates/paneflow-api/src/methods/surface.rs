@@ -29,6 +29,11 @@ pub struct SurfaceRow {
     pub tab_id: Option<u64>,
     pub tab_title: Option<String>,
     pub space: Option<SpaceRef>,
+    #[serde(default)]
+    #[schemars(
+        description = "True when the pane runs in a Paneflow sandbox (an agent profile with `sandbox: \"paneflow\"`)."
+    )]
+    pub sandboxed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -316,7 +321,8 @@ method! {
                 "scope": "workspace",
                 "tab_id": 1,
                 "tab_title": "Terminal",
-                "space": null
+                "space": null,
+                "sandboxed": false
             }]
         })],
     }

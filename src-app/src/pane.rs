@@ -451,6 +451,19 @@ pub(crate) fn unified_tab_chip(
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
 }
 
+const SANDBOXED_TAB_TOOLTIP: &str = "Sandboxed: Paneflow and other panes are out of reach";
+
+const SANDBOX_TAB_MARKER_SIZE: f32 = 12.;
+
+pub(crate) fn sandbox_tab_marker(color: Hsla) -> AnyElement {
+    svg()
+        .size(px(SANDBOX_TAB_MARKER_SIZE))
+        .flex_none()
+        .path("icons/shield-sandbox.svg")
+        .text_color(color)
+        .into_any_element()
+}
+
 pub(crate) fn unified_tab_icon(path: &'static str, color: Hsla) -> AnyElement {
     svg()
         .w(px(20.))
@@ -1785,7 +1798,18 @@ impl Pane {
 
         for (index, surface) in self.surfaces.iter().enumerate() {
             let active = index == self.active_surface;
-            let full_title = Self::surface_full_title(surface, cx);
+            let sandboxed = match surface {
+                PaneSurface::Terminal(terminal) => terminal.read(cx).sandbox_request().is_some(),
+                _ => false,
+            };
+            let full_title = if sandboxed {
+                format!(
+                    "{}\n{SANDBOXED_TAB_TOOLTIP}",
+                    Self::surface_full_title(surface, cx)
+                )
+            } else {
+                Self::surface_full_title(surface, cx)
+            };
             let label = Self::surface_title(surface, cx);
             let (resting, hovered) = if active {
                 (Some(rail_active), None)
@@ -1876,6 +1900,7 @@ impl Pane {
                             .child(label)
                     }
                 }))
+                .children((fit.label && sandboxed).then(|| sandbox_tab_marker(ui.muted)))
                 .children(fit.label.then(|| {
                     tab_close_button(
                         SharedString::from(format!("pane-{pane_id}-tab-close-{index}")),

@@ -34,6 +34,7 @@ fn create(host: &mut HostClient) -> SessionId {
         title: None,
         appearance: None,
         cell: None,
+        ..CreateSession::default()
     })
     .expect("a hosted session")
     .manifest

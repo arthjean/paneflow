@@ -726,15 +726,43 @@ fn worker_lacks(error: &str, method: &str) -> bool {
     error.ends_with(&format!("method not handled by the worker: {method}"))
 }
 
+const PANE_ENDPOINT_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+fn worker_endpoint_for(
+    home: &std::path::Path,
+    pane_endpoint: Option<&std::ffi::OsStr>,
+) -> (std::path::PathBuf, bool) {
+    match paneflow_home::pane_endpoint_from(home, paneflow_home::PaneServer::Worker, pane_endpoint)
+    {
+        Some(endpoint) => (endpoint, true),
+        None => (paneflow_home::serve_endpoint_path(home), false),
+    }
+}
+
+fn wait_for_pane_endpoint(endpoint: &std::path::Path) {
+    use paneflow_ipc_client::host_control::{HostControl, REQUEST_DEADLINE};
+    let deadline = std::time::Instant::now() + PANE_ENDPOINT_WAIT;
+    while std::time::Instant::now() < deadline
+        && HostControl::open(endpoint, CLIENT_NAME, REQUEST_DEADLINE).is_err()
+    {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
 fn worker_call(method: &str, params: Value) -> Result<Value, String> {
     use paneflow_ipc_client::host_control::{HostControl, REQUEST_DEADLINE};
     let home = paneflow_home::paneflow_home()
         .ok_or("cannot resolve the Paneflow state home; set PANEFLOW_HOME")?;
-    let endpoint = paneflow_home::serve_endpoint_path(&home);
+    let (endpoint, sandboxed) = worker_endpoint_for(
+        &home,
+        std::env::var_os(paneflow_home::PANE_SERVE_ENDPOINT_ENV).as_deref(),
+    );
     let unreachable = |reason: String| {
         format!("{method} is served by the Paneflow worker, which is not reachable: {reason}")
     };
-    if HostControl::open(&endpoint, CLIENT_NAME, REQUEST_DEADLINE).is_err() {
+    if sandboxed {
+        wait_for_pane_endpoint(&endpoint);
+    } else if HostControl::open(&endpoint, CLIENT_NAME, REQUEST_DEADLINE).is_err() {
         let controller = std::env::current_exe().map_err(|error| {
             unreachable(format!("cannot locate the paneflow executable: {error}"))
         })?;
@@ -947,6 +975,28 @@ pub(super) fn reject_legacy_error(result: Value) -> Result<Value, CliError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_worker_owned_call_from_a_sandboxed_pane_goes_to_the_pane_endpoint() {
+        let home = std::path::Path::new("/home/someone/.paneflow-dev");
+        let pane = paneflow_home::pane_endpoint_path(
+            home,
+            "0b5f3c1e-7d1a-4f0e-9a4b-2c8d6e1f3a5b",
+            paneflow_home::PaneServer::Worker,
+        );
+        assert_eq!(
+            worker_endpoint_for(home, Some(pane.as_os_str())),
+            (pane, true)
+        );
+        let shared = paneflow_home::serve_endpoint_path(home);
+        assert_eq!(worker_endpoint_for(home, None), (shared.clone(), false));
+        assert_eq!(
+            worker_endpoint_for(home, Some("/run/user/1000/elsewhere.sock".as_ref())),
+            (shared, false),
+            "a path outside the home's panes directory is not a pane endpoint"
+        );
+    }
 
     #[test]
     fn only_a_worker_that_lacks_the_method_sends_the_call_to_the_window() {

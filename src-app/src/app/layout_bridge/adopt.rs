@@ -16,6 +16,7 @@ pub(super) fn surface_definition(surface: &PaneSurface, cx: &App) -> SurfaceDefi
             let terminal = &view.read(cx).terminal;
             SurfaceDefinition {
                 surface_type: Some("terminal".to_string()),
+                env: view.read(cx).persisted_env(),
                 custom_name: terminal.custom_name.clone(),
                 cwd: terminal.current_cwd.clone(),
                 font_size: terminal.font_size_override,
@@ -89,6 +90,12 @@ impl LayoutBridge {
         }
         if live.path.is_some() {
             definition.path = live.path;
+        }
+        if let Some(live_env) = live.env {
+            definition
+                .env
+                .get_or_insert_with(Default::default)
+                .extend(live_env);
         }
         Surface { id, definition }
     }

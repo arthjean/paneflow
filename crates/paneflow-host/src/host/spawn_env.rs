@@ -89,6 +89,10 @@ pub fn launch_env(
         "PANEFLOW_HOST_ENDPOINT",
         "PANEFLOW_RUNTIME_GENERATION",
         "PANEFLOW_HOME",
+        paneflow_home::PANE_HOST_ENDPOINT_ENV,
+        paneflow_home::PANE_SERVE_ENDPOINT_ENV,
+        paneflow_home::PANE_WINDOW_ENDPOINT_ENV,
+        paneflow_config::schema::SANDBOX_REQUEST_ENV,
     ];
     let mut env = BTreeMap::new();
     for (key, value) in user {
@@ -156,4 +160,22 @@ pub fn launch_env(
         }
     }
     env
+}
+
+pub fn sandbox_env(env: &mut BTreeMap<String, String>, home: &Path, session: &SessionId) {
+    for server in paneflow_home::PaneServer::ALL {
+        let endpoint = paneflow_home::pane_endpoint_path(home, session.as_str(), server)
+            .display()
+            .to_string();
+        match server {
+            paneflow_home::PaneServer::Host => {
+                env.insert("PANEFLOW_HOST_ENDPOINT".to_string(), endpoint.clone());
+            }
+            paneflow_home::PaneServer::Window => {
+                env.insert(paneflow_home::SOCKET_PATH_ENV.to_string(), endpoint.clone());
+            }
+            paneflow_home::PaneServer::Worker => {}
+        }
+        env.insert(server.env().to_string(), endpoint);
+    }
 }

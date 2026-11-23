@@ -183,7 +183,8 @@
               "scope": "string",
               "tab_id": "integer",
               "tab_title": "string",
-              "space": "null"
+              "space": "null",
+              "sandboxed": "boolean"
             }
           ]
         }

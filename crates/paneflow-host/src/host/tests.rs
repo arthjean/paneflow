@@ -323,6 +323,8 @@ fn finished_manifest(
             env: BTreeMap::new(),
             cols: 80,
             rows: 24,
+            sandbox: false,
+            sandbox_unix_scope: false,
         },
         lifecycle,
         process: None,
@@ -361,6 +363,8 @@ fn summary_at(workspace: Option<&WorkspaceId>, live: bool, updated_at_ms: u64) -
                 env: BTreeMap::new(),
                 cols: 80,
                 rows: 24,
+                sandbox: false,
+                sandbox_unix_scope: false,
             },
             lifecycle: if live {
                 SessionLifecycle::Running
@@ -1388,6 +1392,8 @@ fn unverified_record(host: &SessionHost, reason: &str) -> SessionId {
             env: BTreeMap::new(),
             cols: 80,
             rows: 24,
+            sandbox: false,
+            sandbox_unix_scope: false,
         },
         lifecycle: SessionLifecycle::Unverified {
             reason: reason.to_string(),
@@ -1663,6 +1669,7 @@ fn launch_owner_thread_failure_is_reconciled_by_the_existing_scan() {
         cell: None,
         xt_checksum: crate::runtime::XtChecksum::default(),
         session: None,
+        sandbox: None,
     };
     spec.env
         .insert("PANEFLOW_TEST_SPAWN_DELAY_MS".into(), "100".into());
@@ -1714,6 +1721,8 @@ fn unlaunched_record(host: &SessionHost, session: &SessionId) -> SessionRecord {
             env: BTreeMap::new(),
             cols: 80,
             rows: 24,
+            sandbox: false,
+            sandbox_unix_scope: false,
         },
         lifecycle: SessionLifecycle::Starting,
         process: None,

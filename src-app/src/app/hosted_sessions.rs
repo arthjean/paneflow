@@ -470,6 +470,8 @@ mod tests {
                 title: None,
                 appearance: None,
                 cell: None,
+                sandbox: false,
+                sandbox_unix_scope: false,
             })
             .expect("hosted session");
         let session = created.manifest.session.clone();

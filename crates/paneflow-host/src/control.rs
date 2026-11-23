@@ -137,6 +137,7 @@ fn surface_value(alias: u64, summary: &SessionSummary) -> Value {
         "lifecycle": summary.manifest.lifecycle.label(),
         "tab_id": Value::Null,
         "tab_title": Value::Null,
+        "sandboxed": summary.manifest.launch.sandbox,
     })
 }
 
@@ -779,6 +780,8 @@ mod tests {
                     env: Default::default(),
                     cols: 80,
                     rows: 24,
+                    sandbox: false,
+                    sandbox_unix_scope: false,
                 },
                 lifecycle: SessionLifecycle::Running,
                 process: None,

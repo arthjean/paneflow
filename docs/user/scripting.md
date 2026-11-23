@@ -252,6 +252,81 @@ your user: a process of your user outside a sandbox can leave its pane
 and be classified `external`, or write to a PTY directly. Run untrusted
 agents in a sandbox or as another user when that matters.
 
+### How do I sandbox an agent's pane?
+
+Set `sandbox` on the agent's profile in `agents`:
+
+```json
+{
+  "agents": {
+    "claude": {"sandbox": "paneflow"},
+    "codex": {"sandbox": "paneflow", "sandbox_unix_scope": true}
+  }
+}
+```
+
+The pane then runs where Paneflow's shared window, background-process
+and host endpoints and the other panes' processes are out of reach. It
+talks to each of the three through an endpoint Paneflow opened for that
+pane alone, under `panes/<session>/` in Paneflow's home, and every
+connection there is that pane: `paneflow api call system.whoami --on
+host` from the pane answers `pane` with its session. The pane's tab
+shows a shield, `paneflow ls` reports `sandboxed: true`, and a pane the
+sandboxed one opens with `paneflow split`, `paneflow up`, a layout or an
+agent team is sandboxed the same way, never less strictly. A sandboxed
+pane is refused (`principal_refused`) what Paneflow cannot keep in the
+sandbox: `layout.apply`, `layout.adopt`, `action.invoke`,
+`client.dispatch_action`, and `workspace.create` or
+`workspace.restore_layout` sent straight to the window; `paneflow split`
+and `paneflow up` work.
+
+- **Linux** runs the shell under bubblewrap (`bwrap`) with its own user,
+  PID, mount and cgroup namespaces and `no_new_privs`. Paneflow's home
+  is read-only there except the pane's own data, and its working
+  directory when that lies inside the home. Landlock (ABI 6 or later)
+  also refuses abstract unix sockets made outside the pane.
+  The runtime directory (`XDG_RUNTIME_DIR`) comes back with only the
+  Wayland, PipeWire and PulseAudio sockets, the GnuPG directory and the
+  SSH agent that `SSH_AUTH_SOCK` names. Everything else there is
+  absent, the D-Bus session bus and the systemd user sockets first,
+  because they start or drive a process outside the pane:
+  `systemd-run --user`, `notify-send`, a keyring read over D-Bus,
+  `xdg-open` and a rootless container daemon socket fail there.
+  `sandbox_unix_scope: true` adds Landlock ABI 9 scoping, which refuses
+  every unix socket made outside the pane, but it forbids mounts, so the
+  agent can no longer start its own bubblewrap sandbox: leave it off for
+  Claude Code and Codex.
+  Measured on Fedora 45, Ubuntu 22.04, Debian 13, Arch and openSUSE
+  Leap 16. Ubuntu 24.04 refuses it as installed (`bwrap: setting up uid
+  map: Permission denied`): AppArmor keeps user namespaces from
+  `bwrap` until `sysctl kernel.apparmor_restrict_unprivileged_userns=0`
+  or an AppArmor profile grants them to `/usr/bin/bwrap`. Ubuntu 22.04
+  and 24.04 have Landlock below ABI 6, so abstract sockets are not
+  refused there.
+- **macOS and Windows** do not offer the sandbox yet: a profile that
+  asks for it there logs `Sandbox 'paneflow' is not available on
+  macos` (or `windows`) and does not start. The Seatbelt profile and
+  the write-restricted token exist in the host but have not been
+  proven on real machines.
+
+A sandboxed profile never runs unsandboxed: when `bwrap` cannot
+start, the pane shows its
+launch failure with the error, and a restored pane starts sandboxed or
+not at all. A profile with an unknown `sandbox` value, or set on a
+platform without a Paneflow sandbox, logs an error naming the key and
+does not start.
+
+The sandbox confines access to Paneflow and to other panes only. File
+and network policy stay with the agent's own sandbox, which still runs
+inside it. A process of your user outside every sandbox can still
+connect to a pane's endpoints, and the agent's configuration
+directories and your shell's startup files stay writable from the pane.
+The rest of your files and the network stay reachable too, so a
+service of yours that runs commands on request still does so for the
+pane: an X11 display, a tmux or editor server socket, a container
+daemon socket, or an SSH server on this machine. On Linux,
+`sandbox_unix_scope: true` closes the socket ones.
+
 Inside a Paneflow pane, `send`, `key`, and the `send` steps of
 `flow run` that target a pane the flow did not spawn pass the pane's
 `PANEFLOW_SESSION_ID`, and the instance refuses a write into a pane of

@@ -1,5 +1,6 @@
 mod agent_grants;
 mod agent_panel;
+mod agent_sandbox;
 mod config;
 mod identity;
 mod ipc;
@@ -10,6 +11,7 @@ mod terminal;
 
 pub use agent_grants::*;
 pub use agent_panel::*;
+pub use agent_sandbox::*;
 pub use config::*;
 pub use identity::*;
 pub use ipc::*;

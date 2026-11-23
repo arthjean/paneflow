@@ -50,8 +50,7 @@ pub(super) fn worker_layout(endpoint: &Path) -> Option<Vec<LayoutSurface>> {
 }
 
 pub(super) fn current_worker_layout() -> Option<Vec<LayoutSurface>> {
-    let home = paneflow_home::paneflow_home()?;
-    worker_layout(&paneflow_home::serve_endpoint_path(&home))
+    worker_layout(&paneflow_home::serve_endpoint_path_for_current_home()?)
 }
 
 pub(super) fn name_sessions(params: Value, layout: &[LayoutSurface]) -> Value {

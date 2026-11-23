@@ -235,6 +235,8 @@ pub struct SessionEntry {
     pub health: Health,
     pub declared_status: Option<DeclaredStatus>,
     pub program_status_capable: bool,
+    pub sandboxed: bool,
+    pub sandbox_unix_scope: bool,
     pub observed_runtime: Option<RuntimeObservation>,
     pub foreground_runtime: Option<&'static str>,
     pub account_env: BTreeMap<String, String>,
@@ -242,6 +244,12 @@ pub struct SessionEntry {
     pub unread: bool,
     pub updated_at_ms: u64,
     pub terminal: TerminalFacts,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SandboxedPane {
+    pub session: String,
+    pub workspace: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -308,6 +316,8 @@ impl SessionEntry {
             health: Health::NonResumable,
             declared_status: manifest.declared_status,
             program_status_capable: manifest.program_status_capable,
+            sandboxed: false,
+            sandbox_unix_scope: false,
             foreground_runtime: foreground_runtime_id(observed_runtime.as_ref()),
             observed_runtime,
             account_env: paneflow_host::agent::account_env(&manifest.launch.env),
@@ -563,6 +573,28 @@ impl WorkerState {
 
     pub fn drain_turn_signals(&mut self) -> Vec<TurnSignal> {
         std::mem::take(&mut self.turn_signals)
+    }
+
+    pub fn sandbox_request_of(&self, session: &str) -> Option<&'static str> {
+        let session = SessionId::parse(session).ok()?;
+        let entry = self.sessions.get(&session)?;
+        entry.sandboxed.then(|| {
+            paneflow_config::schema::ProfileSandbox {
+                unix_scope: entry.sandbox_unix_scope,
+            }
+            .request_value()
+        })
+    }
+
+    pub fn sandboxed_panes(&self) -> Vec<SandboxedPane> {
+        self.sessions
+            .values()
+            .filter(|entry| entry.sandboxed && entry.lifecycle.is_running())
+            .map(|entry| SandboxedPane {
+                session: entry.session.to_string(),
+                workspace: entry.workspace.as_ref().map(ToString::to_string),
+            })
+            .collect()
     }
 
     pub fn grant_holders(&self) -> Vec<GrantHolderFacts> {
@@ -1092,6 +1124,8 @@ fn merge_core_row(session: SessionId, raw: &Value, held: Option<SessionEntry>) -
             .ok()
             .flatten(),
         program_status_capable: raw["program_status_capable"].as_bool().unwrap_or(false),
+        sandboxed: raw["sandboxed"].as_bool().unwrap_or(false),
+        sandbox_unix_scope: raw["sandbox_unix_scope"].as_bool().unwrap_or(false),
         foreground_runtime: foreground_runtime_id(current_observation.as_ref()),
         observed_runtime: current_observation.or_else(|| {
             held.as_ref()
@@ -1163,6 +1197,8 @@ mod tests {
                 env: Default::default(),
                 cols: 80,
                 rows: 24,
+                sandbox: false,
+                sandbox_unix_scope: false,
             },
             lifecycle: SessionLifecycle::Running,
             process: None,

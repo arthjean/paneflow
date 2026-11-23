@@ -705,6 +705,8 @@ mod tests {
                 env: BTreeMap::new(),
                 cols: 80,
                 rows: 24,
+                sandbox: false,
+                sandbox_unix_scope: false,
             },
             lifecycle: SessionLifecycle::Running,
             process: None,

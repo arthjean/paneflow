@@ -194,6 +194,10 @@ pub struct AgentSnapshotEntry {
     pub declared_status: Option<crate::program_status::DeclaredStatus>,
     #[serde(default)]
     pub program_status_capable: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sandboxed: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sandbox_unix_scope: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observed_runtime: Option<crate::runtime_observer::RuntimeObservation>,
     #[serde(default)]

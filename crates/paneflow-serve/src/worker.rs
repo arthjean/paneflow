@@ -78,6 +78,7 @@ impl RunningWorker {
 
     pub fn stop(mut self) {
         self.worker.request_shutdown();
+        self.worker.pane_endpoints.close_all();
         self.worker.layout.close();
         self.worker.config.stop(crate::bootstrap::DRAIN_WAIT);
         if let Some(waker) = self.pump_waker.take() {
@@ -177,6 +178,7 @@ fn open_with_build_id(
         grant_profiles: crate::grant_methods::ProfileSource::new(paneflow_home::config_path_in(
             home,
         )),
+        pane_endpoints: Default::default(),
     });
     let server = ServerHandle::spawn(Arc::clone(&worker), endpoint.clone()).map_err(|source| {
         WorkerError::Endpoint {
@@ -380,6 +382,7 @@ fn sweep(worker: &Arc<Worker>) {
     worker.absorb_turn_signals();
     worker.sweep_usage();
     worker.reconcile_pane_grants();
+    worker.reconcile_pane_endpoints();
 }
 
 fn core_poll_interval(following: bool) -> Duration {
@@ -414,6 +417,7 @@ pub(crate) fn apply(worker: &Arc<Worker>, frame: CoreFrame, following: bool) -> 
     worker.absorb_state_events();
     worker.absorb_turn_signals();
     worker.reconcile_pane_grants();
+    worker.reconcile_pane_endpoints();
     if connected {
         worker.push_grants_to_host(&worker.pane_grants.set());
     }

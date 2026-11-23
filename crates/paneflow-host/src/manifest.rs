@@ -31,6 +31,10 @@ pub struct SessionLaunch {
     pub env: BTreeMap<String, String>,
     pub cols: u16,
     pub rows: u16,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sandbox: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sandbox_unix_scope: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -410,6 +414,8 @@ mod tests {
                 env: BTreeMap::new(),
                 cols: 80,
                 rows: 24,
+                sandbox: false,
+                sandbox_unix_scope: false,
             },
             lifecycle: SessionLifecycle::Running,
             process: Some(ProcessIdentity {

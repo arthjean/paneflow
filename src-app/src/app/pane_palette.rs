@@ -99,10 +99,13 @@ impl Preset {
         }
     }
 
-    pub(crate) fn env(&self) -> Option<std::collections::HashMap<String, String>> {
+    pub(crate) fn env(
+        &self,
+        config: &PaneFlowConfig,
+    ) -> Result<Option<std::collections::HashMap<String, String>>, String> {
         match &self.source {
-            PresetSource::Agent(launch) => launch.process_env(),
-            _ => None,
+            PresetSource::Agent(launch) => launch.launch_env(config),
+            _ => Ok(None),
         }
     }
 
@@ -407,7 +410,13 @@ impl PaneFlowApp {
         if self.pane_palette_create_branch_then_launch(idx, cx) {
             return;
         }
-        let mut env = preset.env();
+        let mut env = match preset.env(&self.cached_config) {
+            Ok(env) => env,
+            Err(message) => {
+                self.pane_palette_set_error(message, cx);
+                return;
+            }
+        };
         if preset.opens_a_team() {
             env.get_or_insert_with(Default::default).insert(
                 crate::tmux_compat::TEAM_ENV.to_string(),

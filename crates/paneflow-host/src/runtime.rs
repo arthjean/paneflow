@@ -68,6 +68,7 @@ pub struct SpawnSpec {
     pub cell: Option<CellSize>,
     pub xt_checksum: XtChecksum,
     pub session: Option<paneflow_config::schema::SessionId>,
+    pub sandbox: Option<crate::sandbox::SandboxPlan>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -1114,8 +1115,20 @@ fn start(
     let cell = spec.cell.unwrap_or(DEFAULT_CELL);
     let pair = crate::pty::open(pty_size(spec.cols, spec.rows, cell))
         .map_err(|e| format!("failed to open a native PTY: {e}"))?;
-    let mut command = CommandBuilder::new(&spec.shell);
-    command.args(&spec.args);
+    let (program, args) = match &spec.sandbox {
+        Some(plan) => {
+            let wrapped = plan.wrap(&spec.shell, &spec.args)?;
+            log::debug!(
+                "paneflow-host: session {} runs sandboxed under {}",
+                plan.session,
+                plan.describe()
+            );
+            (wrapped.program, wrapped.args)
+        }
+        None => (spec.shell.clone(), spec.args.clone()),
+    };
+    let mut command = CommandBuilder::new(&program);
+    command.args(&args);
     command.cwd(&spec.cwd);
     for key in crate::env::inherited_env_keys_to_strip() {
         command.env_remove(&key);
@@ -1134,7 +1147,7 @@ fn start(
     let child = pair
         .slave
         .spawn_command(command)
-        .map_err(|e| format!("failed to spawn {} in the PTY: {e}", spec.shell))?;
+        .map_err(|e| format!("failed to spawn {program} in the PTY: {e}"))?;
     let child_pid = child.process_id().unwrap_or(0);
     shared.contain(child_pid, spec.session.as_ref());
     drop(pair.slave);
@@ -2248,6 +2261,7 @@ mod tests {
             cell: None,
             xt_checksum: XtChecksum::default(),
             session: None,
+            sandbox: None,
         }
     }
 

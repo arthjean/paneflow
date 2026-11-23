@@ -198,9 +198,15 @@ impl PaneFlowApp {
                     self.show_toast(message, cx);
                     return;
                 }
+                let env = match preset.env(&self.cached_config) {
+                    Ok(env) => env,
+                    Err(message) => {
+                        self.show_toast(message, cx);
+                        return;
+                    }
+                };
                 let cwd = self.new_surface_cwd(&pane, ws_id, cx);
                 let command = preset.command(&self.cached_config);
-                let env = preset.env();
                 let profile = preset.profile();
                 let added = self.add_surface_through_model(
                     &pane,

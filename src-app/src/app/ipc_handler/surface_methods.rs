@@ -73,6 +73,7 @@ pub(crate) struct SurfaceMeta {
     pub tab_id: Option<u64>,
     pub tab_title: Option<String>,
     pub space: serde_json::Value,
+    pub sandboxed: bool,
 }
 
 fn authorize_surface_workspace(
@@ -167,6 +168,7 @@ fn surface_meta_value(s: SurfaceMeta) -> serde_json::Value {
         "tab_id": s.tab_id,
         "tab_title": s.tab_title,
         "space": s.space,
+        "sandboxed": s.sandboxed,
     })
 }
 
@@ -578,6 +580,9 @@ impl PaneFlowApp {
                 scope: "workspace",
                 tab_id: entry.tab.as_ref().map(|(id, _)| *id),
                 tab_title: entry.tab.as_ref().map(|(_, title)| title.clone()),
+                sandboxed: crate::ipc_panes::is_sandboxed(
+                    entry.entity.read(cx).terminal.session_id.as_str(),
+                ),
                 space: crate::app::spaces::space_json(
                     &self.cached_config,
                     self.workspaces
@@ -1497,6 +1502,7 @@ mod tests {
             tab_id: Some(11),
             tab_title: Some("build".to_string()),
             space: serde_json::json!({ "id": "550e8400-e29b-41d4-a716-446655440001", "name": "Work" }),
+            sandboxed: false,
         });
         assert_eq!(workspace["workspace_id"], 42);
         assert_eq!(workspace["workspace"], 2);
@@ -1520,6 +1526,7 @@ mod tests {
             tab_id: Some(3),
             tab_title: None,
             space: serde_json::Value::Null,
+            sandboxed: false,
         };
 
         assert!(super::surface_matches_workspace(&surface, Some(42)));
@@ -1925,6 +1932,7 @@ mod tests {
             tab_id: Some(tab_of(hidden_sid).0),
             tab_title: Some(tab_of(hidden_sid).1),
             space: serde_json::Value::Null,
+            sandboxed: false,
         });
         assert_eq!(value["tab_id"], back_tab_id);
         assert_eq!(value["tab_title"], "background");

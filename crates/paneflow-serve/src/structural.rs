@@ -257,6 +257,76 @@ fn env_map(env: Option<paneflow_api::methods::EnvMap>) -> Option<HashMap<String,
     env.map(|env| env.into_iter().collect())
 }
 
+pub fn inherit_sandbox(
+    worker: &Worker,
+    principal: &paneflow_api::Principal,
+    env: Option<HashMap<String, String>>,
+) -> Option<HashMap<String, String>> {
+    let paneflow_api::Principal::Pane { session, .. } = principal else {
+        return env;
+    };
+    let Some(parent) = worker.lock_state().sandbox_request_of(session) else {
+        return env;
+    };
+    let mut env = env.unwrap_or_default();
+    let key = paneflow_config::schema::SANDBOX_REQUEST_ENV;
+    let stronger = env
+        .get(key)
+        .is_some_and(|asked| asked == paneflow_config::schema::SANDBOX_REQUEST_PANEFLOW_UNIX_SCOPE);
+    if !stronger {
+        env.insert(key.to_string(), parent.to_string());
+    }
+    Some(env)
+}
+
+fn inherit_sandbox_in_layout(
+    worker: &Worker,
+    principal: &paneflow_api::Principal,
+    node: LayoutNode,
+) -> LayoutNode {
+    match node {
+        LayoutNode::Pane { surfaces } => {
+            let surfaces = if surfaces.is_empty() {
+                vec![terminal_definition(None, None, None, None, None)]
+            } else {
+                surfaces
+            };
+            LayoutNode::Pane {
+                surfaces: surfaces
+                    .into_iter()
+                    .map(|definition| {
+                        let terminal = definition
+                            .surface_type
+                            .as_deref()
+                            .is_none_or(|kind| kind == "terminal");
+                        if !terminal {
+                            return definition;
+                        }
+                        SurfaceDefinition {
+                            env: inherit_sandbox(worker, principal, definition.env.clone()),
+                            ..definition
+                        }
+                    })
+                    .collect(),
+            }
+        }
+        LayoutNode::Split {
+            direction,
+            ratio,
+            ratios,
+            children,
+        } => LayoutNode::Split {
+            direction,
+            ratio,
+            ratios,
+            children: children
+                .into_iter()
+                .map(|child| inherit_sandbox_in_layout(worker, principal, child))
+                .collect(),
+        },
+    }
+}
+
 struct Built {
     state: State,
     launch_error: Option<ServeError>,
@@ -431,7 +501,7 @@ pub(crate) fn surface_split(
     let pane = PaneId(worker.layout.reserve_id());
     let definition = terminal_definition(
         decision.cwd.as_deref(),
-        env_map(params.env),
+        inherit_sandbox(worker, &call.authority.principal, env_map(params.env)),
         params.command.clone(),
         None,
         label_of(params.label.as_ref(), params.name.as_ref()),
@@ -737,6 +807,8 @@ pub(crate) fn workspace_create(
     if layout.as_ref().is_some_and(layout_needs_orchestration) && !call.authority.may_spawn() {
         return Err(orchestration_refused("workspace.create"));
     }
+    let layout =
+        layout.map(|layout| inherit_sandbox_in_layout(worker, &call.authority.principal, layout));
     let cwd = params.cwd.as_deref().map(canonical_cwd).transpose()?;
     let config = load_config(worker);
     let state = worker.layout.current_state();
@@ -759,7 +831,13 @@ pub(crate) fn workspace_create(
         }
         None => plant(
             &LayoutNode::Pane {
-                surfaces: vec![terminal_definition(cwd.as_deref(), None, None, None, None)],
+                surfaces: vec![terminal_definition(
+                    cwd.as_deref(),
+                    inherit_sandbox(worker, &call.authority.principal, None),
+                    None,
+                    None,
+                    None,
+                )],
             },
             &mut next,
         ),
@@ -817,6 +895,7 @@ pub(crate) fn workspace_restore_layout(
     if layout_needs_orchestration(&layout) && !call.authority.may_spawn() {
         return Err(orchestration_refused("workspace.restore_layout"));
     }
+    let layout = inherit_sandbox_in_layout(worker, &call.authority.principal, layout);
     let needed = layout.leaf_count();
     if needed == 0 || needed > paneflow_layout::MAX_PANES {
         return Err(invalid(format!(
@@ -941,7 +1020,7 @@ pub(crate) fn workspace_up(
             cwd,
             command: spec.command,
             prompt: spec.prompt,
-            env: env_map(spec.env),
+            env: inherit_sandbox(worker, &call.authority.principal, env_map(spec.env)),
             focus: spec.focus.unwrap_or(false),
             label,
             worktree: worktree_of(spec.managed_worktree.as_ref()),

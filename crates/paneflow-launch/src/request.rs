@@ -132,5 +132,7 @@ pub fn create_request(
         title: None,
         appearance,
         cell,
+        sandbox: false,
+        sandbox_unix_scope: false,
     }
 }

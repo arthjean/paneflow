@@ -48,6 +48,7 @@ mod host_bootstrap;
 mod ipc;
 mod ipc_events;
 mod ipc_grants;
+mod ipc_panes;
 mod keybindings;
 mod keys;
 mod launch;

@@ -181,8 +181,30 @@ pub fn serve(host: Arc<SessionHost>, endpoint: &Path, shutdown: Arc<AtomicBool>)
     )
 }
 
+#[cfg(windows)]
 pub fn bind_owner_only(endpoint: &Path, label: &str) -> io::Result<Listener> {
-    #[cfg(unix)]
+    bind_with_sddl(endpoint, label, WINDOWS_PIPE_SDDL)
+}
+
+#[cfg(windows)]
+pub fn bind_with_sddl(endpoint: &Path, label: &str, sddl: &str) -> io::Result<Listener> {
+    use interprocess::os::windows::{
+        local_socket::ListenerOptionsExt, security_descriptor::SecurityDescriptor,
+    };
+    let name = endpoint.to_fs_name::<GenericFilePath>()?;
+    let sddl = widestring::U16CString::from_str(sddl)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+    let descriptor = SecurityDescriptor::deserialize(sddl.as_ucstr())?;
+    let listener = ListenerOptions::new()
+        .name(name)
+        .security_descriptor(descriptor)
+        .create_sync()?;
+    log::info!("{label}: listening on {}", endpoint.display());
+    Ok(listener)
+}
+
+#[cfg(unix)]
+pub fn bind_owner_only(endpoint: &Path, label: &str) -> io::Result<Listener> {
     {
         if let Some(parent) = endpoint.parent() {
             std::fs::create_dir_all(parent)?;
@@ -204,22 +226,7 @@ pub fn bind_owner_only(endpoint: &Path, label: &str) -> io::Result<Listener> {
         }
     }
     let name = endpoint.to_fs_name::<GenericFilePath>()?;
-    #[cfg(windows)]
-    let listener = {
-        use interprocess::os::windows::{
-            local_socket::ListenerOptionsExt, security_descriptor::SecurityDescriptor,
-        };
-        let sddl = widestring::U16CString::from_str(WINDOWS_PIPE_SDDL)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-        let descriptor = SecurityDescriptor::deserialize(sddl.as_ucstr())?;
-        ListenerOptions::new()
-            .name(name)
-            .security_descriptor(descriptor)
-            .create_sync()?
-    };
-    #[cfg(not(windows))]
     let listener = ListenerOptions::new().name(name).create_sync()?;
-    #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(endpoint, std::fs::Permissions::from_mode(0o600))?;
@@ -349,7 +356,7 @@ fn serve_connections(
             .spawn(move || {
                 let _guard = guard;
                 match Wire::new(stream, protocol::MAX_CONTROL_FRAME_BYTES) {
-                    Ok(wire) => handle_connection(wire, host, shutdown),
+                    Ok(wire) => handle_connection(wire, host, shutdown, None),
                     Err(error) => log::debug!("paneflow-host: connection setup failed: {error}"),
                 }
             });
@@ -441,7 +448,24 @@ enum Flow {
     Close,
 }
 
-fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<AtomicBool>) {
+pub fn serve_pane_stream(host: Arc<SessionHost>, stream: Stream, principal: Principal) {
+    match Wire::new(stream, protocol::MAX_CONTROL_FRAME_BYTES) {
+        Ok(wire) => handle_connection(
+            wire,
+            host,
+            Arc::new(AtomicBool::new(false)),
+            Some(principal),
+        ),
+        Err(error) => log::debug!("paneflow-host: pane connection setup failed: {error}"),
+    }
+}
+
+fn handle_connection(
+    mut wire: Wire,
+    host: Arc<SessionHost>,
+    shutdown: Arc<AtomicBool>,
+    fixed: Option<Principal>,
+) {
     let mut greeted = false;
     let mut attaches = false;
     let mut client = String::new();
@@ -529,7 +553,10 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
                 Ok((identity, hello)) => {
                     greeted = true;
                     attaches = hello.attaches();
-                    principal = classify_connection(&host, &wire, &hello);
+                    principal = match &fixed {
+                        Some(pane) => pane.clone(),
+                        None => classify_connection(&host, &wire, &hello),
+                    };
                     client = hello.client;
                     if wire.write_json(&result_envelope(&id, identity)).is_err() {
                         return;
@@ -551,6 +578,9 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
                 continue;
             }
         };
+        if method == "session.create" {
+            host.confine_spawn(&principal, &mut params);
+        }
         let typed_input = attaches && !principal.is_pane();
         let flow = match method {
             METHOD_WHOAMI => match wire.write_json(&result_envelope(&id, principal.whoami_value()))

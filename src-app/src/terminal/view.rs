@@ -852,6 +852,27 @@ impl TerminalView {
         self.launch.launch_env()
     }
 
+    pub(crate) fn sandbox_request(&self) -> Option<String> {
+        let key = paneflow_config::schema::SANDBOX_REQUEST_ENV;
+        self.launch
+            .user_env
+            .as_ref()
+            .and_then(|env| env.get(key).cloned())
+            .or_else(|| {
+                crate::ipc_panes::sandbox_request_of(self.terminal.session_id.as_str())
+                    .map(str::to_string)
+            })
+    }
+
+    pub(crate) fn persisted_env(&self) -> Option<std::collections::HashMap<String, String>> {
+        self.sandbox_request().map(|request| {
+            std::collections::HashMap::from([(
+                paneflow_config::schema::SANDBOX_REQUEST_ENV.to_string(),
+                request,
+            )])
+        })
+    }
+
     #[cfg(test)]
     pub(crate) fn display_only_for_test(workspace_id: u64, cx: &mut Context<Self>) -> Self {
         let mut terminal = TerminalState::new_display_only(24, 80);
@@ -871,6 +892,14 @@ impl TerminalView {
             terminal,
             cx,
         )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn launched_with_env_for_test(
+        &mut self,
+        user_env: std::collections::HashMap<String, String>,
+    ) {
+        self.launch.user_env = Some(user_env);
     }
 }
 

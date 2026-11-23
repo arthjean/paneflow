@@ -1159,6 +1159,7 @@
                 "cmd": "zsh",
                 "cwd": "/home/me/dev",
                 "name": "shell",
+                "sandboxed": false,
                 "scope": "workspace",
                 "space": null,
                 "surface_id": 7,
@@ -1239,6 +1240,11 @@
               "name": {
                 "type": "string"
               },
+              "sandboxed": {
+                "default": false,
+                "description": "True when the pane runs in a Paneflow sandbox (an agent profile with `sandbox: \"paneflow\"`).",
+                "type": "boolean"
+              },
               "scope": {
                 "type": "string"
               },
@@ -1302,7 +1308,8 @@
               "scope",
               "tab_id",
               "tab_title",
-              "space"
+              "space",
+              "sandboxed"
             ],
             "type": "object"
           }

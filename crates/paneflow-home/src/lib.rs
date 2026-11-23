@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 mod endpoint;
+mod pane;
 mod read;
 mod write;
 
@@ -12,6 +13,12 @@ pub use endpoint::{
     same_endpoint,
 };
 
+pub use pane::{
+    PANE_ENDPOINT_ENV, PANE_HOST_ENDPOINT_ENV, PANE_SERVE_ENDPOINT_ENV, PANE_WINDOW_ENDPOINT_ENV,
+    PANES_DIR_NAME, PaneServer, SANDBOX_SHARED_SID, SANDBOX_SID_PREFIX, is_pane_session_name,
+    pane_dir_in, pane_endpoint_for_current_home, pane_endpoint_from, pane_endpoint_path,
+    pane_endpoint_session, pane_sandbox_sid, panes_dir_in,
+};
 pub use read::{
     create_private_dir_all, not_regular_file, open_for_reading, open_regular_for_reading,
     read_regular_capped, read_regular_string_capped, secure_home_dir, too_large,
@@ -202,7 +209,8 @@ pub fn host_endpoint_path(home: &Path) -> PathBuf {
 }
 
 pub fn host_endpoint_path_for_current_home() -> Option<PathBuf> {
-    paneflow_home().map(|home| host_endpoint_path(&home))
+    pane_endpoint_for_current_home(PaneServer::Host)
+        .or_else(|| paneflow_home().map(|home| host_endpoint_path(&home)))
 }
 
 pub fn reserved_host_endpoint() -> Option<PathBuf> {
@@ -298,7 +306,8 @@ pub fn serve_endpoint_path(home: &Path) -> PathBuf {
 }
 
 pub fn serve_endpoint_path_for_current_home() -> Option<PathBuf> {
-    paneflow_home().map(|home| serve_endpoint_path(&home))
+    pane_endpoint_for_current_home(PaneServer::Worker)
+        .or_else(|| paneflow_home().map(|home| serve_endpoint_path(&home)))
 }
 
 pub fn serve_endpoint_beside_host_endpoint(host_endpoint: &Path) -> Option<PathBuf> {
