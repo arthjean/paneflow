@@ -158,7 +158,7 @@ Modifiers: `defaultLibrary` on `function`, `type` or `variable` appends `.builti
 | A2 | Native lexing is at least as fast as the wasmtime figures of R10. | Medium: no native measurement yet | US-016 |
 | A3 | MSVC compiles the 5.6 MB generated C with `/std:c11`, `_Thread_local` works there, and the `Windows x86_64 libghostty check` job still finishes inside its 50-minute timeout (`.github/workflows/run_tests.yml:875`). | High (R8: not shown in WABT CI) | US-039, then US-033 |
 | A4 | Layer 1 retains about 7 bytes per input byte (2.08 MiB for 295 KB is 7.05, R10), so a 10 MiB file needs about 70 MiB. The cap rule of US-015 allows up to 8 bytes per input byte, a 13 % margin over the one measured point; the margin itself is not evidenced. | Medium: one measured point | US-015 |
-| A5 | zls implements `textDocument/semanticTokens/full` and accepts `utf-8` position encoding. | Medium (not researched) | US-029 test against zls, US-036 |
+| A5 | zls implements `textDocument/semanticTokens/full` and accepts `utf-8` position encoding. | Medium (not researched). Validated 2026-11-23: zls 0.17.0 (the signed x86_64 Linux release, minisign key `RWR+9B91GBZ0zOjh6Lr17+zKf5BoSuFvrx2xSeDE57uIYvnKBGmMjOex`) with zig 0.17.1 chose `utf-8` and returned 36 semantic tokens for `sample.zig`, decoded without a dropped token (`tokens::zls_reports_whether_it_returns_semantic_tokens_and_its_encoding`). It offers `full` and `range` but no `full/delta`. Its answer is recorded in `crates/paneflow-lsp/tests/client/zls_sample_zig.json` and replayed on every run | US-029 test against zls, US-036 |
 | A6 | rust-analyzer accepts `utf-8` position encoding. | Low (well-known, not fetched). Validated 2026-11-23: rust-analyzer 1.98.1 (48a229c 2026-09-01) chose `utf-8` when offered `["utf-8", "utf-16"]` (`crates/paneflow-lsp/tests/client/sync.rs`, `sync::rust_analyzer_negotiates_a_position_encoding`, run with that toolchain's binary first on `PATH`) | US-023 |
 | A7 | A server answers `shutdown` within 5 s; past that the client kills it. 5 s mirrors `INITIAL_PARSE_TIMEOUT` (`highlight.rs:22`), not a measured server figure. | Low | US-022 |
 | A8 | No legitimate LSP message exceeds 64 MiB. Reasoning: semantic tokens for the largest editable file (10 MiB) at one token per 6 bytes is about 1.7 million tokens, about 21 MB of JSON. | Medium | US-021 |
@@ -855,15 +855,15 @@ Tokens from the server color the editor over layers 1 and 2, stay aligned throug
 **Dependencies:** Blocked by US-023
 
 **Acceptance Criteria:**
-- [ ] Given a document opened on a server with `full`, when `didOpen` is sent, then a `full` request follows
-- [ ] Given a server with only `range`, when the visible rows change, then a `range` request covers the visible rows
-- [ ] Given edits and no request in flight, when they are applied on a server with delta support, then one `full/delta` request with the last `resultId` is sent
-- [ ] Given edits and no request in flight, when they are applied on a server without delta support, then one `full` request is sent
-- [ ] Given edits while a request is in flight, when its response arrives, then exactly one follow-up request is sent (assumption A9)
-- [ ] Given a response for a document version older than the current one, when it arrives, then it is not delivered to the document's layer-3 token store
-- [ ] Given `workspace/semanticTokens/refresh`, when it arrives, then each open document of that server is requested again
-- [ ] Given a document closed with a request in flight, when the close completes, then `$/cancelRequest` is sent for it
-- [ ] Given a request answered with an error, when the error arrives, then the previous tokens stay and the next edit sends a new request
+- [x] Given a document opened on a server with `full`, when `didOpen` is sent, then a `full` request follows
+- [x] Given a server with only `range`, when the visible rows change, then a `range` request covers the visible rows
+- [x] Given edits and no request in flight, when they are applied on a server with delta support, then one `full/delta` request with the last `resultId` is sent
+- [x] Given edits and no request in flight, when they are applied on a server without delta support, then one `full` request is sent
+- [x] Given edits while a request is in flight, when its response arrives, then exactly one follow-up request is sent (assumption A9)
+- [x] Given a response for a document version older than the current one, when it arrives, then it is not delivered to the document's layer-3 token store
+- [x] Given `workspace/semanticTokens/refresh`, when it arrives, then each open document of that server is requested again
+- [x] Given a document closed with a request in flight, when the close completes, then `$/cancelRequest` is sent for it
+- [x] Given a request answered with an error, when the error arrives, then the previous tokens stay and the next edit sends a new request
 
 #### US-029: Decode semantic tokens and deltas
 **Description:** As a developer of layer 3, I want server responses turned into byte ranges per line so that the editor paints them without knowing the wire format.
@@ -872,15 +872,15 @@ Tokens from the server color the editor over layers 1 and 2, stay aligned throug
 **Dependencies:** Blocked by US-028
 
 **Acceptance Criteria:**
-- [ ] Given the relative encoding, when a response is decoded, then each token becomes an absolute line, a byte range in that line, a type and a modifier set
-- [ ] Given the negotiated encoding `utf-16`, when a token follows a character outside the BMP on its line, then its byte range starts after that character's four UTF-8 bytes
-- [ ] Given a token past the end of its line, when it is decoded, then that token is dropped and the others kept
-- [ ] Given a type index outside the legend, when it is decoded, then that token is dropped and the others kept
-- [ ] Given a delta response, when it is applied, then its edits are applied to the previous array from the last edit to the first
-- [ ] Given a delta whose edit starts beyond the previous array, when it is applied, then the cache is discarded and a `full` request is sent
-- [ ] Given zls on `PATH`, when an integration test opens `sample.zig`, then it records in this PRD whether zls returned tokens (assumption A5)
-- [ ] Given that test, when it initializes zls, then it records the encoding zls accepted
-- [ ] Given zls absent, when that test runs, then it is skipped with a message naming the binary
+- [x] Given the relative encoding, when a response is decoded, then each token becomes an absolute line, a byte range in that line, a type and a modifier set
+- [x] Given the negotiated encoding `utf-16`, when a token follows a character outside the BMP on its line, then its byte range starts after that character's four UTF-8 bytes
+- [x] Given a token past the end of its line, when it is decoded, then that token is dropped and the others kept
+- [x] Given a type index outside the legend, when it is decoded, then that token is dropped and the others kept
+- [x] Given a delta response, when it is applied, then its edits are applied to the previous array from the last edit to the first
+- [x] Given a delta whose edit starts beyond the previous array, when it is applied, then the cache is discarded and a `full` request is sent
+- [x] Given zls on `PATH`, when an integration test opens `sample.zig`, then it records in this PRD whether zls returned tokens (assumption A5)
+- [x] Given that test, when it initializes zls, then it records the encoding zls accepted
+- [x] Given zls absent, when that test runs, then it is skipped with a message naming the binary
 
 #### US-030: Map token types and modifiers to palette roles
 **Description:** As a user, I want server tokens drawn in the theme's colors so that layer 3 looks like the rest of the editor.
@@ -889,13 +889,13 @@ Tokens from the server color the editor over layers 1 and 2, stay aligned throug
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given each LSP 3.17 standard token type, when it is mapped, then it gives the capture name of TD-09
-- [ ] Given the rust-analyzer types of TD-09, when they are mapped, then they give the listed names
-- [ ] Given a custom type not in the table, when it is mapped, then it is transparent
-- [ ] Given `defaultLibrary` on a `function`, `type` or `variable` token, when it is mapped, then `.builtin` is appended
-- [ ] Given `documentation` on a `comment` token, when it is mapped, then the name is `comment.doc`
-- [ ] Given every non-transparent name, when it is resolved through `DiffSyntax::color_for_capture`, then it gets a color
-- [ ] Given a legend that repeats a type name, when it is mapped, then each index maps independently and the mapping never panics
+- [x] Given each LSP 3.17 standard token type, when it is mapped, then it gives the capture name of TD-09
+- [x] Given the rust-analyzer types of TD-09, when they are mapped, then they give the listed names
+- [x] Given a custom type not in the table, when it is mapped, then it is transparent
+- [x] Given `defaultLibrary` on a `function`, `type` or `variable` token, when it is mapped, then `.builtin` is appended
+- [x] Given `documentation` on a `comment` token, when it is mapped, then the name is `comment.doc`
+- [x] Given every non-transparent name, when it is resolved through `DiffSyntax::color_for_capture`, then it gets a color
+- [x] Given a legend that repeats a type name, when it is mapped, then each index maps independently and the mapping never panics
 
 #### US-031: Overlay layer 3 in the editor without wrong colors
 **Description:** As a user, I want semantic colors over the syntax colors with no flicker and no stale tokens so that layer 3 only ever adds information.
@@ -904,15 +904,15 @@ Tokens from the server color the editor over layers 1 and 2, stay aligned throug
 **Dependencies:** Blocked by US-029, US-030, US-011
 
 **Acceptance Criteria:**
-- [ ] Given a row with layer-3 tokens, when it paints, then each byte covered by a mapped token shows the token's color
-- [ ] Given that row, when it paints, then every byte not covered by a mapped token shows layer 2 or layer 1 per TD-05
-- [ ] Given an edit, when the next frame paints, then tokens on unedited rows are shifted by the edit
-- [ ] Given an edit, when the next frame paints, then no token is painted on an edited row
-- [ ] Given a new response, when the next frame paints, then it shows only that response's tokens and none of the previous response's
-- [ ] Given the theme switched, when rows repaint, then layer-3 colors follow the new palette with no new request
-- [ ] Given the server stopped or crashed, when the next frame paints, then no layer-3 color remains
-- [ ] Given `editor.semantic_tokens` turned off while servers run, when it is applied, then layer-3 colors disappear at the next paint
-- [ ] Given `editor.semantic_tokens` false, when a file is edited, then no layer-3 storage is allocated for it
+- [x] Given a row with layer-3 tokens, when it paints, then each byte covered by a mapped token shows the token's color
+- [x] Given that row, when it paints, then every byte not covered by a mapped token shows layer 2 or layer 1 per TD-05
+- [x] Given an edit, when the next frame paints, then tokens on unedited rows are shifted by the edit
+- [x] Given an edit, when the next frame paints, then no token is painted on an edited row
+- [x] Given a new response, when the next frame paints, then it shows only that response's tokens and none of the previous response's
+- [x] Given the theme switched, when rows repaint, then layer-3 colors follow the new palette with no new request
+- [x] Given the server stopped or crashed, when the next frame paints, then no layer-3 color remains
+- [x] Given `editor.semantic_tokens` turned off while servers run, when it is applied, then layer-3 colors disappear at the next paint
+- [x] Given `editor.semantic_tokens` false, when a file is edited, then no layer-3 storage is allocated for it
 
 #### US-032: Report server state in the editor
 **Description:** As a user who turned semantic highlighting on, I want to know when a server is missing or has crashed so that I can fix it instead of guessing.
@@ -921,15 +921,36 @@ Tokens from the server color the editor over layers 1 and 2, stay aligned throug
 **Dependencies:** Blocked by US-022, US-025, US-027
 
 **Acceptance Criteria:**
-- [ ] Given a server in the `Missing` state, when a matching file opens, then the banner says the server was not found and names the command
-- [ ] Given that banner shown once for a server and root, when another file of that root opens in the same session, then it does not appear again
-- [ ] Given a server in the `Crashed` state, when a file of its root is shown, then the banner says the server stopped
-- [ ] Given that banner, when it renders, then it shows the server's last stderr line
-- [ ] Given that banner, when it renders, then it offers "Restart"
-- [ ] Given "Restart", when it is clicked, then the server starts again and reopens its documents
-- [ ] Given the server running again, when the next frame paints, then the banner is gone
-- [ ] Given a server in the `Failed` state, when a file of its root is shown, then the banner shows the `initialize` error message
-- [ ] Given a server that offers no semantic tokens, when its file is shown, then no banner appears and one debug line is logged
+- [x] Given a server in the `Missing` state, when a matching file opens, then the banner says the server was not found and names the command
+- [x] Given that banner shown once for a server and root, when another file of that root opens in the same session, then it does not appear again
+- [x] Given a server in the `Crashed` state, when a file of its root is shown, then the banner says the server stopped
+- [x] Given that banner, when it renders, then it shows the server's last stderr line
+- [x] Given that banner, when it renders, then it offers "Restart"
+- [x] Given "Restart", when it is clicked, then the server starts again and reopens its documents
+- [x] Given the server running again, when the next frame paints, then the banner is gone
+- [x] Given a server in the `Failed` state, when a file of its root is shown, then the banner shows the `initialize` error message
+- [x] Given a server that offers no semantic tokens, when its file is shown, then no banner appears and one debug line is logged
+
+**EP-006 implementation notes (2026-11-23, reviewed).**
+
+- **Reachability.** The client manager (`crates/paneflow-lsp/src/client.rs`) requests `full` right after `didOpen`, `full/delta` from the last `resultId` after an edit, and `range` for the rows the view reports through `Attachment::show_rows` (called from `fill_visible_highlights`) on a range-only server. One request is in flight per document; edits during it set one follow-up. `workspace/semanticTokens/refresh` requests every open document of that server again, and closing a document cancels its request. Answers are decoded on the client thread (`semantic_tokens::decode`, `apply_delta`) and delivered as `ClientEvent::Tokens` only when their document revision is current. `language_server::client` starts the client with a sink that feeds a foreground task, which hands tokens and state changes to the attached `CodeView`; `apply_semantic_tokens` installs them in `CodeHighlighter` only when the view's own edit count matches, and `runs_into` overlays them (editor rows and minimap). `edit_batch` shifts them, `set_syntax` recolors them, and a non-`Running` state, a detach, or `editor.semantic_tokens` turned off drops them. The banner area shows `server_notice` (`view/render.rs`) for `Missing`, `Crashed` and `Failed`, with Restart calling `LanguageClient::restart`.
+- **Fake server in the app tests.** `code/language_server_fake.rs` turns the app's test binary into a language server through a `ctor` constructor that runs before libtest prints anything, when spawned with `--paneflow-fake-language-server <scenario> <dir>`; `ctor` 1.0.13 is a dev-dependency only and was already in the lockfile through GPUI on macOS. Tests that drive a real client call `allow_parking`, because the client thread wakes a foreground task.
+- **Reference machine.** Through `LanguageClient` with rust-analyzer 1.98.1 and this repository as the root, `src-app/src/app/diff_dock/code/highlight.rs` got a first answer in 40 ms (rust-analyzer's syntax-only pass) and the analyzed answer after 29.2 s through its refresh (8372 tokens). In `CodeHighlighter::syntax_runs_into`, the local `fresh` is `variable` and the field access `row_states` is `property`, which TD-09 maps to the `variable` and `property` roles; `self` is `selfKeyword` and the parameter `row` is `parameter`. Not observed on screen; EP-008 owns the visual check.
+- **zls (A5).** zls 0.17.0 was fetched from its GitHub release into a scratch directory outside the repository, its minisign signature verified against the key published both in the release notes and on zigtools.org, and put first on `PATH` for the run only. The fake server's `relay` scenario sits between `LanguageClient` and the real zls and logs both directions, so the test reads zls's own `initialize` result and `semanticTokens/full` answer. It runs zls with `XDG_CACHE_HOME` and `XDG_CONFIG_HOME` in its temporary directory, so a user's `zls.json` cannot change the answer.
+  - **Assertions.** It asserts that every token zls sent reaches the document (36 of 36). When the zls and zig versions match the recording, it also asserts that the legend and the token array equal the recorded ones.
+  - **Rerecording.** `PANEFLOW_RECORD_ZLS=1` rewrites `zls_sample_zig.json` for a new version.
+  - **Replay.** `tokens::the_recorded_zls_answer_reaches_the_document_with_every_token_and_its_role` serves the recorded capabilities and tokens through the fake server on every platform, without zls. It asserts the count and the roles zls gave: `Point` struct, the field `x` property at its declaration and at `self.x`, `len` method, `self` parameter, `main` function, the local `p` variable.
+  - **Proof of the checks.** Changing one type in the recording made the live run fail on the drift assertion; the recording was then restored.
+  - **Commands.** To check a new zls: `cargo nextest run -p paneflow-lsp -E 'test(zls)' --no-capture` with zls on `PATH`.
+
+**EP-006 review (2026-11-23):** US-028 to US-032 are `DONE`. No blocking defect was found; one banner wording was fixed.
+
+- **Reachability.** Tokens reach the screen from the client thread (`Manager::tokens_answered`) through the sink installed by `language_server::client`, the foreground task, `deliver`, `CodeView::apply_semantic_tokens`, `CodeHighlighter::set_semantic_tokens` and `runs_into`, which paints the editor rows and the minimap. Visible rows reach a range-only server from `fill_visible_highlights` through `Attachment::show_rows`. State changes reach `language_server_state_changed` and the banner (`server_notice`, painted by `render.rs`), and Restart calls `LanguageClient::restart`. Turning `editor.semantic_tokens` off goes through `apply_editor_display` (`cli_diff_dock.rs`), `refresh_language_server` and `detach_language_server`, which drops the layer. `Connection::cancel`, which EP-005 left without a caller, is now called on close. `LanguageClient::negotiated` is still called only by the crate's integration tests, a public API of the library; EP-006 did not add it.
+- **Composition.** The view's revision (`Attachment::change` and `replace`) and the client's document revision count the same messages, from 0 at attach, and a restart keeps the client's count, so an answer computed for older text is refused on both sides. An edit batch reaches `SemanticLayer::edit` in the same descending order layer 2 requires, so the shift of the rows below each edit stays exact. Decoding checks every column against a character boundary of the text the request was sent for, so a hostile server can drop its own tokens but cannot make a run split a character or panic.
+- **Fixed.** The `Missing` banner said "no <command> on PATH" for every command, including an absolute path that does not exist and a relative path that is refused (US-025). It now says that an absolute command is not a file and that a relative one is never run; `paneflow_lsp::resolve::has_separator` is public for it. Regression test: `render::tests::the_missing_banner_names_the_command_and_why_it_was_not_found`.
+- **Definition of Done on the reference machine.** Re-run by the reviewer with a probe outside the repository, through `LanguageClient` and rust-analyzer 1.98.1 with this repository as the root: in `CodeHighlighter::syntax_runs_into`, `fresh` is `variable` and `row_states` is `property` in both the first answer (6026 tokens, 108 ms) and the analyzed one (8372 tokens, 9.7 s); no `rust-analyzer` process remained after `shutdown_all`. `variable` and `property` resolve to different colors in the default theme (`layer3_tests::tokens_from_the_server_color_a_field_and_a_local_with_their_own_roles`). Not observed on screen; EP-008 owns that.
+- **Not blocking, not applied.** `SemanticLayer::new` maps the tokens to captures on the render thread; at the A8 worst case (about 1.7 million tokens) that is a long frame, and the mapping could move to the client thread. `runs_into` allocates a run buffer per row that carries tokens. `LanguageServerHub::views` keeps the entry of a view dropped without a detach until the next attach or delivery prunes it. A slot left in `Missing` keeps a later attach from starting the server until Paneflow restarts, which US-025 accepts.
+- **Evidence.** On the final tree: `cargo fmt --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo nextest run --workspace --locked --profile ci` (5491 passed, 29 skipped), `check-test-wallclock.sh`, `check-helper-sizes.sh` (`paneflow-ai-hook` still over its soft cap, unchanged) and `cargo deny check advisories licenses sources` pass. An earlier full run had one failure outside this epic, `paneflow-host` `agent_ingress_rejects_old_generations_and_persists_the_accepted_seed` (a stop deadline under load), which passed on its retry. The tree is not committed, so no CI has run it: the Linux aarch64 and macOS legs of the Definition of Done are pending the push, and the Windows leg belongs to EP-009. Windows and macOS were reviewed by inspection only; the epic adds no platform-specific code.
 
 ---
 
