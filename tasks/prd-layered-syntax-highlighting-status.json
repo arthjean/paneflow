@@ -65,10 +65,10 @@
     {
       "id": "EP-008",
       "title": "Real-hardware validation of the language servers on Linux",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 1,
-      "stories_done": 0
+      "stories_done": 1
     },
     {
       "id": "EP-009",
@@ -527,15 +527,15 @@
       "id": "US-038",
       "title": "Visual pass of layer 3 on Linux",
       "epic": "EP-008",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-031",
         "US-032"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-23",
+      "completed_at": "2026-11-23",
+      "reviewed_at": "2026-11-23"
     },
     {
       "id": "US-039",
