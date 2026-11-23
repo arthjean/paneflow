@@ -4,7 +4,8 @@ use gpui::Context;
 use paneflow_lsp::TextChange;
 
 use super::super::language_server::{
-    self, CheckOutcome, LanguageServerLink, attach, check_blocking, remember_consent_blocking,
+    self, CheckOutcome, ConsentPair, LanguageServerLink, attach, check_blocking,
+    remember_consent_blocking,
 };
 use super::super::spawn_blocking_then;
 use super::CodeView;
@@ -116,17 +117,25 @@ impl CodeView {
             .into_iter()
             .filter(|view| view.entity_id() != me)
             .collect();
+        let answered = pair.clone();
         spawn_blocking_then(
             cx,
             move || remember_consent_blocking(trust_path.as_deref(), &pair),
             move |view: &mut Self, (), cx| {
-                view.attach_consented_language_server(cx);
+                view.attach_answered_language_server(&answered, cx);
                 for other in others {
-                    let _ =
-                        other.update(cx, |other, cx| other.attach_consented_language_server(cx));
+                    let _ = other.update(cx, |other, cx| {
+                        other.attach_answered_language_server(&answered, cx)
+                    });
                 }
             },
         );
+    }
+
+    fn attach_answered_language_server(&mut self, answered: &ConsentPair, cx: &mut Context<Self>) {
+        if self.language_server.consent() == Some(answered) {
+            self.attach_consented_language_server(cx);
+        }
     }
 
     pub(super) fn decline_language_server(&mut self, cx: &mut Context<Self>) {
@@ -439,6 +448,47 @@ mod tests {
             "every file of that root starts with the answer"
         );
         wait_for_server_state(&view, cx);
+    }
+
+    #[gpui::test]
+    fn start_for_one_root_never_attaches_a_view_that_now_asks_for_another_root(
+        cx: &mut TestAppContext,
+    ) {
+        let project = project();
+        install(cx, &config(true, &probe_command()), &project.trust);
+        let (view, cx) = open_first(cx, project.root.join("src/main.rs"), &project.root);
+        let other = open_another(cx, project.root.join("src/lib.rs"), &project.root);
+        let wider_root = project.root.parent().expect("parent").to_path_buf();
+        other.update(cx, |other, cx| {
+            other.detach_language_server(cx);
+            other.set_workspace_root(Some(wider_root.clone()));
+            other.refresh_language_server(cx);
+        });
+        cx.run_until_parked();
+        let asked = other
+            .read_with(cx, |other, _| {
+                other.language_server_link().consent().cloned()
+            })
+            .expect("a banner for the wider root");
+        assert_eq!(asked.root, wider_root);
+
+        view.update(cx, |view, cx| view.start_language_server(cx));
+        cx.run_until_parked();
+
+        assert!(is_attached(&view, cx));
+        assert!(
+            !is_attached(&other, cx),
+            "an answer for {} must not start a server for {}",
+            project.root.display(),
+            wider_root.display()
+        );
+        assert_eq!(
+            other.read_with(cx, |other, _| other
+                .language_server_link()
+                .consent()
+                .cloned()),
+            Some(asked)
+        );
     }
 
     #[gpui::test]
