@@ -10,6 +10,8 @@ pub(crate) mod first_frame;
 pub(crate) mod highlight;
 pub(crate) mod language_server;
 #[cfg(test)]
+pub(crate) mod language_server_fake;
+#[cfg(test)]
 mod lexer_compare;
 #[cfg(test)]
 mod lexer_parity;
@@ -25,6 +27,7 @@ mod oracle;
 mod perf_bench;
 pub(crate) mod rows;
 pub(crate) mod save;
+pub(crate) mod semantic;
 pub(crate) mod view;
 pub(crate) mod wrap;
 

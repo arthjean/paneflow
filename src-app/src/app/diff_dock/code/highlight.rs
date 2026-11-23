@@ -19,6 +19,7 @@ use crate::diff::{
 use super::document::{CodeDocument, CodeEdit};
 use super::first_frame::{FirstFrame, first_frame_for};
 use super::lexical::{Applied, LexJob, Lexed, LexicalLayer};
+use super::semantic::SemanticLayer;
 
 pub(crate) const SYNC_PARSE_BUDGET: Duration = Duration::from_millis(1);
 pub(crate) const INITIAL_PARSE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -226,6 +227,7 @@ impl DeferredParse {
 pub(crate) struct CodeHighlighter {
     syntax: DiffSyntax,
     lexical: Option<LexicalLayer>,
+    semantic: Option<SemanticLayer>,
     passes: Vec<GrammarPass>,
     rows: Vec<IndexedLineRuns>,
     row_states: Vec<RowState>,
@@ -280,6 +282,7 @@ impl CodeHighlighter {
         Self {
             syntax,
             lexical,
+            semantic: None,
             passes,
             rows: vec![Vec::new(); tracked_lines],
             row_states: vec![RowState::Stale; tracked_lines],
@@ -373,6 +376,53 @@ impl CodeHighlighter {
     }
 
     pub(crate) fn runs_into(&self, row: usize, out: &mut LineRuns) {
+        self.syntax_runs_into(row, out);
+        if let Some(semantic) = self
+            .semantic
+            .as_ref()
+            .filter(|semantic| semantic.has_tokens_on(row))
+        {
+            let mut top = LineRuns::new();
+            semantic.push_runs(row, &mut top);
+            let base = std::mem::take(out);
+            overlay_runs(&base, &top, out);
+        }
+    }
+
+    pub(crate) fn set_semantic_tokens(
+        &mut self,
+        tokens: &[paneflow_lsp::semantic_tokens::SemanticToken],
+        legend: &paneflow_lsp::protocol::TokenLegend,
+    ) {
+        self.semantic = Some(SemanticLayer::new(tokens, legend, &self.syntax));
+    }
+
+    pub(crate) fn clear_semantic_tokens(&mut self) -> bool {
+        self.semantic.take().is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_semantic_layer(&self) -> bool {
+        self.semantic.is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn syntax_runs(&self, row: usize) -> LineRuns {
+        let mut out = LineRuns::new();
+        self.syntax_runs_into(row, &mut out);
+        out
+    }
+
+    #[cfg(test)]
+    pub(crate) fn semantic_runs(&self, row: usize) -> LineRuns {
+        let mut out = LineRuns::new();
+        if let Some(semantic) = self.semantic.as_ref() {
+            semantic.push_runs(row, &mut out);
+        }
+        out
+    }
+
+    fn syntax_runs_into(&self, row: usize, out: &mut LineRuns) {
         out.clear();
         let fresh = self.row_states.get(row) == Some(&RowState::Fresh);
         let runs = self.rows.get(row).filter(|_| fresh);
@@ -419,6 +469,9 @@ impl CodeHighlighter {
         if let Some(lexical) = self.lexical.as_mut() {
             lexical.set_syntax(&syntax);
         }
+        if let Some(semantic) = self.semantic.as_mut() {
+            semantic.set_syntax(&syntax);
+        }
         self.syntax = syntax;
         for pass in &mut self.passes {
             pass.colors = capture_colors(pass.grammar, &self.syntax);
@@ -450,6 +503,9 @@ impl CodeHighlighter {
         }
         if edits.is_empty() {
             return Ok(HighlightOutcome::Synced);
+        }
+        if let Some(semantic) = self.semantic.as_mut() {
+            semantic.edit(edits);
         }
         self.plain_until_tree = false;
         if let Some(lexical) = self.lexical.as_mut() {
@@ -2441,5 +2497,153 @@ mod tests {
                 Err(format!("{warnings} warnings instead of one"))
             }
         });
+    }
+
+    fn layer3_legend() -> paneflow_lsp::protocol::TokenLegend {
+        paneflow_lsp::protocol::TokenLegend {
+            token_types: vec!["property".into(), "variable".into(), "lifetime".into()],
+            token_modifiers: Vec::new(),
+        }
+    }
+
+    fn layer3_token(
+        line: u32,
+        start: u32,
+        end: u32,
+        token_type: u32,
+    ) -> paneflow_lsp::semantic_tokens::SemanticToken {
+        paneflow_lsp::semantic_tokens::SemanticToken {
+            line,
+            start,
+            end,
+            token_type,
+            modifiers: 0,
+        }
+    }
+
+    fn color_at(runs: &LineRuns, byte: usize) -> Option<Hsla> {
+        runs.iter()
+            .find(|(range, _)| range.contains(&byte))
+            .map(|(_, color)| *color)
+    }
+
+    fn syntax_only(highlighter: &CodeHighlighter, row: usize) -> LineRuns {
+        highlighter.syntax_runs(row)
+    }
+
+    const LAYER3_TEXT: &str = "fn f(p: P) -> i32 {\n    let total = p.count;\n    total\n}\n";
+
+    fn assert_layer3_over(highlighter: &mut CodeHighlighter, layer: &str) {
+        let before = highlighter.runs(1);
+        assert!(!before.is_empty(), "{layer} colors the row on its own");
+        highlighter.set_semantic_tokens(
+            &[
+                layer3_token(1, 8, 13, 1),
+                layer3_token(1, 16, 17, 2),
+                layer3_token(1, 18, 23, 0),
+            ],
+            &layer3_legend(),
+        );
+        let after = highlighter.runs(1);
+        let palette = syntax();
+        let variable = palette.color_for_capture("variable");
+        let property = palette.color_for_capture("property");
+        for byte in 0.."    let total = p.count;".len() {
+            let expected = match byte {
+                8..13 => variable,
+                18..23 => property,
+                _ => color_at(&before, byte),
+            };
+            assert_eq!(
+                color_at(&after, byte),
+                expected,
+                "byte {byte} over {layer}: {after:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn layer_3_paints_mapped_tokens_over_layer_2_and_layer_2_shows_everywhere_else() {
+        let d = doc("layer3.rs", LAYER3_TEXT);
+        let mut h = parsed(&d);
+        fill_all(&mut h, &d);
+        assert!(!h.is_row_stale(1));
+        assert_layer3_over(&mut h, "layer 2");
+    }
+
+    #[test]
+    fn layer_3_paints_mapped_tokens_over_layer_1_before_the_tree_arrives() {
+        let d = doc("layer3.rs", LAYER3_TEXT);
+        let mut h = CodeHighlighter::new(&d, syntax());
+        h.settle_lexical_for_test(&d);
+        assert!(!h.has_tree());
+        assert_layer3_over(&mut h, "layer 1");
+    }
+
+    #[test]
+    fn an_edit_shifts_layer_3_on_unedited_rows_and_paints_none_on_edited_rows() {
+        let text = "let a = b;\nlet a = b;\nlet a = b;\nlet a = b;\n";
+        let mut d = doc("shift.rs", text);
+        let mut h = parsed(&d);
+        fill_all(&mut h, &d);
+        let tokens: Vec<_> = (0..4).map(|line| layer3_token(line, 4, 5, 0)).collect();
+        h.set_semantic_tokens(&tokens, &layer3_legend());
+        let property = syntax().color_for_capture("property");
+        assert_ne!(color_at(&syntax_only(&h, 0), 4), property);
+
+        let at = d.line_to_byte(1);
+        let split = d.insert(at, "\n").expect("insert a line");
+        h.edit(&d, &split);
+        let typed_at = d.line_to_byte(3) + 2;
+        let typed = d.insert(typed_at, "x").expect("type on a row");
+        h.edit(&d, &typed);
+
+        for row in [0, 4] {
+            assert_eq!(
+                color_at(&h.runs(row), 4),
+                property,
+                "row {row} keeps its token at its shifted place"
+            );
+        }
+        for row in [1, 2, 3] {
+            assert_eq!(
+                h.runs(row),
+                syntax_only(&h, row),
+                "edited row {row} shows no layer-3 color"
+            );
+        }
+    }
+
+    #[test]
+    fn a_new_response_shows_only_its_own_tokens() {
+        let d = doc("replace.rs", "let a = b;\nlet a = b;\n");
+        let mut h = parsed(&d);
+        fill_all(&mut h, &d);
+        let property = syntax().color_for_capture("property");
+        h.set_semantic_tokens(&[layer3_token(0, 4, 5, 0)], &layer3_legend());
+        assert_eq!(color_at(&h.runs(0), 4), property);
+        h.set_semantic_tokens(&[layer3_token(1, 8, 9, 0)], &layer3_legend());
+        assert_eq!(h.runs(0), syntax_only(&h, 0));
+        assert_eq!(color_at(&h.runs(1), 8), property);
+        assert_eq!(color_at(&h.runs(1), 4), color_at(&syntax_only(&h, 1), 4));
+    }
+
+    #[test]
+    fn a_theme_switch_recolors_layer_3_from_the_tokens_it_already_has() {
+        let d = doc("theme.rs", "let a = b;\n");
+        let mut h = parsed(&d);
+        fill_all(&mut h, &d);
+        h.set_semantic_tokens(&[layer3_token(0, 4, 5, 0)], &layer3_legend());
+        let mut palette = syntax().palette();
+        palette.property = gpui::hsla(0.5, 0.9, 0.5, 1.0);
+        assert_ne!(
+            Some(palette.property),
+            syntax().color_for_capture("property")
+        );
+        h.set_syntax(DiffSyntax::from_palette(palette));
+        assert_eq!(color_at(&h.runs(0), 4), Some(palette.property));
+        assert!(h.clear_semantic_tokens());
+        assert!(!h.has_semantic_layer());
+        assert_eq!(h.runs(0), syntax_only(&h, 0));
     }
 }

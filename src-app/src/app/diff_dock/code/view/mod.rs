@@ -6,6 +6,8 @@ mod find;
 mod input_handler;
 mod keymap;
 mod language_server_link;
+#[cfg(test)]
+mod layer3_tests;
 mod motion;
 mod pointer;
 mod preview;
@@ -971,6 +973,7 @@ impl CodeView {
         } else {
             0..INITIAL_HIGHLIGHT_ROWS.min(line_count)
         };
+        self.show_language_server_rows(rows.clone());
         let budget = self.highlight_budget;
         let minimap_rows = self
             .navigation

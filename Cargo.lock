@@ -4387,6 +4387,7 @@ dependencies = [
  "clap",
  "core-foundation",
  "core-text",
+ "ctor",
  "ctrlc",
  "dirs",
  "env_logger",

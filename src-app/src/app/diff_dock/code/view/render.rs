@@ -154,6 +154,24 @@ impl CodeView {
                     .into_any_element(),
             );
         }
+        if let Some(notice) = server_notice(self.language_server_link()) {
+            let mut banner = row().bg(ui.overlay).text_color(ui.text).child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .debug_selector(|| SERVER_NOTICE_TEXT.into())
+                    .child(notice.text),
+            );
+            if notice.restart {
+                banner = banner.child(conflict_button(
+                    "code-language-server-restart",
+                    "Restart",
+                    ui,
+                    cx.listener(|this, _: &MouseDownEvent, _w, _cx| this.restart_language_server()),
+                ));
+            }
+            out.push(banner.into_any_element());
+        }
         if let Some(message) = &self.save_error {
             out.push(
                 row()
@@ -402,6 +420,72 @@ pub(super) fn consent_text(server_id: &str, root: &std::path::Path) -> String {
     )
 }
 
+pub(super) const SERVER_NOTICE_TEXT: &str = "code-language-server-notice-text";
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct ServerNotice {
+    pub(super) text: String,
+    pub(super) restart: bool,
+}
+
+fn missing_text(server_id: &str, command: &str) -> String {
+    if std::path::Path::new(command).is_absolute() {
+        format!(
+            "{server_id} was not found: {command} is not a file. Install it there, or change \
+             its command in paneflow.json."
+        )
+    } else if paneflow_lsp::resolve::has_separator(command) {
+        format!(
+            "{server_id} was not found: {command} is a relative path, which is never run. Set a \
+             command name found on PATH or an absolute path in paneflow.json."
+        )
+    } else {
+        format!(
+            "{server_id} was not found: no {command} on PATH. Install it, or set an absolute \
+             command for it in paneflow.json."
+        )
+    }
+}
+
+pub(super) fn server_notice(
+    link: &super::super::language_server::LanguageServerLink,
+) -> Option<ServerNotice> {
+    use super::super::language_server::LanguageServerLink;
+    use paneflow_lsp::ServerState;
+    let attachment = match link {
+        LanguageServerLink::Missing { server_id, command } => {
+            return Some(ServerNotice {
+                text: missing_text(server_id, command),
+                restart: false,
+            });
+        }
+        LanguageServerLink::Attached(attachment) => attachment,
+        _ => return None,
+    };
+    let server_id = &attachment.key().server_id;
+    match attachment.state()? {
+        ServerState::Missing { command } => Some(ServerNotice {
+            text: missing_text(server_id, command),
+            restart: false,
+        }),
+        ServerState::Crashed { stderr } => {
+            let last = stderr.iter().rev().find(|line| !line.trim().is_empty());
+            Some(ServerNotice {
+                text: match last {
+                    Some(line) => format!("{server_id} stopped. Its last output: {}", line.trim()),
+                    None => format!("{server_id} stopped."),
+                },
+                restart: true,
+            })
+        }
+        ServerState::Failed { message } => Some(ServerNotice {
+            text: format!("{server_id} could not start: {message}"),
+            restart: true,
+        }),
+        ServerState::Starting | ServerState::Running | ServerState::Stopped => None,
+    }
+}
+
 pub(super) fn conflict_button(
     id: &'static str,
     label: &'static str,
@@ -433,6 +517,28 @@ mod tests {
     use super::super::tests::*;
     use super::*;
     use crate::app::diff_dock::code::highlight::MAX_QUERY_ROWS;
+
+    #[test]
+    fn the_missing_banner_names_the_command_and_why_it_was_not_found() {
+        let bare = missing_text("rust-analyzer", "rust-analyzer");
+        assert!(
+            bare.contains("not found: no rust-analyzer on PATH"),
+            "{bare}"
+        );
+        let absolute = std::env::temp_dir().join("paneflow-no-such-server");
+        let absolute = absolute.to_string_lossy();
+        let named = missing_text("rust-analyzer", &absolute);
+        assert!(
+            named.contains(&format!("not found: {absolute} is not a file")),
+            "{named}"
+        );
+        assert!(!named.contains("on PATH"), "{named}");
+        let relative = missing_text("rust-analyzer", "./bin/rust-analyzer");
+        assert!(
+            relative.contains("not found: ./bin/rust-analyzer is a relative path"),
+            "{relative}"
+        );
+    }
 
     fn scroll_to(view: &Entity<CodeView>, cx: &mut VisualTestContext, rows: f64) {
         view.update(cx, |view, cx| {

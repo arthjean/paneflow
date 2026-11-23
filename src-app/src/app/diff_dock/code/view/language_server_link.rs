@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 
 use gpui::Context;
-use paneflow_lsp::TextChange;
+use paneflow_lsp::protocol::TokenLegend;
+use paneflow_lsp::semantic_tokens::SemanticToken;
+use paneflow_lsp::{DocumentId, ServerState, TextChange};
 
 use super::super::language_server::{
     self, CheckOutcome, ConsentPair, LanguageServerLink, attach, check_blocking,
@@ -56,10 +58,22 @@ impl CodeView {
         match outcome {
             CheckOutcome::OutsideRoot => self.language_server = LanguageServerLink::Off,
             CheckOutcome::Missing { key, command } => {
-                self.language_server = LanguageServerLink::Off;
-                if let Some(client) = language_server::hub(cx).client() {
-                    client.report_missing(key, command);
+                if let Some(client) = language_server::client(cx) {
+                    client.report_missing(key.clone(), command.clone());
                 }
+                let pair = ConsentPair {
+                    server_id: key.server_id.clone(),
+                    root: key.root,
+                };
+                self.language_server = if language_server::hub(cx).first_missing_notice(pair) {
+                    LanguageServerLink::Missing {
+                        server_id: key.server_id,
+                        command,
+                    }
+                } else {
+                    LanguageServerLink::Off
+                };
+                cx.notify();
             }
             CheckOutcome::Allowed(plan) => {
                 self.language_server = LanguageServerLink::NeedsConsent(Box::new(plan));
@@ -90,8 +104,9 @@ impl CodeView {
         else {
             return;
         };
+        let view = cx.weak_entity();
         if let Some(text) = self.state.document().map(|doc| doc.text().clone())
-            && let Some(attachment) = attach(language_server::hub(cx), *plan, text)
+            && let Some(attachment) = attach(*plan, text, view, cx)
         {
             self.language_server = LanguageServerLink::Attached(attachment);
         }
@@ -99,11 +114,77 @@ impl CodeView {
     }
 
     pub(crate) fn detach_language_server(&mut self, cx: &mut Context<Self>) {
+        self.clear_semantic_tokens(cx);
         if matches!(self.language_server, LanguageServerLink::Off) {
             return;
         }
+        if let Some(attachment) = self.language_server.attachment() {
+            let document = attachment.document();
+            language_server::hub(cx).forget_view(document);
+        }
         self.language_server = LanguageServerLink::Off;
         cx.notify();
+    }
+
+    fn clear_semantic_tokens(&mut self, cx: &mut Context<Self>) {
+        if let Some((_, highlighter)) = self.state.editable()
+            && highlighter.clear_semantic_tokens()
+        {
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn apply_semantic_tokens(
+        &mut self,
+        document: DocumentId,
+        revision: u64,
+        tokens: &[SemanticToken],
+        legend: &TokenLegend,
+        cx: &mut Context<Self>,
+    ) {
+        let current = self.language_server.attachment().is_some_and(|attachment| {
+            attachment.document() == document && attachment.revision() == revision
+        });
+        if !current {
+            return;
+        }
+        if let Some((_, highlighter)) = self.state.editable() {
+            highlighter.set_semantic_tokens(tokens, legend);
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn language_server_state_changed(
+        &mut self,
+        document: DocumentId,
+        state: ServerState,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(attachment) = self
+            .language_server
+            .attachment_mut()
+            .filter(|attachment| attachment.document() == document)
+        else {
+            return;
+        };
+        let running = state == ServerState::Running;
+        attachment.set_state(state);
+        if !running {
+            self.clear_semantic_tokens(cx);
+        }
+        cx.notify();
+    }
+
+    pub(super) fn restart_language_server(&mut self) {
+        if let Some(attachment) = self.language_server.attachment() {
+            attachment.restart();
+        }
+    }
+
+    pub(super) fn show_language_server_rows(&self, rows: std::ops::Range<usize>) {
+        if let Some(attachment) = self.language_server.attachment() {
+            attachment.show_rows(rows);
+        }
     }
 
     pub(super) fn start_language_server(&mut self, cx: &mut Context<Self>) {
@@ -245,6 +326,7 @@ mod tests {
         let trust = trust.to_path_buf();
         let config = config.clone();
         let log = sent.clone();
+        cx.executor().allow_parking();
         cx.update(move |cx| {
             crate::config_snapshot::publish(&config, cx);
             let mut hub = LanguageServerHub::with_trust_path(Some(trust));
@@ -259,6 +341,7 @@ mod tests {
         path: PathBuf,
         root: &Path,
     ) -> (Entity<CodeView>, &'a mut VisualTestContext) {
+        cx.executor().allow_parking();
         super::super::disk_sync::WATCHER_OFF.with(|off| off.set(true));
         let root = root.to_path_buf();
         let (view, cx) = cx.add_window_view(move |_window, cx| {
@@ -294,6 +377,15 @@ mod tests {
     fn is_off(view: &Entity<CodeView>, cx: &mut VisualTestContext) -> bool {
         view.read_with(cx, |view, _| {
             matches!(view.language_server_link(), LanguageServerLink::Off)
+        })
+    }
+
+    fn is_missing(view: &Entity<CodeView>, cx: &mut VisualTestContext) -> bool {
+        view.read_with(cx, |view, _| {
+            matches!(
+                view.language_server_link(),
+                LanguageServerLink::Missing { .. }
+            )
         })
     }
 
@@ -364,7 +456,7 @@ mod tests {
             &project.trust,
         );
         let (view, cx) = open_first(cx, project.root.join("src/main.rs"), &project.root);
-        assert!(is_off(&view, cx));
+        assert!(is_missing(&view, cx));
         let client = cx.update(|_window, cx| {
             cx.try_global::<LanguageServerHub>()
                 .and_then(LanguageServerHub::running_client)
@@ -401,7 +493,7 @@ mod tests {
         let command = installed.to_string_lossy().into_owned();
         install(cx, &config(true, &command), &project.trust);
         let (view, cx) = open_first(cx, project.root.join("src/main.rs"), &project.root);
-        assert!(is_off(&view, cx));
+        assert!(is_missing(&view, cx));
 
         std::fs::create_dir_all(installed.parent().expect("bin dir")).expect("bin dir");
         std::os::unix::fs::symlink(std::env::current_exe().expect("test binary"), &installed)

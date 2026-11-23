@@ -52,7 +52,7 @@ pub fn resolve_command_in(
         .map_err(|_| ResolveError::NotFound(command.to_string()))
 }
 
-fn has_separator(command: &str) -> bool {
+pub fn has_separator(command: &str) -> bool {
     command.contains('/') || (cfg!(windows) && command.contains('\\'))
 }
 

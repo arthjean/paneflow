@@ -37,7 +37,7 @@ focused library crates:
 | `paneflow-acp` | `crates/paneflow-acp/` | Legacy Claude/Codex identity enum plus the `CLAUDECODE` environment scrub |
 | `paneflow-colrv1` | `crates/paneflow-colrv1/` | COLRv1 color-glyph rasterizer (skrifa paint graph onto tiny-skia, gradients interpolated in linear light) called by the vendored `vendor/gpui_wgpu` Linux text system, whose swash backend reads only COLRv0 and CBDT emoji |
 | `paneflow-highlights` | `crates/paneflow-highlights/` | Pierre's 152 lexers (`@pierre/highlights`) translated to C by wasm2c, compiled by `cc` with bounds-checked memory and no signal handlers, behind a safe live-tokenizer API with byte ranges; layer 1 of the editor's highlighting |
-| `paneflow-lsp` | `crates/paneflow-lsp/` | Minimal Language Server Protocol client for semantic tokens: `Content-Length` framing with a 64 MiB message cap, one server per (server id, Files dock root) on background threads, one automatic restart, `shutdown` then `exit` then a kill after 5 s, incremental document sync in the negotiated `utf-8` or `utf-16` encoding, command resolution from `PATH` or an absolute path only, and the per-root consent store `~/.paneflow/language-server-trust.json` |
+| `paneflow-lsp` | `crates/paneflow-lsp/` | Minimal Language Server Protocol client for semantic tokens: `Content-Length` framing with a 64 MiB message cap, one server per (server id, Files dock root) on background threads, one automatic restart, `shutdown` then `exit` then a kill after 5 s, incremental document sync in the negotiated `utf-8` or `utf-16` encoding, semantic token requests (`full` after `didOpen`, `full/delta` from the last `resultId`, `range` for the visible rows on a range-only server, one request in flight per document plus one follow-up, every open document again on `workspace/semanticTokens/refresh`, `$/cancelRequest` on close) decoded off the render thread into per-line byte ranges and never delivered for an older document revision, command resolution from `PATH` or an absolute path only, and the per-root consent store `~/.paneflow/language-server-trust.json` |
 | `paneflow-telemetry` | `crates/paneflow-telemetry/` | Opt-in telemetry plumbing (no event leaves the machine unless consent resolves to `true`) |
 
 `src-app` is the default workspace member, so bare `cargo run` starts the
@@ -247,6 +247,23 @@ The diff view uses layer 1 only for a side whose extension has no grammar
 (`diff/lexical.rs`), under the same `highlight_cap`; the side store's key
 carries the lexer language, so a `Dockerfile` and a `Makefile` with the same
 text are kept apart.
+
+Layer 3 is the semantic tokens of a language server (`code/semantic.rs`),
+present only while a document is attached to a running server. The client
+thread decodes each answer and delivers it through `LanguageServerHub`, whose
+foreground task hands it to the view; the view installs it only when its
+revision equals the count of edits it has sent, so an answer computed for older
+text is never painted. Each token type maps to a capture name resolved by
+`DiffSyntax::color_for_capture` (TD-09 of the layered highlighting PRD), and a
+type with no mapping stays transparent, so a theme switch recolors all three
+layers alike. `runs_into` overlays the mapped tokens on the layer-2 or layer-1
+runs of the row. An edit drops the tokens of the rows it touches and shifts
+the rows after it until the next answer replaces the whole set. A server that
+leaves the `Running` state, a detached document and a turned-off
+`editor.semantic_tokens` all drop the layer; with the setting off it is never
+allocated. The editor's banner area reports a `Missing` server once per server
+and root in a session, and a `Crashed` (last stderr line) or `Failed`
+(`initialize` error) server with a Restart button.
 
 ## Files tree
 

@@ -436,6 +436,11 @@ windows-sys = { version = "0.59", features = [
 ] }
 
 [dev-dependencies]
+# The editor's layer-3 tests start this test binary as a fake language server:
+# a constructor that runs before libtest serves LSP on stdin and stdout when
+# the process is spawned with `--paneflow-fake-language-server`, so no libtest
+# banner corrupts the framing. Already in the lockfile through GPUI on macOS.
+ctor = "1.0.13"
 # `profiler` gates `gpui::profiler::FrameTimingCollector`, which the
 # `layout::render` frame-pacing benchmark reads to measure dirty-to-draw
 # latency. Test-only: `cargo build` does not resolve dev-dependencies, so the
