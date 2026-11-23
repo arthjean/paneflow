@@ -33,17 +33,33 @@
     {
       "id": "EP-004",
       "title": "Sandboxed agent panes",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
-      "stories_total": 8,
-      "stories_done": 0
+      "stories_total": 6,
+      "stories_done": 6
     },
     {
       "id": "EP-005",
       "title": "Real-hardware validation",
       "status": "TODO",
       "priority": "P0",
-      "stories_total": 5,
+      "stories_total": 1,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-006",
+      "title": "Windows tests and validation",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 3,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-007",
+      "title": "macOS tests and validation",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 3,
       "stories_done": 0
     }
   ],
@@ -316,113 +332,111 @@
       "id": "US-021",
       "title": "Give each sandboxed pane its own host and worker endpoints",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "blocked_by": [
         "US-007"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-23T14:53:12+01:00",
+      "completed_at": "2026-11-23T16:10:41+01:00",
+      "reviewed_at": "2026-11-23T16:10:41+01:00"
     },
     {
       "id": "US-022",
       "title": "Give each sandboxed pane its own window endpoint",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "blocked_by": [
         "US-021"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-23T15:23:24+01:00",
+      "completed_at": "2026-11-23T16:10:41+01:00",
+      "reviewed_at": "2026-11-23T16:10:41+01:00"
     },
     {
       "id": "US-023",
       "title": "Prove bubblewrap on the Linux targets",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-23T14:53:12+01:00",
+      "completed_at": "2026-11-23T17:08:54+01:00",
+      "reviewed_at": "2026-11-23T17:08:54+01:00"
     },
     {
       "id": "US-024",
       "title": "Run a Linux pane under bubblewrap",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "blocked_by": [
         "US-022",
         "US-023"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-23T15:23:24+01:00",
+      "completed_at": "2026-11-23T16:10:41+01:00",
+      "reviewed_at": "2026-11-23T16:10:41+01:00"
     },
     {
       "id": "US-025",
       "title": "Add Landlock scoping inside the Linux sandbox",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "blocked_by": [
         "US-024"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-23T15:23:24+01:00",
+      "completed_at": "2026-11-23T16:10:41+01:00",
+      "reviewed_at": "2026-11-23T16:10:41+01:00"
     },
     {
       "id": "US-026",
       "title": "Run a macOS pane under a Seatbelt profile",
-      "epic": "EP-004",
-      "status": "TODO",
+      "epic": "EP-007",
+      "status": "BLOCKED",
       "priority": "P2",
       "blocked_by": [
         "US-022"
       ],
-      "started_at": null,
+      "started_at": "2026-11-23T15:23:24+01:00",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-11-23T16:10:41+01:00",
+      "blocked_reason": "Seatbelt wrap written and reviewed by inspection only; needs a macOS run (US-032)"
     },
     {
       "id": "US-027",
       "title": "Run a Windows pane with a restricted token",
-      "epic": "EP-004",
-      "status": "TODO",
+      "epic": "EP-006",
+      "status": "BLOCKED",
       "priority": "P2",
       "blocked_by": [
         "US-022"
       ],
-      "started_at": null,
+      "started_at": "2026-11-23T15:23:24+01:00",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-11-23T16:10:41+01:00",
+      "blocked_reason": "restricted-token wrap written and reviewed by inspection only; needs a Windows run (US-033); restricting SIDs are the per-pane SID and a shared sandbox SID granted on cwd, %TEMP% and session data, not the SIDs the cwd grants"
     },
     {
       "id": "US-028",
       "title": "Show sandbox state and refuse silent downgrades",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "blocked_by": [
-        "US-024",
-        "US-026",
-        "US-027",
-        "US-032",
-        "US-033"
+        "US-024"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-23T15:45:51+01:00",
+      "completed_at": "2026-11-23T17:08:54+01:00",
+      "reviewed_at": "2026-11-23T17:08:54+01:00"
     },
     {
       "id": "US-029",
       "title": "Validate layer 1 on macOS hardware",
-      "epic": "EP-005",
+      "epic": "EP-007",
       "status": "TODO",
       "priority": "P0",
       "blocked_by": [
@@ -437,7 +451,7 @@
     {
       "id": "US-030",
       "title": "Validate layer 1 on Windows hardware",
-      "epic": "EP-005",
+      "epic": "EP-006",
       "status": "TODO",
       "priority": "P0",
       "blocked_by": [
@@ -465,7 +479,7 @@
     {
       "id": "US-032",
       "title": "Validate the macOS sandbox on hardware",
-      "epic": "EP-005",
+      "epic": "EP-007",
       "status": "TODO",
       "priority": "P2",
       "blocked_by": [
@@ -478,7 +492,7 @@
     {
       "id": "US-033",
       "title": "Validate the Windows sandbox on hardware",
-      "epic": "EP-005",
+      "epic": "EP-006",
       "status": "TODO",
       "priority": "P2",
       "blocked_by": [

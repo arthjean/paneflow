@@ -6,6 +6,10 @@
 | Version | Date | Author | Summary |
 |---------|------|--------|---------|
 | 1.0 | 2026-11-21 | Arthur Jean | Initial PRD, from the EP-008 review of the Lua scripting PRD (an automated security review flagged `layout.apply` and `layout.sweep`), a code map of the three IPC servers, and two research passes on peer credentials, process containment and agent sandboxes. Three layers: kernel-attested caller identity with one authorization point, per-pane grants held by the worker, opt-in OS sandboxes for agent panes; plus a real-hardware epic. 5 epics, 33 stories. |
+| 1.1 | 2026-11-23 | Arthur Jean | EP-004: Landlock pathname-socket scoping (ABI 9) becomes an opt-in, `sandbox_unix_scope: true`, because a Landlock domain that handles file-system rights forbids mounts and so breaks the bubblewrap that Claude Code and Codex start inside the pane; ABI 6 abstract-socket scoping stays on for every sandboxed pane. US-025's second criterion is rewritten to match, and the Linux sandbox report (US-023) is added. |
+| 1.2 | 2026-11-23 | Arthur Jean | EP-004 review: the Linux sandbox no longer re-exposes the D-Bus session bus, the systemd user sockets and the accessibility bus (`bus`, `systemd`, `at-spi`, `.dbus-proxy` in the runtime directory). With them a sandboxed process started a process outside the sandbox with `systemd-run --user`, measured on Fedora 45, which then saw every shared endpoint. Known remaining limits (X11, other command-running sockets, a local SSH server) are in `docs/user/scripting.md`; a filtering D-Bus proxy is an open question. |
+| 1.3 | 2026-11-23 | Arthur Jean | The stories that need a Windows machine (US-027, US-030, US-033) move to a final epic EP-006, and those that need a Mac (US-026, US-029, US-032) to a final epic EP-007. EP-004 keeps the endpoints, the Linux sandbox and US-028; EP-005 keeps the Linux kernel matrix (US-031). Story ids, criteria and dependencies are unchanged. 7 epics, 33 stories. |
+| 1.4 | 2026-11-23 | Arthur Jean | EP-004 closed. The Linux sandbox report is measured on five distributions in KVM virtual machines (`scripts/sandbox-matrix.sh`): Ubuntu 24.04 is unsupported as installed. The runtime directory of a sandboxed pane is an allowlist (Wayland, PipeWire, PulseAudio, GnuPG, the SSH agent), replacing v1.2's list of refused entries. The config offers `sandbox: "paneflow"` on Linux only until EP-006 and EP-007 validate Windows and macOS, so US-028 no longer waits for them; US-032 and US-033 each gain the criterion that turns their platform on. The CLI now reaches the worker through the pane endpoint from a sandboxed pane (`paneflow split` failed there). |
 
 ## Problem Statement
 
@@ -47,7 +51,7 @@ EP-002 enforces the `Gate` each method already declares (`crates/paneflow-api/sr
 
 **Layer 3: identity that cannot be escaped (EP-004).** Layer 1 holds against a confused agent, but a hostile process of the same user can leave a pane's classification (`setsid` plus a double fork on Unix). An agent profile can opt into a sandbox where Paneflow's own endpoints and other panes' processes are out of reach, and where the pane reaches each server through an endpoint that server created for that pane alone: every connection on it is that pane, after Wayland's `security-context-v1` model ([wayland.app](https://wayland.app/protocols/security-context-v1)). Linux uses bubblewrap namespaces (Codex's default, R8) with Landlock scoping where the kernel has it; macOS uses a Seatbelt profile that denies `network-outbound` to Paneflow's sockets (as Anthropic's sandbox-runtime does, R9); Windows uses a write-restricted token with a per-pane SID (Codex's unelevated approach, R8). The sandbox confines access to Paneflow and to other panes only.
 
-EP-005 runs the Windows and macOS checks on real hardware and the Linux kernel matrix, split so that the layer-1 checks never wait for the P2 sandbox.
+EP-005 exercises the Linux kernel matrix. EP-006 holds every story that needs a Windows machine and EP-007 every story that needs a Mac, each run in one pass on real hardware; inside them the layer-1 checks stay separate stories from the sandbox checks, so they never wait for the P2 sandbox.
 
 ## Non-Goals
 
@@ -115,7 +119,7 @@ The conductor documentation tells users to set `PANEFLOW_IPC_SCRIPTING=1` for `s
 | A1 | Every pane's root process is a session leader on Linux and macOS (portable-pty `setsid`). | Low (code read, `portable-pty-0.9.0/src/unix.rs:257`) | US-004 tests |
 | A2 | A Job Object assigned right after ConPTY spawns the child contains the pane's tree, the console host aside. | High (R6) | US-030 |
 | A3 | `GetNamedPipeClientProcessId` cannot be set by an unprivileged client. | High (R5) | US-030; US-003 also compares the impersonated token's user |
-| A4 | bubblewrap can create user namespaces on Ubuntu 24.04, where AppArmor restricts unprivileged user namespaces by default. | High (memory, not researched) | US-023 |
+| A4 | bubblewrap can create user namespaces on Ubuntu 24.04, where AppArmor restricts unprivileged user namespaces by default. | Disproved by US-023: it cannot as installed; it can with `kernel.apparmor_restrict_unprivileged_userns=0` | US-023 |
 | A5 | A Seatbelt `network-outbound` rule matches Paneflow's socket paths on every supported macOS release. | High (R9) | US-032 |
 | A6 | Claude Code and Codex still run their own sandbox inside a Paneflow sandbox. | Medium | US-023, US-032 |
 | A7 | A Seatbelt profile that allows by default can deny `process-info*` and `signal` toward processes outside the pane. | High (not researched) | US-032 |
@@ -455,13 +459,13 @@ An agent profile can run in a sandbox where Paneflow's shared endpoints and othe
 **Dependencies:** Blocked by US-007
 
 **Acceptance Criteria:**
-- [ ] Given a pane launched with a sandboxed profile, when its session is created, then the host creates an endpoint for it in the home's directory `panes/<session>/`
-- [ ] Given that session, when the worker learns it from the host, then the worker creates its endpoint for the pane in the same directory
-- [ ] Given those endpoints, when the pane starts, then its environment names them in `PANEFLOW_PANE_HOST_ENDPOINT` and `PANEFLOW_PANE_SERVE_ENDPOINT`
-- [ ] Given a client in the pane, when it resolves the host or the worker endpoint, then `paneflow_home` returns the pane variable's path, and only when that path lies under the home's `panes/` directory
-- [ ] Given a connection on a pane endpoint, when it is accepted, then its principal is that `Pane` without `peer.classify`
-- [ ] Given the pane's session ending, when it ends, then the host and the worker close and remove their endpoints for it
-- [ ] Given an endpoint that cannot be created, when the session starts, then the sandboxed pane does not start and shows the launch-failure state with the OS error
+- [x] Given a pane launched with a sandboxed profile, when its session is created, then the host creates an endpoint for it in the home's directory `panes/<session>/`
+- [x] Given that session, when the worker learns it from the host, then the worker creates its endpoint for the pane in the same directory
+- [x] Given those endpoints, when the pane starts, then its environment names them in `PANEFLOW_PANE_HOST_ENDPOINT` and `PANEFLOW_PANE_SERVE_ENDPOINT`
+- [x] Given a client in the pane, when it resolves the host or the worker endpoint, then `paneflow_home` returns the pane variable's path, and only when that path lies under the home's `panes/` directory
+- [x] Given a connection on a pane endpoint, when it is accepted, then its principal is that `Pane` without `peer.classify`
+- [x] Given the pane's session ending, when it ends, then the host and the worker close and remove their endpoints for it
+- [x] Given an endpoint that cannot be created, when the session starts, then the sandboxed pane does not start and shows the launch-failure state with the OS error
 
 #### US-022: Give each sandboxed pane its own window endpoint
 **Description:** As the maintainer, I want the window to listen on one endpoint per sandboxed pane, so that window-owned methods reach it from a sandbox.
@@ -470,12 +474,12 @@ An agent profile can run in a sandbox where Paneflow's shared endpoints and othe
 **Dependencies:** Blocked by US-021
 
 **Acceptance Criteria:**
-- [ ] Given a running window and a sandboxed pane, when the pane's session exists, then the window creates its endpoint for it in `panes/<session>/`
-- [ ] Given a window that starts after the pane, when it starts, then it creates that endpoint for every sandboxed pane the host lists
-- [ ] Given the pane's environment, when it starts, then `PANEFLOW_PANE_WINDOW_ENDPOINT` names that endpoint
-- [ ] Given an isolated home (`PANEFLOW_HOME` set), when a client in the pane resolves the window endpoint, then the pane variable is honored without `PANEFLOW_ALLOW_SOCKET_OVERRIDE` because its path lies under the home's `panes/` directory (`crates/paneflow-home/src/endpoint.rs:153-167` ignores a foreign `PANEFLOW_SOCKET_PATH`)
-- [ ] Given no window running, when the pane calls a window-owned method, then it fails with the existing "no window" reason
-- [ ] Given a connection on the window's pane endpoint, when it is accepted, then its principal is that `Pane`
+- [x] Given a running window and a sandboxed pane, when the pane's session exists, then the window creates its endpoint for it in `panes/<session>/`
+- [x] Given a window that starts after the pane, when it starts, then it creates that endpoint for every sandboxed pane the host lists
+- [x] Given the pane's environment, when it starts, then `PANEFLOW_PANE_WINDOW_ENDPOINT` names that endpoint
+- [x] Given an isolated home (`PANEFLOW_HOME` set), when a client in the pane resolves the window endpoint, then the pane variable is honored without `PANEFLOW_ALLOW_SOCKET_OVERRIDE` because its path lies under the home's `panes/` directory (`crates/paneflow-home/src/endpoint.rs:153-167` ignores a foreign `PANEFLOW_SOCKET_PATH`)
+- [x] Given no window running, when the pane calls a window-owned method, then it fails with the existing "no window" reason
+- [x] Given a connection on the window's pane endpoint, when it is accepted, then its principal is that `Pane`
 
 #### US-023: Prove bubblewrap on the Linux targets
 **Description:** As the maintainer, I want to know where bubblewrap works and with which agents, so that the Linux sandbox is designed on facts.
@@ -484,10 +488,10 @@ An agent profile can run in a sandbox where Paneflow's shared endpoints and othe
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given Ubuntu 22.04, Ubuntu 24.04 (AppArmor's user-namespace restriction on), Fedora, Debian 13, Arch and openSUSE Leap 16, when `bwrap --unshare-all --die-with-parent` runs a shell started by Paneflow's host, then the report states per distribution whether it started
-- [ ] Given a distribution where it fails, when the report is read, then it gives the exact error and names the setting or AppArmor profile that would allow it
-- [ ] Given Claude Code and Codex started inside that sandbox with their own sandbox enabled, when each runs one sandboxed command, then the report states whether it ran
-- [ ] Given the report, when it is written, then it is a section of this PRD listing the supported distributions
+- [x] Given Ubuntu 22.04, Ubuntu 24.04 (AppArmor's user-namespace restriction on), Fedora, Debian 13, Arch and openSUSE Leap 16, when `bwrap --unshare-all --die-with-parent` runs a shell started by Paneflow's host, then the report states per distribution whether it started
+- [x] Given a distribution where it fails, when the report is read, then it gives the exact error and names the setting or AppArmor profile that would allow it
+- [x] Given Claude Code and Codex started inside that sandbox with their own sandbox enabled, when each runs one sandboxed command, then the report states whether it ran
+- [x] Given the report, when it is written, then it is a section of this PRD listing the supported distributions
 
 #### US-024: Run a Linux pane under bubblewrap
 **Description:** As a user, I want an agent profile to run in a sandbox that hides Paneflow and other panes, so that the agent reaches Paneflow only through its own pane.
@@ -496,12 +500,12 @@ An agent profile can run in a sandbox where Paneflow's shared endpoints and othe
 **Dependencies:** Blocked by US-022, US-023
 
 **Acceptance Criteria:**
-- [ ] Given a profile with `sandbox: "paneflow"` on Linux, when its pane launches, then the shell runs under bubblewrap with new user, PID, mount and cgroup namespaces, `--die-with-parent` and `no_new_privs`
-- [ ] Given that sandbox, when a process lists `XDG_RUNTIME_DIR` and Paneflow's home, then the shared window, worker and host endpoints are absent
-- [ ] Given that sandbox, when a process lists the pane's endpoint directory, then the pane's endpoints are present
-- [ ] Given that sandbox, when a process reads `/proc`, then only processes of the pane are listed
-- [ ] Given the pane's working directory and the agent's configuration directories, when the pane runs, then they are writable as without the sandbox
-- [ ] Given `bwrap` missing or refusing, when the pane launches, then it does not start and shows the launch-failure state naming `bwrap` and its error
+- [x] Given a profile with `sandbox: "paneflow"` on Linux, when its pane launches, then the shell runs under bubblewrap with new user, PID, mount and cgroup namespaces, `--die-with-parent` and `no_new_privs`
+- [x] Given that sandbox, when a process lists `XDG_RUNTIME_DIR` and Paneflow's home, then the shared window, worker and host endpoints are absent
+- [x] Given that sandbox, when a process lists the pane's endpoint directory, then the pane's endpoints are present
+- [x] Given that sandbox, when a process reads `/proc`, then only processes of the pane are listed
+- [x] Given the pane's working directory and the agent's configuration directories, when the pane runs, then they are writable as without the sandbox
+- [x] Given `bwrap` missing or refusing, when the pane launches, then it does not start and shows the launch-failure state naming `bwrap` and its error
 
 #### US-025: Add Landlock scoping inside the Linux sandbox
 **Description:** As the maintainer, I want Landlock to scope sockets created outside the sandbox when the kernel supports it, so that a socket passed in by mistake is still unreachable.
@@ -510,81 +514,29 @@ An agent profile can run in a sandbox where Paneflow's shared endpoints and othe
 **Dependencies:** Blocked by US-024
 
 **Acceptance Criteria:**
-- [ ] Given a kernel with Landlock ABI 6 or later, when the sandbox starts, then abstract unix sockets created outside it cannot be connected to
-- [ ] Given a kernel with ABI 9 or later, when a process connects to a pathname socket created outside the sandbox, then it fails with `EACCES`
-- [ ] Given a kernel with neither, when the sandbox starts, then it starts without Landlock and the pane's debug log names the missing ABI
-
-#### US-026: Run a macOS pane under a Seatbelt profile
-**Description:** As a user on macOS, I want the sandboxed profile to keep an agent away from Paneflow's shared sockets.
-
-**Priority:** P2
-**Dependencies:** Blocked by US-022
-
-**Acceptance Criteria:**
-- [ ] Given a profile with `sandbox: "paneflow"` on macOS, when its pane launches, then the shell runs under a Seatbelt profile that allows by default and denies `network-outbound` to the shared window, worker and host socket paths
-- [ ] Given that profile, when a process in the pane connects to its pane endpoints, then the connection succeeds
-- [ ] Given that profile, when a process in the pane connects to the shared worker socket, then the sandbox refuses it
-- [ ] Given that profile, when a process in the pane sends a signal to a process outside the pane, then the sandbox refuses it
-- [ ] Given `sandbox-exec` missing or refusing the profile, when the pane launches, then it does not start and shows the launch-failure state with the error
-
-#### US-027: Run a Windows pane with a restricted token
-**Description:** As a user on Windows, I want the sandboxed profile to keep an agent off Paneflow's shared pipes.
-
-**Priority:** P2
-**Dependencies:** Blocked by US-022
-
-**Acceptance Criteria:**
-- [ ] Given a profile with `sandbox: "paneflow"` on Windows, when its pane launches, then the shell runs with a write-restricted token whose restricting SIDs are a per-pane SID and the SIDs the pane's working directory grants
-- [ ] Given that token, when a process in the pane opens the shared window, worker or host pipe for writing, then the open fails with access denied
-- [ ] Given the pane's endpoints, whose DACL grants the per-pane SID, when a process in the pane connects, then it succeeds
-- [ ] Given the pane's working directory, when a process in the pane writes a file there, then the write succeeds
-- [ ] Given token creation failing, when the pane launches, then it does not start and shows the launch-failure state with the OS error
+- [x] Given a kernel with Landlock ABI 6 or later, when the sandbox starts, then abstract unix sockets created outside it cannot be connected to
+- [x] Given a kernel with ABI 9 or later and a profile with `sandbox_unix_scope: true`, when a process connects to a pathname socket created outside the sandbox, then it fails with `EACCES`; without the opt-in the connection is not scoped, so the agent's own bubblewrap still starts
+- [x] Given a kernel with neither, when the sandbox starts, then it starts without Landlock and the pane's debug log names the missing ABI
 
 #### US-028: Show sandbox state and refuse silent downgrades
 **Description:** As a user, I want to see that a pane is sandboxed and never have it run unsandboxed by surprise.
 
 **Priority:** P2
-**Dependencies:** Blocked by US-024, US-026, US-027, US-032, US-033
+**Dependencies:** Blocked by US-024
 
 **Acceptance Criteria:**
-- [ ] Given a sandboxed pane, when its header is drawn, then it shows a sandbox indicator built from `DESIGN.md`'s component rules
-- [ ] Given a sandboxed pane, when `paneflow ls` runs, then its row reports `sandboxed: true`
-- [ ] Given a restored session whose profile is sandboxed, when the window restores it, then it restores sandboxed or shows the launch-failure state, never an unsandboxed shell
-- [ ] Given a profile set to `sandbox: "paneflow"` on a platform the reports of US-023, US-032 or US-033 list as unsupported, when the config loads, then the error names the platform and the profile
+- [x] Given a sandboxed pane, when its header is drawn, then it shows a sandbox indicator built from `DESIGN.md`'s component rules
+- [x] Given a sandboxed pane, when `paneflow ls` runs, then its row reports `sandboxed: true`
+- [x] Given a restored session whose profile is sandboxed, when the window restores it, then it restores sandboxed or shows the launch-failure state, never an unsandboxed shell
+- [x] Given a profile set to `sandbox: "paneflow"` on a platform the reports of US-023, US-032 or US-033 list as unsupported, when the config loads, then the error names the platform and the profile
 
 ---
 
 ### EP-005: Real-hardware validation
 
-What was written for macOS and Windows by inspection is run on real machines, and the Linux kernel matrix is exercised; the layer-1 checks are separate from the sandbox checks so they never wait for EP-004.
+The Linux kernel matrix is exercised on real kernels. The Windows and macOS hardware checks live in EP-006 and EP-007.
 
 **Definition of Done:** each story below has its report written as a section of this PRD; every defect it found is fixed or recorded as a blocker on the story it belongs to; the platform notes of `docs/user/scripting.md` match the reports.
-
-#### US-029: Validate layer 1 on macOS hardware
-**Description:** As the maintainer, I want the macOS identity paths run on Intel and Apple Silicon, so that nothing ships on inspection alone.
-
-**Priority:** P0
-**Dependencies:** Blocked by US-007, US-013, US-014
-
-**Acceptance Criteria:**
-- [ ] Given macOS 13 or later on Apple Silicon, when `system.whoami` is sent to the host from a pane and from Terminal.app, then the answers are `pane` and `external`
-- [ ] Given the same machine, when `system.whoami` is sent to the worker from a pane and from Terminal.app, then the answers are `pane` and `external`
-- [ ] Given macOS on Intel, when both checks run, then the answers are the same
-- [ ] Given a raw client in a pane that claims an engine, when it calls `approval.decide`, then it is refused
-- [ ] Given `sysctl KERN_PROC` on a process of the same user, when the classification reads it, then the report confirms the parent PID and session are returned (assumption A9)
-
-#### US-030: Validate layer 1 on Windows hardware
-**Description:** As the maintainer, I want the Windows identity paths run on Arthur's Windows 11 machine, so that the Job Object and pipe assumptions are facts.
-
-**Priority:** P0
-**Dependencies:** Blocked by US-007, US-013, US-014
-
-**Acceptance Criteria:**
-- [ ] Given a pane under ConPTY, when its shell, a child of the shell and the console host are checked with `IsProcessInJob`, then the report states which are in the pane's job (assumption A2)
-- [ ] Given a test client that tries to present another process's PID on a named pipe, when the server reads the peer, then the report states whether the PID could be forged (assumption A3)
-- [ ] Given that test, when the PID was forged, then the report states whether the token-user check refused it
-- [ ] Given `system.whoami` sent to the host from a pane and from Windows Terminal outside Paneflow, when it runs, then the answers are `pane` and `external`
-- [ ] Given `system.whoami` sent to the worker from the same two places, when it runs, then the answers are `pane` and `external`
 
 #### US-031: Exercise the Linux kernel matrix
 **Description:** As the maintainer, I want the fallback peer path proven on kernels without `SO_PEERPIDFD`, so that users of a kernel older than 6.5 (Ubuntu 22.04's GA kernel, Debian 12, Leap 15.6) get the same answers.
@@ -601,6 +553,86 @@ What was written for macOS and Windows by inspection is run on real machines, an
 - [ ] Given `/proc` mounted with `hidepid=2`, when a pane process is classified, then the report states the answer (assumption A8)
 - [ ] Given a process in a pane that calls `setsid` and double-forks, when it calls `system.whoami`, then the report records `external` as the documented layer-1 limit
 
+---
+
+### EP-006: Windows tests and validation
+
+Everything that needs a Windows machine is run there in one pass: the restricted-token sandbox written by inspection, the layer-1 identity paths and the sandbox checks.
+
+**Definition of Done:** each story below is proven on Windows 10 or 11 hardware and its report is a section of this PRD; every defect found is fixed or recorded as a blocker on the story it belongs to; the Windows notes of `docs/user/scripting.md` match the reports.
+
+#### US-027: Run a Windows pane with a restricted token
+**Description:** As a user on Windows, I want the sandboxed profile to keep an agent off Paneflow's shared pipes.
+
+**Priority:** P2
+**Dependencies:** Blocked by US-022
+
+**Acceptance Criteria:**
+- [ ] Given a profile with `sandbox: "paneflow"` on Windows, when its pane launches, then the shell runs with a write-restricted token whose restricting SIDs are a per-pane SID and the SIDs the pane's working directory grants
+- [ ] Given that token, when a process in the pane opens the shared window, worker or host pipe for writing, then the open fails with access denied
+- [ ] Given the pane's endpoints, whose DACL grants the per-pane SID, when a process in the pane connects, then it succeeds
+- [ ] Given the pane's working directory, when a process in the pane writes a file there, then the write succeeds
+- [ ] Given token creation failing, when the pane launches, then it does not start and shows the launch-failure state with the OS error
+
+#### US-030: Validate layer 1 on Windows hardware
+**Description:** As the maintainer, I want the Windows identity paths run on Arthur's Windows 11 machine, so that the Job Object and pipe assumptions are facts.
+
+**Priority:** P0
+**Dependencies:** Blocked by US-007, US-013, US-014
+
+**Acceptance Criteria:**
+- [ ] Given a pane under ConPTY, when its shell, a child of the shell and the console host are checked with `IsProcessInJob`, then the report states which are in the pane's job (assumption A2)
+- [ ] Given a test client that tries to present another process's PID on a named pipe, when the server reads the peer, then the report states whether the PID could be forged (assumption A3)
+- [ ] Given that test, when the PID was forged, then the report states whether the token-user check refused it
+- [ ] Given `system.whoami` sent to the host from a pane and from Windows Terminal outside Paneflow, when it runs, then the answers are `pane` and `external`
+- [ ] Given `system.whoami` sent to the worker from the same two places, when it runs, then the answers are `pane` and `external`
+
+#### US-033: Validate the Windows sandbox on hardware
+**Description:** As the maintainer, I want the restricted-token pane checked on Windows 11, so that it ships only where it holds.
+
+**Priority:** P2
+**Dependencies:** Blocked by US-027
+
+**Acceptance Criteria:**
+- [ ] Given a sandboxed pane, when it opens the shared worker pipe, then the report states whether access was denied
+- [ ] Given that pane, when `git status`, `cargo build` and `node -v` run in its working directory, then the report states whether each succeeded
+- [ ] Given a check that fails, when the report is written, then it lists Windows as unsupported for the sandboxed profile until it is fixed
+- [ ] Given the report lists the platform as supported, when the story closes, then `SANDBOX_SUPPORTED_PLATFORMS` in `crates/paneflow-config/src/schema/agent_sandbox.rs` gains `windows` and `docs/user/scripting.md` says so; until then a profile with `sandbox: "paneflow"` is refused there
+
+---
+
+### EP-007: macOS tests and validation
+
+Everything that needs a Mac is run there in one pass: the Seatbelt sandbox written by inspection, the layer-1 identity paths and the sandbox checks.
+
+**Definition of Done:** each story below is proven on macOS hardware (Intel and Apple Silicon where the story says so) and its report is a section of this PRD; every defect found is fixed or recorded as a blocker on the story it belongs to; the macOS notes of `docs/user/scripting.md` match the reports.
+
+#### US-026: Run a macOS pane under a Seatbelt profile
+**Description:** As a user on macOS, I want the sandboxed profile to keep an agent away from Paneflow's shared sockets.
+
+**Priority:** P2
+**Dependencies:** Blocked by US-022
+
+**Acceptance Criteria:**
+- [ ] Given a profile with `sandbox: "paneflow"` on macOS, when its pane launches, then the shell runs under a Seatbelt profile that allows by default and denies `network-outbound` to the shared window, worker and host socket paths
+- [ ] Given that profile, when a process in the pane connects to its pane endpoints, then the connection succeeds
+- [ ] Given that profile, when a process in the pane connects to the shared worker socket, then the sandbox refuses it
+- [ ] Given that profile, when a process in the pane sends a signal to a process outside the pane, then the sandbox refuses it
+- [ ] Given `sandbox-exec` missing or refusing the profile, when the pane launches, then it does not start and shows the launch-failure state with the error
+
+#### US-029: Validate layer 1 on macOS hardware
+**Description:** As the maintainer, I want the macOS identity paths run on Intel and Apple Silicon, so that nothing ships on inspection alone.
+
+**Priority:** P0
+**Dependencies:** Blocked by US-007, US-013, US-014
+
+**Acceptance Criteria:**
+- [ ] Given macOS 13 or later on Apple Silicon, when `system.whoami` is sent to the host from a pane and from Terminal.app, then the answers are `pane` and `external`
+- [ ] Given the same machine, when `system.whoami` is sent to the worker from a pane and from Terminal.app, then the answers are `pane` and `external`
+- [ ] Given macOS on Intel, when both checks run, then the answers are the same
+- [ ] Given a raw client in a pane that claims an engine, when it calls `approval.decide`, then it is refused
+- [ ] Given `sysctl KERN_PROC` on a process of the same user, when the classification reads it, then the report confirms the parent PID and session are returned (assumption A9)
+
 #### US-032: Validate the macOS sandbox on hardware
 **Description:** As the maintainer, I want the Seatbelt profile checked on the current and previous macOS releases, so that the sandbox's socket rule is known to match.
 
@@ -614,17 +646,32 @@ What was written for macOS and Windows by inspection is run on real machines, an
 - [ ] Given Claude Code with its own sandbox in that pane, when it runs one sandboxed command, then the report states whether it ran (assumption A6)
 - [ ] Given Codex with its own sandbox in that pane, when it runs one sandboxed command, then the report states whether it ran (assumption A6)
 - [ ] Given a release where a check fails, when the report is written, then it lists that release as unsupported for the sandboxed profile
+- [ ] Given the report lists the platform as supported, when the story closes, then `SANDBOX_SUPPORTED_PLATFORMS` in `crates/paneflow-config/src/schema/agent_sandbox.rs` gains `macos` and `docs/user/scripting.md` says so; until then a profile with `sandbox: "paneflow"` is refused there
 
-#### US-033: Validate the Windows sandbox on hardware
-**Description:** As the maintainer, I want the restricted-token pane checked on Windows 11, so that it ships only where it holds.
+## Linux sandbox report (US-023)
 
-**Priority:** P2
-**Dependencies:** Blocked by US-027
+Measured on 2026-11-23. Fedora is the development machine; every other row is a throwaway KVM virtual machine booted from the distribution's cloud image by `scripts/sandbox-matrix.sh`, so each runs its own kernel and its own security policy. In each one the script runs `bwrap --unshare-all --die-with-parent` and then the host's sandbox tests (`crates/paneflow-host/tests/sandboxed_pane.rs`, built once against Ubuntu 22.04's glibc) with `PANEFLOW_SANDBOX_REQUIRED=1`, which turns a sandbox that does not start into a failure.
 
-**Acceptance Criteria:**
-- [ ] Given a sandboxed pane, when it opens the shared worker pipe, then the report states whether access was denied
-- [ ] Given that pane, when `git status`, `cargo build` and `node -v` run in its working directory, then the report states whether each succeeded
-- [ ] Given a check that fails, when the report is written, then it lists Windows as unsupported for the sandboxed profile until it is fixed
+| Distribution | Kernel, bubblewrap, Landlock ABI | `bwrap --unshare-all --die-with-parent` | Paneflow sandbox (US-024), 5 tests |
+|---|---|---|---|
+| Fedora 45 | 7.3.4, 0.13.1, ABI 11 | Starts (`NoNewPrivs: 1`) | Pass |
+| Ubuntu 22.04.5 | 5.15.0-203, 0.6.1, ABI 1 | Starts | Pass; no Landlock scoping below ABI 6, so an abstract unix socket made outside stays reachable |
+| Ubuntu 24.04.5, default (`kernel.apparmor_restrict_unprivileged_userns = 1`) | 6.8.0-147, 0.9.0, ABI 4 | Fails: `bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted` | Fails: the pane does not start, `bwrap refused to create the sandbox (exit status: 1): bwrap: setting up uid map: Permission denied` |
+| Ubuntu 24.04.5 with `sysctl kernel.apparmor_restrict_unprivileged_userns=0` | same | Starts | Pass; no Landlock scoping below ABI 6 |
+| Debian 13 | 6.12.118+deb13-cloud, 0.12.0, ABI 6 | Starts | Pass |
+| Arch | 7.3.4-arch1-2, 0.13.1, ABI 11 | Starts | Pass |
+| openSUSE Leap 16.0 | 6.12.0-160000.41, 0.11.0, ABI 6 | Starts | Pass |
+
+**Supported distributions:** Fedora 45, Ubuntu 22.04, Debian 13, Arch and openSUSE Leap 16.0 as installed. Ubuntu 24.04 is unsupported as installed: AppArmor refuses the user namespace to an unconfined `bwrap`, and the image ships no AppArmor profile for it (`/etc/apparmor.d` has none). The setting that allows it is `kernel.apparmor_restrict_unprivileged_userns=0` (measured above); an AppArmor profile that grants `userns` to `/usr/bin/bwrap` is the narrower alternative and was not measured. A pane whose `bwrap` cannot start does not start: its launch-failure state names `bwrap` and its stderr (US-024).
+
+**Agents inside the Paneflow sandbox, own sandbox on** (Fedora 45, in a session created with `paneflow-host session create --sandbox`):
+
+| Agent | Command | Result |
+|---|---|---|
+| Claude Code 2.1.330 | `claude -p --settings '{"sandbox":{"enabled":true}}' --allowedTools Bash`, asked to run `touch $HOME/pf-claude-sandbox-probe; echo hello-from-claude-sandbox` | Ran: `hello-from-claude-sandbox` printed, and the write outside the working directory was refused by its own sandbox (read-only file system) |
+| Codex 0.165.0 | `codex sandbox -- sh -c 'echo codex-sandbox-ran; touch /usr/pf-codex-probe'` | Ran: `codex-sandbox-ran` printed, the write to `/usr` refused (read-only file system) |
+
+The agents were run on Fedora only; the other distributions were measured for bubblewrap and the Paneflow sandbox, not for each agent. In a live debug window on Fedora, a sandboxed pane answered `system.whoami` with `pane` and its session on the window, the worker and the host, and a `paneflow split` from it opened a pane that `paneflow ls` reports `sandboxed: true`.
 
 ## Edge Cases & Error States
 
@@ -650,6 +697,7 @@ What was written for macOS and Windows by inspection is run on real machines, an
 ## Open Questions
 
 - **Length of the deprecation.** US-010 keeps the environment variable for panes during the release that ships it and drops it in the next one. A longer window would need a version named by Arthur.
+- **D-Bus inside the Linux sandbox.** The runtime directory of a sandboxed pane is an allowlist (v1.4) without the session bus, so a keyring read over D-Bus, `notify-send` and `xdg-open` fail there. A filtering proxy (`xdg-dbus-proxy`, as Flatpak uses) could give back the secret service, notifications and portals while still refusing `org.freedesktop.systemd1`; it is not built.
 - **Grants across a worker restart.** US-016 restores them so that a self-update does not cut an agent's authority mid-task; ending them with the worker is the stricter choice if Arthur prefers it.
 
 ## Files NOT to Modify
