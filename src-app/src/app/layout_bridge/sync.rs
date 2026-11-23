@@ -469,6 +469,34 @@ impl PaneFlowApp {
         }
     }
 
+    fn adopt_surface_names(&mut self, cx: &mut Context<Self>) {
+        let named: Vec<_> = self
+            .layout
+            .model
+            .state()
+            .workspaces
+            .iter()
+            .flat_map(|ws| ws.tabs.iter())
+            .filter_map(|tab| tab.root.as_ref())
+            .flat_map(paneflow_layout::Node::panes)
+            .flat_map(|pane| pane.surfaces.iter())
+            .filter_map(|surface| match self.layout.surface(surface.id)? {
+                crate::pane::PaneSurface::Terminal(view) => {
+                    Some((view, surface.definition.custom_name.clone()))
+                }
+                crate::pane::PaneSurface::Markdown(_) => None,
+            })
+            .collect();
+        for (view, name) in named {
+            if view.read(cx).terminal.custom_name != name {
+                view.update(cx, |view, cx| {
+                    view.terminal.custom_name = name;
+                    cx.notify();
+                });
+            }
+        }
+    }
+
     pub(crate) fn reconcile_layout(&mut self, view: Snapshot, cx: &mut Context<Self>) {
         let focused_before = model_focus(self.layout.model.state());
         self.layout.model.restore(view);
@@ -491,6 +519,7 @@ impl PaneFlowApp {
                 None => self.spawn_layout_surface(*surface, cx),
             }
         }
+        self.adopt_surface_names(cx);
         self.project_layout(cx);
         self.layout.prune();
         let focused_after = model_focus(self.layout.model.state());

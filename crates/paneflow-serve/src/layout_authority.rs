@@ -615,13 +615,17 @@ impl LayoutAuthority {
                 let Some(inputs) = crate::launcher::inputs_from_model(&state, surface) else {
                     continue;
                 };
+                let named = state
+                    .surface(surface)
+                    .and_then(|known| known.session().cloned());
+                let binds = named.is_none();
                 match self.start_session(
                     link.as_mut(),
                     &state,
                     surface,
-                    SessionId::new(),
+                    named.unwrap_or_else(SessionId::new),
                     inputs,
-                    true,
+                    binds,
                 ) {
                     Ok(started) => {
                         revision = started.revision;

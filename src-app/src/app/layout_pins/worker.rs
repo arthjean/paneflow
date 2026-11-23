@@ -10,7 +10,7 @@ use super::Rig;
 use crate::PaneFlowApp;
 use crate::{ClosePane, SplitVertically};
 
-pub(super) const PINS: usize = 12;
+pub(super) const PINS: usize = 13;
 
 const PATIENCE: Duration = Duration::from_secs(60);
 
@@ -460,6 +460,65 @@ fn pin_a_workspace_another_client_opens_is_drawn_with_its_terminal(cx: &mut Test
     });
     assert_eq!(terminals, [1], "the remote pane shows its terminal");
     assert_converged(&mut rig, &home);
+    finish(&mut rig, worker, &home);
+}
+
+fn shown_name(rig: &mut Rig<'_>, surface: u64) -> Option<String> {
+    let app = rig.app.clone();
+    rig.cx.update(|_, cx| {
+        crate::workspace::panes_across(&app.read(cx).workspaces)
+            .iter()
+            .flat_map(|pane| pane.read(cx).terminals().cloned().collect::<Vec<_>>())
+            .find(|terminal| terminal.read(cx).surface_id() == surface)
+            .and_then(|terminal| terminal.read(cx).terminal.custom_name.clone())
+    })
+}
+
+fn model_name(snapshot: &Snapshot, surface: u64) -> Option<String> {
+    snapshot
+        .state
+        .surface(paneflow_layout::SurfaceId(surface))
+        .and_then(|known| known.definition.custom_name.clone())
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_a_surface_another_client_renames_shows_its_name_and_keeps_it_through_a_gesture(
+    cx: &mut TestAppContext,
+) {
+    let home = home();
+    let mut rig = Rig::mount(cx);
+    rig.workspace("alpha");
+    let worker = Running::open(&home);
+    attach(&mut rig);
+    let surface = rig.model_surface_ids()[0];
+    let renamed: Value = control(&home)
+        .request(
+            "surface.rename",
+            json!({"surface_id": surface, "name": "tests"}),
+        )
+        .expect("the worker renames the surface");
+    assert_eq!(renamed["renamed"], true, "{renamed}");
+    pump(&mut rig, "the window adopting the foreign rename", |app| {
+        app.layout
+            .model()
+            .state()
+            .surface(paneflow_layout::SurfaceId(surface))
+            .is_some_and(|known| known.definition.custom_name.as_deref() == Some("tests"))
+    });
+    assert_eq!(
+        shown_name(&mut rig, surface).as_deref(),
+        Some("tests"),
+        "the window shows the name another client gave"
+    );
+    split(&mut rig);
+    assert_converged(&mut rig, &home);
+    assert_eq!(shown_name(&mut rig, surface).as_deref(), Some("tests"));
+    assert_eq!(
+        model_name(&worker_view(&home), surface).as_deref(),
+        Some("tests"),
+        "a gesture in the window keeps the name another client gave"
+    );
     finish(&mut rig, worker, &home);
 }
 

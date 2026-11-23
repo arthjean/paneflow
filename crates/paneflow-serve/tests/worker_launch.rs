@@ -265,6 +265,40 @@ fn an_op_from_a_client_with_no_window_starts_its_terminal_and_binds_the_session(
 }
 
 #[test]
+fn a_new_surface_that_names_a_live_session_shows_it_without_starting_another() {
+    let home = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    prepare_home(home.path(), cwd.path());
+    let starter = FakeStarter::default();
+    let worker = open_worker(home.path(), &starter);
+    let mut cli = Client::connect(home.path());
+    let start = cli.lease();
+    cli.ok(
+        "layout.apply",
+        json!({"op": split_op(start, start + 1, terminal_definition()), "ids_from": start + 2}),
+    );
+    let live = session_of(&cli.ok("layout.view", json!({})), start + 1).expect("a bound session");
+
+    let applied = cli.ok(
+        "layout.apply",
+        json!({
+            "op": split_op(
+                start + 10,
+                start + 11,
+                json!({"surface_type": "terminal", "session": live}),
+            ),
+            "ids_from": start + 12
+        }),
+    );
+
+    assert_eq!(starter.created().len(), 1, "no second session is started");
+    let view = cli.ok("layout.view", json!({}));
+    assert_eq!(session_of(&view, start + 11), Some(live));
+    assert_eq!(view["revision"], applied["revision"]);
+    worker.stop();
+}
+
+#[test]
 fn a_refused_create_keeps_the_surface_without_a_session_and_reports_the_host_message() {
     let home = tempfile::tempdir().unwrap();
     let cwd = tempfile::tempdir().unwrap();
