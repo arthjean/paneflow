@@ -18,6 +18,8 @@ pub(crate) mod minimap;
 mod navigation;
 mod navigation_paint;
 #[cfg(test)]
+mod oracle;
+#[cfg(test)]
 mod perf_bench;
 pub(crate) mod rows;
 pub(crate) mod save;

@@ -876,6 +876,15 @@ impl CodeHighlighter {
             .map_or(0, LexicalLayer::retained_bytes)
     }
 
+    pub(crate) fn nested_ranges(&self, row: usize) -> Vec<Range<usize>> {
+        self.rows.get(row).map_or_else(Vec::new, |runs| {
+            runs.iter()
+                .filter(|(_, _, run)| run.pass == NESTED_PASS)
+                .map(|&(start, end, _)| start as usize..end as usize)
+                .collect()
+        })
+    }
+
     pub(crate) fn row_has_nested_region(&self, row: usize) -> bool {
         self.rows
             .get(row)

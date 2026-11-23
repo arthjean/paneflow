@@ -15,6 +15,11 @@ impl DiffSyntax {
         Self { palette: t.syntax }
     }
 
+    #[cfg(test)]
+    pub(crate) fn from_palette(palette: SyntaxPalette) -> Self {
+        Self { palette }
+    }
+
     pub(crate) fn palette(&self) -> SyntaxPalette {
         self.palette
     }
