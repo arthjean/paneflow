@@ -50,6 +50,11 @@ pub(crate) trait ProcessTable {
         let _ = pid;
         (None, None)
     }
+
+    fn is_hidden(&self, pid: u32) -> bool {
+        let _ = pid;
+        false
+    }
 }
 
 #[cfg(unix)]
@@ -151,6 +156,14 @@ pub(crate) fn classify_in(
         }
         let facts = match table.facts(parent) {
             Ok(facts) => facts,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied
+                ) && table.is_hidden(parent) =>
+            {
+                return Membership::NotInPane;
+            }
             Err(error) => {
                 return Membership::Unverified {
                     reason: format!(
@@ -183,6 +196,7 @@ mod tests {
     struct Table {
         processes: HashMap<u32, ProcessFacts>,
         unreadable: Vec<u32>,
+        hidden: Vec<u32>,
     }
 
     impl Table {
@@ -202,6 +216,11 @@ mod tests {
             self.unreadable.push(pid);
             self
         }
+
+        fn hidden(mut self, pid: u32) -> Self {
+            self.hidden.push(pid);
+            self
+        }
     }
 
     impl ProcessTable for Table {
@@ -209,10 +228,17 @@ mod tests {
             if self.unreadable.contains(&pid) {
                 return Err(io::Error::from(io::ErrorKind::PermissionDenied));
             }
+            if self.hidden.contains(&pid) {
+                return Err(io::Error::from(io::ErrorKind::NotFound));
+            }
             self.processes
                 .get(&pid)
                 .copied()
                 .ok_or_else(|| io::Error::from(io::ErrorKind::NotFound))
+        }
+
+        fn is_hidden(&self, pid: u32) -> bool {
+            self.hidden.contains(&pid)
         }
     }
 
@@ -294,6 +320,43 @@ mod tests {
             classify_in(&table, 500, 500, &[leader(100, 100)]),
             Membership::Unverified { .. }
         ));
+    }
+
+    #[test]
+    fn a_parent_hidden_by_hidepid_ends_the_chain_outside_every_pane() {
+        let table = Table::default()
+            .hidden(1)
+            .hidden(900)
+            .with(500, 900, 500, 500);
+        assert_eq!(
+            classify_in(&table, 500, 500, &[leader(100, 100)]),
+            Membership::NotInPane
+        );
+    }
+
+    #[test]
+    fn a_pane_process_whose_pane_sits_below_hidden_ancestors_is_still_that_pane() {
+        let table = Table::default()
+            .hidden(1)
+            .hidden(900)
+            .with(100, 900, 100, 100)
+            .with(200, 100, 100, 200)
+            .with(300, 200, 300, 300);
+        assert_eq!(classify_in(&table, 200, 200, &[leader(100, 100)]), pane());
+        assert_eq!(classify_in(&table, 300, 300, &[leader(100, 100)]), pane());
+    }
+
+    #[test]
+    fn a_new_session_below_a_hidden_pane_process_reads_outside_every_pane() {
+        let table = Table::default()
+            .hidden(1)
+            .with(100, 1, 100, 100)
+            .hidden(200)
+            .with(300, 200, 300, 300);
+        assert_eq!(
+            classify_in(&table, 300, 300, &[leader(100, 100)]),
+            Membership::NotInPane
+        );
     }
 
     #[test]

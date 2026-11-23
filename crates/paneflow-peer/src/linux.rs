@@ -129,6 +129,19 @@ impl Kernel for LiveKernel {
 }
 
 impl ProcessTable for LiveKernel {
+    fn is_hidden(&self, pid: u32) -> bool {
+        let Some(target) = libc::pid_t::try_from(pid).ok().filter(|target| *target > 0) else {
+            return false;
+        };
+        if self.stat(pid).is_ok() {
+            return false;
+        }
+        if unsafe { libc::kill(target, 0) } == 0 {
+            return true;
+        }
+        io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+
     fn facts(&self, pid: u32) -> io::Result<ProcessFacts> {
         let stat = self.stat(pid)?;
         if stat.exited() {
@@ -410,5 +423,12 @@ mod tests {
         );
         assert_eq!(parse_stat("1234 (zsh) S 1 1234"), None);
         assert_eq!(parse_stat(""), None);
+    }
+
+    #[test]
+    fn a_process_whose_stat_is_readable_or_that_does_not_exist_is_not_hidden() {
+        assert!(!LiveKernel.is_hidden(std::process::id()));
+        assert!(!LiveKernel.is_hidden(0));
+        assert!(!LiveKernel.is_hidden(u32::MAX));
     }
 }

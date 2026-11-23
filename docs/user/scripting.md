@@ -117,6 +117,21 @@ request is answered. `paneflow api call system.whoami` prints it.
 
 The session host decides pane membership, because it started every
 pane; the window and the background process ask it with `peer.classify`.
+When the host is down, they read the session manifests in the home
+instead, so a pane process that survived the host still reads `pane`.
+
+On Linux, Paneflow identifies the caller with `SO_PEERPIDFD` on kernel
+6.5 and later, and with `SO_PEERCRED` plus a start-time check on older
+kernels such as Ubuntu 22.04's 5.15 or Debian 12; both give the same
+answers. With `/proc` mounted `hidepid=2`, a parent that Paneflow
+cannot see (`init`, `sshd`, the login manager) ends the parent chain,
+so a pane process still reads `pane` and a process outside every pane
+reads `external`. A process that leaves its pane's session with `setsid`
+and then double-forks reads `external`: these principals hold against a
+confused agent, not a hostile one, and the sandbox below closes that
+gap. Under `hidepid=2` the same holds for a new session started below a
+pane process Paneflow cannot see, such as a `sudo` that opens its own
+terminal.
 An `init.lua` action started from a key or the command palette acts as
 the window, and one started by `paneflow actions run` acts as its
 caller.
