@@ -20,6 +20,7 @@ uvx zizmor@1.32.0 --config .github/zizmor.yml --min-severity high .github   # wh
 bash scripts/test-ci-scripts.sh                     # when a CI script changes: runs the scripts against fixtures
 bash scripts/check-test-wallclock.sh                # when a test changes: no new wall-clock budget
 bash scripts/sandbox-matrix.sh                      # when crates/paneflow-host/src/sandbox/** changes: the sandbox tests on each distribution's own kernel, in throwaway KVM machines (Linux host with /dev/kvm and podman; about 10 minutes)
+bash scripts/sandbox-matrix.sh --suite identity     # when crates/paneflow-peer/** or crates/paneflow-host/src/peer.rs changes: the caller identity tests on Ubuntu 22.04 (5.15, the SO_PEERCRED fallback) and 24.04 (6.8, SO_PEERPIDFD), plain and with /proc hidepid=2
 ```
 
 **`cargo fmt --check` before every `git commit` and every `git push` that

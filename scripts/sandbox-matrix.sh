@@ -3,14 +3,21 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-usage: sandbox-matrix.sh [--out <dir>] [--skip-build] [<distribution>...]
+usage: sandbox-matrix.sh [--suite sandbox|identity] [--out <dir>] [--skip-build] [<distribution>...]
 
-Runs the Linux sandbox tests of paneflow-host on the real kernel of each
-distribution, in a throwaway KVM virtual machine booted from its cloud image,
-and prints one Markdown row per distribution.
+Runs Linux tests of paneflow-host on the real kernel of each distribution, in
+a throwaway KVM virtual machine booted from its cloud image, and prints one
+Markdown row per distribution.
+
+Suites:
+  sandbox   the sandbox tests (sandboxed_pane); default distributions:
+            ubuntu-22.04 ubuntu-24.04 debian-13 arch opensuse-leap-16
+  identity  the caller identity tests (caller_identity, linux_kernel_matrix),
+            run a second time with /proc remounted hidepid=2; default
+            distributions: ubuntu-22.04 ubuntu-24.04
 
 Distributions: ubuntu-22.04 ubuntu-24.04 debian-13 arch opensuse-leap-16
-(all of them when none is named).
+(the suite's defaults when none is named).
 
 Needs: /dev/kvm, qemu-system-x86_64, qemu-img, genisoimage, podman, curl, ssh.
 Images are kept in ${PANEFLOW_MATRIX_CACHE:-~/.cache/paneflow-sandbox-matrix}.
@@ -25,6 +32,7 @@ GUEST_ROOT="/opt/paneflow-matrix"
 GUEST_USER="matrix"
 OUT=""
 SKIP_BUILD=0
+SUITE=sandbox
 DISTROS=()
 
 while [ "$#" -gt 0 ]; do
@@ -38,6 +46,14 @@ while [ "$#" -gt 0 ]; do
       SKIP_BUILD=1
       shift
       ;;
+    --suite)
+      [ "$#" -ge 2 ] || usage
+      case "$2" in
+        sandbox | identity) SUITE="$2" ;;
+        *) usage ;;
+      esac
+      shift 2
+      ;;
     -h | --help) usage ;;
     -*) usage ;;
     *)
@@ -47,8 +63,13 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 if [ "${#DISTROS[@]}" -eq 0 ]; then
-  DISTROS=(ubuntu-22.04 ubuntu-24.04 debian-13 arch opensuse-leap-16)
+  if [ "$SUITE" = identity ]; then
+    DISTROS=(ubuntu-22.04 ubuntu-24.04)
+  else
+    DISTROS=(ubuntu-22.04 ubuntu-24.04 debian-13 arch opensuse-leap-16)
+  fi
 fi
+TESTS=(sandboxed_pane caller_identity linux_kernel_matrix)
 
 image_url() {
   case "$1" in
@@ -115,7 +136,7 @@ build() {
       export DEBIAN_FRONTEND=noninteractive
       apt-get update -qq >/dev/null
       apt-get install -y -qq gcc libc6-dev >/dev/null
-      cargo test --locked --offline -p paneflow-host --test sandboxed_pane --no-run
+      cargo test --locked --offline -p paneflow-host --test sandboxed_pane --test caller_identity --test linux_kernel_matrix --no-run
     ' >&2
 }
 
@@ -124,8 +145,19 @@ if [ "$SKIP_BUILD" -eq 0 ]; then
   build
 fi
 HOST_BINARY="$CACHE/target/debug/paneflow-host"
-TEST_BINARY="$(find "$CACHE/target/debug/deps" -maxdepth 1 -type f -name 'sandboxed_pane-*' -perm -u+x -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n 1 | cut -d' ' -f2-)"
-if [ ! -x "$HOST_BINARY" ] || [ -z "$TEST_BINARY" ]; then
+FIXTURE_BINARY="$CACHE/target/debug/paneflow-session-fixture"
+test_binary() {
+  find "$CACHE/target/debug/deps" -maxdepth 1 -type f -name "$1-*" -perm -u+x -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n 1 | cut -d' ' -f2-
+}
+declare -A TEST_BINARIES=()
+for name in "${TESTS[@]}"; do
+  TEST_BINARIES[$name]="$(test_binary "$name")"
+  if [ -z "${TEST_BINARIES[$name]}" ]; then
+    echo "sandbox-matrix: the $name test binary is missing under $CACHE/target; run without --skip-build" >&2
+    exit 1
+  fi
+done
+if [ ! -x "$HOST_BINARY" ] || [ ! -x "$FIXTURE_BINARY" ]; then
   echo "sandbox-matrix: the built binaries are missing under $CACHE/target; run without --skip-build" >&2
   exit 1
 fi
@@ -171,6 +203,35 @@ if [ "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null)" = "
   field restriction_off_paneflow_sandbox "$(printf '%s' "$tests" | grep -E 'test result|panicked' | tail -n 4)"
   sudo sysctl -q -w kernel.apparmor_restrict_unprivileged_userns=1
 fi
+EOF
+
+cat >"$RUN/probe-identity.sh" <<'EOF'
+#!/bin/sh
+field() {
+  printf '%s=%s\n' "$1" "$(printf '%s' "$2" | tr '\n' ' ' | sed 's/  */ /g; s/ $//')"
+}
+matrix="$1"
+identity="$2"
+. /etc/os-release
+field distribution "$PRETTY_NAME"
+field kernel "$(uname -r)"
+expected="$(uname -r | awk -F. '{ if ($1 > 6 || ($1 == 6 && $2 + 0 >= 5)) print "SO_PEERPIDFD"; else print "SO_PEERCRED" }')"
+field expected_peer_source "$expected"
+suite() {
+  out="$(PANEFLOW_EXPECT_PEER_SOURCE="$expected" "$matrix" --test-threads=1 --nocapture 2>&1)"
+  field "${1}matrix_exit" "$?"
+  field "${1}matrix" "$(printf '%s\n' "$out" | awk '/^kernel-matrix:|^test |test result/ { print } /panicked/ { print; getline; print }')"
+  out="$("$identity" --test-threads=1 2>&1)"
+  field "${1}identity_exit" "$?"
+  field "${1}identity" "$(printf '%s\n' "$out" | awk '/^test |test result/ { print } /panicked/ { print; getline; print }')"
+}
+field proc_mount "$(grep ' /proc proc ' /proc/mounts)"
+suite ""
+sudo mount -o remount,hidepid=2 /proc
+field hidepid_proc_mount "$(grep ' /proc proc ' /proc/mounts)"
+field hidepid_visible_root_processes "$(ps -e -o user= | grep -c '^root')"
+suite hidepid_
+sudo mount -o remount,hidepid=0 /proc
 EOF
 
 value() {
@@ -226,10 +287,18 @@ EOF
     fi
     sleep 5
   done
+  local deps="$GUEST_ROOT/target/debug/deps" name
   scp -q "${SSH_OPTS[@]}" -P "$PORT" "$HOST_BINARY" "$GUEST_USER@127.0.0.1:$GUEST_ROOT/target/debug/paneflow-host"
-  scp -q "${SSH_OPTS[@]}" -P "$PORT" "$TEST_BINARY" "$GUEST_USER@127.0.0.1:$GUEST_ROOT/target/debug/deps/sandboxed_pane"
-  scp -q "${SSH_OPTS[@]}" -P "$PORT" "$RUN/probe.sh" "$GUEST_USER@127.0.0.1:$GUEST_ROOT/probe.sh"
-  guest sh "$GUEST_ROOT/probe.sh" "$GUEST_ROOT/target/debug/deps/sandboxed_pane" >"$report" || true
+  scp -q "${SSH_OPTS[@]}" -P "$PORT" "$FIXTURE_BINARY" "$GUEST_USER@127.0.0.1:$GUEST_ROOT/target/debug/paneflow-session-fixture"
+  for name in "${TESTS[@]}"; do
+    scp -q "${SSH_OPTS[@]}" -P "$PORT" "${TEST_BINARIES[$name]}" "$GUEST_USER@127.0.0.1:$deps/$name"
+  done
+  scp -q "${SSH_OPTS[@]}" -P "$PORT" "$RUN/probe.sh" "$RUN/probe-identity.sh" "$GUEST_USER@127.0.0.1:$GUEST_ROOT/"
+  if [ "$SUITE" = identity ]; then
+    guest sh "$GUEST_ROOT/probe-identity.sh" "$deps/linux_kernel_matrix" "$deps/caller_identity" >"$report" || true
+  else
+    guest sh "$GUEST_ROOT/probe.sh" "$deps/sandboxed_pane" >"$report" || true
+  fi
   guest sudo poweroff >/dev/null 2>&1 || true
   local stop=$((SECONDS + 60))
   while kill -0 "$QEMU_PID" 2>/dev/null && [ "$SECONDS" -lt "$stop" ]; do
@@ -249,9 +318,25 @@ verdict() {
   fi
 }
 
+passes() {
+  local key
+  for key in "${@:2}"; do
+    if [ "$(value "$1" "$key")" != "0" ]; then
+      echo "Fails"
+      return
+    fi
+  done
+  echo "Pass"
+}
+
 status=0
-echo "| Distribution | Kernel, bubblewrap, Landlock ABI | \`bwrap --unshare-all --die-with-parent\` | Paneflow sandbox tests |"
-echo "|---|---|---|---|"
+if [ "$SUITE" = identity ]; then
+  echo "| Distribution | Kernel | Expected peer source | Identity tests | Identity tests, \`/proc\` hidepid=2 |"
+  echo "|---|---|---|---|---|"
+else
+  echo "| Distribution | Kernel, bubblewrap, Landlock ABI | \`bwrap --unshare-all --die-with-parent\` | Paneflow sandbox tests |"
+  echo "|---|---|---|---|"
+fi
 for distro in "${DISTROS[@]}"; do
   echo "sandbox-matrix: running $distro" >&2
   if ! run_distro "$distro"; then
@@ -260,8 +345,13 @@ for distro in "${DISTROS[@]}"; do
     continue
   fi
   report="$OUT/$distro.report"
-  [ "$(value "$report" paneflow_sandbox_exit)" = "0" ] || status=1
-  echo "| $(value "$report" distribution) | $(value "$report" kernel), $(value "$report" bwrap), ABI $(value "$report" landlock_abi) | $(verdict "$report" bwrap_unshare_all_exit) | $(verdict "$report" paneflow_sandbox_exit) |"
+  if [ "$SUITE" = identity ]; then
+    [ "$(passes "$report" matrix_exit identity_exit hidepid_matrix_exit hidepid_identity_exit)" = "Pass" ] || status=1
+    echo "| $(value "$report" distribution) | $(value "$report" kernel) | $(value "$report" expected_peer_source) | $(passes "$report" matrix_exit identity_exit) | $(passes "$report" hidepid_matrix_exit hidepid_identity_exit) |"
+  else
+    [ "$(value "$report" paneflow_sandbox_exit)" = "0" ] || status=1
+    echo "| $(value "$report" distribution) | $(value "$report" kernel), $(value "$report" bwrap), ABI $(value "$report" landlock_abi) | $(verdict "$report" bwrap_unshare_all_exit) | $(verdict "$report" paneflow_sandbox_exit) |"
+  fi
 done
 echo "sandbox-matrix: full reports and console logs are in $OUT" >&2
 exit "$status"

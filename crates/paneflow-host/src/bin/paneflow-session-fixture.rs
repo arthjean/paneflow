@@ -2,7 +2,7 @@ use std::io::{Read, Write};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::Duration;
 
-const USAGE: &str = "paneflow-session-fixture <idle|declare|echo|flood <bytes>|stream <bytes-per-second> <seconds>|history <lines>|delayed-exit <ms> <code>|blocked-stdin|descendants <count> <parent-ms>|descendants-orphan <count> <parent-ms>|split-sequences|whoami <host|worker|window> <endpoint> [engine|control|worker]|call <host|worker|window> <endpoint> <engine|control|worker> <method> <params>|setsid-whoami <args>|orphan-whoami <args>|escape-whoami <args>>";
+const USAGE: &str = "paneflow-session-fixture <idle|declare|echo|flood <bytes>|stream <bytes-per-second> <seconds>|history <lines>|delayed-exit <ms> <code>|blocked-stdin|descendants <count> <parent-ms>|descendants-orphan <count> <parent-ms>|split-sequences|whoami <host|worker|window> <endpoint> [engine|control|worker]|call <host|worker|window> <endpoint> <engine|control|worker> <method> <params>|setsid-whoami <args>|orphan-whoami <args>|escape-whoami <args>|outlive-host <socket>>";
 
 const FLOOD_CHUNK: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\r\n";
 
@@ -42,6 +42,7 @@ fn main() -> ExitCode {
         "orphan-whoami" => spawn_whoami(&args[1..], Detach::Orphan),
         "escape-whoami" => spawn_whoami(&args[1..], Detach::SessionAndOrphan),
         "orphan-relay" => orphan_relay(&args[1..]),
+        "outlive-host" => outlive_host(&args[1..]),
         _ => {
             eprintln!("{USAGE}");
             Err(2)
@@ -280,6 +281,37 @@ fn await_orphaning() {
 
 #[cfg(not(unix))]
 fn await_orphaning() {}
+
+#[cfg(unix)]
+fn outlive_host(args: &[String]) -> Result<(), u8> {
+    let socket = std::path::PathBuf::from(args.first().ok_or(2_u8)?);
+    unsafe {
+        libc::signal(libc::SIGHUP, libc::SIG_IGN);
+    }
+    let parent = unsafe { libc::getppid() };
+    announce(&format!("outlive ready parent={parent}"))?;
+    while unsafe { libc::getppid() } == parent {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    let mut stream = loop {
+        match std::os::unix::net::UnixStream::connect(&socket) {
+            Ok(stream) => break stream,
+            Err(_) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(_) => return Err(3),
+        }
+    };
+    let mut closed = [0_u8; 1];
+    let _ = stream.read(&mut closed);
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn outlive_host(_: &[String]) -> Result<(), u8> {
+    Err(2)
+}
 
 fn whoami(args: &[String]) -> Result<(), u8> {
     use paneflow_ipc_client::IpcTransport;
