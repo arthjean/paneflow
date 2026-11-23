@@ -590,12 +590,12 @@ Layer 1's agreement with tree-sitter and the visible change at the layer swap ar
 **Dependencies:** Blocked by US-009, US-002
 
 **Acceptance Criteria:**
-- [ ] Given each `CORPUS` sample whose extension has a grammar, when the oracle pairs it, then the layer-1 language is `language_for_path` of the sample's file name, the same function the editor uses
-- [ ] Given each of the 19 paired languages, when the oracle test runs, then it computes the byte agreement of displayed roles outside whitespace and outside nested-code regions
-- [ ] Given `src-app/src/app/diff_dock/code/oracle-floors.toml`, when the test runs, then each language's agreement is at or above its recorded floor
-- [ ] Given a language below its floor, when the test runs, then it fails naming the language, the floor, the measured value and the three roles with the most disagreeing bytes
-- [ ] Given a paired language absent from the floors file, when the test runs, then it fails naming the language
-- [ ] Given the test, when its code is read, then it measures no time
+- [x] Given each `CORPUS` sample whose extension has a grammar, when the oracle pairs it, then the layer-1 language is `language_for_path` of the sample's file name, the same function the editor uses
+- [x] Given each of the 19 paired languages, when the oracle test runs, then it computes the byte agreement of displayed roles outside whitespace and outside nested-code regions
+- [x] Given `src-app/src/app/diff_dock/code/oracle-floors.toml`, when the test runs, then each language's agreement is at or above its recorded floor
+- [x] Given a language below its floor, when the test runs, then it fails naming the language, the floor, the measured value and the three roles with the most disagreeing bytes
+- [x] Given a paired language absent from the floors file, when the test runs, then it fails naming the language
+- [x] Given the test, when its code is read, then it measures no time
 
 #### US-019: Measure the change at the layer swap and set the first-frame policy
 **Description:** As Arthur, I want to know how many bytes change color when tree-sitter replaces the lexer so that I decide where the lexical first frame helps.
@@ -604,12 +604,76 @@ Layer 1's agreement with tree-sitter and the visible change at the layer swap ar
 **Dependencies:** Blocked by US-018, US-011
 
 **Acceptance Criteria:**
-- [ ] Given each of the 19 paired languages, when the swap report runs on the first 60 rows of its sample, then it prints the share of colored bytes whose role changes at the swap
-- [ ] Given the report, when it completes, then its table is recorded in this PRD
-- [ ] Given `FIRST_FRAME_POLICY` in `src-app/src/app/diff_dock/code/first_frame.rs`, a slice of (lexer language name, `Lexical` or `Plain`), when the editor opens a file whose language is `Plain`, then its first frame is plain
-- [ ] Given a `Plain` language, when its file is edited or has nested regions, then layer 1 still colors the edited rows and the nested regions
-- [ ] Given a language absent from the table, when its file opens, then the policy is `Lexical`
-- [ ] Given the table, when this story completes, then every entry is `Lexical` unless Arthur chose otherwise from the report (Open Question 2)
+- [x] Given each of the 19 paired languages, when the swap report runs on the first 60 rows of its sample, then it prints the share of colored bytes whose role changes at the swap
+- [x] Given the report, when it completes, then its table is recorded in this PRD
+- [x] Given `FIRST_FRAME_POLICY` in `src-app/src/app/diff_dock/code/first_frame.rs`, a slice of (lexer language name, `Lexical` or `Plain`), when the editor opens a file whose language is `Plain`, then its first frame is plain
+- [x] Given a `Plain` language, when its file is edited or has nested regions, then layer 1 still colors the edited rows and the nested regions
+- [x] Given a language absent from the table, when its file opens, then the policy is `Lexical`
+- [x] Given the table, when this story completes, then every entry is `Lexical` unless Arthur chose otherwise from the report (Open Question 2)
+
+**EP-004 implementation notes (2026-11-23, reviewed):**
+
+- **What the oracle compares.** `src-app/src/app/diff_dock/code/oracle.rs` (test-only) opens each `CORPUS` sample (`src-app/src/diff/parity_tests.rs`) whose extension has a grammar as a `CodeDocument` named after the sample, so `CodeHighlighter::new` resolves layer 1 through `language_for_path` exactly as `open_blocking` does; `the_oracle_pairs_every_grammar_of_the_corpus_through_the_editor_lookup` checks the 19 pairs. Layer 1 is the settled lexer runs of that highlighter, layer 2 the runs of a layer-2-only highlighter after its tree and a requery of every row, both read through `runs_into`, the function the text area and the minimap paint from. Roles are read back from the colors through `role_syntax()`, a palette that gives each of the 29 roles its own color (`every_role_resolves_to_its_own_color`), so a disagreement is one the user would see in a theme whose roles all differ. Bytes that are ASCII whitespace, plain in both layers, or inside a layer-2 nested region (`CodeHighlighter::nested_ranges`) are not compared. No time is measured.
+- **Floors.** `oracle-floors.toml` holds each measured agreement truncated to one decimal, compared in integer tenths of a percent, so the test fails on the first degraded byte past the truncation. `every_paired_language_meets_its_agreement_floor` fails with, for example, `rs (lexer rs, sample.rs): agreement 87.68 % is below its floor 90.0 %; most disagreeing roles: variable 12 B, property 5 B, plain 4 B`, where a role is the layer-2 role of the disagreeing bytes and `plain` means only the lexer colored them; a paired language missing from the file, and a floor for a language the oracle does not pair, each fail naming it (`a_language_below_its_floor_fails_with_its_floor_measure_and_worst_roles`, `a_paired_language_absent_from_the_floors_file_fails_naming_it`). `oracle_floor_report` (ignored; `cargo test -p paneflow-app --bin paneflow app::diff_dock::code::oracle::oracle_floor_report -- --ignored --exact --nocapture`) prints the table below and the TOML to paste after a deliberate change. The lexer column is `Language::name`, the first key of Pierre's table for that id.
+
+| language | lexer | compared bytes | agreement (floor) | most disagreeing roles |
+|---|---|---|---|---|
+| rs | rs | 211 | 87.68 % (87.6) | variable 12 B, property 5 B, plain 4 B |
+| json | json | 56 | 100.00 % (100.0) | |
+| sh | bash | 81 | 56.79 % (56.7) | keyword 20 B, string 8 B, constant 4 B |
+| py | py | 91 | 95.60 % (95.6) | variable 4 B |
+| ts | angular-ts | 115 | 95.65 % (95.6) | function 5 B |
+| tsx | tsx | 106 | 94.34 % (94.3) | variable 5 B, punctuation.special 1 B |
+| toml | toml | 92 | 79.35 % (79.3) | type 19 B |
+| md | markdown | 102 | 56.86 % (56.8) | link_uri 21 B, text.literal 16 B, link_text 7 B |
+| go | go | 66 | 100.00 % (100.0) | |
+| yaml | yaml | 104 | 100.00 % (100.0) | |
+| css | css | 58 | 91.38 % (91.3) | type 4 B, punctuation 1 B |
+| html | htm | 59 | 71.19 % (71.1) | constant 13 B, plain 3 B, punctuation 1 B |
+| c | c | 66 | 100.00 % (100.0) | |
+| cpp | c++ | 242 | 90.08 % (90.0) | namespace 10 B, variable 7 B, property 5 B |
+| java | java | 89 | 77.53 % (77.5) | plain 14 B, variable 6 B |
+| rb | rb | 70 | 77.14 % (77.1) | constructor 7 B, function 4 B, property 4 B |
+| jsonc | json | 57 | 100.00 % (100.0) | |
+| js | cjs | 89 | 78.65 % (78.6) | punctuation 8 B, tag 6 B, attribute 5 B |
+| zig | zig | 391 | 99.23 % (99.2) | namespace 3 B |
+
+  The samples are the parity corpus, 56 to 391 compared bytes each, so one token moves a small language by several points; the floors catch a change, they do not rank the lexers. Every language here has a grammar, so none of them is a final-layer language and TD-04's 84.1 % trigger does not apply to any of them.
+- **Swap report (US-019).** `swap` (same file) opens the sample through `CodeHighlighter::new` with every language forced to `Lexical`, reads the first-frame runs of its first 60 rows, installs the tree, requeries those rows and reads them again; a byte counts when it is not whitespace and is colored in either frame, and it changes when its role differs, including colored to plain and back. `the_swap_report_covers_every_paired_language` prints the table on every run (`--nocapture`), and `the_swap_measures_layer_1_against_layer_2_and_not_against_itself` checks that Rust changes some bytes and that a Markdown fence body changes none. Every sample is shorter than 60 rows.
+
+| language | lexer | colored bytes | role changes at the swap | share | largest changes |
+|---|---|---|---|---|---|
+| rs | rs | 211 | 26 | 12.3 % | variable to property 5 B, label to plain 4 B, label to variable 4 B |
+| json | json | 56 | 0 | 0.0 % | |
+| sh | bash | 81 | 35 | 43.2 % | comment to keyword 18 B, variable to string 8 B, variable to constant 4 B |
+| py | py | 91 | 4 | 4.4 % | string to variable 4 B |
+| ts | angular-ts | 115 | 5 | 4.3 % | variable to function 5 B |
+| tsx | tsx | 106 | 6 | 5.7 % | type to variable 5 B, punctuation to punctuation.special 1 B |
+| toml | toml | 92 | 19 | 20.7 % | property to type 19 B |
+| md | markdown | 102 | 34 | 33.3 % | plain to link_uri 19 B, punctuation to text.literal 6 B, plain to link_text 5 B |
+| go | go | 66 | 0 | 0.0 % | |
+| yaml | yaml | 104 | 0 | 0.0 % | |
+| css | css | 58 | 5 | 8.6 % | number to type 4 B, constant to punctuation 1 B |
+| html | htm | 59 | 17 | 28.8 % | tag to constant 13 B, string to plain 2 B, punctuation to plain 1 B |
+| c | c | 66 | 0 | 0.0 % | |
+| cpp | c++ | 242 | 24 | 9.9 % | type to variable 7 B, variable to namespace 6 B, variable to property 5 B |
+| java | java | 89 | 20 | 22.5 % | punctuation to plain 14 B, namespace to variable 3 B, property to variable 3 B |
+| rb | rb | 70 | 16 | 22.9 % | type to constructor 7 B, variable to function 4 B, variable to property 4 B |
+| jsonc | json | 57 | 0 | 0.0 % | |
+| js | cjs | 89 | 19 | 21.3 % | variable to attribute 5 B, operator to punctuation 4 B, string.special to punctuation 4 B |
+| zig | zig | 391 | 3 | 0.8 % | variable to namespace 3 B |
+
+  Bash's largest change is its shebang (`#!/usr/bin/env bash`, a comment for the lexer and a keyword for tree-sitter); Markdown's is the link destination and the reference definition, which the lexer leaves plain.
+- **First-frame policy.** `FIRST_FRAME_POLICY` (`first_frame.rs`) has one entry per distinct lexer language of the 19 pairs (18, since `json` and `jsonc` share Pierre's `json`), each `Lexical`; a name is any key of Pierre's language table, resolved with `language_for_key`, and a language absent from the table is `Lexical` (`first_frame_for`). Guard tests check that every entry names a distinct lexer language, that every paired language has an entry, and that every entry is `Lexical`. Open Question 2 stays open: no entry is `Plain` until Arthur chooses from the table above and the US-035 visual pass.
+- **How `Plain` behaves.** `CodeHighlighter::with_lexical` sets `plain_until_tree` when the document has a layer 2 and its lexer language is `Plain`; `runs_into` then paints no layer-1 run on a row that is not `Fresh`. The hold ends at the first edit (`edit_batch`, so the edited rows show layer 1 at the next paint), when the tree is installed (`apply_parsed`), and when the initial parse gives up, where layer 1 takes over as before. Layer 1 still lexes from the open, so nothing is lost when the hold ends, and nested regions show layer 1 on fresh rows. A file with no grammar, or past `highlight_cap`, has no swap to hide, so the policy does not apply to it and layer 1 stays its final layer. Proofs: `a_plain_first_frame_language_opens_plain_and_colors_once_its_tree_arrives` and `a_language_absent_from_the_first_frame_table_opens_colored` start at `open_blocking` (`load.rs`); `a_plain_first_frame_language_colors_the_rows_edited_before_its_tree`, `a_plain_first_frame_language_keeps_its_nested_regions_on_layer_1`, `a_plain_first_frame_only_holds_files_that_have_a_layer_2` and `a_plain_first_frame_ends_when_the_initial_parse_gives_up` (`highlight.rs`). Tests set a `Plain` table with `override_policy_for_test`, a thread-local restored on drop.
+- **Platforms.** No platform-specific code; every test is deterministic and runs on each CI leg. Windows and macOS were not run locally.
+
+**EP-004 review (2026-11-23):** US-018 and US-019 are `DONE`; no code was changed.
+
+- **Reachability.** `first_frame_for` is called by `CodeHighlighter::with_lexical`, which `open_blocking` reaches through `CodeHighlighter::new`, so the policy sits on the production open path; `LexicalLayer::language` has that caller too. The oracle, `nested_ranges`, `DiffSyntax::from_palette` and the policy override are test-only, as the criteria intend. With every entry `Lexical`, `plain_until_tree` is always false in production, so today's behavior is unchanged.
+- **Proof the tests bite.** Raising the Rust floor to 87.7 fails `every_paired_language_meets_its_agreement_floor` with `rs (lexer rs, sample.rs): agreement 87.68 % is below its floor 87.7 %; most disagreeing roles: variable 12 B, property 5 B, plain 4 B`. Removing the `plain_until_tree` filter from `runs_into` fails four of the five `Plain` tests (the fifth covers a file without a grammar, where the hold never applies). Both files were restored byte for byte. The floor report and the swap report, rerun on the final tree, print exactly the two tables above.
+- **Not blocking, not applied.** After the tree of a `Plain` language arrives, rows the frame budget leaves stale show layer 1 until they are requeried. The first slice of `fill_stale_rows` always covers `MAX_QUERY_ROWS` (128), so only a viewport taller than 128 rows could see layer 1 for a moment between plain and tree-sitter. No entry is `Plain` today; revisit it if Open Question 2 makes one `Plain`.
+- **Evidence.** On the final tree: `cargo fmt --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo nextest run --workspace --locked --profile ci` (5364 passed, 29 skipped), `check-test-wallclock.sh` and `check-helper-sizes.sh` pass (`paneflow-ai-hook` is still over its soft cap, unchanged). No dependency changed, so `cargo deny` was not run. Windows and macOS were reviewed by inspection only; the code has no `cfg`, and the corpus is inline Rust source, which rustc reads with LF line endings on every platform.
 
 ---
 

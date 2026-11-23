@@ -33,10 +33,10 @@
     {
       "id": "EP-004",
       "title": "The differential oracle",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 2,
-      "stories_done": 0
+      "stories_done": 2
     },
     {
       "id": "EP-005",
@@ -306,29 +306,29 @@
       "id": "US-018",
       "title": "Per-language agreement floors as a deterministic test",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-009",
         "US-002"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-23",
+      "completed_at": "2026-11-23",
+      "reviewed_at": "2026-11-23"
     },
     {
       "id": "US-019",
       "title": "Measure the change at the layer swap and set the first-frame policy",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-018",
         "US-011"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-23",
+      "completed_at": "2026-11-23",
+      "reviewed_at": "2026-11-23"
     },
     {
       "id": "US-020",
