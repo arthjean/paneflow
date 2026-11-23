@@ -25,10 +25,10 @@
     {
       "id": "EP-003",
       "title": "Grants a pane holds",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "stories_total": 5,
-      "stories_done": 0
+      "stories_done": 5
     },
     {
       "id": "EP-004",
@@ -250,67 +250,67 @@
       "id": "US-016",
       "title": "Hold grants in the worker",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-009"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-23T13:24:59+01:00",
+      "completed_at": "2026-11-23T14:45:00+01:00",
+      "reviewed_at": "2026-11-23T14:45:00+01:00"
     },
     {
       "id": "US-017",
       "title": "Apply grants in the host and the window",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-016"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-23T14:06:23+01:00",
+      "completed_at": "2026-11-23T14:45:00+01:00",
+      "reviewed_at": "2026-11-23T14:45:00+01:00"
     },
     {
       "id": "US-018",
       "title": "Ask the human for a grant",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-016"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-23T14:06:23+01:00",
+      "completed_at": "2026-11-23T14:45:00+01:00",
+      "reviewed_at": "2026-11-23T14:45:00+01:00"
     },
     {
       "id": "US-019",
       "title": "Grant from configuration per agent profile",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-016"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-23T14:06:23+01:00",
+      "completed_at": "2026-11-23T14:45:00+01:00",
+      "reviewed_at": "2026-11-23T14:45:00+01:00"
     },
     {
       "id": "US-020",
       "title": "Delegate and revoke",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-017",
         "US-018"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-23T14:06:23+01:00",
+      "completed_at": "2026-11-23T14:45:00+01:00",
+      "reviewed_at": "2026-11-23T14:45:00+01:00"
     },
     {
       "id": "US-021",

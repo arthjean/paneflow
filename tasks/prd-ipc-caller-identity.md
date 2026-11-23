@@ -381,11 +381,11 @@ The human grants an agent what it needs, for a scope and a time, and an agent ca
 **Dependencies:** Blocked by US-009
 
 **Acceptance Criteria:**
-- [ ] Given a grant, when it is stored, then it records its holder (session id and launch generation), rights among `write`, `spawn` and `layout`, a scope (`workspace` or `instance`), an expiry, and the grant it was delegated from if any
-- [ ] Given a `Pane` caller of a gated method, when a live grant covers the rights and scope the request needs, then `authorize` opens the gate
-- [ ] Given a grant whose holder's session ended or whose launch generation changed, when the next request arrives, then the grant does not apply
-- [ ] Given the worker restarted, when it starts, then grants of live sessions are restored from the serve directory and expired ones are dropped
-- [ ] Given a grant file the worker cannot parse, when it starts, then it starts with no grant and logs the cause
+- [x] Given a grant, when it is stored, then it records its holder (session id and launch generation), rights among `write`, `spawn` and `layout`, a scope (`workspace` or `instance`), an expiry, and the grant it was delegated from if any
+- [x] Given a `Pane` caller of a gated method, when a live grant covers the rights and scope the request needs, then `authorize` opens the gate
+- [x] Given a grant whose holder's session ended or whose launch generation changed, when the next request arrives, then the grant does not apply
+- [x] Given the worker restarted, when it starts, then grants of live sessions are restored from the serve directory and expired ones are dropped
+- [x] Given a grant file the worker cannot parse, when it starts, then it starts with no grant and logs the cause
 
 #### US-017: Apply grants in the host and the window
 **Description:** As the maintainer, I want the host and the window to apply grants without asking the worker on every call, so that authorization stays local.
@@ -394,11 +394,11 @@ The human grants an agent what it needs, for a scope and a time, and an agent ca
 **Dependencies:** Blocked by US-016
 
 **Acceptance Criteria:**
-- [ ] Given a grant created, delegated, revoked or expired, when it changes, then the worker sends the full grant set to the host with a new `host.grants.set` call, whose audience is `PaneflowOnly`
-- [ ] Given that change, when it happens, then the worker appends a `grant.changed` event to its event log
-- [ ] Given the window following the worker's event log, when it receives `grant.changed`, then it reads the grant set with `grant.list` before applying the next gated request
-- [ ] Given the host or the window holding a grant set older than the worker's revision, when a `Pane` request needs a grant, then it is refused with reason `grants_unsynced` and a message saying the call can be retried
-- [ ] Given a request that needs no grant, when the host's or the window's grant set is stale, then it is authorized as without grants
+- [x] Given a grant created, delegated, revoked or expired, when it changes, then the worker sends the full grant set to the host with a new `host.grants.set` call, whose audience is `PaneflowOnly`
+- [x] Given that change, when it happens, then the worker appends a `grant.changed` event to its event log
+- [x] Given the window following the worker's event log, when it receives `grant.changed`, then it reads the grant set with `grant.list` before applying the next gated request
+- [x] Given the host or the window holding a grant set older than the worker's revision, when a `Pane` request needs a grant, then it is refused with reason `grants_unsynced` and a message saying the call can be retried
+- [x] Given a request that needs no grant, when the host's or the window's grant set is stale, then it is authorized as without grants
 
 #### US-018: Ask the human for a grant
 **Description:** As an agent author, I want an agent to ask for the rights it needs, so that the human decides when it matters.
@@ -407,12 +407,12 @@ The human grants an agent what it needs, for a scope and a time, and an agent ca
 **Dependencies:** Blocked by US-016
 
 **Acceptance Criteria:**
-- [ ] Given a `Pane` caller of `grant.request` with rights, scope and duration, when the worker receives it, then it raises a prompt through its prompt broker naming the agent, its pane, the rights, the scope and the duration
-- [ ] Given the human allowing the prompt, when it is answered, then the grant is stored and the call returns its id and expiry
-- [ ] Given the human denying it, when the call returns, then it returns `granted: false` with reason `denied` and no grant exists
-- [ ] Given no answer before the broker's timeout or no window able to show the prompt, when the call returns, then it returns `granted: false` with reason `unanswered`
-- [ ] Given a request for `instance` scope or with no expiry, when the prompt is shown, then its title says so
-- [ ] Given a `grant.request` from a non-pane caller, when it is received, then it is refused with reason `principal_refused`
+- [x] Given a `Pane` caller of `grant.request` with rights, scope and duration, when the worker receives it, then it raises a prompt through its prompt broker naming the agent, its pane, the rights, the scope and the duration
+- [x] Given the human allowing the prompt, when it is answered, then the grant is stored and the call returns its id and expiry
+- [x] Given the human denying it, when the call returns, then it returns `granted: false` with reason `denied` and no grant exists
+- [x] Given no answer before the broker's timeout or no window able to show the prompt, when the call returns, then it returns `granted: false` with reason `unanswered`
+- [x] Given a request for `instance` scope or with no expiry, when the prompt is shown, then its title says so
+- [x] Given a `grant.request` from a non-pane caller, when it is received, then it is refused with reason `principal_refused`
 
 #### US-019: Grant from configuration per agent profile
 **Description:** As a user who automates, I want to grant an agent profile rights in `paneflow.json`, so that a trusted setup needs no prompt each time.
@@ -421,10 +421,10 @@ The human grants an agent what it needs, for a scope and a time, and an agent ca
 **Dependencies:** Blocked by US-016
 
 **Acceptance Criteria:**
-- [ ] Given `agents.<profile>.grants` in `paneflow.json`, when a pane is launched with that profile, then the worker stores those grants for the pane, ending with its session
-- [ ] Given a pane whose agent is declared after launch by the shim, when the declaration arrives, then the profile's grants apply from that moment
-- [ ] Given a profile grant naming an unknown right, when the config loads, then the error names the profile and the right
-- [ ] Given that error, when a pane of that profile launches, then no grant of the profile is stored
+- [x] Given `agents.<profile>.grants` in `paneflow.json`, when a pane is launched with that profile, then the worker stores those grants for the pane, ending with its session
+- [x] Given a pane whose agent is declared after launch by the shim, when the declaration arrives, then the profile's grants apply from that moment
+- [x] Given a profile grant naming an unknown right, when the config loads, then the error names the profile and the right
+- [x] Given that error, when a pane of that profile launches, then no grant of the profile is stored
 
 #### US-020: Delegate and revoke
 **Description:** As an agent author, I want an orchestrating agent to give a sub-agent less than it holds, and the human to revoke any grant, so that authority narrows down a tree and can be taken back.
@@ -433,12 +433,12 @@ The human grants an agent what it needs, for a scope and a time, and an agent ca
 **Dependencies:** Blocked by US-017, US-018
 
 **Acceptance Criteria:**
-- [ ] Given a pane holding a grant and a pane it spawned with `surface.split`, when it calls `grant.delegate` within its own rights and scope, then the child receives the grant with an expiry no later than the parent's
-- [ ] Given a delegation wider than the delegator's grant in rights, scope or expiry, when it is called, then it is refused with reason `grant_exceeds_holder`
-- [ ] Given a delegation to a pane the delegator did not spawn, when it is called, then it is refused with reason `not_spawned_by_caller`
-- [ ] Given a grant revoked or expired, when that happens, then every grant delegated from it is revoked in the same `grant.changed` event
-- [ ] Given `paneflow grants ls` and `paneflow grants revoke <id>` from a non-pane caller, when they run, then they list and revoke any grant
-- [ ] Given `paneflow grants revoke <id>` from a `Pane` caller on a grant it did not delegate, when it runs, then it is refused with reason `principal_refused`
+- [x] Given a pane holding a grant and a pane it spawned with `surface.split`, when it calls `grant.delegate` within its own rights and scope, then the child receives the grant with an expiry no later than the parent's
+- [x] Given a delegation wider than the delegator's grant in rights, scope or expiry, when it is called, then it is refused with reason `grant_exceeds_holder`
+- [x] Given a delegation to a pane the delegator did not spawn, when it is called, then it is refused with reason `not_spawned_by_caller`
+- [x] Given a grant revoked or expired, when that happens, then every grant delegated from it is revoked in the same `grant.changed` event
+- [x] Given `paneflow grants ls` and `paneflow grants revoke <id>` from a non-pane caller, when they run, then they list and revoke any grant
+- [x] Given `paneflow grants revoke <id>` from a `Pane` caller on a grant it did not delegate, when it runs, then it is refused with reason `principal_refused`
 
 ---
 
