@@ -5,6 +5,7 @@
 
 | Version | Date | Author | Summary |
 |---------|------|--------|---------|
+| 1.2 | 2026-11-23 | Arthur Jean | US-026's criterion on layer-3 colors disappearing when the switch is turned off moves to US-031, which owns the overlay; US-026 keeps what the setting itself does: closing every open document on its server and stopping each server after its last document. US-026 no longer waits for US-031. |
 | 1.1 | 2026-11-22 | Arthur Jean | Every Windows-only proof moves to a final epic, EP-009, run on Arthur's Windows 11 dual boot: the Windows CI leg and the PowerShell twin of US-005 and US-006, US-033 from EP-007, US-036 from EP-008, the Windows behaviors of US-020 and US-025, and the PowerShell twin of EP-001 on Windows (new US-039 and US-040). EP-007 and EP-008 keep macOS and Linux. 9 epics, 40 stories. |
 | 1.0 | 2026-11-22 | Arthur Jean | Initial PRD, from the investigation of missing Zig colors in the Files dock, a code map of t3code's highlighter, a probe of the Zig grammar under tree-sitter 0.26, a native compile of t3code's wasm2c output, a code map of the editor's highlighter, the LSP process model and the C build constraints, and two web research passes (LSP semantic tokens, wasm2c). Implements the two-layer decision of 2026-11-19 (`tasks/prd-files-experience.md`, version 1.4) with one change: layer 1 is Pierre's lexers translated to C by wasm2c instead of a hand rewrite. Adds LSP semantic tokens as layer 3. Reviewed against the PRD rubric by an independent reader in two passes; its findings are applied. 8 epics, 38 stories. |
 
@@ -158,7 +159,7 @@ Modifiers: `defaultLibrary` on `function`, `type` or `variable` appends `.builti
 | A3 | MSVC compiles the 5.6 MB generated C with `/std:c11`, `_Thread_local` works there, and the `Windows x86_64 libghostty check` job still finishes inside its 50-minute timeout (`.github/workflows/run_tests.yml:875`). | High (R8: not shown in WABT CI) | US-039, then US-033 |
 | A4 | Layer 1 retains about 7 bytes per input byte (2.08 MiB for 295 KB is 7.05, R10), so a 10 MiB file needs about 70 MiB. The cap rule of US-015 allows up to 8 bytes per input byte, a 13 % margin over the one measured point; the margin itself is not evidenced. | Medium: one measured point | US-015 |
 | A5 | zls implements `textDocument/semanticTokens/full` and accepts `utf-8` position encoding. | Medium (not researched) | US-029 test against zls, US-036 |
-| A6 | rust-analyzer accepts `utf-8` position encoding. | Low (well-known, not fetched) | US-023 |
+| A6 | rust-analyzer accepts `utf-8` position encoding. | Low (well-known, not fetched). Validated 2026-11-23: rust-analyzer 1.98.1 (48a229c 2026-09-01) chose `utf-8` when offered `["utf-8", "utf-16"]` (`crates/paneflow-lsp/tests/client/sync.rs`, `sync::rust_analyzer_negotiates_a_position_encoding`, run with that toolchain's binary first on `PATH`) | US-023 |
 | A7 | A server answers `shutdown` within 5 s; past that the client kills it. 5 s mirrors `INITIAL_PARSE_TIMEOUT` (`highlight.rs:22`), not a measured server figure. | Low | US-022 |
 | A8 | No legitimate LSP message exceeds 64 MiB. Reasoning: semantic tokens for the largest editable file (10 MiB) at one token per 6 bytes is about 1.7 million tokens, about 21 MB of JSON. | Medium | US-021 |
 | A9 | One outstanding semantic token request per document, re-sent once when edits arrived meanwhile, keeps tokens current without a timer. | Low | US-028 |
@@ -690,14 +691,14 @@ Paneflow can start a language server for a project root after consent, keep its 
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given `spawn_stdio_session` on Unix, when it starts a child, then the child gets its own process group as in `spawn_line_session`
-- [ ] Given the session, when it is read, then stdout is a byte reader with no newline framing
-- [ ] Given the session, when it is written, then stdin is a byte writer with no newline framing
-- [ ] Given the child's stderr, when it writes, then the last `STDERR_CAP` bytes (R16) are kept and readable for logs
-- [ ] Given the session dropped, when the drop completes, then the child and its descendants are killed
-- [ ] Given a command that does not exist, when it is spawned, then the error is a distinct not-found variant
-- [ ] Given a child that exits at once, when its stdout is read, then the reader returns end of file
-- [ ] Given that child, when its status is read, then the exit status is available
+- [x] Given `spawn_stdio_session` on Unix, when it starts a child, then the child gets its own process group as in `spawn_line_session`
+- [x] Given the session, when it is read, then stdout is a byte reader with no newline framing
+- [x] Given the session, when it is written, then stdin is a byte writer with no newline framing
+- [x] Given the child's stderr, when it writes, then the last `STDERR_CAP` bytes (R16) are kept and readable for logs
+- [x] Given the session dropped, when the drop completes, then the child and its descendants are killed
+- [x] Given a command that does not exist, when it is spawned, then the error is a distinct not-found variant
+- [x] Given a child that exits at once, when its stdout is read, then the reader returns end of file
+- [x] Given that child, when its status is read, then the exit status is available
 
 #### US-021: Content-Length JSON-RPC transport with bounded reads
 **Description:** As a developer of the LSP client, I want a transport that frames, routes and bounds messages so that a broken server cannot hang or exhaust the app.
@@ -706,19 +707,19 @@ Paneflow can start a language server for a project root after consent, keep its 
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given a message, when it is written, then it is `Content-Length: <bytes>\r\n\r\n` followed by the UTF-8 JSON body
-- [ ] Given a stream split at arbitrary byte boundaries, when it is read, then every message is decoded once and in order
-- [ ] Given a response, when it arrives, then it completes the request with the same id
-- [ ] Given a response with an unknown id, when it arrives, then it is logged and dropped
-- [ ] Given the server requests `workspace/configuration`, `window/workDoneProgress/create` and `client/registerCapability`, when they arrive, then the client answers each with a result
-- [ ] Given any other server request, when it arrives, then the client answers error `-32601`
-- [ ] Given `window/logMessage`, when it arrives, then it is logged at debug level with the server id
-- [ ] Given a header without `Content-Length`, when it is read, then the connection is closed
-- [ ] Given that closed connection, when its end is reported to the lifecycle, then the cause is a protocol error
-- [ ] Given a `Content-Length` above 64 MiB (assumption A8), when it is read, then the connection is closed before the body is allocated
-- [ ] Given a body that is not valid JSON, when it is read, then it is logged and skipped
-- [ ] Given that invalid body, when the next valid message arrives, then it is decoded on the same connection
-- [ ] Given the transport tests, when they run, then they use in-memory pipes and measure no time
+- [x] Given a message, when it is written, then it is `Content-Length: <bytes>\r\n\r\n` followed by the UTF-8 JSON body
+- [x] Given a stream split at arbitrary byte boundaries, when it is read, then every message is decoded once and in order
+- [x] Given a response, when it arrives, then it completes the request with the same id
+- [x] Given a response with an unknown id, when it arrives, then it is logged and dropped
+- [x] Given the server requests `workspace/configuration`, `window/workDoneProgress/create` and `client/registerCapability`, when they arrive, then the client answers each with a result
+- [x] Given any other server request, when it arrives, then the client answers error `-32601`
+- [x] Given `window/logMessage`, when it arrives, then it is logged at debug level with the server id
+- [x] Given a header without `Content-Length`, when it is read, then the connection is closed
+- [x] Given that closed connection, when its end is reported to the lifecycle, then the cause is a protocol error
+- [x] Given a `Content-Length` above 64 MiB (assumption A8), when it is read, then the connection is closed before the body is allocated
+- [x] Given a body that is not valid JSON, when it is read, then it is logged and skipped
+- [x] Given that invalid body, when the next valid message arrives, then it is decoded on the same connection
+- [x] Given the transport tests, when they run, then they use in-memory pipes and measure no time
 
 #### US-022: Server lifecycle: initialize, shutdown, and crashes
 **Description:** As a user, I want one server per language server and root that starts when needed and stops when unused so that servers neither pile up nor linger.
@@ -727,19 +728,19 @@ Paneflow can start a language server for a project root after consent, keep its 
 **Dependencies:** Blocked by US-020, US-021
 
 **Acceptance Criteria:**
-- [ ] Given a start for (server id, root), when it runs, then `initialize` carries `rootUri` and one workspace folder for the root
-- [ ] Given that `initialize`, when it is sent, then its capabilities carry the semantic token fields of R12 with `formats: ["relative"]`, `augmentsSyntaxTokens: true`, `multilineTokenSupport: false`, `overlappingTokenSupport: false` and `refreshSupport: true`
-- [ ] Given that `initialize`, when it is sent, then `general.positionEncodings` is `["utf-8", "utf-16"]`
-- [ ] Given the `initialize` result, when it arrives, then the client records the negotiated position encoding and the token legend
-- [ ] Given that result recorded, when the client continues, then it sends `initialized` before any document message
-- [ ] Given a second document of the same (server id, root), when it opens, then no second process starts
-- [ ] Given the last document of a (server id, root) closed, when the close completes, then the client sends `shutdown` followed by `exit`
-- [ ] Given a server still alive 5 s after `exit` (assumption A7), when the timeout passes, then the client kills it
-- [ ] Given Paneflow quitting, when servers are running, then each receives `shutdown` and `exit` off the render thread
-- [ ] Given an unexpected exit or a protocol error, when it is the first for that key since it started, then the server restarts once and its open documents are opened again
-- [ ] Given a second unexpected exit or protocol error, when it happens, then the server stays stopped in the `Crashed` state with its last stderr lines kept
-- [ ] Given an `initialize` error response, when it arrives, then the server is stopped in the `Failed` state with the error message kept
-- [ ] Given the lifecycle tests, when they run, then they drive a fake server that is the test binary re-executed with an environment variable
+- [x] Given a start for (server id, root), when it runs, then `initialize` carries `rootUri` and one workspace folder for the root
+- [x] Given that `initialize`, when it is sent, then its capabilities carry the semantic token fields of R12 with `formats: ["relative"]`, `augmentsSyntaxTokens: true`, `multilineTokenSupport: false`, `overlappingTokenSupport: false` and `refreshSupport: true`
+- [x] Given that `initialize`, when it is sent, then `general.positionEncodings` is `["utf-8", "utf-16"]`
+- [x] Given the `initialize` result, when it arrives, then the client records the negotiated position encoding and the token legend
+- [x] Given that result recorded, when the client continues, then it sends `initialized` before any document message
+- [x] Given a second document of the same (server id, root), when it opens, then no second process starts
+- [x] Given the last document of a (server id, root) closed, when the close completes, then the client sends `shutdown` followed by `exit`
+- [x] Given a server still alive 5 s after `exit` (assumption A7), when the timeout passes, then the client kills it
+- [x] Given Paneflow quitting, when servers are running, then each receives `shutdown` and `exit` off the render thread
+- [x] Given an unexpected exit or a protocol error, when it is the first for that key since it started, then the server restarts once and its open documents are opened again
+- [x] Given a second unexpected exit or protocol error, when it happens, then the server stays stopped in the `Crashed` state with its last stderr lines kept
+- [x] Given an `initialize` error response, when it arrives, then the server is stopped in the `Failed` state with the error message kept
+- [x] Given the lifecycle tests, when they run, then they drive a fake server that is the test binary re-executed with an environment variable
 
 #### US-023: Document sync from editor edits
 **Description:** As a user editing a file, I want the server to see my unsaved text so that its tokens match what I see.
@@ -748,18 +749,18 @@ Paneflow can start a language server for a project root after consent, keep its 
 **Dependencies:** Blocked by US-022, US-024
 
 **Acceptance Criteria:**
-- [ ] Given a document opened for a running server, when it opens, then `didOpen` sends its URI, the catalog's `languageId`, version 1 and the full text
-- [ ] Given an edit batch, when it is applied, then one `didChange` sends the incremental ranges and texts in the negotiated encoding
-- [ ] Given that `didChange`, when it is sent, then its version is the previous version plus one
-- [ ] Given a server whose `textDocumentSync.change` is Full, when an edit is applied, then `didChange` sends the full text
-- [ ] Given a server that offers no sync, when a document opens, then no `didOpen` is sent and the document is marked unsupported
-- [ ] Given the negotiated encoding `utf-16` and a line with a character outside the BMP, when an edit after it is sent, then the column counts that character as two units
-- [ ] Given the negotiated encoding `utf-8`, when an edit is sent, then columns are byte offsets in the line
-- [ ] Given "Reload from disk", when the document is replaced, then one full-text `didChange` is sent
-- [ ] Given a tab closed, when the close completes, then `didClose` is sent for its URI
-- [ ] Given a document outside its workspace's Files dock root (TD-07), when it opens, then no server is involved
-- [ ] Given rust-analyzer on `PATH`, when an integration test initializes it, then the negotiated encoding is recorded in this PRD (assumption A6)
-- [ ] Given rust-analyzer absent, when that integration test runs, then it is skipped with a message naming the binary
+- [x] Given a document opened for a running server, when it opens, then `didOpen` sends its URI, the catalog's `languageId`, version 1 and the full text
+- [x] Given an edit batch, when it is applied, then one `didChange` sends the incremental ranges and texts in the negotiated encoding
+- [x] Given that `didChange`, when it is sent, then its version is the previous version plus one
+- [x] Given a server whose `textDocumentSync.change` is Full, when an edit is applied, then `didChange` sends the full text
+- [x] Given a server that offers no sync, when a document opens, then no `didOpen` is sent and the document is marked unsupported
+- [x] Given the negotiated encoding `utf-16` and a line with a character outside the BMP, when an edit after it is sent, then the column counts that character as two units
+- [x] Given the negotiated encoding `utf-8`, when an edit is sent, then columns are byte offsets in the line
+- [x] Given "Reload from disk", when the document is replaced, then one full-text `didChange` is sent
+- [x] Given a tab closed, when the close completes, then `didClose` is sent for its URI
+- [x] Given a document outside its workspace's Files dock root (TD-07), when it opens, then no server is involved
+- [x] Given rust-analyzer on `PATH`, when an integration test initializes it, then the negotiated encoding is recorded in this PRD (assumption A6)
+- [x] Given rust-analyzer absent, when that integration test runs, then it is skipped with a message naming the binary
 
 #### US-024: Language server settings and the built-in catalog
 **Description:** As a user, I want semantic highlighting and its servers declared in my own settings so that nothing runs unless I ask.
@@ -768,15 +769,15 @@ Paneflow can start a language server for a project root after consent, keep its 
 **Dependencies:** Blocked by US-022
 
 **Acceptance Criteria:**
-- [ ] Given `EditorDisplayConfig`, when it is read, then it has `semantic_tokens: Option<bool>` resolved by `semantic_tokens_enabled()` to `false` by default
-- [ ] Given a new top-level `language_servers` section, when it is parsed, then each entry has `command`, `args`, `extensions`, `language_id`, `enabled`, `initialization_options` and `settings`
-- [ ] Given no user entry, when the catalog resolves, then it contains `rust-analyzer` for `rs` with `languageId` `rust`
-- [ ] Given no user entry, when the catalog resolves, then it contains `zls` for `zig` with `languageId` `zig`
-- [ ] Given a user entry with the id of a built-in, when the catalog resolves, then the user's fields replace the built-in's
-- [ ] Given `settings` in an entry, when the server sends `workspace/configuration`, then the client answers with those values
-- [ ] Given a malformed `language_servers` entry, when the config loads, then that entry is dropped with a log line
-- [ ] Given that malformed entry, when the config loads, then the other entries still load
-- [ ] Given `editor.semantic_tokens` false, when a Rust file opens, then no language server process starts
+- [x] Given `EditorDisplayConfig`, when it is read, then it has `semantic_tokens: Option<bool>` resolved by `semantic_tokens_enabled()` to `false` by default
+- [x] Given a new top-level `language_servers` section, when it is parsed, then each entry has `command`, `args`, `extensions`, `language_id`, `enabled`, `initialization_options` and `settings`
+- [x] Given no user entry, when the catalog resolves, then it contains `rust-analyzer` for `rs` with `languageId` `rust`
+- [x] Given no user entry, when the catalog resolves, then it contains `zls` for `zig` with `languageId` `zig`
+- [x] Given a user entry with the id of a built-in, when the catalog resolves, then the user's fields replace the built-in's
+- [x] Given `settings` in an entry, when the server sends `workspace/configuration`, then the client answers with those values
+- [x] Given a malformed `language_servers` entry, when the config loads, then that entry is dropped with a log line
+- [x] Given that malformed entry, when the config loads, then the other entries still load
+- [x] Given `editor.semantic_tokens` false, when a Rust file opens, then no language server process starts
 
 #### US-025: Resolve server commands, and the Missing state
 **Description:** As a user, I want servers found only where I put them so that a repository can never choose what Paneflow runs. The Windows `PATHEXT` resolution is written here and proven in US-040.
@@ -785,29 +786,29 @@ Paneflow can start a language server for a project root after consent, keep its 
 **Dependencies:** Blocked by US-024
 
 **Acceptance Criteria:**
-- [ ] Given a `command` without a path separator, when it resolves, then it is searched on `PATH` with `which`
-- [ ] Given a `command` with an absolute path, when it resolves, then that path is used
-- [ ] Given a `command` with a relative path, when it resolves, then it is rejected with a log line
-- [ ] Given a command that does not resolve, when a matching file opens, then the server enters the `Missing` state and no process starts
-- [ ] Given a `Missing` server, when the user's `PATH` gains the binary and Paneflow restarts, then the next matching file starts it
+- [x] Given a `command` without a path separator, when it resolves, then it is searched on `PATH` with `which`
+- [x] Given a `command` with an absolute path, when it resolves, then that path is used
+- [x] Given a `command` with a relative path, when it resolves, then it is rejected with a log line
+- [x] Given a command that does not resolve, when a matching file opens, then the server enters the `Missing` state and no process starts
+- [x] Given a `Missing` server, when the user's `PATH` gains the binary and Paneflow restarts, then the next matching file starts it
 
 #### US-026: The Settings controls and their documentation
 **Description:** As a user, I want semantic highlighting and its permissions in the Settings page and the docs so that I can find them without editing JSON.
 
 **Priority:** P1
-**Dependencies:** Blocked by US-024, US-027, US-031
+**Dependencies:** Blocked by US-024, US-027
 
 **Acceptance Criteria:**
-- [ ] Given the Settings editor tab, when it renders, then a "Semantic highlighting" switch built on `kit::switch` shows the value of `editor.semantic_tokens`
-- [ ] Given the switch clicked, when the click completes, then `persist_setting` writes the new value to `paneflow.json`
-- [ ] Given the switch turned off while servers run, when it is applied, then layer-3 colors disappear at the next paint
-- [ ] Given the schema tests, when they run, then `schemas/paneflow.schema.json` describes `editor.semantic_tokens`
-- [ ] Given the schema tests, when they run, then `schemas/paneflow.schema.json` describes `language_servers`
-- [ ] Given the schema tests, when they run, then `docs/user/configuration/schema.md` describes `language_servers`
-- [ ] Given `docs/user/configuration/schema.md`, when it is read, then it shows a gopls entry with `semanticTokens: true` in `settings` (R14) as an example of a user entry
-- [ ] Given `paneflow.json` unwritable, when the switch is clicked, then the error is logged and the switch shows the value actually stored
-- [ ] Given the Settings editor tab, when "Forget language server permissions" is clicked, then the trust file of US-027 is emptied
-- [ ] Given that click, when servers are running, then they keep running until their last tab closes
+- [x] Given the Settings editor tab, when it renders, then a "Semantic highlighting" switch built on `kit::switch` shows the value of `editor.semantic_tokens`
+- [x] Given the switch clicked, when the click completes, then `persist_setting` writes the new value to `paneflow.json`
+- [x] Given the switch turned off while servers run, when it is applied, then every open document is closed on its server (`didClose`) and each server stops once its last document is closed
+- [x] Given the schema tests, when they run, then `schemas/paneflow.schema.json` describes `editor.semantic_tokens`
+- [x] Given the schema tests, when they run, then `schemas/paneflow.schema.json` describes `language_servers`
+- [x] Given the schema tests, when they run, then `docs/user/configuration/schema.md` describes `language_servers`
+- [x] Given `docs/user/configuration/schema.md`, when it is read, then it shows a gopls entry with `semanticTokens: true` in `settings` (R14) as an example of a user entry
+- [x] Given `paneflow.json` unwritable, when the switch is clicked, then the error is logged and the switch shows the value actually stored
+- [x] Given the Settings editor tab, when "Forget language server permissions" is clicked, then the trust file of US-027 is emptied
+- [x] Given that click, when servers are running, then they keep running until their last tab closes
 
 #### US-027: Ask once per server and root before the first start
 **Description:** As a user who opens repositories cloned by agents, I want Paneflow to ask before a language server runs a project for the first time so that opening a file never executes unknown code silently.
@@ -816,18 +817,27 @@ Paneflow can start a language server for a project root after consent, keep its 
 **Dependencies:** Blocked by US-022, US-025
 
 **Acceptance Criteria:**
-- [ ] Given semantic tokens on, a resolved server and a root with no recorded answer, when a matching file opens, then the editor shows a banner naming the server and the root
-- [ ] Given that banner, when it is read, then it states that the server can run the project's build scripts
-- [ ] Given that banner, when it renders, then it offers "Start" and "Not now"
-- [ ] Given "Start", when it is clicked, then the canonical root and server id are stored in `~/.paneflow/language-server-trust.json`
-- [ ] Given "Start", when the answer is stored, then the server starts
-- [ ] Given a stored answer, when another file of that root opens after a Paneflow restart, then the server starts with no banner
-- [ ] Given "Not now", when it is clicked, then no server starts for that pair
-- [ ] Given "Not now", when another file of that root opens before a restart, then no banner appears
-- [ ] Given a symlinked path to an allowed root, when a file opens through it, then it matches the stored canonical root
-- [ ] Given a trust file that cannot be parsed, when it is read, then it is treated as empty and the banner appears
-- [ ] Given that unparseable file, when no "Start" has been clicked, then the file is left unchanged on disk
-- [ ] Given `crates/paneflow-home`, when `language_server_trust_path()` is called, then it returns the file under the Paneflow home, covered by a test
+- [x] Given semantic tokens on, a resolved server and a root with no recorded answer, when a matching file opens, then the editor shows a banner naming the server and the root
+- [x] Given that banner, when it is read, then it states that the server can run the project's build scripts
+- [x] Given that banner, when it renders, then it offers "Start" and "Not now"
+- [x] Given "Start", when it is clicked, then the canonical root and server id are stored in `~/.paneflow/language-server-trust.json`
+- [x] Given "Start", when the answer is stored, then the server starts
+- [x] Given a stored answer, when another file of that root opens after a Paneflow restart, then the server starts with no banner
+- [x] Given "Not now", when it is clicked, then no server starts for that pair
+- [x] Given "Not now", when another file of that root opens before a restart, then no banner appears
+- [x] Given a symlinked path to an allowed root, when a file opens through it, then it matches the stored canonical root
+- [x] Given a trust file that cannot be parsed, when it is read, then it is treated as empty and the banner appears
+- [x] Given that unparseable file, when no "Start" has been clicked, then the file is left unchanged on disk
+- [x] Given `crates/paneflow-home`, when `language_server_trust_path()` is called, then it returns the file under the Paneflow home, covered by a test
+
+**EP-005 review (2026-11-23):** US-020 to US-027 are `DONE`. One defect was fixed and three unused public functions were removed.
+
+- **Reachability.** `PaneFlowApp::open_file` (`diff_dock/tabs.rs`) and the restored dock (`cli_diff_dock.rs`) give each `CodeView` its Files dock root; a loaded document calls `refresh_language_server` (`view/preview.rs`), which checks the file off the render thread (`check_blocking`: canonical root, `resolve_command`, trust file) and attaches only after a stored or clicked answer. Edits reach the client from `splice_all` and `time_travel` (`view/editing.rs`), a disk reload as one full text, and dropping the view's `Attachment` closes the document. `apply_editor_display` re-runs the check on every live and parked file tab when `editor.semantic_tokens` changes, and `on_app_quit` calls `LanguageClient::shutdown_all` through `smol::unblock` with a 150 ms budget, inside GPUI's 200 ms `SHUTDOWN_TIMEOUT`. `ClientEvent::Unsupported`, `LanguageClient::negotiated` and `Connection::cancel` have no production caller yet; EP-006 consumes them.
+- **Fixed.** "Start" was remembered only in the trust file, so without a Paneflow home the next file of the same root asked again although the log said the permission lasted for the session, and a file whose check read the trust file just before the write could also ask again. `LanguageServerHub` now keeps the pairs accepted this session (`accept`, `is_accepted`), a check that needs consent attaches when its pair is accepted, and "Forget language server permissions" clears them with the file. Regression test: `without_a_paneflow_home_start_lasts_for_the_session_until_permissions_are_forgotten`, which fails when `is_accepted` returns false.
+- **Removed.** `StderrTail::detached`, `Connection::set_settings` and `Connection::server_id` had no caller; the connection keeps its settings as a plain `Value`.
+- **Definition of Done on the reference machine.** Through `LanguageClient` with rust-analyzer 1.98.1 (`~/.rustup/toolchains/1.98.1-x86_64-unknown-linux-gnu/bin/rust-analyzer`) and this repository as the root, opening `crates/paneflow-lsp/src/lib.rs` and `encoding.rs` started one `rust-analyzer` process (`pgrep -x`), negotiated `utf-8`, kept it running after the first close, and stopped it 270 ms after the second close with `shutdown` and `exit` and no kill; no `rust-analyzer` process remained. The GUI path to the client is covered by the `language_server_link.rs` tests with the probe server, not observed on screen; EP-008 owns the on-screen check.
+- **Not blocking, not applied.** The Settings tests drive a test view that repeats `persist_semantic_tokens` and the revert of `persist_setting_with` rather than `PaneFlowApp` itself. When two quick toggles both fail to write, the second revert restores the value the first click replaced, so the switch can show the opposite of the file. `initialize` has no timeout, so a server that never answers stays `Starting` with its documents unopened. `exit_at_once_command` has identical Unix and Windows twins in `paneflow-process`.
+- **Evidence.** On the final tree: `cargo fmt --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo nextest run --workspace --locked --profile ci` (5442 passed, 29 skipped), `check-test-wallclock.sh`, `check-helper-sizes.sh` (`paneflow-ai-hook` still over its soft cap, unchanged) and `cargo deny check advisories licenses sources` pass. `sync::rust_analyzer_negotiates_a_position_encoding` passes with the 1.98.1 binary first on `PATH` (`utf-8`) and skips otherwise, because the rustup proxy has no rust-analyzer for the pinned 1.98.0. Windows was reviewed by inspection only (`CREATE_NO_WINDOW`, the Job Object, `PATHEXT` through `which`, the verbatim-prefix strip); US-040 owns its proof. macOS was not run.
 
 ---
 
@@ -900,6 +910,7 @@ Tokens from the server color the editor over layers 1 and 2, stay aligned throug
 - [ ] Given a new response, when the next frame paints, then it shows only that response's tokens and none of the previous response's
 - [ ] Given the theme switched, when rows repaint, then layer-3 colors follow the new palette with no new request
 - [ ] Given the server stopped or crashed, when the next frame paints, then no layer-3 color remains
+- [ ] Given `editor.semantic_tokens` turned off while servers run, when it is applied, then layer-3 colors disappear at the next paint
 - [ ] Given `editor.semantic_tokens` false, when a file is edited, then no layer-3 storage is allocated for it
 
 #### US-032: Report server state in the editor
