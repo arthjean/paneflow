@@ -1,12 +1,13 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
+use std::collections::VecDeque;
 use std::error::Error;
 use std::fmt;
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
+use std::process::{Child, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
-use std::sync::OnceLock;
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -45,6 +46,7 @@ impl fmt::Display for OutputStream {
 #[derive(Debug)]
 pub enum ProcError {
     Spawn(io::Error),
+    NotFound(io::Error),
     ProcessTree(io::Error),
     InvalidOutputLimit(u64),
     Supervision(io::Error),
@@ -69,6 +71,7 @@ impl fmt::Display for ProcError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ProcError::Spawn(e) => write!(f, "failed to spawn process: {e}"),
+            ProcError::NotFound(e) => write!(f, "command not found: {e}"),
             ProcError::ProcessTree(e) => {
                 write!(f, "failed to configure process-tree supervision: {e}")
             }
@@ -96,6 +99,7 @@ impl Error for ProcError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             ProcError::Spawn(e)
+            | ProcError::NotFound(e)
             | ProcError::ProcessTree(e)
             | ProcError::Supervision(e)
             | ProcError::Wait(e) => Some(e),
@@ -955,6 +959,184 @@ fn skip_rest_of_line(reader: &mut impl BufRead) -> bool {
     }
 }
 
+pub struct StdioSession {
+    process: RunningProcess,
+    stdin: Option<ChildStdin>,
+    stdout: Option<ChildStdout>,
+    stderr: StderrTail,
+}
+
+#[derive(Clone)]
+pub struct StderrTail {
+    state: Arc<(Mutex<StderrTailState>, Condvar)>,
+}
+
+struct StderrTailState {
+    bytes: VecDeque<u8>,
+    closed: bool,
+}
+
+impl StderrTail {
+    fn new() -> Self {
+        Self {
+            state: Arc::new((
+                Mutex::new(StderrTailState {
+                    bytes: VecDeque::new(),
+                    closed: false,
+                }),
+                Condvar::new(),
+            )),
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, StderrTailState> {
+        self.state
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn push(&self, chunk: &[u8]) {
+        let cap = STDERR_CAP as usize;
+        let mut state = self.lock();
+        let keep = &chunk[chunk.len().saturating_sub(cap)..];
+        let overflow = (state.bytes.len() + keep.len()).saturating_sub(cap);
+        state.bytes.drain(..overflow);
+        state.bytes.extend(keep);
+    }
+
+    fn close(&self) {
+        self.lock().closed = true;
+        self.state.1.notify_all();
+    }
+
+    pub fn snapshot(&self) -> Vec<u8> {
+        self.lock().bytes.iter().copied().collect()
+    }
+
+    pub fn last_lines(&self, count: usize) -> Vec<String> {
+        let text = String::from_utf8_lossy(&self.snapshot()).into_owned();
+        let lines: Vec<String> = text
+            .lines()
+            .map(str::trim_end)
+            .filter(|line| !line.is_empty())
+            .map(str::to_string)
+            .collect();
+        lines[lines.len().saturating_sub(count)..].to_vec()
+    }
+
+    pub fn wait_closed(&self, timeout: Duration) -> bool {
+        let state = self.lock();
+        let (state, _) = self
+            .state
+            .1
+            .wait_timeout_while(state, timeout, |state| !state.closed)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.closed
+    }
+}
+
+pub fn spawn_stdio_session(mut cmd: Command) -> Result<StdioSession, ProcError> {
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    configure_process_tree(&mut cmd);
+    let cleanup = spawn_cleanup_worker()?;
+    SPAWNS.fetch_add(1, Ordering::Relaxed);
+    let child = cmd.spawn().map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            ProcError::NotFound(error)
+        } else {
+            ProcError::Spawn(error)
+        }
+    })?;
+    let mut process = RunningProcess::new(child, cleanup)?;
+    let child = process.child_mut()?;
+    let stdin = child.stdin.take();
+    let stdout = child.stdout.take();
+    let stderr_pipe = child
+        .stderr
+        .take()
+        .ok_or_else(|| supervision_error("stderr pipe unavailable after spawn"))?;
+    let stderr = StderrTail::new();
+    let tail = stderr.clone();
+    thread::Builder::new()
+        .name("paneflow-process-stderr".to_string())
+        .spawn(move || keep_stderr_tail(stderr_pipe, &tail))
+        .map_err(|source| ProcError::ReaderSpawn {
+            stream: OutputStream::Stderr,
+            source,
+        })?;
+    Ok(StdioSession {
+        process,
+        stdin,
+        stdout,
+        stderr,
+    })
+}
+
+fn keep_stderr_tail(mut pipe: impl Read, tail: &StderrTail) {
+    let mut chunk = [0u8; TAP_CHUNK];
+    loop {
+        match pipe.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(read) => tail.push(&chunk[..read]),
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(_) => break,
+        }
+    }
+    tail.close();
+}
+
+impl StdioSession {
+    pub fn id(&self) -> Option<u32> {
+        self.process.child.as_ref().map(Child::id)
+    }
+
+    pub fn take_stdin(&mut self) -> Option<ChildStdin> {
+        self.stdin.take()
+    }
+
+    pub fn take_stdout(&mut self) -> Option<ChildStdout> {
+        self.stdout.take()
+    }
+
+    pub fn stderr_tail(&self) -> StderrTail {
+        self.stderr.clone()
+    }
+
+    pub fn try_status(&mut self) -> Result<Option<ExitStatus>, ProcError> {
+        self.process
+            .child_mut()?
+            .try_wait()
+            .map_err(ProcError::Wait)
+    }
+
+    pub fn wait_for_exit(&mut self, grace: Duration) -> Option<ExitStatus> {
+        let start = Instant::now();
+        loop {
+            match self.try_status() {
+                Ok(Some(status)) => return Some(status),
+                Ok(None) => {}
+                Err(_) => return None,
+            }
+            thread::sleep(poll_sleep_duration(start, grace)?);
+        }
+    }
+
+    pub fn kill(&mut self) {
+        self.stdin = None;
+        self.process.terminate_and_detach();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1505,5 +1687,121 @@ mod tests {
         let start = Instant::now();
         assert!(!session.close(Duration::from_millis(200)));
         assert!(start.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn a_stdio_session_carries_raw_bytes_both_ways_with_no_newline_framing() {
+        let mut session = spawn_stdio_session(stdin_copy_command()).unwrap();
+        let mut stdin = session.take_stdin().unwrap();
+        let mut stdout = session.take_stdout().unwrap();
+        let payload = b"Content-Length: 2\r\n\r\n{}\0no newline";
+        stdin.write_all(payload).unwrap();
+        drop(stdin);
+        let mut received = Vec::new();
+        stdout.read_to_end(&mut received).unwrap();
+        assert_eq!(received, payload);
+    }
+
+    #[test]
+    fn a_stdio_session_for_a_missing_command_reports_not_found() {
+        let result = spawn_stdio_session(Command::new("paneflow-no-such-language-server-xyz"));
+        assert!(
+            matches!(result, Err(ProcError::NotFound(_))),
+            "{:?}",
+            result.err()
+        );
+    }
+
+    #[cfg(unix)]
+    fn exit_at_once_command() -> Command {
+        sh("exit 3")
+    }
+
+    #[cfg(windows)]
+    fn exit_at_once_command() -> Command {
+        sh("exit 3")
+    }
+
+    #[test]
+    fn a_stdio_child_that_exits_at_once_gives_end_of_file_and_its_status() {
+        let mut session = spawn_stdio_session(exit_at_once_command()).unwrap();
+        let mut stdout = session.take_stdout().unwrap();
+        let mut received = Vec::new();
+        assert_eq!(stdout.read_to_end(&mut received).unwrap(), 0);
+        let status = session.wait_for_exit(Duration::from_secs(30)).unwrap();
+        assert_eq!(status.code(), Some(3));
+    }
+
+    #[cfg(unix)]
+    fn loud_stderr_then_marker_command() -> Command {
+        sh("head -c 100000 /dev/zero | tr '\\0' e >&2; printf '\\nlast line\\n' >&2")
+    }
+
+    #[cfg(windows)]
+    fn loud_stderr_then_marker_command() -> Command {
+        let mut c = Command::new("powershell.exe");
+        c.args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "[Console]::Error.Write('e' * 100000); [Console]::Error.Write(\"`nlast line`n\")",
+        ]);
+        c
+    }
+
+    #[test]
+    fn a_stdio_session_keeps_the_last_stderr_bytes_up_to_the_cap() {
+        let mut session = spawn_stdio_session(loud_stderr_then_marker_command()).unwrap();
+        let tail = session.stderr_tail();
+        assert!(session.wait_for_exit(Duration::from_secs(60)).is_some());
+        assert!(tail.wait_closed(Duration::from_secs(60)));
+        let bytes = tail.snapshot();
+        assert_eq!(bytes.len() as u64, STDERR_CAP);
+        assert!(bytes.ends_with(b"last line\n"));
+        assert_eq!(
+            tail.last_lines(1).last().map(String::as_str),
+            Some("last line")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_stdio_child_leads_its_own_process_group() {
+        unsafe extern "C" {
+            fn getpgid(pid: i32) -> i32;
+        }
+        let session = spawn_stdio_session(sleep_command()).unwrap();
+        let pid = i32::try_from(session.id().unwrap()).unwrap();
+        assert_eq!(unsafe { getpgid(pid) }, pid);
+    }
+
+    #[cfg(unix)]
+    fn child_with_descendant_holding_stdout_command() -> Command {
+        sh("sleep 300 & sleep 300")
+    }
+
+    #[cfg(windows)]
+    fn child_with_descendant_holding_stdout_command() -> Command {
+        sh("start /b ping -n 300 127.0.0.1 >NUL & ping -n 300 127.0.0.1 >NUL")
+    }
+
+    #[test]
+    fn dropping_a_stdio_session_kills_the_child_and_its_descendants() {
+        let mut session =
+            spawn_stdio_session(child_with_descendant_holding_stdout_command()).unwrap();
+        let mut stdout = session.take_stdout().unwrap();
+        thread::sleep(Duration::from_millis(200));
+        drop(session);
+        let (sender, closed) = mpsc::channel();
+        thread::spawn(move || {
+            let mut sink = Vec::new();
+            let _ = stdout.read_to_end(&mut sink);
+            let _ = sender.send(());
+        });
+        assert!(
+            closed.recv_timeout(Duration::from_secs(120)).is_ok(),
+            "a descendant still holds the stdout pipe after the session was dropped"
+        );
     }
 }
