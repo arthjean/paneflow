@@ -109,7 +109,7 @@ Each line gives the gesture and the result it must give. A difference from
 - [ ] `paneflow surface rename`: the surface title changes and is saved.
 - [ ] Reorder workspaces in the sidebar: the order holds after a restart.
 - [ ] Switch workspaces and spaces with the sidebar and the shortcuts: the
-  focused pane of each comes back.
+  first pane of the shown tab takes focus.
 
 ## Restart
 
