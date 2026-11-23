@@ -1,0 +1,27 @@
+schema_version = 1
+id = "com.google.antigravity"
+slug = "antigravity"
+label = "Antigravity"
+platforms = ["linux", "macos", "windows"]
+
+[display]
+order = 19
+icon_asset_path = "agents/antigravity.svg"
+icon_multicolor = false
+visibility_config_key = "antigravity_button_visible"
+
+[detection]
+command_aliases = ["agy"]
+process_aliases = ["agy"]
+script_path_signatures = []
+
+[environment]
+strip_inherited = []
+
+[integration]
+summary = "Paneflow detects Antigravity when its agy command runs in a pane."
+hook_adapter = "none"
+
+[[suggested_presets]]
+id = "antigravity"
+command = "agy"

@@ -147,6 +147,7 @@
                             <File Id='HelperHermes' Name='hermes.exe' DiskId='1' Source='$(var.CargoTargetBinDir)\paneflow-helpers\hermes.exe'/>
                             <File Id='HelperGrok' Name='grok.exe' DiskId='1' Source='$(var.CargoTargetBinDir)\paneflow-helpers\grok.exe'/>
                             <File Id='HelperAmp' Name='amp.exe' DiskId='1' Source='$(var.CargoTargetBinDir)\paneflow-helpers\amp.exe'/>
+                            <File Id='HelperAgy' Name='agy.exe' DiskId='1' Source='$(var.CargoTargetBinDir)\paneflow-helpers\agy.exe'/>
                             <File Id='HelperGemini' Name='gemini.exe' DiskId='1' Source='$(var.CargoTargetBinDir)\paneflow-helpers\gemini.exe'/>
                             <File Id='HelperCopilot' Name='copilot.exe' DiskId='1' Source='$(var.CargoTargetBinDir)\paneflow-helpers\copilot.exe'/>
                             <File Id='HelperDroid' Name='droid.exe' DiskId='1' Source='$(var.CargoTargetBinDir)\paneflow-helpers\droid.exe'/>

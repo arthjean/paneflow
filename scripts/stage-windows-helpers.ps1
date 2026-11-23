@@ -34,7 +34,8 @@ foreach ($name in @(
   'copilot.exe',
   'droid.exe',
   'openclaw.exe',
-  'muse.exe'
+  'muse.exe',
+  'agy.exe'
 )) {
   Copy-Item -LiteralPath $shim -Destination (Join-Path $packagedHelperDir $name) -Force
 }

@@ -246,8 +246,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn catalog_has_thirteen_complete_runtime_packages() {
-        assert_eq!(RUNTIMES.len(), 13);
+    fn catalog_has_fourteen_complete_runtime_packages() {
+        assert_eq!(RUNTIMES.len(), 14);
         for runtime in RUNTIMES {
             assert!(
                 !runtime.detection.command_aliases.is_empty(),
@@ -336,7 +336,14 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             windows,
-            vec!["claude-code", "codex", "amp", "gemini", "github-copilot"]
+            vec![
+                "claude-code",
+                "codex",
+                "amp",
+                "gemini",
+                "github-copilot",
+                "antigravity"
+            ]
         );
 
         let claude = runtime_by_slug("claude-code").expect("claude");
