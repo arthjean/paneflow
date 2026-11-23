@@ -15,3 +15,4 @@ protocol/paneflow.d.lua text eol=lf
 # byte for byte, so a Windows checkout keeps them LF.
 *.rs text eol=lf
 protocol/** text eol=lf
+crates/paneflow-api/tests/decision_table.txt text eol=lf

@@ -75,28 +75,36 @@ impl Follower {
         Some(serde_json::from_str(&line).expect("a JSON frame"))
     }
 
-    fn next_event(&mut self) -> Value {
-        loop {
+    fn next_event_before(&mut self, deadline: Instant) -> Option<Value> {
+        while Instant::now() < deadline {
             let frame = self
                 .frame()
                 .expect("the stream stays open while an event is expected");
             if frame.get("seq").is_some() {
                 self.seen.push(frame.clone());
-                return frame;
+                return Some(frame);
             }
             assert_eq!(frame["type"], "keepalive", "a non-event frame: {frame}");
         }
+        None
+    }
+
+    fn next_event(&mut self) -> Value {
+        self.next_event_before(Instant::now() + FRAME_WAIT)
+            .unwrap_or_else(|| panic!("no event arrived within {FRAME_WAIT:?}"))
     }
 
     fn until(&mut self, mut wanted: impl FnMut(&Value) -> bool) -> Value {
         let deadline = Instant::now() + FRAME_WAIT;
-        while Instant::now() < deadline {
-            let event = self.next_event();
+        while let Some(event) = self.next_event_before(deadline) {
             if wanted(&event) {
                 return event;
             }
         }
-        panic!("the wanted event did not arrive within {FRAME_WAIT:?}");
+        panic!(
+            "the wanted event did not arrive within {FRAME_WAIT:?}; the last events were {:?}",
+            self.seen.iter().rev().take(8).collect::<Vec<_>>()
+        );
     }
 
     fn until_seq(&mut self, seq: u64) {
@@ -175,6 +183,13 @@ fn shell_params() -> Value {
         "cols": 80,
         "rows": 24,
     })
+}
+
+fn file_uri(path: &Path) -> String {
+    #[cfg(windows)]
+    return format!("file:///{}", path.display().to_string().replace('\\', "/"));
+    #[cfg(unix)]
+    return format!("file://localhost{}", path.display());
 }
 
 fn osc_command(osc: &str) -> String {
@@ -354,7 +369,7 @@ fn case_terminal_events_from_the_host_stream(
     let session = created.manifest.session.to_string();
     let generation = created.manifest.generation;
     let moved_to = std::env::temp_dir().join("paneflow-events-conformance");
-    let osc7 = format!("7;file://localhost{}", moved_to.display());
+    let osc7 = format!("7;{}", file_uri(&moved_to));
     owner
         .input(
             &created.manifest.session,

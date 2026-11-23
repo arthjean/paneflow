@@ -666,6 +666,41 @@ const QUERY_PROGRAM_STATUS_COMMAND: &[u8] = b"printf '\\033]7501;?\\007'; sleep 
 #[cfg(windows)]
 const QUERY_PROGRAM_STATUS_COMMAND: &[u8] = b"powershell -NoProfile -Command \"[Console]::Write([char]27 + ']7501;?' + [char]7); Start-Sleep 30\"\r\n";
 
+#[cfg(windows)]
+#[test]
+fn a_running_windows_session_keeps_a_pane_job_named_after_it_until_it_stops() {
+    let home = tempfile::tempdir().unwrap();
+    let host = SessionHost::open(home.path(), Path::new("named-pane-job")).unwrap();
+    let created = host.create(shell_request(80, 24)).unwrap();
+    let session = created.manifest.session.clone();
+    let name = paneflow_peer::pane_job_name(session.as_str());
+    let leader = created.manifest.process.expect("a pane leader");
+    let job = paneflow_peer::PaneJob::open(&name)
+        .unwrap()
+        .expect("the session's job is named after it");
+    let leaders = [paneflow_peer::PaneLeader {
+        session: session.to_string(),
+        workspace: None,
+        pid: 0,
+        started_at: 0,
+        process_session: None,
+        job: Some(Arc::new(job)),
+    }];
+    assert!(matches!(
+        paneflow_peer::classify(leader.pid, leader.started_at.unwrap(), &leaders),
+        paneflow_peer::Membership::Pane { .. }
+    ));
+    host.stop(&session, Some(created.manifest.generation))
+        .unwrap();
+    drop(leaders);
+    assert!(
+        wait_until(Duration::from_secs(20), || {
+            paneflow_peer::PaneJob::open(&name).is_ok_and(|job| job.is_none())
+        }),
+        "a stopped session releases its named job"
+    );
+}
+
 #[test]
 fn an_answered_support_query_is_published_and_a_new_generation_starts_without_it() {
     let home = tempfile::tempdir().unwrap();
@@ -1627,6 +1662,7 @@ fn launch_owner_thread_failure_is_reconciled_by_the_existing_scan() {
         appearance: None,
         cell: None,
         xt_checksum: crate::runtime::XtChecksum::default(),
+        session: None,
     };
     spec.env
         .insert("PANEFLOW_TEST_SPAWN_DELAY_MS".into(), "100".into());

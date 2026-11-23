@@ -41,7 +41,7 @@ mod worktree_requests;
 use gates::*;
 pub(crate) use jsonrpc::*;
 use params::*;
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(crate) use registry::gate_refusal;
 pub(crate) use registry::{Admission, Call, Route, admit, registry};
 use registry::{RegistryBuilder, spawn_gate_open, spawn_gate_refusal};

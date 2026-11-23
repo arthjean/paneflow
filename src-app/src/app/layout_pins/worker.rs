@@ -10,7 +10,7 @@ use super::Rig;
 use crate::PaneFlowApp;
 use crate::{ClosePane, SplitVertically};
 
-pub(super) const PINS: usize = 11;
+pub(super) const PINS: usize = 12;
 
 const PATIENCE: Duration = Duration::from_secs(60);
 
@@ -427,6 +427,39 @@ fn pin_an_op_from_another_client_is_drawn_by_the_attached_window(cx: &mut TestAp
     });
     assert_converged(&mut rig, &home);
     assert_eq!(rig.workspaces(), ["*renamed elsewhere"]);
+    finish(&mut rig, worker, &home);
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_a_workspace_another_client_opens_is_drawn_with_its_terminal(cx: &mut TestAppContext) {
+    let home = home();
+    let mut rig = Rig::mount(cx);
+    rig.workspace("alpha");
+    let worker = Running::open(&home);
+    attach(&mut rig);
+    let opened: Value = control(&home)
+        .request("workspace.create", json!({"name": "remote"}))
+        .expect("the worker opens the workspace");
+    assert_eq!(opened["panes"], 1, "{opened}");
+    pump(&mut rig, "the window drawing the remote workspace", |app| {
+        app.workspaces.iter().any(|ws| ws.title == "remote")
+    });
+    let app = rig.app.clone();
+    let terminals: Vec<usize> = rig.cx.update(|_, cx| {
+        let app = app.read(cx);
+        let remote = app
+            .workspaces
+            .iter()
+            .find(|ws| ws.title == "remote")
+            .expect("the remote workspace");
+        crate::workspace::panes_across(std::slice::from_ref(remote))
+            .iter()
+            .map(|pane| pane.read(cx).terminals().count())
+            .collect()
+    });
+    assert_eq!(terminals, [1], "the remote pane shows its terminal");
+    assert_converged(&mut rig, &home);
     finish(&mut rig, worker, &home);
 }
 

@@ -6,7 +6,8 @@ use std::os::windows::io::{AsRawHandle, BorrowedHandle, FromRawHandle, OwnedHand
 use std::path::PathBuf;
 
 use windows_sys::Win32::Foundation::{
-    CloseHandle, ERROR_INVALID_PARAMETER, FILETIME, HANDLE, INVALID_HANDLE_VALUE,
+    CloseHandle, ERROR_FILE_NOT_FOUND, ERROR_INVALID_PARAMETER, FILETIME, HANDLE,
+    INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Security::{
     EqualSid, GetTokenInformation, RevertToSelf, TOKEN_QUERY, TOKEN_USER, TokenUser,
@@ -16,10 +17,11 @@ use windows_sys::Win32::System::Diagnostics::ToolHelp::{
 };
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob,
-    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation, OpenJobObjectW,
     SetInformationJobObject,
 };
 use windows_sys::Win32::System::Pipes::{GetNamedPipeClientProcessId, ImpersonateNamedPipeClient};
+use windows_sys::Win32::System::SystemServices::JOB_OBJECT_QUERY;
 use windows_sys::Win32::System::Threading::{
     GetCurrentProcess, GetCurrentThread, GetProcessTimes, OpenProcess, OpenProcessToken,
     OpenThreadToken, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_QUOTA,
@@ -178,12 +180,22 @@ fn identify(pipe: HANDLE, pid: u32) -> PeerRead {
     })
 }
 
+pub fn pane_job_name(session: &str) -> String {
+    format!("Local\\paneflow-pane-{session}")
+}
+
+fn wide_nul(text: &str) -> Vec<u16> {
+    text.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
 #[derive(Debug)]
 pub struct PaneJob(OwnedHandle);
 
 impl PaneJob {
-    pub fn contain(pid: u32) -> io::Result<Self> {
-        let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+    pub fn contain(pid: u32, name: Option<&str>) -> io::Result<Self> {
+        let name = name.map(wide_nul);
+        let name_ptr = name.as_ref().map_or(std::ptr::null(), |name| name.as_ptr());
+        let job = unsafe { CreateJobObjectW(std::ptr::null(), name_ptr) };
         if job.is_null() {
             return Err(io::Error::last_os_error());
         }
@@ -205,6 +217,19 @@ impl PaneJob {
             return Err(io::Error::last_os_error());
         }
         Ok(Self(job))
+    }
+
+    pub fn open(name: &str) -> io::Result<Option<Self>> {
+        let name = wide_nul(name);
+        let job = unsafe { OpenJobObjectW(JOB_OBJECT_QUERY, 0, name.as_ptr()) };
+        if job.is_null() {
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() == Some(ERROR_FILE_NOT_FOUND as i32) {
+                return Ok(None);
+            }
+            return Err(error);
+        }
+        Ok(Some(Self(unsafe { OwnedHandle::from_raw_handle(job) })))
     }
 
     fn holds(&self, process: HANDLE) -> io::Result<bool> {
@@ -563,7 +588,7 @@ mod tests {
         let child = sleeper();
         let pid = child.0.id();
         let started = crate::process_start_time(pid).unwrap();
-        let job = PaneJob::contain(pid).unwrap();
+        let job = PaneJob::contain(pid, None).unwrap();
         let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
         let queried = unsafe {
             QueryInformationJobObject(
@@ -595,7 +620,50 @@ mod tests {
 
     #[test]
     fn a_process_that_cannot_be_opened_is_not_contained() {
-        assert!(PaneJob::contain(u32::MAX - 3).is_err());
+        assert!(PaneJob::contain(u32::MAX - 3, None).is_err());
+    }
+
+    #[test]
+    fn a_named_pane_job_opens_by_name_from_another_handle_and_holds_only_its_pane() {
+        let child = sleeper();
+        let pid = child.0.id();
+        let started = crate::process_start_time(pid).unwrap();
+        let name = pane_job_name(&format!("peer-test-{}-{pid}", std::process::id()));
+        assert!(
+            PaneJob::open(&name).unwrap().is_none(),
+            "no job before the pane"
+        );
+        let owner = PaneJob::contain(pid, Some(&name)).unwrap();
+        let opened = Arc::new(PaneJob::open(&name).unwrap().expect("the named job opens"));
+        assert_eq!(
+            classify(pid, started, &[leader(0, 0, Some(Arc::clone(&opened)))]),
+            pane()
+        );
+        let me = std::process::id();
+        let mine = crate::process_start_time(me).unwrap();
+        assert_eq!(
+            classify(me, mine, &[leader(pid, started, Some(opened))]),
+            Membership::NotInPane
+        );
+        drop(owner);
+    }
+
+    #[test]
+    fn a_pane_job_created_again_under_its_name_holds_the_new_leader_too() {
+        let first = sleeper();
+        let second = sleeper();
+        let name = pane_job_name(&format!("peer-test-again-{}", std::process::id()));
+        let _held = PaneJob::contain(first.0.id(), Some(&name)).unwrap();
+        let again = PaneJob::contain(second.0.id(), Some(&name)).unwrap();
+        let started = crate::process_start_time(second.0.id()).unwrap();
+        assert_eq!(
+            classify(
+                second.0.id(),
+                started,
+                &[leader(0, 0, Some(Arc::new(again)))]
+            ),
+            pane()
+        );
     }
 
     #[test]

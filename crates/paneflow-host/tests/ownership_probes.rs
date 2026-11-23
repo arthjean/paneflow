@@ -422,6 +422,7 @@ fn h01_root_exit_and_pty_hangup_do_not_prove_descendant_exit() {
 fn h02_a_requester_that_disconnects_mid_create_leaves_the_host_owning_the_child() {
     let host = DetachedHost::start_with_config("ownership-probe", r#"{"ai_unrestricted": true}"#);
     let session = paneflow_host::SessionId::new();
+    let mut client = host.client();
     {
         let mut control = HostControl::connect(&host.endpoint, "ownership-probe").unwrap();
         let mut request = fixture_request(&["idle"]);
@@ -433,7 +434,6 @@ fn h02_a_requester_that_disconnects_mid_create_leaves_the_host_owning_the_child(
             .write_request("session.create", serde_json::to_value(&request).unwrap())
             .unwrap();
     }
-    let mut client = host.client();
     assert!(wait_until(Duration::from_secs(5), || client
         .inspect(&session)
         .is_ok_and(|summary| summary.pending_launch)));

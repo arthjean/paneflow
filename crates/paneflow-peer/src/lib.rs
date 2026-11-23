@@ -26,7 +26,7 @@ pub use membership::{Membership, PaneLeader, classify};
 pub use start_time::process_session;
 pub use start_time::process_start_time;
 #[cfg(windows)]
-pub use windows::PaneJob;
+pub use windows::{PaneJob, pane_job_name};
 
 #[cfg(target_os = "linux")]
 type Anchor = std::os::fd::OwnedFd;

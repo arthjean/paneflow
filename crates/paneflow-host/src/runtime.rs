@@ -67,6 +67,7 @@ pub struct SpawnSpec {
     pub appearance: Option<SessionAppearance>,
     pub cell: Option<CellSize>,
     pub xt_checksum: XtChecksum,
+    pub session: Option<paneflow_config::schema::SessionId>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -369,8 +370,8 @@ impl Shared {
         })
     }
 
-    fn contain(&self, pid: u32) {
-        let containment = crate::peer::PaneContainment::of(pid);
+    fn contain(&self, pid: u32, session: Option<&paneflow_config::schema::SessionId>) {
+        let containment = crate::peer::PaneContainment::of(pid, session);
         *self
             .containment
             .lock()
@@ -1135,7 +1136,7 @@ fn start(
         .spawn_command(command)
         .map_err(|e| format!("failed to spawn {} in the PTY: {e}", spec.shell))?;
     let child_pid = child.process_id().unwrap_or(0);
-    shared.contain(child_pid);
+    shared.contain(child_pid, spec.session.as_ref());
     drop(pair.slave);
     let mut session = Session {
         terminal: Some(terminal),
@@ -2246,6 +2247,7 @@ mod tests {
             appearance: None,
             cell: None,
             xt_checksum: XtChecksum::default(),
+            session: None,
         }
     }
 

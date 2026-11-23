@@ -35,19 +35,21 @@ static JOB_FAILURE_LOGGED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 impl PaneContainment {
-    pub(crate) fn of(pid: u32) -> Self {
+    pub(crate) fn of(pid: u32, session: Option<&paneflow_config::schema::SessionId>) -> Self {
         if pid == 0 {
             return Self::default();
         }
         #[cfg(unix)]
         {
+            let _ = session;
             Self {
                 process_session: paneflow_peer::process_session(pid),
             }
         }
         #[cfg(windows)]
         {
-            let job = match paneflow_peer::PaneJob::contain(pid) {
+            let name = session.map(|session| paneflow_peer::pane_job_name(session.as_str()));
+            let job = match paneflow_peer::PaneJob::contain(pid, name.as_deref()) {
                 Ok(job) => Some(std::sync::Arc::new(job)),
                 Err(error) => {
                     if !JOB_FAILURE_LOGGED.swap(true, std::sync::atomic::Ordering::AcqRel) {
@@ -65,6 +67,7 @@ impl PaneContainment {
         }
         #[cfg(not(any(unix, windows)))]
         {
+            let _ = session;
             Self::default()
         }
     }
@@ -170,12 +173,62 @@ pub fn leaders_from_manifests(home: &Path) -> Result<Vec<PaneLeader>, String> {
     Ok(leaders)
 }
 
+#[cfg(windows)]
+pub fn leaders_from_named_jobs(home: &Path) -> Result<Vec<PaneLeader>, String> {
+    let paths = list_manifest_paths(home)
+        .map_err(|error| format!("cannot list the session manifests: {error}"))?;
+    let mut leaders = Vec::new();
+    for path in paths {
+        let manifest = read_manifest(&path).map_err(|error| {
+            format!(
+                "the session manifest {} cannot be read: {error}",
+                path.display()
+            )
+        })?;
+        let name = paneflow_peer::pane_job_name(manifest.session.as_str());
+        let job = paneflow_peer::PaneJob::open(&name).map_err(|error| {
+            format!(
+                "the pane job of session {} cannot be opened: {error}",
+                manifest.session
+            )
+        })?;
+        match job {
+            Some(job) => leaders.push(PaneLeader {
+                session: manifest.session.to_string(),
+                workspace: manifest.workspace.as_ref().map(ToString::to_string),
+                pid: 0,
+                started_at: 0,
+                process_session: None,
+                job: Some(std::sync::Arc::new(job)),
+            }),
+            None if may_hold_live_processes(&manifest.lifecycle) => {
+                return Err(format!(
+                    "the {} session {} has no named pane job, so its pane cannot be read without the host",
+                    manifest.lifecycle.label(),
+                    manifest.session
+                ));
+            }
+            None => {}
+        }
+    }
+    Ok(leaders)
+}
+
+#[cfg(windows)]
+fn may_hold_live_processes(lifecycle: &crate::manifest::SessionLifecycle) -> bool {
+    !matches!(
+        lifecycle,
+        crate::manifest::SessionLifecycle::Exited { .. }
+            | crate::manifest::SessionLifecycle::Failed { .. }
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClassifiedBy {
     Local,
     Host,
     Manifests,
-    Unreachable,
+    NamedJobs,
     UnidentifiedPeer,
 }
 
@@ -185,7 +238,7 @@ impl ClassifiedBy {
             Self::Local => "the host's pane leaders",
             Self::Host => "peer.classify",
             Self::Manifests => "session manifests",
-            Self::Unreachable => "no source",
+            Self::NamedJobs => "named pane jobs",
             Self::UnidentifiedPeer => "peer read",
         }
     }
@@ -233,24 +286,18 @@ impl PeerClassifier {
     }
 
     fn membership_from_manifests(&self, pid: u32, started_at: u64) -> Membership {
-        #[cfg(windows)]
-        {
-            let _ = (pid, started_at, &self.home);
-            Membership::Unverified {
-                reason: "the host is unreachable, and pane membership on Windows needs the host's job handles".into(),
-            }
-        }
-        #[cfg(not(windows))]
-        {
-            let Some(home) = self.home.as_deref() else {
-                return Membership::Unverified {
-                    reason: "the host is unreachable and no Paneflow home resolves".into(),
-                };
+        let Some(home) = self.home.as_deref() else {
+            return Membership::Unverified {
+                reason: "the host is unreachable and no Paneflow home resolves".into(),
             };
-            match leaders_from_manifests(home) {
-                Ok(leaders) => paneflow_peer::classify(pid, started_at, &leaders),
-                Err(reason) => Membership::Unverified { reason },
-            }
+        };
+        #[cfg(windows)]
+        let leaders = leaders_from_named_jobs(home);
+        #[cfg(not(windows))]
+        let leaders = leaders_from_manifests(home);
+        match leaders {
+            Ok(leaders) => paneflow_peer::classify(pid, started_at, &leaders),
+            Err(reason) => Membership::Unverified { reason },
         }
     }
 
@@ -276,7 +323,7 @@ impl PeerClassifier {
                 let membership =
                     self.membership_from_manifests(identity.pid(), identity.started_at());
                 let by = if cfg!(windows) {
-                    ClassifiedBy::Unreachable
+                    ClassifiedBy::NamedJobs
                 } else {
                     ClassifiedBy::Manifests
                 };
@@ -464,7 +511,8 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn with_the_host_unreachable_a_windows_peer_is_unverified() {
+    fn with_the_host_unreachable_a_running_session_without_a_named_job_leaves_a_windows_peer_unverified()
+     {
         let home = tempfile::tempdir().unwrap();
         let classifier = PeerClassifier::new(
             Some(std::path::PathBuf::from(
@@ -480,6 +528,90 @@ mod tests {
         assert!(
             matches!(membership, Membership::Unverified { .. }),
             "{membership:?}"
+        );
+    }
+
+    fn unreachable_classifier(home: &Path) -> PeerClassifier {
+        PeerClassifier::new(
+            Some(home.join("no-host-answers-here")),
+            Some(home.to_path_buf()),
+            "paneflow-test",
+        )
+    }
+
+    #[test]
+    fn with_the_host_unreachable_and_no_session_recorded_a_caller_is_outside_every_pane() {
+        let home = tempfile::tempdir().unwrap();
+        let me = std::process::id();
+        let membership = unreachable_classifier(home.path())
+            .membership_from_manifests(me, crate::process::process_start_time(me).unwrap());
+        assert_eq!(membership, Membership::NotInPane);
+    }
+
+    #[cfg(windows)]
+    struct Sleeper(std::process::Child);
+
+    #[cfg(windows)]
+    impl Drop for Sleeper {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    #[cfg(windows)]
+    fn sleeper() -> Sleeper {
+        Sleeper(
+            std::process::Command::new("ping")
+                .args(["-n", "60", "127.0.0.1"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .unwrap(),
+        )
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn with_the_host_unreachable_the_named_job_of_a_running_session_decides_membership() {
+        let home = tempfile::tempdir().unwrap();
+        let manifest = manifest_naming_this_process(home.path());
+        let pane = sleeper();
+        let pid = pane.0.id();
+        let started = crate::process::process_start_time(pid).unwrap();
+        let name = paneflow_peer::pane_job_name(manifest.session.as_str());
+        let _job = paneflow_peer::PaneJob::contain(pid, Some(&name)).unwrap();
+        let classifier = unreachable_classifier(home.path());
+        assert_eq!(
+            classifier.membership_from_manifests(pid, started),
+            Membership::Pane {
+                session: manifest.session.to_string(),
+                workspace: manifest.workspace.as_ref().map(ToString::to_string),
+            }
+        );
+        let me = std::process::id();
+        assert_eq!(
+            classifier
+                .membership_from_manifests(me, crate::process::process_start_time(me).unwrap()),
+            Membership::NotInPane
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn with_the_host_unreachable_an_ended_session_without_a_job_does_not_block_a_windows_peer() {
+        let home = tempfile::tempdir().unwrap();
+        let mut manifest = manifest_naming_this_process(home.path());
+        manifest.lifecycle = crate::manifest::SessionLifecycle::Exited {
+            code: 0,
+            signal: None,
+        };
+        write_manifest(home.path(), &manifest).unwrap();
+        let me = std::process::id();
+        assert_eq!(
+            unreachable_classifier(home.path())
+                .membership_from_manifests(me, crate::process::process_start_time(me).unwrap()),
+            Membership::NotInPane
         );
     }
 
@@ -531,9 +663,9 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_failed_job_assignment_leaves_the_pane_uncontained_and_is_logged_once() {
-        assert!(PaneContainment::of(u32::MAX - 3).job.is_none());
+        assert!(PaneContainment::of(u32::MAX - 3, None).job.is_none());
         assert!(JOB_FAILURE_LOGGED.load(std::sync::atomic::Ordering::Acquire));
-        assert!(PaneContainment::of(u32::MAX - 3).job.is_none());
+        assert!(PaneContainment::of(u32::MAX - 3, None).job.is_none());
     }
 
     #[test]

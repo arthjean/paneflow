@@ -27,7 +27,8 @@ impl PaneFlowApp {
                     .staged_workspaces
                     .get(&location.workspace)
                     .map(|ws| ws.id)
-            })?;
+            })
+            .unwrap_or(location.workspace.0);
         Some((location.workspace, app))
     }
 

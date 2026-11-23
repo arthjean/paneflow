@@ -29,6 +29,10 @@ focused library crates:
 | `paneflow-host` | `crates/paneflow-host/` | GPU-free local host library and executable: owns PTYs, child processes, canonical libghostty state and the durable session manifests under `~/.paneflow/host/` |
 | `paneflow-serve` | `crates/paneflow-serve/` | The per-home worker: owns the layout model and `session.json`, the activity reducer, the session projection and the advertised-capability protocol Controllers speak |
 | `paneflow-layout` | `crates/paneflow-layout/` | The GPU-free layout model: workspaces, tabs, split trees, ops with their events and effects, undo records, revisions and id leases, shared by the worker and the window |
+| `paneflow-api` | `crates/paneflow-api/` | The method registry: each JSON-RPC method declared once with its owner (window, worker or host), audience, gate, parameter and result schemas and examples; dispatch, `authorize`, `paneflow api`, the CLI's routing and the Lua bindings derive from it |
+| `paneflow-script` | `crates/paneflow-script/` | The Lua 5.4 runtime (mlua, vendored): the `paneflow` table, events, timers, `paneflow.exec`, prompts and limits, on one thread; `paneflow do` runs it in the CLI process and the worker runs it for `init.lua` |
+| `paneflow-launch` | `crates/paneflow-launch/` | How a terminal session starts: the shell, its integration, its environment and the request sent to the host, shared by the window and the worker |
+| `paneflow-peer` | `crates/paneflow-peer/` | The process at the other end of an IPC connection, read from the kernel, and whether it runs inside a pane (pane leaders, Windows pane jobs, parent walks) |
 | `paneflow-shim` | `crates/paneflow-shim/` | PATH shim wrapping every agent CLI of the `runtimes/` catalog so Paneflow can observe its lifecycle |
 | `paneflow-ai-hook` | `crates/paneflow-ai-hook/` | The hook binary agent CLIs invoke to report session events back over IPC |
 | `paneflow-ipc-client` | `crates/paneflow-ipc-client/` | Blocking JSON-RPC client for the local IPC socket (shared by the MCP bridge and the CLI) |
@@ -582,9 +586,20 @@ from the OS (`crates/paneflow-peer`), bound to the process rather than a
 reusable PID. The host decides pane membership, since it spawned every pane
 and records their leaders; the window and the worker ask it with
 `peer.classify`, a query they make for themselves, and fall back to the
-session manifests in the home when it does not answer (Linux, macOS) or to
-`Unverified` (Windows). A connection is never assumed to be outside every
-pane.
+session manifests in the home when it does not answer. On Linux and macOS the
+fallback walks the caller's parents to a recorded pane leader. On Windows,
+where a parent that exits leaves its children without a parent to walk, the
+host places each pane's leader in a Job Object named after its session
+(`Local\paneflow-pane-<session>`, `paneflow_peer::pane_job_name`), and the
+fallback opens each recorded session's job by name and asks the kernel whether
+the caller is in it (`IsProcessInJob`); the job grants no breakaway, so a
+pane's process stays in it unless a process of the same user rewrites the
+job's limits, which is outside what this layer defends. A
+session whose manifest may still hold a process but whose job cannot be
+opened, such as one started by a host that predates named jobs, leaves the
+caller `Unverified`; with no session recorded at all, no pane exists and the
+caller is outside every pane. A connection is never assumed to be outside
+every pane on an incomplete answer.
 
 Every request then goes through one pure function,
 `paneflow_api::authorize(principal, descriptor, params, policy)`
@@ -817,9 +832,14 @@ stale code.
   refused op, or a layout event the window did not cause makes it fetch the
   view (`layout.view` with `unless_revision` answers nothing when nothing
   moved) and reproject, keeping every pane whose id persists; a refused split
-  or undo shows the toast it shows when refused locally. The window still
-  creates every terminal session and binds it with a `bind_session` op. While
-  attached it leaves stops to the worker and never writes `session.json`.
+  or undo shows the toast it shows when refused locally. While attached, the
+  window starts each new terminal through `layout.launch`: the worker builds
+  the request with `paneflow-launch` and creates the session under the id the
+  window chose. Detached, the window creates the session itself and binds it
+  with a `bind_session` op. A view fetched from the worker that names
+  surfaces the window has no terminal for (a workspace or a split another
+  client made) gets those terminals before it is projected. While attached
+  the window leaves stops to the worker and never writes `session.json`.
 - **The fallback write.** When no worker answers, or the worker predates
   `layout.authority`, the window is the layout authority: it keeps applying
   ops with the ids left in its lease and writes `session.json` on the 150 ms
@@ -835,6 +855,18 @@ stale code.
   attached writes `session.json` itself whoever holds `serve/owner.lock`, so
   its last model is on disk even when a worker holds the lock and does not
   answer; the worker reads that file again before the next window attaches.
+- **Two homes for Lua.** Both run `paneflow-script`. `paneflow do` runs a
+  file, a chunk or a named action in the CLI process
+  (`src-app/src/cli/do_cmd.rs`), with no memory cap or deadline unless the
+  user passes one; each `paneflow.*` call is routed to the method's owner
+  from its descriptor, and Ctrl-C stops a busy loop through an
+  instruction-count hook. `init.lua` (`<home>/init.lua`) runs inside the
+  worker (`crates/paneflow-serve/src/config_runtime.rs`): it is loaded again
+  300 ms after a save settles, a failed load keeps the previous configuration
+  and reports its file and line, the state is capped at 256 MiB, and its
+  handlers and timers live as long as the worker, not the window. Its actions
+  are served by `action.invoke` with a 30 s limit, and its bindings by
+  `keymap.list`, which the window applies under its own Settings shortcuts.
 - **One prompt broker.** `crates/paneflow-serve/src/prompts.rs` holds the
   questions an action, a script or later an agent asks the user, in memory
   only. `prompt.request` queues one when a `prompt.follow` client can show its

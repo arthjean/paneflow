@@ -142,7 +142,7 @@ fn pane_client() {
         "typed" => act_as_caller(&home),
         _ => panic!("unknown pane client mode {mode}"),
     }
-    println!("{}", pane::DONE);
+    pane::finish(&home);
 }
 
 fn loaded(home: &Path) {
@@ -241,6 +241,7 @@ fn a_process_whose_parent_is_an_agent_acts_as_that_agent_without_any_hook() {
         "the prompt of a run the agent started names it: {asked_by_run}"
     );
     dismiss(instance.home(), &asked_by_run);
+    instance.release_panes();
 }
 
 #[test]

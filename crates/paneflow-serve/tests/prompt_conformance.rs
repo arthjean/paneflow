@@ -438,7 +438,7 @@ fn pane_client() {
         }
         _ => panic!("unknown pane client mode {mode}"),
     }
-    println!("{}", pane::DONE);
+    pane::finish(&home);
 }
 
 fn case_pane_refused_on_an_agent_prompt() -> &'static str {

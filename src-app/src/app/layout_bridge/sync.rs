@@ -472,7 +472,6 @@ impl PaneFlowApp {
     pub(crate) fn reconcile_layout(&mut self, view: Snapshot, cx: &mut Context<Self>) {
         let focused_before = model_focus(self.layout.model.state());
         self.layout.model.restore(view);
-        self.project_layout(cx);
         let missing: Vec<(SurfaceId, Option<paneflow_config::schema::SessionId>)> = self
             .layout
             .model
@@ -492,9 +491,7 @@ impl PaneFlowApp {
                 None => self.spawn_layout_surface(*surface, cx),
             }
         }
-        if !missing.is_empty() {
-            self.project_layout(cx);
-        }
+        self.project_layout(cx);
         self.layout.prune();
         let focused_after = model_focus(self.layout.model.state());
         if focused_after != focused_before

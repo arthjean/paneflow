@@ -261,6 +261,7 @@ fn host_hello(kind: Option<&str>) -> paneflow_host::protocol::ClientHello {
     }
 }
 
+#[cfg(unix)]
 const ORPHAN_OF_ENV: &str = "PANEFLOW_FIXTURE_ORPHAN_OF";
 
 #[cfg(unix)]

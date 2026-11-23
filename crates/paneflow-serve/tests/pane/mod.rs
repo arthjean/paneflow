@@ -19,6 +19,7 @@ pub const HOME_ENV: &str = "PANEFLOW_TEST_PANE_HOME";
 pub const DONE: &str = "pane-client done";
 const REPLY_WAIT: Duration = Duration::from_secs(30);
 const RUN_WAIT: Duration = Duration::from_secs(90);
+const RELEASE_FILE: &str = "pane-client.release";
 
 pub fn worker_call(control: &mut HostControl, method: &str, params: Value) -> Result<Value, Value> {
     let id = control
@@ -56,6 +57,19 @@ pub fn pane_mode() -> Option<(String, PathBuf)> {
     let mode = std::env::var(MODE_ENV).ok()?;
     let home = PathBuf::from(std::env::var(HOME_ENV).expect("the test names the home"));
     Some((mode, home))
+}
+
+pub fn finish(home: &Path) {
+    println!("{DONE}");
+    hold_until_released(home);
+}
+
+fn hold_until_released(home: &Path) {
+    let release = home.join(RELEASE_FILE);
+    let deadline = Instant::now() + RUN_WAIT;
+    while !release.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }
 
 pub fn reports(text: &str) -> Vec<Value> {
@@ -112,6 +126,10 @@ impl Instance {
         self.home.path()
     }
 
+    pub fn release_panes(&self) {
+        std::fs::write(self.home.path().join(RELEASE_FILE), b"").unwrap();
+    }
+
     pub fn run_in_pane(&self, test: &str, mode: &str) -> Vec<Value> {
         self.run_program_in_pane(&std::env::current_exe().unwrap(), test, mode)
     }
@@ -155,6 +173,7 @@ impl Instance {
 
 impl Drop for Instance {
     fn drop(&mut self) {
+        let _ = std::fs::write(self.home.path().join(RELEASE_FILE), b"");
         if let Some(worker) = self.worker.take() {
             worker.stop();
         }

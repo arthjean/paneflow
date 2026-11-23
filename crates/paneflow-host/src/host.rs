@@ -1373,6 +1373,7 @@ impl SessionHost {
             appearance: request.appearance,
             cell: request.cell,
             xt_checksum: self.current_xt_checksum(),
+            session: Some(session.clone()),
         };
         let created = self.launch(
             session,
@@ -1548,6 +1549,7 @@ impl SessionHost {
                 appearance: record.appearance.clone(),
                 cell: record.cell,
                 xt_checksum,
+                session: Some(guard.session.clone()),
             };
             drop(guard);
             record.launch = Some(PendingLaunch {
