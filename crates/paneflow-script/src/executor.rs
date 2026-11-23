@@ -193,10 +193,11 @@ impl Executor {
                     slot.value = Some(value);
                     slot.waker.take()
                 };
-                outstanding.fetch_sub(1, Ordering::AcqRel);
                 if let Some(waker) = waker {
                     waker.wake();
                 }
+                wake.notify();
+                outstanding.fetch_sub(1, Ordering::AcqRel);
                 wake.notify();
             });
         if spawned.is_err() {
