@@ -57,10 +57,10 @@
     {
       "id": "EP-007",
       "title": "Real-hardware validation of layers 1 and 2 on Linux",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 1,
-      "stories_done": 0
+      "stories_done": 1
     },
     {
       "id": "EP-008",
@@ -513,15 +513,15 @@
       "id": "US-035",
       "title": "Visual pass of layers 1 and 2 on Linux, Wayland and X11",
       "epic": "EP-007",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-015",
         "US-016"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-23",
+      "completed_at": "2026-11-23",
+      "reviewed_at": "2026-11-23"
     },
     {
       "id": "US-038",

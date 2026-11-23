@@ -968,10 +968,34 @@ What CI cannot show for the lexical and tree-sitter layers, colors on screen, is
 **Dependencies:** Blocked by US-015, US-016
 
 **Acceptance Criteria:**
-- [ ] Given a Rust file just under the 2 MB tree-sitter cap, the largest file where the swap happens, under Wayland, when it opens, then the report states whether the swap is visible and how
-- [ ] Given the same file under X11, when it opens, then the report states the same
-- [ ] Given a Rust file between 2 MB and 10 MiB, when it opens, then the report states how long it stays plain before layer 1 colors it
-- [ ] Given a file whose extension Pierre does not know, when it opens, then the report states that it is plain and editable
+- [x] Given a Rust file just under the 2 MB tree-sitter cap, the largest file where the swap happens, under Wayland, when it opens, then the report states whether the swap is visible and how
+- [x] Given the same file under X11, when it opens, then the report states the same
+- [x] Given a Rust file between 2 MB and 10 MiB, when it opens, then the report states how long it stays plain before layer 1 colors it
+- [x] Given a file whose extension Pierre does not know, when it opens, then the report states that it is plain and editable
+
+**US-035 report (2026-11-23).**
+
+- **Setup.** Release build of `0eff56e0` (`cargo build --release --locked`, Paneflow 0.20.0), on a Ryzen 7 7800X3D with a GeForce RTX 4070 Ti SUPER (NVIDIA 620.70.06), Fedora 45, kernel 7.3.4. The compositor is sway 1.12 on its headless backend, rendering with GLES2 on the NVIDIA GPU, one 1600x1000 output at scale 1. Wayland runs are Paneflow on sway's native Wayland socket (`xdg_shell`); X11 runs are Paneflow on sway's Xwayland (`DISPLAY=:2`, the window reported as `xwayland` by sway and GPUI's X11 client in the log). Each run starts a fresh app on its own `PANEFLOW_HOME` and `XDG_RUNTIME_DIR`, opens the Files dock with Ctrl+Alt+F, selects the file, and presses Enter through `wtype` (Wayland) or `xdotool` (X11); `grim` then captures the 820x900 code area about 60 times a second, so every time below has a resolution of about 17 ms and counts from the key press, compositor latency included. A pixel counts as text when its brightest channel is above 90, and as colored when its chroma is above 35 % of that channel. Arthur's own GNOME session was not used, so GNOME's and KDE's compositors were not exercised. The harness, the analysis script and the screenshots are local evidence in `tasks/evidence/layered-highlighting-ep007/`, untracked.
+- **Swap under the tree-sitter cap, Wayland.** `a_under_cap.rs`, 1,998,998 bytes of this repository's Rust sources. Three runs: the first frame that shows the file comes 49, 66 and 50 ms after the key press and is already colored by layer 1 (21,842 colored pixels of 30,762 text pixels, identical in every run); the tree arrives at 213, 214 and 216 ms, about 150 to 165 ms later, and that one frame changes 2,430 pixels, 7.9 % of the text, on 12 of the 50 visible rows; after it only the caret blinks (36 pixels every 540 ms or so). No frame shows the file plain, and no row moves. The swap is visible to an eye resting on the tokens it touches, as a single hue change of a few tokens, not as a flash: an attribute's `#` turns from the plain color to the punctuation color, a tuple-struct constructor call such as `TerminalAgent(runtime.id)` turns from the function color to the type color, the apostrophe of `&'static` and the pipes of a closure change tint. Everything else on screen keeps its color. Screenshots: `us035-wayland-under-cap-layer1-first-frame.png`, `us035-wayland-under-cap-after-swap.png`, and `us035-wayland-swap-zoom.png` (each changed region before and after, at twice the size).
+- **Swap under the tree-sitter cap, X11.** Same file, three runs: first frame at 53, 40 and 36 ms, colored by layer 1, with the same 21,842 colored pixels; the swap at 222, 211 and 214 ms changes the same 2,430 pixels as under Wayland. The swap looks the same on both display servers. Screenshots: `us035-x11-under-cap-layer1-first-frame.png`, `us035-x11-under-cap-after-swap.png`.
+- **Plain time between the cap and 10 MiB.** First frame plain, then layer-1 colors in one frame, with no intermediate state:
+
+| File | Display server | Plain from | Colored from | Plain for |
+|---|---|---|---|---|
+| `b_five_mb.rs`, 4,999,992 bytes | Wayland | 34 ms, 50 ms | 121 ms, 119 ms | 87 ms, 69 ms |
+| `b_five_mb.rs` | X11 | 44 ms, 40 ms | 124 ms, 108 ms | 80 ms, 68 ms |
+| `c_ten_mib.rs`, 10,481,660 bytes (4 KiB under `MAX_FILE_BYTES`) | Wayland | 67 ms, 71 ms | 235 ms, 234 ms | 168 ms, 163 ms |
+| `c_ten_mib.rs` | X11 | 50 ms, 52 ms | 220 ms, 221 ms | 170 ms, 169 ms |
+
+  The plain time grows with the size of the background `LexJob`, about 70 to 85 ms at 5 MB and 165 to 170 ms at 10 MiB on this machine, so four to five frames and about ten frames at 60 Hz. Screenshots: `us035-wayland-10mib-plain.png`, `us035-wayland-10mib-layer1.png`, `us035-x11-5mb-plain.png`, `us035-x11-5mb-layer1.png`.
+- **Unknown extension.** `notes.qqzz`, 200 lines of Rust-like text: no colored pixel in any frame under Wayland or X11. Typing at the end of the first line inserted the text at the caret and marked the tab modified, on both display servers; the file was not saved. Screenshots: `us035-wayland-unknown-ext-edited.png`, `us035-x11-unknown-ext-edited.png`.
+- **Defects.** None found. For Open Question 2, the evidence is a one-frame recolor of about 8 % of the text pixels some 150 ms after a colored first frame on the largest file that swaps, against a plain first frame followed by a full recolor without layer 1; Arthur decides whether any language should be `Plain`.
+
+**EP-007 review (2026-11-23):** US-035 is `DONE`. No blocking defect was found; one sentence of the report was made exact.
+- **Evidence re-derived from the raw captures.** The reviewer re-ran `analyze.py` on all 17 runs kept in the job scratchpad (`wl-a1..3`, `x11-a1..3`, `wayland-b1..2`, `x11-b1..2`, `wayland-c1..2`, `x11-c1..2`, `wayland-d1`, `x11-d1`): every first-frame, swap and plain-time figure in the report matches to the millisecond, the swap changes 2,430 pixels in 12 bands of rows in every under-cap run, and the unknown-extension runs show no colored pixel in any frame. The X11 runs used GPUI's X11 client (`gpui_linux::linux::x11::client` in `app-rel-x11.log`), the Wayland runs its Wayland client, both on the NVIDIA swapchain. Three X11 screenshots are byte-identical to their Wayland twins; they come from separate runs (distinct capture times), so the two display servers render the same pixels. The fixtures sit under the caps the code enforces: 1,998,998 bytes against `MAX_HIGHLIGHT_BYTES` = 2,000,000 (`src-app/src/diff/highlighter.rs:10`), 10,481,660 bytes against `MAX_FILE_BYTES` = 10 MiB (`src-app/src/app/diff_dock/code/load.rs:10`). The release binary was built after `0eff56e0` and the epic changes no source file.
+- **Fixed.** The report said nothing changes after the swap; the frames show the caret blinking (36 pixels every 540 ms or so), now stated.
+- **Coverage.** Wayland was sway's headless backend and X11 its Xwayland; GNOME and KDE were not exercised, as the report says. The criteria require a Wayland and an X11 run, not a given compositor.
+- **Gates on the final tree.** `cargo fmt --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo nextest run --workspace --locked --profile ci` (5491 passed, 29 skipped), `check-test-wallclock.sh` and `check-helper-sizes.sh` (`paneflow-ai-hook` still over its soft cap, unchanged) pass. No dependency changed, so `cargo deny` was not run.
 
 ---
 
