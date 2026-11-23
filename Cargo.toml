@@ -11,6 +11,7 @@ members = [
     "crates/paneflow-home",
     "crates/paneflow-host",
     "crates/paneflow-libghostty-sys",
+    "crates/paneflow-lsp",
     "crates/paneflow-mcp",
     "crates/paneflow-mcp-install",
     "crates/paneflow-minisign",
@@ -73,6 +74,7 @@ paneflow-highlights = { path = "crates/paneflow-highlights" }
 paneflow-home = { path = "crates/paneflow-home" }
 paneflow-host = { path = "crates/paneflow-host" }
 paneflow-ipc-client = { path = "crates/paneflow-ipc-client" }
+paneflow-lsp = { path = "crates/paneflow-lsp" }
 paneflow-mcp-install = { path = "crates/paneflow-mcp-install" }
 paneflow-minisign = { path = "crates/paneflow-minisign" }
 paneflow-serve = { path = "crates/paneflow-serve" }

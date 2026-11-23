@@ -1732,6 +1732,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "escape8259"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f1f0d310082fd5de539d4f41601182241147498444a7695c520288a0cdbead6"
+
+[[package]]
 name = "etagere"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3412,6 +3418,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "libtest-mimic"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14e6ba06f0ade6e504aff834d7c34298e5155c6baca353cc6a4aaff2f9fd7f33"
+dependencies = [
+ "anstream",
+ "anstyle",
+ "clap",
+ "escape8259",
+]
+
+[[package]]
 name = "linebender_resource_handle"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4565,6 +4583,22 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "toml 0.8.23",
+]
+
+[[package]]
+name = "paneflow-lsp"
+version = "0.20.0"
+dependencies = [
+ "libtest-mimic",
+ "log",
+ "paneflow-home",
+ "paneflow-process",
+ "ropey",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "url",
+ "which",
 ]
 
 [[package]]

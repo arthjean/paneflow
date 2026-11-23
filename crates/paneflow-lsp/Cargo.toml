@@ -1,0 +1,32 @@
+[package]
+name = "paneflow-lsp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+description = "A minimal Language Server Protocol client for semantic tokens: framing, lifecycle, document sync, command resolution and per-root consent"
+
+[dependencies]
+log.workspace = true
+paneflow-home.workspace = true
+paneflow-process.workspace = true
+ropey = { version = "1.6", default-features = false, features = ["simd"] }
+serde.workspace = true
+serde_json.workspace = true
+url = "2.5"
+which.workspace = true
+
+[dev-dependencies]
+libtest-mimic = "0.8.2"
+tempfile.workspace = true
+
+[[test]]
+name = "client"
+path = "tests/client/main.rs"
+harness = false
+
+[lints]
+workspace = true
