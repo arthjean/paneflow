@@ -89,10 +89,10 @@
     {
       "id": "EP-011",
       "title": "Windows validation and release readiness",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 5,
-      "stories_done": 2
+      "stories_done": 5
     }
   ],
   "stories": [
@@ -1118,7 +1118,7 @@
       "id": "US-077",
       "title": "Windows: configuration, keys and prompts",
       "epic": "EP-011",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-047",
@@ -1126,14 +1126,14 @@
         "US-043"
       ],
       "started_at": "2026-11-23",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-23",
+      "reviewed_at": "2026-11-23"
     },
     {
       "id": "US-078",
       "title": "Windows: layout authority, headless and agents",
       "epic": "EP-011",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-055",
@@ -1141,8 +1141,8 @@
         "US-075"
       ],
       "started_at": "2026-11-23",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-23",
+      "reviewed_at": "2026-11-23"
     },
     {
       "id": "US-079",
@@ -1163,14 +1163,14 @@
       "id": "US-080",
       "title": "Release records",
       "epic": "EP-011",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-079"
       ],
       "started_at": "2026-11-23",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-23",
+      "reviewed_at": "2026-11-23"
     }
   ]
 }
