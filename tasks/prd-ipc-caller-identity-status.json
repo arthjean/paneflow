@@ -41,10 +41,10 @@
     {
       "id": "EP-005",
       "title": "Real-hardware validation",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 1,
-      "stories_done": 0
+      "stories_done": 1
     },
     {
       "id": "EP-006",
@@ -467,14 +467,14 @@
       "id": "US-031",
       "title": "Exercise the Linux kernel matrix",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-007"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-23T17:47:59+01:00",
+      "completed_at": "2026-11-23T18:18:06+01:00",
+      "reviewed_at": "2026-11-23T18:18:06+01:00"
     },
     {
       "id": "US-032",

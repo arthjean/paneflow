@@ -10,6 +10,7 @@
 | 1.2 | 2026-11-23 | Arthur Jean | EP-004 review: the Linux sandbox no longer re-exposes the D-Bus session bus, the systemd user sockets and the accessibility bus (`bus`, `systemd`, `at-spi`, `.dbus-proxy` in the runtime directory). With them a sandboxed process started a process outside the sandbox with `systemd-run --user`, measured on Fedora 45, which then saw every shared endpoint. Known remaining limits (X11, other command-running sockets, a local SSH server) are in `docs/user/scripting.md`; a filtering D-Bus proxy is an open question. |
 | 1.3 | 2026-11-23 | Arthur Jean | The stories that need a Windows machine (US-027, US-030, US-033) move to a final epic EP-006, and those that need a Mac (US-026, US-029, US-032) to a final epic EP-007. EP-004 keeps the endpoints, the Linux sandbox and US-028; EP-005 keeps the Linux kernel matrix (US-031). Story ids, criteria and dependencies are unchanged. 7 epics, 33 stories. |
 | 1.4 | 2026-11-23 | Arthur Jean | EP-004 closed. The Linux sandbox report is measured on five distributions in KVM virtual machines (`scripts/sandbox-matrix.sh`): Ubuntu 24.04 is unsupported as installed. The runtime directory of a sandboxed pane is an allowlist (Wayland, PipeWire, PulseAudio, GnuPG, the SSH agent), replacing v1.2's list of refused entries. The config offers `sandbox: "paneflow"` on Linux only until EP-006 and EP-007 validate Windows and macOS, so US-028 no longer waits for them; US-032 and US-033 each gain the criterion that turns their platform on. The CLI now reaches the worker through the pane endpoint from a sandboxed pane (`paneflow split` failed there). |
+| 1.5 | 2026-11-23 | Arthur Jean | EP-005: the Linux kernel matrix report (US-031) is measured in KVM virtual machines (`scripts/sandbox-matrix.sh --suite identity`) on Ubuntu 22.04 (5.15, `SO_PEERCRED`) and 24.04 (6.8, `SO_PEERPIDFD`). It found that with `/proc` mounted `hidepid=2` every caller was `unverified`, because the parent chain reached a process the host cannot see (`sshd-session`, `init`); an ancestor that exists but is hidden now ends the chain, as `init` does. A8 and A12 are validated. |
 
 ## Problem Statement
 
@@ -123,10 +124,10 @@ The conductor documentation tells users to set `PANEFLOW_IPC_SCRIPTING=1` for `s
 | A5 | A Seatbelt `network-outbound` rule matches Paneflow's socket paths on every supported macOS release. | High (R9) | US-032 |
 | A6 | Claude Code and Codex still run their own sandbox inside a Paneflow sandbox. | Medium | US-023, US-032 |
 | A7 | A Seatbelt profile that allows by default can deny `process-info*` and `signal` toward processes outside the pane. | High (not researched) | US-032 |
-| A8 | `/proc/<pid>/stat` of the user's own processes is readable by the host on Linux; a `hidepid=2` mount of `/proc` still lets a process read its own user's entries. | Medium (memory) | US-031 |
+| A8 | `/proc/<pid>/stat` of the user's own processes is readable by the host on Linux; a `hidepid=2` mount of `/proc` still lets a process read its own user's entries. | Validated with a correction by US-031: the user's dumpable processes stay readable, but a parent chain also crosses processes the host cannot see (other users' and non-dumpable ones), which made every caller `unverified` until the fix | US-031 |
 | A9 | On macOS, `sysctl KERN_PROC` returns the parent PID and session of any process of the same user. | Medium (memory) | US-029 |
 | A10 | RHEL 9 has no `SO_PEERPIDFD` backport. | Low: the fallback path US-031 proves on 5.15 runs on any kernel without the option | Not validated separately |
-| A12 | A pane process that ignores `SIGHUP` can outlive the host, and the session manifests in the home still name its leader while the host is down. | Medium (reasoning, not evidence) | US-031 |
+| A12 | A pane process that ignores `SIGHUP` can outlive the host, and the session manifests in the home still name its leader while the host is down. | Validated by US-031 on 5.15 and 6.8 | US-031 |
 | A11 | A `peer.classify` round trip per new connection does not measurably slow the CLI. No latency target is set because none is evidenced; the answer is kept for the connection's life. | Low | Debug log timing in US-007 |
 
 Constraints from `AGENTS.md`: every change works on Linux, macOS and Windows, with Windows behavior verified on hardware after a push; no comments in source; the render thread never blocks (the window classifies on its connection thread); the helper binaries keep their size caps; every grant an agent asks for goes through the human.
@@ -545,13 +546,13 @@ The Linux kernel matrix is exercised on real kernels. The Windows and macOS hard
 **Dependencies:** Blocked by US-007
 
 **Acceptance Criteria:**
-- [ ] Given Ubuntu 22.04 on its GA 5.15 kernel, when `system.whoami` runs from a pane and outside, then the answers are `pane` and `external`
-- [ ] Given that kernel, when the peer is read, then the debug log shows the `SO_PEERCRED` fallback
-- [ ] Given Ubuntu 24.04 on 6.8, when the same check runs, then the answers are the same
-- [ ] Given that kernel, when the peer is read, then the debug log shows `SO_PEERPIDFD`
-- [ ] Given a pane process that ignores `SIGHUP` and the host killed, when the worker classifies that process, then the report states the answer and whether the manifests still named its leader (assumption A12)
-- [ ] Given `/proc` mounted with `hidepid=2`, when a pane process is classified, then the report states the answer (assumption A8)
-- [ ] Given a process in a pane that calls `setsid` and double-forks, when it calls `system.whoami`, then the report records `external` as the documented layer-1 limit
+- [x] Given Ubuntu 22.04 on its GA 5.15 kernel, when `system.whoami` runs from a pane and outside, then the answers are `pane` and `external`
+- [x] Given that kernel, when the peer is read, then the debug log shows the `SO_PEERCRED` fallback
+- [x] Given Ubuntu 24.04 on 6.8, when the same check runs, then the answers are the same
+- [x] Given that kernel, when the peer is read, then the debug log shows `SO_PEERPIDFD`
+- [x] Given a pane process that ignores `SIGHUP` and the host killed, when the worker classifies that process, then the report states the answer and whether the manifests still named its leader (assumption A12)
+- [x] Given `/proc` mounted with `hidepid=2`, when a pane process is classified, then the report states the answer (assumption A8)
+- [x] Given a process in a pane that calls `setsid` and double-forks, when it calls `system.whoami`, then the report records `external` as the documented layer-1 limit
 
 ---
 
@@ -673,6 +674,24 @@ Measured on 2026-11-23. Fedora is the development machine; every other row is a 
 
 The agents were run on Fedora only; the other distributions were measured for bubblewrap and the Paneflow sandbox, not for each agent. In a live debug window on Fedora, a sandboxed pane answered `system.whoami` with `pane` and its session on the window, the worker and the host, and a `paneflow split` from it opened a pane that `paneflow ls` reports `sandboxed: true`.
 
+## Linux kernel matrix report (US-031)
+
+Measured on 2026-11-23 by `scripts/sandbox-matrix.sh --suite identity`, in throwaway KVM virtual machines booted from each distribution's cloud image, so each runs its own kernel. In each one the script runs two test binaries of `paneflow-host`, built once against Ubuntu 22.04's glibc, as an unprivileged user, first on the default `/proc` and then with `/proc` remounted `hidepid=2` (the kernel reports it as `hidepid=invisible`; the user then sees no root process at all):
+
+- `linux_kernel_matrix` starts the real `paneflow-host serve` binary with `RUST_LOG=debug`, creates a pane whose shell calls `system.whoami`, calls it again from outside every pane, and reads the host's debug log. The script derives the expected peer source from the kernel version alone (6.5 or later: `SO_PEERPIDFD`, R1) and the test fails when the log names another. Its second test starts a pane whose shell ignores `SIGHUP`, kills the host with `SIGKILL`, waits for the shell to be orphaned, lets it connect, and classifies it with the classifier the worker uses (`PeerClassifier`, host endpoint dead).
+- `caller_identity` runs the layer-1 cases against an in-process host, including the shell that calls `setsid` and double-forks.
+
+| Distribution | Kernel | Peer source in the host's debug log | `system.whoami` in a pane / outside | Host killed: manifest names the leader, worker's answer | `setsid` and double fork | Same, `/proc` `hidepid=2` |
+|---|---|---|---|---|---|---|
+| Ubuntu 22.04.5 | 5.15.0-203-generic (GA) | `SO_PEERCRED` (fallback) | `pane` with its session and workspace / `external` | Yes (lifecycle still `running`); `pane` with its session, through the session manifests | `external` | Same answers after the fix below; before it, every caller was `unverified` |
+| Ubuntu 24.04.5 | 6.8.0-147-generic | `SO_PEERPIDFD` | `pane` / `external` | Yes; `pane`, through the session manifests | `external` | Same answers after the fix below; before it, every caller was `unverified` |
+
+A log line reads, on 5.15: `paneflow host: process 2438 (SO_PEERCRED) classified pane through the host's pane leaders in 151 us`, and on 6.8 the same with `(SO_PEERPIDFD)`.
+
+**Defect found and fixed: `hidepid=2` refused every caller.** With `/proc` mounted `hidepid=2`, the first run refused every `session.create` with `Paneflow could not identify the calling process: cannot read the parent 2021 of process 2022: No such file or directory`, on both kernels. The parent chain of any caller reaches a process the host cannot see: `sshd-session`, which runs as the user but is not dumpable, over SSH, and `init` everywhere. Membership answered `unverified` for any unreadable parent (`crates/paneflow-peer/src/membership.rs`). It now ends the chain when the parent still exists but its `/proc` entry is hidden (`kill(pid, 0)` succeeds or fails with `EPERM`, and its `stat` cannot be read), as `init` ends it, and stays `unverified` when the parent is gone. The walk has already tested every visible process for a pane leader or a pane's session id before it reaches a hidden one, so a pane process still reads `pane`. The residual is a new session started below a pane process hidden from the host, such as a `sudo` that opens its own terminal: it reads `external` under `hidepid=2`, which is the same layer-1 limit as `setsid` and a double fork, and is documented in `docs/user/scripting.md`.
+
+**Layer-1 limit:** a pane process that calls `setsid` and double-forks reads `external` on both kernels, with and without `hidepid=2`. EP-004's sandbox is what closes it.
+
 ## Edge Cases & Error States
 
 | Scenario | Trigger | Expected behavior | Message |
@@ -682,6 +701,7 @@ The agents were run on Fedora only; the other distributions were measured for bu
 | Grant set stale in the host or the window | Window just reconnected | `grants_unsynced`, retryable | "Grants are being synchronized; retry the call" |
 | Pane leader PID reused | Long-running instance | Start-time mismatch, `NotInPane` | None |
 | Agent escapes with `setsid` and a double fork (Unix) | Hostile process | Classified `External`; documented limit, closed by EP-004 | None |
+| An ancestor hidden by `hidepid=2` (Linux) | `/proc` mounted `hidepid=2` | The hidden ancestor ends the parent chain, as `init` does; a pane process still reads `pane` (US-031) | None |
 | Sandboxed profile on an unsupported platform | Config load | Config error naming the platform and profile | "Sandbox 'paneflow' is not available on <platform>" |
 
 ## Risks & Mitigations
