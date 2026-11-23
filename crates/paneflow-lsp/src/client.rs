@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::io;
+use std::ops;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -17,10 +18,12 @@ use crate::connection::{Connection, ConnectionEvent, ResponseError, CONNECTION_C
 use crate::encoding::position_at;
 use crate::protocol::{
     initialize_params, DidChangeTextDocumentParams, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, Negotiated, Range, SyncKind, TextDocumentContentChangeEvent,
-    TextDocumentIdentifier, TextDocumentItem, VersionedTextDocumentIdentifier,
+    DidOpenTextDocumentParams, Negotiated, Position, Range, SemanticTokensDeltaParams,
+    SemanticTokensParams, SemanticTokensRangeParams, SyncKind, TextDocumentContentChangeEvent,
+    TextDocumentIdentifier, TextDocumentItem, TokenLegend, VersionedTextDocumentIdentifier,
 };
 use crate::resolve::resolve_command;
+use crate::semantic_tokens::{apply_delta, decode, parse_result, SemanticToken, TokensResult};
 
 pub const EXIT_GRACE: Duration = Duration::from_secs(5);
 pub const SHUTDOWN_REPLY_GRACE: Duration = Duration::from_secs(5);
@@ -77,9 +80,23 @@ pub struct TextChange {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ClientEvent {
-    State { key: ServerKey, state: ServerState },
-    Unsupported { document: DocumentId },
-    Stopped { key: ServerKey, killed: bool },
+    State {
+        key: ServerKey,
+        state: ServerState,
+    },
+    Unsupported {
+        document: DocumentId,
+    },
+    Stopped {
+        key: ServerKey,
+        killed: bool,
+    },
+    Tokens {
+        document: DocumentId,
+        revision: u64,
+        tokens: Arc<[SemanticToken]>,
+        legend: Arc<TokenLegend>,
+    },
 }
 
 pub type ClientEventSink = Arc<dyn Fn(ClientEvent) + Send + Sync>;
@@ -111,6 +128,7 @@ impl LanguageClient {
             events,
             servers: BTreeMap::new(),
             documents: HashMap::new(),
+            next_ticket: 0,
             quitting: false,
         };
         thread::Builder::new()
@@ -153,6 +171,14 @@ impl LanguageClient {
 
     pub fn report_missing(&self, key: ServerKey, command: String) {
         self.send(Message::Missing { key, command });
+    }
+
+    pub fn set_visible_lines(&self, id: DocumentId, lines: ops::Range<u32>) {
+        self.send(Message::Visible { id, lines });
+    }
+
+    pub fn restart(&self, key: ServerKey) {
+        self.send(Message::Restart { key });
     }
 
     pub fn state(&self, key: &ServerKey) -> Option<ServerState> {
@@ -217,6 +243,18 @@ enum Message {
         key: ServerKey,
         command: String,
     },
+    Visible {
+        id: DocumentId,
+        lines: ops::Range<u32>,
+    },
+    Restart {
+        key: ServerKey,
+    },
+    TokensAnswered {
+        id: DocumentId,
+        ticket: u64,
+        result: Result<Value, ResponseError>,
+    },
     ShutdownAll {
         budget: Duration,
         done: Sender<()>,
@@ -237,6 +275,31 @@ struct Running {
     session: StdioSession,
     connection: Connection,
     negotiated: Option<Negotiated>,
+    legend: Option<Arc<TokenLegend>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TokenRequest {
+    Full,
+    Delta,
+    Range,
+}
+
+struct InFlight {
+    ticket: u64,
+    request: i64,
+    kind: TokenRequest,
+    revision: u64,
+    text: Rope,
+}
+
+#[derive(Default)]
+struct TokenSchedule {
+    in_flight: Option<InFlight>,
+    follow_up: bool,
+    result_id: Option<String>,
+    data: Vec<u32>,
+    visible: Option<ops::Range<u32>>,
 }
 
 struct Slot {
@@ -252,8 +315,10 @@ struct Document {
     uri: String,
     language_id: String,
     version: i32,
+    revision: u64,
     text: Rope,
     opened_on: Option<u64>,
+    tokens: TokenSchedule,
 }
 
 struct Manager {
@@ -262,6 +327,7 @@ struct Manager {
     events: ClientEventSink,
     servers: BTreeMap<ServerKey, Slot>,
     documents: HashMap<DocumentId, Document>,
+    next_ticket: u64,
     quitting: bool,
 }
 
@@ -279,6 +345,11 @@ impl Manager {
                 Message::Replace { id, text } => self.replace(id, text),
                 Message::Close { id } => self.close(id),
                 Message::Missing { key, command } => self.missing(key, command),
+                Message::Visible { id, lines } => self.visible(id, lines),
+                Message::Restart { key } => self.restart(&key),
+                Message::TokensAnswered { id, ticket, result } => {
+                    self.tokens_answered(id, ticket, result);
+                }
                 Message::ShutdownAll { budget, done } => {
                     self.shutdown_all(budget);
                     let _ = done.send(());
@@ -341,8 +412,10 @@ impl Manager {
                 uri,
                 language_id: document.language_id,
                 version: 1,
+                revision: 0,
                 text: document.text,
                 opened_on: None,
+                tokens: TokenSchedule::default(),
             },
         );
         let slot = self.servers.entry(key.clone()).or_insert_with(|| Slot {
@@ -498,6 +571,7 @@ impl Manager {
                 session,
                 connection,
                 negotiated: None,
+                legend: None,
             });
         }
         self.set_state(key, ServerState::Starting);
@@ -536,6 +610,10 @@ impl Manager {
         };
         if let Some(running) = slot.running.as_mut() {
             running.connection.notify("initialized", json!({}));
+            running.legend = negotiated
+                .semantic_tokens
+                .as_ref()
+                .map(|support| Arc::new(support.legend.clone()));
             running.negotiated = Some(negotiated.clone());
         }
         self.set_state(key, ServerState::Running);
@@ -584,6 +662,18 @@ impl Manager {
             return;
         }
         document.opened_on = Some(slot.generation);
+        let visible = document.tokens.visible.take();
+        document.tokens = TokenSchedule {
+            visible,
+            ..TokenSchedule::default()
+        };
+        if negotiated.semantic_tokens.is_none() {
+            log::debug!(
+                "{}: the server offers no semantic tokens for {}",
+                document.key,
+                document.uri
+            );
+        }
         if negotiated.sync.open_close {
             let params = DidOpenTextDocumentParams {
                 text_document: TextDocumentItem {
@@ -597,6 +687,7 @@ impl Manager {
                 .connection
                 .notify("textDocument/didOpen", to_value(&params));
         }
+        self.request_tokens(id);
     }
 
     fn live_server(&self, id: DocumentId) -> Option<(&Running, &Negotiated)> {
@@ -635,6 +726,7 @@ impl Manager {
             return;
         };
         document.text = text;
+        document.revision += 1;
         if let Some((connection, uri, content_changes)) = message {
             document.version += 1;
             let params = DidChangeTextDocumentParams {
@@ -645,6 +737,7 @@ impl Manager {
                 content_changes,
             };
             connection.notify("textDocument/didChange", to_value(&params));
+            self.request_tokens(id);
         }
     }
 
@@ -656,6 +749,7 @@ impl Manager {
             return;
         };
         document.text = text;
+        document.revision += 1;
         if let Some(connection) = message {
             document.version += 1;
             let params = DidChangeTextDocumentParams {
@@ -669,16 +763,23 @@ impl Manager {
                 }],
             };
             connection.notify("textDocument/didChange", to_value(&params));
+            self.request_tokens(id);
         }
     }
 
     fn close(&mut self, id: DocumentId) {
-        let close_message = self.live_server(id).and_then(|(running, negotiated)| {
-            negotiated
-                .sync
-                .open_close
-                .then(|| running.connection.clone())
-        });
+        let live = self
+            .live_server(id)
+            .map(|(running, negotiated)| (running.connection.clone(), negotiated.sync.open_close));
+        let in_flight = self
+            .documents
+            .get_mut(&id)
+            .and_then(|document| document.tokens.in_flight.take());
+        if let (Some((connection, _)), Some(in_flight)) = (&live, in_flight) {
+            connection.cancel(in_flight.request);
+        }
+        let close_message =
+            live.and_then(|(connection, open_close)| open_close.then_some(connection));
         self.shared
             .unsupported
             .lock()
@@ -764,7 +865,218 @@ impl Manager {
             }
             ConnectionEvent::SemanticTokensRefresh => {
                 log::debug!("{key}: semantic token refresh requested");
+                let mut documents: Vec<DocumentId> = self
+                    .documents
+                    .iter()
+                    .filter(|(_, document)| &document.key == key)
+                    .map(|(id, _)| *id)
+                    .collect();
+                documents.sort();
+                for id in documents {
+                    self.request_tokens(id);
+                }
             }
+        }
+    }
+
+    fn visible(&mut self, id: DocumentId, lines: ops::Range<u32>) {
+        let range_only = self
+            .live_server(id)
+            .and_then(|(_, negotiated)| negotiated.semantic_tokens.as_ref())
+            .is_some_and(|support| !support.full && support.range);
+        let Some(document) = self.documents.get_mut(&id) else {
+            return;
+        };
+        if document.tokens.visible.as_ref() == Some(&lines) {
+            return;
+        }
+        document.tokens.visible = Some(lines);
+        if range_only {
+            self.request_tokens(id);
+        }
+    }
+
+    fn restart(&mut self, key: &ServerKey) {
+        let Some(slot) = self.servers.get_mut(key) else {
+            return;
+        };
+        if self.quitting
+            || slot.running.is_some()
+            || !matches!(
+                slot.state,
+                ServerState::Crashed { .. } | ServerState::Failed { .. }
+            )
+        {
+            return;
+        }
+        slot.failures = 0;
+        log::info!("{key}: restarting the server on request");
+        self.start(key);
+    }
+
+    fn request_tokens(&mut self, id: DocumentId) {
+        let Some((connection, support)) = self.live_server(id).and_then(|(running, negotiated)| {
+            Some((
+                running.connection.clone(),
+                negotiated.semantic_tokens.clone()?,
+            ))
+        }) else {
+            return;
+        };
+        let Some(document) = self.documents.get_mut(&id) else {
+            return;
+        };
+        if document.tokens.in_flight.is_some() {
+            document.tokens.follow_up = true;
+            return;
+        }
+        let text_document = TextDocumentIdentifier {
+            uri: document.uri.clone(),
+        };
+        let (method, params, kind) = if support.full {
+            match document.tokens.result_id.clone().filter(|_| support.delta) {
+                Some(previous_result_id) => (
+                    "textDocument/semanticTokens/full/delta",
+                    to_value(&SemanticTokensDeltaParams {
+                        text_document,
+                        previous_result_id,
+                    }),
+                    TokenRequest::Delta,
+                ),
+                None => (
+                    "textDocument/semanticTokens/full",
+                    to_value(&SemanticTokensParams { text_document }),
+                    TokenRequest::Full,
+                ),
+            }
+        } else if support.range {
+            let Some(lines) = document.tokens.visible.clone() else {
+                return;
+            };
+            let range = Range {
+                start: Position {
+                    line: lines.start,
+                    character: 0,
+                },
+                end: Position {
+                    line: lines.end,
+                    character: 0,
+                },
+            };
+            (
+                "textDocument/semanticTokens/range",
+                to_value(&SemanticTokensRangeParams {
+                    text_document,
+                    range,
+                }),
+                TokenRequest::Range,
+            )
+        } else {
+            return;
+        };
+        self.next_ticket += 1;
+        let ticket = self.next_ticket;
+        document.tokens.follow_up = false;
+        let outbox = Mutex::new(self.outbox.clone());
+        let sent = connection.request(
+            method,
+            params,
+            Box::new(move |result| {
+                let _ = outbox
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .send(Message::TokensAnswered { id, ticket, result });
+            }),
+        );
+        if let Some(request) = sent {
+            document.tokens.in_flight = Some(InFlight {
+                ticket,
+                request,
+                kind,
+                revision: document.revision,
+                text: document.text.clone(),
+            });
+        }
+    }
+
+    fn tokens_answered(
+        &mut self,
+        id: DocumentId,
+        ticket: u64,
+        result: Result<Value, ResponseError>,
+    ) {
+        let live = self
+            .live_server(id)
+            .and_then(|(running, negotiated)| Some((running.legend.clone()?, negotiated.encoding)));
+        let Some(document) = self.documents.get_mut(&id) else {
+            return;
+        };
+        let Some(in_flight) = document
+            .tokens
+            .in_flight
+            .take_if(|in_flight| in_flight.ticket == ticket)
+        else {
+            return;
+        };
+        let Some((legend, encoding)) = live else {
+            return;
+        };
+        let data = match result {
+            Err(error) if error.code == CONNECTION_CLOSED => return,
+            Err(error) => {
+                log::debug!(
+                    "{}: a semantic token request for {} failed: {error}",
+                    document.key,
+                    document.uri
+                );
+                document.tokens.result_id = None;
+                document.tokens.data = Vec::new();
+                None
+            }
+            Ok(value) => match parse_result(&value) {
+                None => None,
+                Some(TokensResult::Full { result_id, data }) => {
+                    if in_flight.kind != TokenRequest::Range {
+                        document.tokens.result_id = result_id;
+                        document.tokens.data.clone_from(&data);
+                    }
+                    Some(data)
+                }
+                Some(TokensResult::Delta { result_id, edits }) => {
+                    match apply_delta(&document.tokens.data, &edits) {
+                        Ok(data) => {
+                            document.tokens.result_id = result_id;
+                            document.tokens.data.clone_from(&data);
+                            Some(data)
+                        }
+                        Err(error) => {
+                            log::debug!(
+                                "{}: a semantic token delta for {} starts at {} past the {} cached values; requesting all tokens",
+                                document.key,
+                                document.uri,
+                                error.start,
+                                error.len
+                            );
+                            document.tokens.result_id = None;
+                            document.tokens.data = Vec::new();
+                            self.request_tokens(id);
+                            return;
+                        }
+                    }
+                }
+            },
+        };
+        if let Some(data) = data.filter(|_| in_flight.revision == document.revision) {
+            let tokens = decode(&data, &in_flight.text, encoding, legend.token_types.len());
+            (self.events)(ClientEvent::Tokens {
+                document: id,
+                revision: in_flight.revision,
+                tokens: tokens.into(),
+                legend,
+            });
+        }
+        if document.tokens.follow_up {
+            self.request_tokens(id);
         }
     }
 

@@ -4,6 +4,7 @@ mod fake_server;
 mod lifecycle;
 mod support;
 mod sync;
+mod tokens;
 
 use libtest_mimic::{Arguments, Trial};
 
@@ -42,6 +43,19 @@ fn main() {
         sync::a_replaced_document_sends_one_full_text_did_change,
         sync::closing_a_tab_sends_did_close_for_its_uri,
         sync::rust_analyzer_negotiates_a_position_encoding,
+        tokens::did_open_is_followed_by_a_full_request_whose_tokens_reach_the_document,
+        tokens::a_range_only_server_gets_a_range_request_for_the_visible_rows,
+        tokens::an_edit_on_a_delta_server_sends_one_delta_with_the_last_result_id,
+        tokens::an_edit_on_a_server_without_delta_sends_one_full_request,
+        tokens::edits_during_a_request_send_exactly_one_follow_up_and_the_stale_answer_is_never_delivered,
+        tokens::a_refresh_requests_every_open_document_of_that_server_again,
+        tokens::closing_a_document_with_a_request_in_flight_sends_cancel_request_for_it,
+        tokens::an_error_answer_delivers_nothing_and_the_next_edit_requests_again,
+        tokens::a_delta_beyond_the_cached_tokens_discards_them_and_requests_all_tokens,
+        tokens::a_server_without_semantic_tokens_gets_no_request_and_one_debug_line,
+        tokens::restart_after_a_crash_starts_the_server_again_and_reopens_its_documents,
+        tokens::zls_reports_whether_it_returns_semantic_tokens_and_its_encoding,
+        tokens::the_recorded_zls_answer_reaches_the_document_with_every_token_and_its_role,
     ];
     libtest_mimic::run(&Arguments::from_args(), trials).exit();
 }

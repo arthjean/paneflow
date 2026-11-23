@@ -4,6 +4,7 @@ pub mod encoding;
 pub mod framing;
 pub mod protocol;
 pub mod resolve;
+pub mod semantic_tokens;
 pub mod trust;
 
 pub use client::{

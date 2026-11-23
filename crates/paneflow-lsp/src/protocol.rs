@@ -340,6 +340,26 @@ pub struct DidCloseTextDocumentParams {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticTokensParams {
+    pub text_document: TextDocumentIdentifier,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticTokensDeltaParams {
+    pub text_document: TextDocumentIdentifier,
+    pub previous_result_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SemanticTokensRangeParams {
+    pub text_document: TextDocumentIdentifier,
+    pub range: Range,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConfigurationItem {
     #[serde(default, rename = "scopeUri", skip_serializing_if = "Option::is_none")]
     pub scope_uri: Option<String>,
@@ -420,6 +440,18 @@ mod tests {
         let log = json!({"type": 3, "message": "hello"});
         let parsed: LogMessageParams = serde_json::from_value(log.clone()).unwrap();
         assert_eq!(serde_json::to_value(&parsed).unwrap(), log);
+
+        let full = json!({"textDocument": {"uri": "file:///a.rs"}});
+        let parsed: SemanticTokensParams = serde_json::from_value(full.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), full);
+
+        let delta = json!({"textDocument": {"uri": "file:///a.rs"}, "previousResultId": "10"});
+        let parsed: SemanticTokensDeltaParams = serde_json::from_value(delta.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), delta);
+
+        let range = json!({"textDocument": {"uri": "file:///a.rs"}, "range": {"start": {"line": 2, "character": 0}, "end": {"line": 9, "character": 0}}});
+        let parsed: SemanticTokensRangeParams = serde_json::from_value(range.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&parsed).unwrap(), range);
 
         let cancel = json!({"id": 7});
         let parsed: CancelParams = serde_json::from_value(cancel.clone()).unwrap();

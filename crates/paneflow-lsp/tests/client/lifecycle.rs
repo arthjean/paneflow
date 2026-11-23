@@ -40,8 +40,8 @@ pub fn initialize_carries_the_root_and_the_capabilities_then_initialized_precede
         json!(["utf-8", "utf-16"])
     );
     assert_eq!(
-        method_order(&entries),
-        vec!["initialize", "initialized", "textDocument/didOpen"]
+        method_order(&entries)[..3],
+        ["initialize", "initialized", "textDocument/didOpen"]
     );
     let negotiated = f.client.negotiated(&key).unwrap();
     assert_eq!(negotiated.encoding, PositionEncoding::Utf8);

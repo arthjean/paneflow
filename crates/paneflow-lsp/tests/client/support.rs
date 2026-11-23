@@ -167,3 +167,44 @@ pub fn executable_runs(program: &Path) -> bool {
         .status()
         .is_ok_and(|status| status.success())
 }
+
+struct CapturingLogger(Mutex<Vec<String>>);
+
+impl log::Log for CapturingLogger {
+    fn enabled(&self, _metadata: &log::Metadata<'_>) -> bool {
+        true
+    }
+
+    fn log(&self, record: &log::Record<'_>) {
+        if record.level() == log::Level::Debug {
+            self.0.lock().unwrap().push(record.args().to_string());
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+fn logger() -> &'static CapturingLogger {
+    static LOGGER: std::sync::OnceLock<&'static CapturingLogger> = std::sync::OnceLock::new();
+    LOGGER.get_or_init(|| {
+        let logger: &'static CapturingLogger =
+            Box::leak(Box::new(CapturingLogger(Mutex::new(Vec::new()))));
+        let _ = log::set_logger(logger);
+        log::set_max_level(log::LevelFilter::Debug);
+        logger
+    })
+}
+
+pub fn capture_debug_logs() {
+    logger();
+}
+
+pub fn debug_lines_containing(text: &str) -> usize {
+    logger()
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|line| line.contains(text))
+        .count()
+}
