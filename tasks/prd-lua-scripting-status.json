@@ -89,10 +89,10 @@
     {
       "id": "EP-011",
       "title": "Windows validation and release readiness",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "stories_total": 5,
-      "stories_done": 0
+      "stories_done": 2
     }
   ],
   "stories": [
@@ -1102,7 +1102,7 @@
       "id": "US-076",
       "title": "Windows: scripts, events and commands",
       "epic": "EP-011",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-005",
@@ -1110,22 +1110,22 @@
         "US-032",
         "US-033"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-23",
+      "completed_at": "2026-11-23",
+      "reviewed_at": "2026-11-23"
     },
     {
       "id": "US-077",
       "title": "Windows: configuration, keys and prompts",
       "epic": "EP-011",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "blocked_by": [
         "US-047",
         "US-046",
         "US-043"
       ],
-      "started_at": null,
+      "started_at": "2026-11-23",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -1133,14 +1133,14 @@
       "id": "US-078",
       "title": "Windows: layout authority, headless and agents",
       "epic": "EP-011",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "blocked_by": [
         "US-055",
         "US-057",
         "US-075"
       ],
-      "started_at": null,
+      "started_at": "2026-11-23",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -1148,27 +1148,27 @@
       "id": "US-079",
       "title": "Fix what Windows found",
       "epic": "EP-011",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-076",
         "US-077",
         "US-078"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-23",
+      "completed_at": "2026-11-23",
+      "reviewed_at": "2026-11-23"
     },
     {
       "id": "US-080",
       "title": "Release records",
       "epic": "EP-011",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "blocked_by": [
         "US-079"
       ],
-      "started_at": null,
+      "started_at": "2026-11-23",
       "completed_at": null,
       "reviewed_at": null
     }
