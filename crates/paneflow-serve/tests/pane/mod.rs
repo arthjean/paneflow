@@ -56,7 +56,29 @@ pub fn report(label: &str, answer: &Result<Value, Value>) {
 pub fn pane_mode() -> Option<(String, PathBuf)> {
     let mode = std::env::var(MODE_ENV).ok()?;
     let home = PathBuf::from(std::env::var(HOME_ENV).expect("the test names the home"));
+    wait_until_the_host_recorded_the_pane_shell(&home);
     Some((mode, home))
+}
+
+fn wait_until_the_host_recorded_the_pane_shell(home: &Path) {
+    let Some(session) = std::env::var("PANEFLOW_SESSION_ID")
+        .ok()
+        .and_then(|raw| paneflow_config::schema::SessionId::parse(&raw).ok())
+    else {
+        return;
+    };
+    let path = paneflow_host::manifest::manifest_path(home, &session);
+    let deadline = Instant::now() + REPLY_WAIT;
+    loop {
+        let recorded = paneflow_host::manifest::read_manifest(&path)
+            .ok()
+            .and_then(|manifest| manifest.process)
+            .is_some_and(|process| process.started_at.is_some());
+        if recorded || Instant::now() >= deadline {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
 
 pub fn finish(home: &Path) {
