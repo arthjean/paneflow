@@ -81,10 +81,10 @@
     {
       "id": "EP-010",
       "title": "Agent prompts only the user can answer",
-      "status": "BLOCKED",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 5,
-      "stories_done": 0
+      "stories_done": 5
     },
     {
       "id": "EP-011",
@@ -1033,70 +1033,70 @@
       "id": "US-071",
       "title": "An answer token per prompt",
       "epic": "EP-010",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-068"
       ],
       "started_at": "2026-11-22",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-22",
+      "reviewed_at": "2026-11-22"
     },
     {
       "id": "US-072",
       "title": "Recognize an agent by the process that calls",
       "epic": "EP-010",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-069"
       ],
       "started_at": "2026-11-22",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-22",
+      "reviewed_at": "2026-11-22"
     },
     {
       "id": "US-073",
       "title": "A permission prompt shows the whole input",
       "epic": "EP-010",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-068",
         "US-066"
       ],
       "started_at": "2026-11-22",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-22",
+      "reviewed_at": "2026-11-22"
     },
     {
       "id": "US-074",
       "title": "Run and prompt handles nobody can guess",
       "epic": "EP-010",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-069",
         "US-065"
       ],
       "started_at": "2026-11-22",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-22",
+      "reviewed_at": "2026-11-22"
     },
     {
       "id": "US-075",
       "title": "Prove an agent cannot approve itself",
       "epic": "EP-010",
-      "status": "BLOCKED",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-071",
         "US-072",
         "US-073"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-22",
+      "completed_at": "2026-11-22",
+      "reviewed_at": "2026-11-22"
     },
     {
       "id": "US-076",
