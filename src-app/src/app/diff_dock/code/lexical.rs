@@ -468,6 +468,10 @@ impl LexicalLayer {
         Some(layer)
     }
 
+    pub(crate) fn language(&self) -> Language {
+        self.language
+    }
+
     pub(crate) fn warn(&self, err: &LexError) {
         tracing::warn!(
             target: "paneflow_app::code::lexical",

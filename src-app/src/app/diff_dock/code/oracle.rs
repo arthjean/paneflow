@@ -8,6 +8,7 @@ use paneflow_highlights::language_for_path;
 use serde::Deserialize;
 
 use super::document::CodeDocument;
+use super::first_frame::override_policy_for_test;
 use super::highlight::{CodeHighlighter, LineRuns};
 use crate::diff::parity_tests::CORPUS;
 use crate::diff::{DiffSyntax, grammar_for_ext};
@@ -16,6 +17,8 @@ use crate::theme::SyntaxPalette;
 const PLAIN: &str = "plain";
 
 const PAIRED_LANGUAGES: usize = 19;
+
+pub(crate) const SWAP_ROWS: usize = 60;
 
 const ROLE_NAMES: [&str; 29] = [
     "comment",
@@ -283,6 +286,128 @@ fn measure_all() -> Vec<(Pair, Agreement)> {
             (pair, agreement)
         })
         .collect()
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct Swap {
+    colored: usize,
+    changed: usize,
+    transitions: BTreeMap<(&'static str, &'static str), usize>,
+}
+
+impl Swap {
+    fn percent(&self) -> f64 {
+        if self.colored == 0 {
+            return 0.0;
+        }
+        self.changed as f64 * 100.0 / self.colored as f64
+    }
+
+    fn top_transitions(&self) -> String {
+        let mut transitions: Vec<_> = self.transitions.iter().collect();
+        transitions.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+        transitions
+            .iter()
+            .take(3)
+            .map(|((from, to), bytes)| format!("{from} to {to} {bytes} B"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+pub(crate) fn swap(pair: &Pair) -> Swap {
+    let _lexical = override_policy_for_test(&[]);
+    let doc = pair.document();
+    let mut highlighter = CodeHighlighter::new(&doc, role_syntax());
+    let rows = 0..doc.line_count().min(SWAP_ROWS);
+    let before: Vec<LineRuns> = rows.clone().map(|row| highlighter.runs(row)).collect();
+    assert!(
+        highlighter.parse_initial_blocking(&doc),
+        "{} produced no layer-2 tree",
+        pair.sample
+    );
+    highlighter.requery_rows(&doc, rows.clone());
+
+    let mut out = Swap::default();
+    for (row, before) in rows.zip(before) {
+        let Some(line) = doc.line_string(row) else {
+            continue;
+        };
+        let first = row_roles(&before, line.len());
+        let swapped = row_roles(&highlighter.runs(row), line.len());
+        for (byte, value) in line.bytes().enumerate() {
+            if value.is_ascii_whitespace() || (first[byte] == PLAIN && swapped[byte] == PLAIN) {
+                continue;
+            }
+            out.colored += 1;
+            if first[byte] != swapped[byte] {
+                out.changed += 1;
+                *out.transitions
+                    .entry((first[byte], swapped[byte]))
+                    .or_default() += 1;
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn the_swap_report_covers_every_paired_language() {
+    let mut out = format!(
+        "| language | lexer | colored bytes (first {SWAP_ROWS} rows) | role changes at the swap | share | largest changes |\n|---|---|---|---|---|---|\n"
+    );
+    let pairs = paired_samples();
+    assert_eq!(pairs.len(), PAIRED_LANGUAGES);
+    for pair in &pairs {
+        let swap = swap(pair);
+        assert!(swap.colored > 0, "{} has no colored byte", pair.sample);
+        let _ = writeln!(
+            out,
+            "| {} | {} | {} | {} | {:.1} % | {} |",
+            pair.ext,
+            pair.lexer,
+            swap.colored,
+            swap.changed,
+            swap.percent(),
+            swap.top_transitions(),
+        );
+    }
+    println!("{out}");
+}
+
+#[test]
+fn the_swap_measures_layer_1_against_layer_2_and_not_against_itself() {
+    let pair = paired_samples()
+        .into_iter()
+        .find(|pair| pair.ext == "rs")
+        .expect("the Rust sample");
+    let swap = swap(&pair);
+    assert!(swap.changed > 0, "Rust changes some bytes at the swap");
+    assert!(swap.changed < swap.colored);
+    let markdown = paired_samples()
+        .into_iter()
+        .find(|pair| pair.ext == "md")
+        .expect("the Markdown sample");
+    let fence = swap_on_rows(&markdown, "fn main() {}");
+    assert_eq!(fence, 0, "the fence body stays on layer 1 through the swap");
+}
+
+fn swap_on_rows(pair: &Pair, row_text: &str) -> usize {
+    let _lexical = override_policy_for_test(&[]);
+    let doc = pair.document();
+    let row = (0..doc.line_count())
+        .find(|row| doc.line_string(*row).as_deref() == Some(row_text))
+        .expect("the row");
+    let mut highlighter = CodeHighlighter::new(&doc, role_syntax());
+    let before = highlighter.runs(row);
+    assert!(!before.is_empty());
+    assert!(highlighter.parse_initial_blocking(&doc));
+    highlighter.requery_rows(&doc, 0..doc.line_count());
+    assert!(highlighter.row_has_nested_region(row));
+    let line = doc.line_string(row).expect("the row");
+    let first = row_roles(&before, line.len());
+    let swapped = row_roles(&highlighter.runs(row), line.len());
+    first.iter().zip(&swapped).filter(|(a, b)| a != b).count()
 }
 
 #[test]

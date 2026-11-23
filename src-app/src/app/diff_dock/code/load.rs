@@ -561,6 +561,44 @@ mod tests {
     }
 
     #[test]
+    fn a_plain_first_frame_language_opens_plain_and_colors_once_its_tree_arrives() {
+        use super::super::first_frame::{FirstFrame, override_policy_for_test};
+        let _policy = override_policy_for_test(&[("rust", FirstFrame::Plain)]);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = write(&dir, "main.rs", b"fn main() {\n    let x = 1;\n}\n");
+
+        let mut opened = open_blocking(&path, syntax()).expect("open");
+
+        assert!(opened.highlighter.lexical_is_ready(), "layer 1 still lexes");
+        for row in 0..opened.document.line_count() {
+            assert!(
+                opened.highlighter.runs(row).is_empty(),
+                "row {row} paints plain"
+            );
+        }
+        assert!(opened.highlighter.parse_initial_blocking(&opened.document));
+        let rows = 0..opened.document.line_count();
+        opened.highlighter.requery_rows(&opened.document, rows);
+        assert!(!opened.highlighter.runs(0).is_empty(), "layer 2 colors it");
+    }
+
+    #[test]
+    fn a_language_absent_from_the_first_frame_table_opens_colored() {
+        use super::super::first_frame::{FirstFrame, override_policy_for_test};
+        let _policy = override_policy_for_test(&[("rust", FirstFrame::Plain)]);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = write(&dir, "main.py", b"def main():\n    return 1\n");
+
+        let opened = open_blocking(&path, syntax()).expect("open");
+
+        assert!(!opened.highlighter.has_tree());
+        assert!(
+            !opened.highlighter.runs(0).is_empty(),
+            "Python stays Lexical"
+        );
+    }
+
+    #[test]
     fn a_refused_file_never_reaches_the_parse() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = write(&dir, "blob.rs", b"fn main\0() {}\n");

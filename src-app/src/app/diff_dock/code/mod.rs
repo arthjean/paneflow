@@ -6,6 +6,7 @@ pub(crate) mod cursor;
 pub(crate) mod document;
 pub(crate) mod edit;
 pub(crate) mod element;
+pub(crate) mod first_frame;
 pub(crate) mod highlight;
 #[cfg(test)]
 mod lexer_compare;

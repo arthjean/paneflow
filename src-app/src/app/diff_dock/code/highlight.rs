@@ -17,6 +17,7 @@ use crate::diff::{
 };
 
 use super::document::{CodeDocument, CodeEdit};
+use super::first_frame::{FirstFrame, first_frame_for};
 use super::lexical::{Applied, LexJob, Lexed, LexicalLayer};
 
 pub(crate) const SYNC_PARSE_BUDGET: Duration = Duration::from_millis(1);
@@ -229,6 +230,7 @@ pub(crate) struct CodeHighlighter {
     rows: Vec<IndexedLineRuns>,
     row_states: Vec<RowState>,
     enabled: bool,
+    plain_until_tree: bool,
     too_complex: bool,
     generation: u64,
     last_parse_cost: Duration,
@@ -269,6 +271,10 @@ impl CodeHighlighter {
             })
             .collect::<Vec<_>>();
         let enabled = !passes.is_empty();
+        let plain_until_tree = enabled
+            && lexical
+                .as_ref()
+                .is_some_and(|layer| first_frame_for(layer.language()) == FirstFrame::Plain);
         let tracked_lines = if enabled { doc.line_count() } else { 0 };
 
         Self {
@@ -278,6 +284,7 @@ impl CodeHighlighter {
             rows: vec![Vec::new(); tracked_lines],
             row_states: vec![RowState::Stale; tracked_lines],
             enabled,
+            plain_until_tree,
             too_complex: false,
             generation: 0,
             last_parse_cost: Duration::ZERO,
@@ -370,7 +377,7 @@ impl CodeHighlighter {
         let fresh = self.row_states.get(row) == Some(&RowState::Fresh);
         let runs = self.rows.get(row).filter(|_| fresh);
         let Some(runs) = runs else {
-            if let Some(lexical) = &self.lexical {
+            if let Some(lexical) = self.lexical.as_ref().filter(|_| !self.plain_until_tree) {
                 lexical.push_runs(row, 0..usize::MAX, out);
             }
             return;
@@ -444,6 +451,7 @@ impl CodeHighlighter {
         if edits.is_empty() {
             return Ok(HighlightOutcome::Synced);
         }
+        self.plain_until_tree = false;
         if let Some(lexical) = self.lexical.as_mut() {
             lexical.edit(doc, edits, budget);
         }
@@ -552,6 +560,7 @@ impl CodeHighlighter {
             );
             self.deferred_cancel = None;
             self.enabled = false;
+            self.plain_until_tree = false;
             self.too_complex = true;
             self.passes = Vec::new();
             self.rows = Vec::new();
@@ -572,6 +581,7 @@ impl CodeHighlighter {
             pass.tree = Some(new_tree);
         }
         self.deferred_cancel = None;
+        self.plain_until_tree = false;
         if !without_old_tree {
             self.last_parse_cost = parse_cost;
         }
@@ -2291,6 +2301,84 @@ mod tests {
                 (8..9, b),
                 (9..12, a)
             ]
+        );
+    }
+
+    fn plain_policy(name: &'static str) -> super::super::first_frame::PolicyOverride {
+        let policy: super::super::first_frame::FirstFramePolicy = match name {
+            "rust" => &[("rust", super::super::first_frame::FirstFrame::Plain)],
+            "markdown" => &[("markdown", super::super::first_frame::FirstFrame::Plain)],
+            "kotlin" => &[("kotlin", super::super::first_frame::FirstFrame::Plain)],
+            _ => &[],
+        };
+        super::super::first_frame::override_policy_for_test(policy)
+    }
+
+    #[test]
+    fn a_plain_first_frame_language_colors_the_rows_edited_before_its_tree() {
+        let _policy = plain_policy("rust");
+        let text = rows_of_code(40);
+        let mut d = doc("plain.rs", &text);
+        let mut h = CodeHighlighter::new(&d, syntax());
+        assert!(h.runs(3).is_empty() && !h.lexical_runs(3).is_empty());
+        let at = d.line_to_byte(3);
+        let edit = d.insert(at, "let typed = 1; ").expect("insert");
+        assert!(matches!(h.edit(&d, &edit), HighlightOutcome::Synced));
+        assert!(
+            !h.runs(3).is_empty(),
+            "the edited row is colored by layer 1"
+        );
+        assert_eq!(h.runs(3), h.lexical_runs(3));
+    }
+
+    #[test]
+    fn a_plain_first_frame_language_keeps_its_nested_regions_on_layer_1() {
+        let _policy = plain_policy("markdown");
+        let text = "# Title\n\n```rust\nfn main() { let x = 1; }\n```\n";
+        let d = doc("plain.md", text);
+        let mut h = CodeHighlighter::new(&d, syntax());
+        for row in 0..d.line_count() {
+            assert!(
+                h.runs(row).is_empty(),
+                "row {row} of the first frame is plain"
+            );
+        }
+        assert!(h.parse_initial_blocking(&d));
+        fill_all(&mut h, &d);
+        assert!(h.row_has_nested_region(3));
+        assert!(!h.lexical_runs(3).is_empty());
+        assert_eq!(h.runs(3), h.lexical_runs(3), "the fence body shows layer 1");
+    }
+
+    #[test]
+    fn a_plain_first_frame_only_holds_files_that_have_a_layer_2() {
+        let _policy = plain_policy("kotlin");
+        let d = doc("Main.kt", "fun main() {\n    val x = 1\n}\n");
+        let mut h = CodeHighlighter::new(&d, syntax());
+        h.settle_lexical_for_test(&d);
+        assert!(!h.is_enabled(), "Kotlin has no grammar");
+        assert!(
+            !h.runs(0).is_empty(),
+            "layer 1 is final, so there is no swap to hide"
+        );
+    }
+
+    #[test]
+    fn a_plain_first_frame_ends_when_the_initial_parse_gives_up() {
+        let _policy = plain_policy("rust");
+        let text = rows_of_code(40);
+        let d = doc("slow.rs", &text);
+        let mut h = CodeHighlighter::new(&d, syntax());
+        assert!(h.runs(0).is_empty());
+        let parse = h
+            .initial_parse(&d)
+            .expect("an initial parse")
+            .with_timeout_for_test(Duration::ZERO);
+        assert!(h.apply_parsed(&d, parse.run()));
+        assert!(!h.is_enabled() && !h.is_too_complex());
+        assert!(
+            !h.runs(0).is_empty(),
+            "layer 1 takes over when layer 2 gave up"
         );
     }
 
