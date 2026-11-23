@@ -41,8 +41,14 @@ pub fn resolve_command_in(
         log::warn!("{error}");
         return Err(error);
     }
+    let absolute_entries = search_path.and_then(|path| {
+        let entries: Vec<PathBuf> = std::env::split_paths(&path)
+            .filter(|entry| entry.is_absolute())
+            .collect();
+        std::env::join_paths(entries).ok()
+    });
     let cwd = std::env::temp_dir();
-    which::which_in(command, search_path, cwd)
+    which::which_in(command, absolute_entries, cwd)
         .map_err(|_| ResolveError::NotFound(command.to_string()))
 }
 
@@ -95,6 +101,38 @@ mod tests {
             resolve_command_in(missing.to_str().unwrap(), None),
             Err(ResolveError::NotFound(_))
         ));
+    }
+
+    fn below_root(path: &Path) -> impl Iterator<Item = std::path::Component<'_>> {
+        path.components().filter(|part| {
+            !matches!(
+                part,
+                std::path::Component::Prefix(_) | std::path::Component::RootDir
+            )
+        })
+    }
+
+    fn relative_to_working_directory(target: &Path) -> PathBuf {
+        let cwd = std::env::current_dir().unwrap();
+        let mut relative: PathBuf = below_root(&cwd).map(|_| "..").collect();
+        relative.extend(below_root(target));
+        relative
+    }
+
+    #[test]
+    fn a_relative_path_entry_never_resolves_against_the_working_directory() {
+        let planted = tempfile::tempdir().unwrap();
+        executable(planted.path(), "planted-ls");
+        let relative = relative_to_working_directory(planted.path());
+        assert!(!relative.is_absolute());
+        let search_path = std::env::join_paths([PathBuf::new(), relative]).unwrap();
+        assert_eq!(
+            resolve_command_in("planted-ls", Some(search_path)),
+            Err(ResolveError::NotFound("planted-ls".to_string()))
+        );
+        assert!(
+            resolve_command_in("planted-ls", Some(planted.path().as_os_str().to_owned())).is_ok()
+        );
     }
 
     #[test]

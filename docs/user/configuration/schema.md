@@ -226,8 +226,8 @@ the repository; **Not now** asks again after Paneflow restarts. **Forget
 language server permissions** in Settings > Editor empties the file.
 
 Paneflow never downloads a server. A `command` that is a bare name is searched
-on `PATH`, an absolute path is used as written, and a relative path is
-rejected. A server that cannot be found does not start, and the next file
+in the absolute directories of `PATH` (a relative or empty entry is skipped),
+an absolute path is used as written, and a relative path is rejected. A server that cannot be found does not start, and the next file
 starts it once it is installed and Paneflow restarts. A server that exits or
 breaks the protocol is restarted once; a second failure leaves it stopped.
 
