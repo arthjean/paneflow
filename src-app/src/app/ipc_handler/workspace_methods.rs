@@ -142,7 +142,7 @@ pub(crate) fn workspace_up_request(
     if (setup_runs || pane_specs.iter().any(pane_spec_requires_orchestration))
         && !spawn_gate_open(&spec, gates)
     {
-        return Err(spawn_gate_refusal(&spec));
+        return Err(spawn_gate_refusal(&spec, gates));
     }
     dedupe_planned_pane_labels(&mut planned);
     Ok(WorkspaceUpRequest {
@@ -174,7 +174,7 @@ pub(crate) fn workspace_create_request(
     let spec = paneflow_api::methods::workspace::Create::SPEC;
     if layout.as_ref().is_some_and(layout_requires_orchestration) && !spawn_gate_open(&spec, gates)
     {
-        return Err(spawn_gate_refusal(&spec));
+        return Err(spawn_gate_refusal(&spec, gates));
     }
     Ok(WorkspaceCreateRequest {
         name,
@@ -819,7 +819,7 @@ impl PaneFlowApp {
         };
         let spec = paneflow_api::methods::workspace::RestoreLayout::SPEC;
         if layout_requires_orchestration(&layout) && !spawn_gate_open(&spec, self.ipc_gates) {
-            return spawn_gate_refusal(&spec).into_value();
+            return spawn_gate_refusal(&spec, self.ipc_gates).into_value();
         }
         let needed = layout.leaf_count();
         if needed == 0 || needed > MAX_PANES {

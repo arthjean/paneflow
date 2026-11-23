@@ -607,6 +607,27 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
                 }
             }
             METHOD_AGENT_FOLLOW => stream_agent_follow(&mut wire, &host, &shutdown, &id),
+            METHOD_HOST_GRANTS_SET => {
+                let envelope = match serde_json::from_value::<paneflow_api::grants::GrantSet>(
+                    params.clone(),
+                ) {
+                    Ok(set) => {
+                        let revision = set.revision;
+                        let installed = host.pane_grants().install(set);
+                        result_envelope(&id, json!({"revision": revision, "installed": installed}))
+                    }
+                    Err(error) => error_envelope(
+                        &id,
+                        ERR_INVALID_PARAMS,
+                        format!("invalid grant set: {error}"),
+                        None,
+                    ),
+                };
+                match wire.write_json(&envelope) {
+                    Ok(()) => Flow::Continue,
+                    Err(_) => Flow::Close,
+                }
+            }
             "host.shutdown" => {
                 let force = params
                     .get("force")
@@ -741,6 +762,8 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
     }
 }
 
+const METHOD_HOST_GRANTS_SET: &str = "host.grants.set";
+
 static CATALOG: std::sync::LazyLock<Option<paneflow_api::Catalog>> =
     std::sync::LazyLock::new(|| paneflow_api::host_catalog().ok());
 
@@ -776,6 +799,12 @@ fn refusal_envelope(id: &Value, method: &str, principal: &Principal, refusal: Re
             paneflow_api::authorize::source_mismatch_message(method),
             Some(data),
         ),
+        Refusal::GrantsUnsynced => error_envelope(
+            id,
+            ERR_METHOD_NOT_FOUND,
+            paneflow_api::grants::GRANTS_UNSYNCED_MESSAGE.to_string(),
+            Some(data),
+        ),
         Refusal::ScopeRefused | Refusal::GateClosed { .. } => error_envelope(
             id,
             ERR_INVALID_PARAMS,
@@ -787,7 +816,7 @@ fn refusal_envelope(id: &Value, method: &str, principal: &Principal, refusal: Re
 
 fn check_target_scope(
     host: &SessionHost,
-    scope: &Scope,
+    (scope, gates): (&Scope, &paneflow_api::Gates),
     id: &Value,
     method: &str,
     principal: &Principal,
@@ -831,8 +860,11 @@ fn check_target_scope(
         .map(|workspace| workspace.to_string());
     scope
         .check(target.as_str(), workspace.as_deref())
-        .map_err(|refusal| {
-            error_envelope(
+        .map_err(|_| match paneflow_api::authorize::scope_refusal(gates) {
+            Refusal::GrantsUnsynced => {
+                refusal_envelope(id, method, principal, Refusal::GrantsUnsynced)
+            }
+            refusal => error_envelope(
                 id,
                 ERR_INVALID_PARAMS,
                 paneflow_api::authorize::scope_refusal_message(
@@ -841,7 +873,7 @@ fn check_target_scope(
                     workspace.as_deref(),
                 ),
                 Some(paneflow_api::authorize::refusal_data(principal, refusal)),
-            )
+            ),
         })
 }
 
@@ -856,10 +888,22 @@ pub(crate) fn authorize_request(
     let Some(descriptor) = CATALOG.as_ref().and_then(|catalog| catalog.get(method)) else {
         return Ok(host.permissions_for(policy.gates_for(principal)));
     };
-    match paneflow_api::authorize(principal, descriptor, params, &policy) {
+    let mirror = host.pane_grants().snapshot();
+    let generation = match principal {
+        Principal::Pane { session, .. } => host.session_generation(session),
+        _ => None,
+    };
+    let view = mirror.view(crate::manifest::now_ms(), generation);
+    let ungated = paneflow_api::grants::pane_gates(
+        principal,
+        &descriptor.spec,
+        policy.gates_for(principal),
+        &view,
+    );
+    match paneflow_api::authorize_with(principal, descriptor, params, &policy, &view) {
         Decision::Refused {
             reason: Refusal::GateClosed { .. },
-        } => Ok(host.permissions_for(policy.gates_for(principal))),
+        } => Ok(host.permissions_for(ungated)),
         Decision::Refused { reason } => Err(refusal_envelope(id, method, principal, reason)),
         Decision::Allowed { scope, gates } => {
             if let Some(notice) = paneflow_api::policy::deprecation_notice(&policy, &gates) {
@@ -867,7 +911,7 @@ pub(crate) fn authorize_request(
             }
             scope.bind(principal, params);
             if descriptor.spec.scope == ScopeRule::Workspace {
-                check_target_scope(host, &scope, id, method, principal, params)?;
+                check_target_scope(host, (&scope, &gates), id, method, principal, params)?;
             }
             Ok(host.permissions_for(gates))
         }
@@ -972,6 +1016,12 @@ fn control_error_to_envelope(id: &Value, error: ControlError) -> Value {
     match error {
         ControlError::Params(message) => error_envelope(id, ERR_INVALID_PARAMS, message, None),
         ControlError::Disabled(message) => error_envelope(id, ERR_METHOD_NOT_FOUND, message, None),
+        ControlError::GrantsUnsynced => error_envelope(
+            id,
+            ERR_METHOD_NOT_FOUND,
+            paneflow_api::grants::GRANTS_UNSYNCED_MESSAGE.to_string(),
+            Some(json!({"reason": paneflow_api::grants::REASON_GRANTS_UNSYNCED})),
+        ),
         ControlError::NoController(message) => error_envelope(id, ERR_NO_CONTROLLER, message, None),
         ControlError::Host(error) => error_to_envelope(id, DispatchError::Host(error)),
     }
@@ -3989,6 +4039,8 @@ mod tests {
         crate::control::ControlPermissions {
             scripting,
             orchestration,
+            reach: orchestration,
+            stale_grants: false,
             fenced_reads: true,
         }
     }

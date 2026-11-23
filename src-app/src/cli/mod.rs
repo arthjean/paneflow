@@ -10,6 +10,7 @@ mod do_cmd;
 mod events_cmd;
 mod flow_cmd;
 mod flow_spec;
+mod grants_cmd;
 mod headless;
 mod host_cmd;
 mod read_cmds;
@@ -35,6 +36,7 @@ const VERBS: &[&str] = &[
     "do",
     "actions",
     "config",
+    "grants",
     "ls",
     "read",
     "search",
@@ -215,6 +217,11 @@ enum Commands {
         about = "Reload or check init.lua, the Lua configuration the worker runs"
     )]
     Config(config_cmd::ConfigCommand),
+    #[command(
+        subcommand,
+        about = "List or revoke the grants agents in panes hold over Paneflow"
+    )]
+    Grants(grants_cmd::GrantsCommand),
     #[command(alias = "list_panes", about = "List terminal surfaces")]
     Ls {
         #[arg(long, help = "Human-readable table instead of the default JSON")]
@@ -608,6 +615,16 @@ pub fn run() -> i32 {
         };
     }
 
+    if let Commands::Grants(command) = command {
+        return match grants_cmd::run(command) {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("paneflow: {}", e.message);
+                e.code
+            }
+        };
+    }
+
     if let Commands::Host(command) = command {
         return match host_cmd::run(command) {
             Ok(code) => code,
@@ -896,6 +913,7 @@ fn dispatch(command: Commands, client: &CliTransport) -> Result<i32, CliError> {
         Commands::Do(args) => Ok(do_cmd::run(args)),
         Commands::Actions { json } => config_cmd::actions(json),
         Commands::Config(command) => config_cmd::run(command),
+        Commands::Grants(command) => grants_cmd::run(command),
         Commands::Host(command) => host_cmd::run(command),
         Commands::Serve(command) => serve_cmd::run(command),
         Commands::Sessions {

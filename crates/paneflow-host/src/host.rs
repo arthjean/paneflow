@@ -236,6 +236,7 @@ pub struct SessionHost {
     helper_dir: Option<PathBuf>,
     fenced_reads: bool,
     policy: crate::policy::PolicySource,
+    pane_grants: crate::pane_grants::GrantMirror,
     submit_paste_delay: std::time::Duration,
     xt_checksum: Mutex<crate::runtime::XtChecksum>,
     next_operation: AtomicU64,
@@ -366,6 +367,7 @@ impl SessionHost {
             helper_dir,
             fenced_reads,
             policy: crate::policy::PolicySource::for_home(home),
+            pane_grants: crate::pane_grants::GrantMirror::for_home(home),
             submit_paste_delay,
             xt_checksum: Mutex::new(crate::runtime::XtChecksum::default()),
             next_operation: AtomicU64::new(1),
@@ -591,6 +593,18 @@ impl SessionHost {
         self.policy.current()
     }
 
+    pub fn pane_grants(&self) -> &crate::pane_grants::GrantMirror {
+        &self.pane_grants
+    }
+
+    pub fn session_generation(&self, session: &str) -> Option<u64> {
+        let session = SessionId::parse(session).ok()?;
+        self.inspect(&session)
+            .ok()
+            .filter(|summary| summary.live)
+            .map(|summary| summary.manifest.generation.get())
+    }
+
     pub fn fenced_reads(&self) -> bool {
         #[cfg(test)]
         if let Some(fenced) = *self
@@ -609,7 +623,9 @@ impl SessionHost {
     ) -> crate::control::ControlPermissions {
         crate::control::ControlPermissions {
             scripting: gates.scripting,
-            orchestration: gates.orchestration,
+            orchestration: gates.orchestration && !gates.spawn_confined,
+            reach: gates.reach,
+            stale_grants: gates.stale_grants,
             fenced_reads: self.fenced_reads(),
         }
     }

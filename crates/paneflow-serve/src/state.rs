@@ -244,6 +244,42 @@ pub struct SessionEntry {
     pub terminal: TerminalFacts,
 }
 
+#[derive(Debug, Clone)]
+pub struct GrantHolderFacts {
+    pub session: String,
+    pub generation: u64,
+    pub workspace: Option<String>,
+    pub observed: Option<&'static Runtime>,
+    pub label: Option<String>,
+}
+
+impl GrantHolderFacts {
+    fn of(entry: &SessionEntry) -> Self {
+        let observed = entry
+            .observed_runtime
+            .as_ref()
+            .and_then(RuntimeObservation::runtime);
+        Self {
+            session: entry.session.to_string(),
+            generation: entry.generation.get(),
+            workspace: entry.workspace.as_ref().map(ToString::to_string),
+            observed,
+            label: observed
+                .map(|runtime| runtime.label.to_string())
+                .or_else(|| entry.activity.as_ref().map(|summary| summary.tool.clone())),
+        }
+    }
+
+    pub fn answers_to(&self, profile: &str) -> bool {
+        let Some(runtime) = self.observed else {
+            return false;
+        };
+        runtime.id.eq_ignore_ascii_case(profile)
+            || runtime.slug.eq_ignore_ascii_case(profile)
+            || runtime_for_tool(profile).is_some_and(|named| named.id == runtime.id)
+    }
+}
+
 impl SessionEntry {
     fn from_manifest(manifest: SessionManifest) -> Self {
         let terminal = TerminalFacts::from_manifest(&manifest);
@@ -527,6 +563,22 @@ impl WorkerState {
 
     pub fn drain_turn_signals(&mut self) -> Vec<TurnSignal> {
         std::mem::take(&mut self.turn_signals)
+    }
+
+    pub fn grant_holders(&self) -> Vec<GrantHolderFacts> {
+        self.sessions
+            .values()
+            .filter(|entry| entry.lifecycle.is_running())
+            .map(GrantHolderFacts::of)
+            .collect()
+    }
+
+    pub fn grant_holder(&self, session: &str) -> Option<GrantHolderFacts> {
+        let session = SessionId::parse(session).ok()?;
+        self.sessions
+            .get(&session)
+            .filter(|entry| entry.lifecycle.is_running())
+            .map(GrantHolderFacts::of)
     }
 
     pub fn running_sessions(&self) -> BTreeSet<String> {

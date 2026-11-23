@@ -82,7 +82,8 @@ pub(crate) fn gate_refusal(gate: Gate, scripting_open: bool) -> Option<JsonRpcEr
 }
 
 pub(crate) fn spawn_gate_open(spec: &Spec, gates: Gates) -> bool {
-    !matches!(spec.gate, Gate::OrchestrationWhenSpawning) || gates.orchestration
+    !matches!(spec.gate, Gate::OrchestrationWhenSpawning)
+        || (gates.orchestration && !gates.spawn_confined)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -95,11 +96,28 @@ pub(crate) enum Admission {
     },
 }
 
+#[cfg(test)]
 pub(crate) fn admit(
     principal: &Principal,
     method: &str,
     params: &mut Value,
     policy: &Policy,
+) -> Admission {
+    admit_with(
+        principal,
+        method,
+        params,
+        policy,
+        &paneflow_api::grants::GrantView::NONE,
+    )
+}
+
+pub(crate) fn admit_with(
+    principal: &Principal,
+    method: &str,
+    params: &mut Value,
+    policy: &Policy,
+    grants: &paneflow_api::grants::GrantView<'_>,
 ) -> Admission {
     let Some(entry) = registry().get(method) else {
         return Admission::Allowed(policy.gates_for(principal));
@@ -109,9 +127,8 @@ pub(crate) fn admit(
         message,
         data: paneflow_api::authorize::refusal_data(principal, refusal),
     };
-    let mut typed_gate_check = entry.descriptor;
-    typed_gate_check.spec.gate = Gate::Open;
-    match paneflow_api::authorize(principal, &typed_gate_check, params, policy) {
+    match paneflow_api::authorize::admit_with(principal, &entry.descriptor, params, policy, grants)
+    {
         Decision::Allowed { scope, gates } => {
             if let Some(notice) = paneflow_api::policy::deprecation_notice(policy, &gates) {
                 tracing::warn!("{notice}");
@@ -143,6 +160,13 @@ pub(crate) fn admit(
             paneflow_api::authorize::source_mismatch_message(method),
         ),
         Decision::Refused {
+            reason: reason @ Refusal::GrantsUnsynced,
+        } => refused(
+            reason,
+            i64::from(JsonRpcError::METHOD_NOT_ENABLED),
+            paneflow_api::grants::GRANTS_UNSYNCED_MESSAGE.to_string(),
+        ),
+        Decision::Refused {
             reason: reason @ Refusal::ScopeRefused,
         } => refused(
             reason,
@@ -152,7 +176,10 @@ pub(crate) fn admit(
     }
 }
 
-pub(crate) fn spawn_gate_refusal(spec: &Spec) -> JsonRpcError {
+pub(crate) fn spawn_gate_refusal(spec: &Spec, gates: Gates) -> JsonRpcError {
+    if gates.stale_grants {
+        return JsonRpcError::grants_unsynced();
+    }
     super::orchestration_disabled_error(spec.name)
 }
 

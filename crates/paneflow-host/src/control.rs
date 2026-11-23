@@ -52,6 +52,7 @@ pub const CONTROLLER_ONLY_METHODS: &[&str] = &[
 pub enum ControlError {
     Params(String),
     Disabled(String),
+    GrantsUnsynced,
     NoController(&'static str),
     Host(HostError),
 }
@@ -66,6 +67,8 @@ impl From<HostError> for ControlError {
 pub struct ControlPermissions {
     pub scripting: bool,
     pub orchestration: bool,
+    pub reach: bool,
+    pub stale_grants: bool,
     pub fenced_reads: bool,
 }
 
@@ -243,6 +246,9 @@ fn create_gate(params: &Value, permissions: ControlPermissions) -> Result<(), Co
         if permissions.orchestration {
             return Ok(());
         }
+        if permissions.stale_grants {
+            return Err(ControlError::GrantsUnsynced);
+        }
         return Err(ControlError::Disabled(
             "session.create orchestration disabled; set PANEFLOW_IPC_ORCHESTRATION=1 or \
              PANEFLOW_IPC_SCRIPTING=1 to launch a command, prompt, or env"
@@ -260,6 +266,9 @@ fn create_gate(params: &Value, permissions: ControlPermissions) -> Result<(), Co
 fn input_gate(permissions: ControlPermissions) -> Result<(), ControlError> {
     if permissions.scripting {
         return Ok(());
+    }
+    if permissions.stale_grants {
+        return Err(ControlError::GrantsUnsynced);
     }
     Err(ControlError::Disabled(
         "session.input disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable".to_string(),
@@ -314,8 +323,11 @@ pub fn authorize_write_scope(
     match params.get("scope").map(Value::as_str) {
         None | Some(Some(SCOPE_WORKSPACE)) => {}
         Some(Some(SCOPE_ALL)) => {
-            if permissions.orchestration {
+            if permissions.reach {
                 return Ok(());
+            }
+            if permissions.stale_grants {
+                return Err(ControlError::GrantsUnsynced);
             }
             return Err(ControlError::Disabled(
                 "scope all needs orchestration; set PANEFLOW_IPC_ORCHESTRATION=1 or \
@@ -863,6 +875,8 @@ mod tests {
         let permissions = ControlPermissions {
             scripting: true,
             orchestration: true,
+            reach: true,
+            stale_grants: false,
             fenced_reads: true,
         };
         for method in CONTROLLER_ONLY_METHODS {
@@ -999,6 +1013,8 @@ mod tests {
         let closed = ControlPermissions {
             scripting: false,
             orchestration: false,
+            reach: false,
+            stale_grants: false,
             fenced_reads: true,
         };
         let error = send_text_gate(closed).unwrap_err();

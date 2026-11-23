@@ -183,6 +183,12 @@ impl Controller {
             .map_err(ControllerError::Protocol)
     }
 
+    pub fn call(&mut self, method: &str, params: Value) -> Result<Value, ControllerError> {
+        self.control
+            .request(method, params)
+            .map_err(ControllerError::Protocol)
+    }
+
     pub fn usage_snapshot(&mut self) -> Result<Value, ControllerError> {
         self.control
             .request(METHOD_USAGE_SNAPSHOT, json!({}))

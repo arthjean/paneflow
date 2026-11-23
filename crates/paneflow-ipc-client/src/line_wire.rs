@@ -42,6 +42,7 @@ impl WindowsWireStream {
 
 pub struct Wire {
     max_frame: usize,
+    max_write: usize,
     #[cfg(windows)]
     stream: WindowsWireStream,
     #[cfg(windows)]
@@ -71,6 +72,7 @@ impl Wire {
             )?;
             Ok(Self {
                 max_frame,
+                max_write: max_frame,
                 stream: WindowsWireStream::Connected(pipe),
                 pending: Vec::new(),
             })
@@ -97,6 +99,11 @@ impl Wire {
 
     pub fn set_max_frame(&mut self, max_frame: usize) {
         self.max_frame = max_frame;
+        self.max_write = self.max_write.max(max_frame);
+    }
+
+    pub fn set_max_write(&mut self, max_write: usize) {
+        self.max_write = max_write.max(self.max_frame);
     }
 
     pub fn new(stream: Stream, max_frame: usize) -> io::Result<Self> {
@@ -105,6 +112,7 @@ impl Wire {
             let Stream::NamedPipe(stream) = stream;
             Ok(Self {
                 max_frame,
+                max_write: max_frame,
                 stream: WindowsWireStream::Accepted(stream),
                 pending: Vec::new(),
             })
@@ -115,6 +123,7 @@ impl Wire {
             let writer = stream.try_clone()?;
             Ok(Self {
                 max_frame,
+                max_write: max_frame,
                 reader: io::BufReader::new(stream),
                 writer,
             })
@@ -199,10 +208,10 @@ impl Wire {
     }
 
     pub fn write_line_with_timeout(&mut self, line: &[u8], timeout: Duration) -> io::Result<()> {
-        if line.len() > self.max_frame {
+        if line.len() > self.max_write {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("control frame exceeds the {} byte limit", self.max_frame),
+                format!("control frame exceeds the {} byte limit", self.max_write),
             ));
         }
         let mut payload = Vec::with_capacity(line.len() + 1);

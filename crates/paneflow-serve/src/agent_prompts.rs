@@ -187,7 +187,7 @@ pub fn permission_choices(mut request: RequestParams, tool_input: Option<&Value>
     request
 }
 
-struct Deadline(Instant);
+pub(crate) struct Deadline(pub(crate) Instant);
 
 impl Deadline {
     fn left(&self) -> Duration {
@@ -195,7 +195,7 @@ impl Deadline {
     }
 }
 
-enum Asked {
+pub(crate) enum Asked {
     Answer(PromptAnswer),
     Declined(&'static str),
 }
@@ -216,7 +216,7 @@ impl crate::server::Worker {
             .agent_prompts_in_paneflow()
     }
 
-    fn ask_until(&self, mut params: RequestParams, deadline: &Deadline) -> Asked {
+    pub(crate) fn ask_until(&self, mut params: RequestParams, deadline: &Deadline) -> Asked {
         let left = deadline.left();
         if left.is_zero() {
             return Asked::Declined("timeout");

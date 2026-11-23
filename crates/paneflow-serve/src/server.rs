@@ -59,6 +59,8 @@ pub struct Worker {
         Mutex<std::collections::HashMap<ConnectionId, crate::agent_caller::CallerVerdict>>,
     pub policy: paneflow_host::policy::PolicySource,
     pub(crate) acting: crate::authority::ActingRuns,
+    pub pane_grants: crate::pane_grants::PaneGrantStore,
+    pub grant_profiles: crate::grant_methods::ProfileSource,
 }
 
 pub const WINDOW_LAYOUT_CLIENT: &str = "window";
@@ -658,7 +660,12 @@ fn serve_connections(listener: &Listener, worker: Arc<Worker>, shutdown: Arc<Ato
             .spawn(move || {
                 let _guard = guard;
                 match Wire::new(stream, MAX_CONTROL_FRAME_BYTES) {
-                    Ok(wire) => handle_connection(wire, worker, shutdown),
+                    Ok(mut wire) => {
+                        wire.set_max_write(
+                            paneflow_ipc_client::host_control::MAX_REPLY_FRAME_BYTES,
+                        );
+                        handle_connection(wire, worker, shutdown);
+                    }
                     Err(error) => log::debug!("paneflow-serve: connection setup failed: {error}"),
                 }
             });
@@ -825,7 +832,7 @@ fn reply(wire: &mut Wire, id: &Value, answer: Result<Value, ServeError>) -> Flow
 
 pub(crate) fn register_methods(builder: RegistryBuilder) -> RegistryBuilder {
     use paneflow_api::methods::{
-        config, events, layout, prompt, surface, system, worker, workspace,
+        config, events, grant, layout, prompt, surface, system, worker, workspace,
     };
 
     builder
@@ -873,6 +880,24 @@ pub(crate) fn register_methods(builder: RegistryBuilder) -> RegistryBuilder {
                 .and_then(to_value)
         })
         .ready::<config::ListKeymap>(|worker, _| to_value(worker.config.keymap()))
+        .ready::<grant::Request>(|worker, call| {
+            worker
+                .request_grant(call.params, &call.authority.principal, call.connection)
+                .and_then(to_value)
+        })
+        .ready::<grant::List>(|worker, call| {
+            to_value(worker.list_grants(&call.authority.principal))
+        })
+        .ready::<grant::Revoke>(|worker, call| {
+            worker
+                .revoke_grant(call.params, &call.authority.principal)
+                .and_then(to_value)
+        })
+        .ready::<grant::Delegate>(|worker, call| {
+            worker
+                .delegate_grant(call.params, &call.authority.principal)
+                .and_then(to_value)
+        })
         .ready::<prompt::Request>(|worker, call| {
             worker
                 .request_prompt(call.params, &call.authority.principal, call.connection)

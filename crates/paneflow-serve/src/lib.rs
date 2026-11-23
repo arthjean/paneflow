@@ -19,11 +19,15 @@ pub mod config_runtime;
 pub mod controller;
 pub mod core_link;
 pub mod event_log;
+pub mod grant_methods;
+#[cfg(test)]
+mod grant_tests;
 pub mod handles;
 pub mod integrations;
 pub mod launcher;
 pub mod layout_authority;
 pub mod notifications;
+pub mod pane_grants;
 pub mod prompts;
 pub mod protocol;
 pub mod registry;

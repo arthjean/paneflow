@@ -47,6 +47,7 @@ use paneflow_git::fixture as git_fixture;
 mod host_bootstrap;
 mod ipc;
 mod ipc_events;
+mod ipc_grants;
 mod keybindings;
 mod keys;
 mod launch;

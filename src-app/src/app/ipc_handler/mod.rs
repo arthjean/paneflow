@@ -43,7 +43,7 @@ pub(crate) use jsonrpc::*;
 use params::*;
 #[cfg(all(test, unix))]
 pub(crate) use registry::gate_refusal;
-pub(crate) use registry::{Admission, Call, Route, admit, registry};
+pub(crate) use registry::{Admission, Call, Route, admit_with, registry};
 use registry::{RegistryBuilder, spawn_gate_open, spawn_gate_refusal};
 pub(crate) use surface_methods::*;
 use transcript::*;

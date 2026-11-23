@@ -320,7 +320,7 @@ impl PaneFlowApp {
         if let Some(cwd) = cwd {
             params["cwd"] = serde_json::Value::String(cwd);
         }
-        let task = match self.prepare_split(&params, true, cx) {
+        let task = match self.prepare_split(&params, paneflow_api::Gates::OPEN, cx) {
             Ok(task) => task,
             Err(error) => {
                 self.forget_team_pane(&token, local);

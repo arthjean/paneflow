@@ -229,6 +229,7 @@ pub const SERVE_DIR_NAME: &str = "serve";
 pub const SERVE_OWNER_LOCK_FILE_NAME: &str = "owner.lock";
 
 pub const SERVE_INSTANCE_FILE_NAME: &str = "instance.json";
+pub const SERVE_GRANTS_FILE_NAME: &str = "grants.json";
 
 pub const SERVE_LOG_FILE_NAME: &str = "serve.log";
 
@@ -244,6 +245,10 @@ pub fn serve_owner_lock_path_in(home: &Path) -> PathBuf {
 
 pub fn serve_instance_record_path_in(home: &Path) -> PathBuf {
     serve_dir_in(home).join(SERVE_INSTANCE_FILE_NAME)
+}
+
+pub fn serve_grants_path_in(home: &Path) -> PathBuf {
+    serve_dir_in(home).join(SERVE_GRANTS_FILE_NAME)
 }
 
 pub fn serve_log_path_in(home: &Path) -> PathBuf {

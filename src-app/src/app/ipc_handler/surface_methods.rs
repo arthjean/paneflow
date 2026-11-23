@@ -199,14 +199,14 @@ fn scoped_workspace_id(
 
 fn authorize_write_scope(
     params: &serde_json::Value,
-    orchestration: bool,
+    reach: bool,
     caller_workspace: impl FnOnce(&str) -> Option<u64>,
     surface_id: u64,
     target: Option<(u64, &str)>,
 ) -> Result<(), JsonRpcError> {
     match params.get("scope").map(serde_json::Value::as_str) {
         None | Some(Some("workspace")) => {}
-        Some(Some("all")) if orchestration => return Ok(()),
+        Some(Some("all")) if reach => return Ok(()),
         Some(Some("all")) => {
             return Err(JsonRpcError::method_not_enabled(
                 "scope all needs orchestration; set PANEFLOW_IPC_ORCHESTRATION=1 or \
@@ -409,6 +409,7 @@ fn input_rejected_error(reason: &str) -> JsonRpcError {
     JsonRpcError {
         code: JsonRpcError::RUNTIME_UNAVAILABLE,
         message: reason.to_owned(),
+        data: None,
     }
 }
 
@@ -659,7 +660,7 @@ impl PaneFlowApp {
             .map(|workspace| (workspace.id, workspace.title.as_str()));
         authorize_write_scope(
             params,
-            self.ipc_gates.orchestration,
+            self.ipc_gates.reach,
             |session| session_workspace_id(&self.workspaces, session, cx),
             surface_id,
             target,

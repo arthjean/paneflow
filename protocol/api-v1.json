@@ -446,7 +446,7 @@
       ],
       "fallback": null,
       "gate": "orchestration",
-      "gate_note": "A request that sets a command, a prompt or an env is refused with -32601 unless ipc.orchestration, ipc.scripting or ai_unrestricted is true in paneflow.json.",
+      "gate_note": "A request that sets a command, a prompt or an env is refused with -32601 unless ipc.orchestration, ipc.scripting or ai_unrestricted is true in paneflow.json, or a spawn or layout grant covers the calling pane.",
       "in_capabilities": true,
       "name": "workspace.create",
       "owner": "worker",
@@ -795,7 +795,7 @@
       ],
       "fallback": null,
       "gate": "orchestration",
-      "gate_note": "A request that sets a command, a prompt or an env is refused with -32601 unless ipc.orchestration, ipc.scripting or ai_unrestricted is true in paneflow.json.",
+      "gate_note": "A request that sets a command, a prompt or an env is refused with -32601 unless ipc.orchestration, ipc.scripting or ai_unrestricted is true in paneflow.json, or a spawn or layout grant covers the calling pane.",
       "in_capabilities": true,
       "name": "workspace.restore_layout",
       "owner": "worker",
@@ -871,7 +871,7 @@
       ],
       "fallback": null,
       "gate": "orchestration",
-      "gate_note": "A request that sets a command, a prompt or an env is refused with -32601 unless ipc.orchestration, ipc.scripting or ai_unrestricted is true in paneflow.json.",
+      "gate_note": "A request that sets a command, a prompt or an env is refused with -32601 unless ipc.orchestration, ipc.scripting or ai_unrestricted is true in paneflow.json, or a spawn or layout grant covers the calling pane.",
       "in_capabilities": true,
       "name": "workspace.up",
       "owner": "worker",
@@ -1706,7 +1706,7 @@
       ],
       "fallback": "host",
       "gate": "scripting",
-      "gate_note": "Refused with -32601 unless ipc.scripting or ai_unrestricted is true in paneflow.json.",
+      "gate_note": "Refused with -32601 unless ipc.scripting or ai_unrestricted is true in paneflow.json, or a write grant covers the calling pane.",
       "in_capabilities": true,
       "name": "surface.send_text",
       "owner": "window",
@@ -1864,7 +1864,7 @@
       ],
       "fallback": null,
       "gate": "scripting",
-      "gate_note": "Refused with -32601 unless ipc.scripting or ai_unrestricted is true in paneflow.json.",
+      "gate_note": "Refused with -32601 unless ipc.scripting or ai_unrestricted is true in paneflow.json, or a write grant covers the calling pane.",
       "in_capabilities": true,
       "name": "surface.send_keystroke",
       "owner": "window",
@@ -1953,7 +1953,7 @@
       ],
       "fallback": null,
       "gate": "orchestration",
-      "gate_note": "A request that sets a command, a prompt or an env is refused with -32601 unless ipc.orchestration, ipc.scripting or ai_unrestricted is true in paneflow.json.",
+      "gate_note": "A request that sets a command, a prompt or an env is refused with -32601 unless ipc.orchestration, ipc.scripting or ai_unrestricted is true in paneflow.json, or a spawn or layout grant covers the calling pane.",
       "in_capabilities": true,
       "name": "surface.split",
       "owner": "worker",
@@ -6213,7 +6213,7 @@
       ],
       "fallback": null,
       "gate": "orchestration",
-      "gate_note": "A request that sets a command, a prompt or an env is refused with -32601 unless ipc.orchestration, ipc.scripting or ai_unrestricted is true in paneflow.json.",
+      "gate_note": "A request that sets a command, a prompt or an env is refused with -32601 unless ipc.orchestration, ipc.scripting or ai_unrestricted is true in paneflow.json, or a spawn or layout grant covers the calling pane.",
       "in_capabilities": false,
       "name": "layout.apply",
       "owner": "worker",
@@ -6462,7 +6462,7 @@
       ],
       "fallback": null,
       "gate": "orchestration",
-      "gate_note": "A request that sets a command, a prompt or an env is refused with -32601 unless ipc.orchestration, ipc.scripting or ai_unrestricted is true in paneflow.json.",
+      "gate_note": "A request that sets a command, a prompt or an env is refused with -32601 unless ipc.orchestration, ipc.scripting or ai_unrestricted is true in paneflow.json, or a spawn or layout grant covers the calling pane.",
       "in_capabilities": false,
       "name": "layout.launch",
       "owner": "worker",
@@ -6715,6 +6715,524 @@
       "scope_note": null,
       "stream": false,
       "summary": "Remove the records of ended sessions that no surface of the layout, no undo hold and no pending launch names, and with live, also stop the live sessions this host started that nothing holds. The attached layout client calls it after it restores; the worker runs the host requests. Fails with -32070 and data {reason}: not_attached or host_unreachable."
+    },
+    {
+      "audience": "pane_only",
+      "examples": [
+        {
+          "params": {
+            "duration_secs": 600,
+            "rights": [
+              "write"
+            ],
+            "scope": "workspace"
+          },
+          "result": {
+            "expires_at_ms": 1800000000000,
+            "granted": true,
+            "id": "g-1"
+          }
+        },
+        {
+          "params": {
+            "rights": [
+              "write"
+            ]
+          },
+          "result": {
+            "granted": false,
+            "reason": "denied"
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "none",
+      "gate_note": null,
+      "in_capabilities": false,
+      "name": "grant.request",
+      "owner": "worker",
+      "params": {
+        "$defs": {
+          "GrantScope": {
+            "enum": [
+              "workspace",
+              "instance"
+            ],
+            "type": "string"
+          },
+          "Right": {
+            "enum": [
+              "write",
+              "spawn",
+              "layout"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "duration_secs": {
+            "description": "Seconds the grant lasts once allowed, 3600 by default; 0 asks for a grant with no expiry",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "reason": {
+            "description": "Why the agent needs it, shown to the human",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rights": {
+            "description": "Rights asked for, among write, spawn and layout",
+            "items": {
+              "$ref": "#/$defs/Right"
+            },
+            "type": "array"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/GrantScope"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "workspace",
+            "description": "workspace reaches the calling pane's own workspace, instance every workspace"
+          }
+        },
+        "required": [
+          "rights"
+        ],
+        "title": "GrantRequestParams",
+        "type": "object"
+      },
+      "reply": "ready",
+      "result": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "expires_at_ms": {
+            "description": "Unix time in milliseconds the grant ends at; absent when it has none",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "granted": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "description": "denied, unanswered, or why the grant could not be stored",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "granted"
+        ],
+        "title": "Granted",
+        "type": "object"
+      },
+      "scope": "none",
+      "scope_note": null,
+      "stream": false,
+      "summary": "Ask the human for rights the calling pane does not hold, for a scope and a time."
+    },
+    {
+      "audience": "anyone",
+      "examples": [
+        {
+          "params": {},
+          "result": {
+            "grants": [],
+            "revision": 4
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "none",
+      "gate_note": null,
+      "in_capabilities": false,
+      "name": "grant.list",
+      "owner": "worker",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "NoParams",
+        "type": "object"
+      },
+      "reply": "ready",
+      "result": {
+        "$defs": {
+          "GrantHolder": {
+            "additionalProperties": false,
+            "properties": {
+              "generation": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "session": {
+                "type": "string"
+              },
+              "workspace": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "session",
+              "generation"
+            ],
+            "type": "object"
+          },
+          "GrantOrigin": {
+            "oneOf": [
+              {
+                "properties": {
+                  "kind": {
+                    "const": "prompt",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "profile",
+                    "type": "string"
+                  },
+                  "profile": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "profile"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "delegation",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "GrantScope": {
+            "enum": [
+              "workspace",
+              "instance"
+            ],
+            "type": "string"
+          },
+          "PaneGrant": {
+            "additionalProperties": false,
+            "properties": {
+              "delegated_from": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "expires_at_ms": {
+                "description": "Unix time in milliseconds after which the grant no longer applies",
+                "format": "uint64",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "granted_at_ms": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "holder": {
+                "$ref": "#/$defs/GrantHolder"
+              },
+              "id": {
+                "type": "string"
+              },
+              "origin": {
+                "$ref": "#/$defs/GrantOrigin"
+              },
+              "rights": {
+                "items": {
+                  "$ref": "#/$defs/Right"
+                },
+                "type": "array"
+              },
+              "scope": {
+                "$ref": "#/$defs/GrantScope"
+              }
+            },
+            "required": [
+              "id",
+              "holder",
+              "rights",
+              "scope",
+              "origin",
+              "granted_at_ms"
+            ],
+            "type": "object"
+          },
+          "Right": {
+            "enum": [
+              "write",
+              "spawn",
+              "layout"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "grants": {
+            "items": {
+              "$ref": "#/$defs/PaneGrant"
+            },
+            "type": "array"
+          },
+          "revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision",
+          "grants"
+        ],
+        "title": "GrantSet",
+        "type": "object"
+      },
+      "scope": "none",
+      "scope_note": null,
+      "stream": false,
+      "summary": "List the grants panes hold, with the revision of the set; a pane sees the grants it holds or delegated."
+    },
+    {
+      "audience": "anyone",
+      "examples": [
+        {
+          "params": {
+            "id": "g-1"
+          },
+          "result": {
+            "revision": 5,
+            "revoked": [
+              "g-1",
+              "g-2"
+            ]
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "none",
+      "gate_note": null,
+      "in_capabilities": false,
+      "name": "grant.revoke",
+      "owner": "worker",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "The grant to revoke; every grant delegated from it is revoked too",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "title": "RevokeParams",
+        "type": "object"
+      },
+      "reply": "ready",
+      "result": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "revoked": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "revoked",
+          "revision"
+        ],
+        "title": "Revoked",
+        "type": "object"
+      },
+      "scope": "none",
+      "scope_note": null,
+      "stream": false,
+      "summary": "Revoke a grant and every grant delegated from it."
+    },
+    {
+      "audience": "pane_only",
+      "examples": [
+        {
+          "params": {
+            "rights": [
+              "write"
+            ],
+            "session": "223e4567-e89b-42d3-a456-426614174000"
+          },
+          "result": {
+            "expires_at_ms": 1800000000000,
+            "granted": true,
+            "id": "g-2"
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "none",
+      "gate_note": null,
+      "in_capabilities": false,
+      "name": "grant.delegate",
+      "owner": "worker",
+      "params": {
+        "$defs": {
+          "GrantScope": {
+            "enum": [
+              "workspace",
+              "instance"
+            ],
+            "type": "string"
+          },
+          "Right": {
+            "enum": [
+              "write",
+              "spawn",
+              "layout"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "duration_secs": {
+            "description": "Seconds the delegated grant lasts, until the delegator's grant ends by default",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "rights": {
+            "items": {
+              "$ref": "#/$defs/Right"
+            },
+            "type": "array"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/GrantScope"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "workspace"
+          },
+          "session": {
+            "description": "The session of a pane the caller spawned with surface.split",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session",
+          "rights"
+        ],
+        "title": "DelegateParams",
+        "type": "object"
+      },
+      "reply": "ready",
+      "result": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "expires_at_ms": {
+            "description": "Unix time in milliseconds the grant ends at; absent when it has none",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "granted": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "description": "denied, unanswered, or why the grant could not be stored",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "granted"
+        ],
+        "title": "Granted",
+        "type": "object"
+      },
+      "scope": "none",
+      "scope_note": null,
+      "stream": false,
+      "summary": "Give a pane the caller spawned a grant no wider than one the caller holds."
     }
   ]
 }

@@ -289,6 +289,26 @@ layout.sweep worker worker allowed:instance allowed:instance
 layout.sweep worker pane refused:principal_refused refused:principal_refused
 layout.sweep worker external refused:principal_refused refused:principal_refused
 layout.sweep worker unverified refused:unverified_caller refused:unverified_caller
+grant.request worker window refused:principal_refused refused:principal_refused
+grant.request worker worker refused:principal_refused refused:principal_refused
+grant.request worker pane allowed:instance allowed:instance
+grant.request worker external refused:principal_refused refused:principal_refused
+grant.request worker unverified refused:unverified_caller refused:unverified_caller
+grant.list worker window allowed:instance allowed:instance
+grant.list worker worker allowed:instance allowed:instance
+grant.list worker pane allowed:instance allowed:instance
+grant.list worker external allowed:instance allowed:instance
+grant.list worker unverified refused:unverified_caller refused:unverified_caller
+grant.revoke worker window allowed:instance allowed:instance
+grant.revoke worker worker allowed:instance allowed:instance
+grant.revoke worker pane allowed:instance allowed:instance
+grant.revoke worker external allowed:instance allowed:instance
+grant.revoke worker unverified refused:unverified_caller refused:unverified_caller
+grant.delegate worker window refused:principal_refused refused:principal_refused
+grant.delegate worker worker refused:principal_refused refused:principal_refused
+grant.delegate worker pane allowed:instance allowed:instance
+grant.delegate worker external refused:principal_refused refused:principal_refused
+grant.delegate worker unverified refused:unverified_caller refused:unverified_caller
 host.hello host window allowed:instance allowed:instance
 host.hello host worker allowed:instance allowed:instance
 host.hello host pane allowed:instance allowed:instance
@@ -399,6 +419,11 @@ agent.event host worker allowed:instance allowed:instance
 agent.event host pane allowed:instance allowed:instance
 agent.event host external allowed:instance allowed:instance
 agent.event host unverified refused:unverified_caller refused:unverified_caller
+host.grants.set host window allowed:instance allowed:instance
+host.grants.set host worker allowed:instance allowed:instance
+host.grants.set host pane refused:principal_refused refused:principal_refused
+host.grants.set host external refused:principal_refused refused:principal_refused
+host.grants.set host unverified refused:unverified_caller refused:unverified_caller
 # prompt.follow and prompt.reply against the prompt's asker: method principal asker decision
 prompt.follow window agent shown_with_a_token
 prompt.follow window action_run_by_agent shown_with_a_token

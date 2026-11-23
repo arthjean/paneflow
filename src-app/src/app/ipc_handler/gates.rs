@@ -115,6 +115,7 @@ mod tests {
             code: -32601,
             message: "surface.send_text disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable"
                 .to_string(),
+            data: None,
         };
         let envelope = promote_response(err.into_value(), serde_json::json!(42));
         assert_eq!(envelope["error"]["code"], -32601);

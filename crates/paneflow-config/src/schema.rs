@@ -1,3 +1,4 @@
+mod agent_grants;
 mod agent_panel;
 mod config;
 mod identity;
@@ -7,6 +8,7 @@ mod session;
 mod space;
 mod terminal;
 
+pub use agent_grants::*;
 pub use agent_panel::*;
 pub use config::*;
 pub use identity::*;
@@ -163,6 +165,7 @@ mod tests {
                 restore_conversations: Some(true),
                 claude_preassign_session_id: Some(false),
                 update_methods: BTreeMap::from([("codex".to_string(), "bun".to_string())]),
+                profiles: BTreeMap::new(),
             }),
             usage: Some(UsageConfig {
                 plan_limits: Some(true),

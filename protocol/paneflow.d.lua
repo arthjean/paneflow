@@ -520,6 +520,74 @@ paneflow.fleet = {}
 ---@return integer? code
 paneflow.fleet.list = function(params) end
 
+---@class paneflow.grant
+paneflow.grant = {}
+
+---@class paneflow.grant.delegate.params
+---@field duration_secs? integer Seconds the delegated grant lasts, until the delegator's grant ends by default
+---@field rights ("write"|"spawn"|"layout")[]
+---@field scope? "workspace"|"instance"
+---@field session string The session of a pane the caller spawned with surface.split
+
+---@class paneflow.grant.delegate.result
+---@field expires_at_ms? integer
+---@field granted boolean
+---@field id? string
+---@field reason? string
+
+---Give a pane the caller spawned a grant no wider than one the caller holds.
+---@param params paneflow.grant.delegate.params
+---@return paneflow.grant.delegate.result? result
+---@return string? message
+---@return integer? code
+paneflow.grant.delegate = function(params) end
+
+---@class paneflow.grant.list.params
+
+---@class paneflow.grant.list.result
+---@field grants table[]
+---@field revision integer
+
+---List the grants panes hold, with the revision of the set; a pane sees the grants it holds or delegated.
+---@param params paneflow.grant.list.params?
+---@return paneflow.grant.list.result? result
+---@return string? message
+---@return integer? code
+paneflow.grant.list = function(params) end
+
+---@class paneflow.grant.request.params
+---@field duration_secs? integer Seconds the grant lasts once allowed, 3600 by default; 0 asks for a grant with no expiry
+---@field reason? string Why the agent needs it, shown to the human
+---@field rights ("write"|"spawn"|"layout")[] Rights asked for, among write, spawn and layout
+---@field scope? "workspace"|"instance" workspace reaches the calling pane's own workspace, instance every workspace
+
+---@class paneflow.grant.request.result
+---@field expires_at_ms? integer
+---@field granted boolean
+---@field id? string
+---@field reason? string
+
+---Ask the human for rights the calling pane does not hold, for a scope and a time.
+---@param params paneflow.grant.request.params
+---@return paneflow.grant.request.result? result
+---@return string? message
+---@return integer? code
+paneflow.grant.request = function(params) end
+
+---@class paneflow.grant.revoke.params
+---@field id string The grant to revoke; every grant delegated from it is revoked too
+
+---@class paneflow.grant.revoke.result
+---@field revision integer
+---@field revoked string[]
+
+---Revoke a grant and every grant delegated from it.
+---@param params paneflow.grant.revoke.params
+---@return paneflow.grant.revoke.result? result
+---@return string? message
+---@return integer? code
+paneflow.grant.revoke = function(params) end
+
 ---@class paneflow.keymap
 paneflow.keymap = {}
 

@@ -1,6 +1,7 @@
 use serde_json::Value;
 
 use crate::descriptor::{Audience, Descriptor, Gate, ScopeRule};
+use crate::grants::{GrantView, pane_gates};
 use crate::policy::{Gates, Policy};
 use crate::principal::Principal;
 
@@ -33,6 +34,7 @@ pub enum Refusal {
     UnverifiedCaller,
     ScopeRefused,
     SourceMismatch,
+    GrantsUnsynced,
     GateClosed { refusal: &'static str },
 }
 
@@ -43,6 +45,7 @@ impl Refusal {
             Self::UnverifiedCaller => REASON_UNVERIFIED_CALLER,
             Self::ScopeRefused => REASON_SCOPE_REFUSED,
             Self::SourceMismatch => REASON_SOURCE_MISMATCH,
+            Self::GrantsUnsynced => crate::grants::REASON_GRANTS_UNSYNCED,
             Self::GateClosed { .. } => REASON_GATE_CLOSED,
         }
     }
@@ -78,6 +81,7 @@ fn admits_audience(principal: &Principal, audience: Audience) -> bool {
     match audience {
         Audience::Anyone => true,
         Audience::NotPane => !principal.is_pane(),
+        Audience::PaneOnly => principal.is_pane(),
         Audience::PaneflowOnly => matches!(principal, Principal::Window | Principal::Worker),
     }
 }
@@ -87,10 +91,10 @@ fn pane_scope(rule: ScopeRule, params: &Value, gates: &Gates, own: Scope) -> Sco
         ScopeRule::Unscoped => Scope::Instance,
         ScopeRule::ClaimedSession if params.get(SCOPE_SESSION).is_some() => own,
         ScopeRule::ClaimedSession => Scope::Instance,
-        ScopeRule::Workspace if gates.orchestration => Scope::Instance,
+        ScopeRule::Workspace if gates.reach => Scope::Instance,
         ScopeRule::Workspace => own,
         ScopeRule::WorkspaceUnlessAll
-            if gates.orchestration && param_str(params, "scope") == Some("all") =>
+            if gates.reach && param_str(params, "scope") == Some("all") =>
         {
             Scope::Instance
         }
@@ -103,6 +107,56 @@ pub fn authorize(
     descriptor: &Descriptor,
     params: &Value,
     policy: &Policy,
+) -> Decision {
+    decide(
+        principal,
+        descriptor,
+        params,
+        policy,
+        &GrantView::NONE,
+        true,
+    )
+}
+
+pub fn authorize_with(
+    principal: &Principal,
+    descriptor: &Descriptor,
+    params: &Value,
+    policy: &Policy,
+    grants: &GrantView<'_>,
+) -> Decision {
+    decide(principal, descriptor, params, policy, grants, true)
+}
+
+pub fn admit_with(
+    principal: &Principal,
+    descriptor: &Descriptor,
+    params: &Value,
+    policy: &Policy,
+    grants: &GrantView<'_>,
+) -> Decision {
+    decide(principal, descriptor, params, policy, grants, false)
+}
+
+fn needs_unsynced_grant(descriptor: &Descriptor, params: &Value, gates: &Gates) -> bool {
+    if !gates.stale_grants {
+        return false;
+    }
+    let spec = &descriptor.spec;
+    let scripting_closed = matches!(spec.gate, Gate::Scripting { .. }) && !gates.scripting;
+    let reach_closed = !gates.reach
+        && spec.scope == ScopeRule::WorkspaceUnlessAll
+        && param_str(params, "scope") == Some("all");
+    scripting_closed || reach_closed
+}
+
+fn decide(
+    principal: &Principal,
+    descriptor: &Descriptor,
+    params: &Value,
+    policy: &Policy,
+    grants: &GrantView<'_>,
+    check_gate: bool,
 ) -> Decision {
     let spec = &descriptor.spec;
     if let Principal::Unverified { .. } = principal {
@@ -122,8 +176,14 @@ pub fn authorize(
             reason: Refusal::PrincipalRefused,
         };
     }
-    let gates = policy.gates_for(principal);
+    let gates = pane_gates(principal, spec, policy.gates_for(principal), grants);
+    if principal.is_pane() && needs_unsynced_grant(descriptor, params, &gates) {
+        return Decision::Refused {
+            reason: Refusal::GrantsUnsynced,
+        };
+    }
     if let Gate::Scripting { refusal } = spec.gate
+        && check_gate
         && !gates.scripting
     {
         return Decision::Refused {
@@ -191,6 +251,14 @@ impl Scope {
                 fields.remove(SCOPE_SESSION);
             }
         }
+    }
+}
+
+pub const fn scope_refusal(gates: &Gates) -> Refusal {
+    if gates.stale_grants {
+        Refusal::GrantsUnsynced
+    } else {
+        Refusal::ScopeRefused
     }
 }
 
@@ -410,6 +478,130 @@ mod tests {
                 &json!({"source_session": "s-1", "session": "s-2", "text": "x"}),
                 &open
             ),
+            Decision::Allowed { .. }
+        ));
+    }
+
+    fn held(
+        rights: &[crate::grants::Right],
+        scope: crate::grants::GrantScope,
+    ) -> crate::grants::PaneGrant {
+        crate::grants::PaneGrant {
+            id: "g-1".into(),
+            holder: crate::grants::GrantHolder {
+                session: "s-1".into(),
+                generation: 3,
+                workspace: Some("w-1".into()),
+            },
+            rights: rights.to_vec(),
+            scope,
+            expires_at_ms: Some(1_000),
+            delegated_from: None,
+            origin: crate::grants::GrantOrigin::Prompt,
+            granted_at_ms: 0,
+        }
+    }
+
+    #[test]
+    fn a_live_grant_opens_the_gate_it_covers_and_only_an_instance_grant_reaches_further() {
+        use crate::grants::{GrantScope, GrantView, Right};
+        let send = Descriptor::of::<surface::SendText>();
+        let stop = Descriptor::of::<session::SessionStop>();
+        let workspace = [held(&[Right::Write], GrantScope::Workspace)];
+        let view = GrantView {
+            grants: &workspace,
+            now_ms: 10,
+            generation: Some(3),
+            synced: true,
+        };
+        let Decision::Allowed { scope, gates } =
+            authorize_with(&pane(), &send, &json!({"scope": "all"}), &closed(), &view)
+        else {
+            panic!("a write grant opens send_text");
+        };
+        assert!(gates.scripting);
+        assert_eq!(
+            scope,
+            Scope::Pane {
+                session: "s-1".into(),
+                workspace: Some("w-1".into())
+            }
+        );
+        let Decision::Allowed { scope, .. } =
+            authorize_with(&pane(), &stop, &json!({}), &closed(), &view)
+        else {
+            panic!("stop is allowed");
+        };
+        assert_eq!(scope.check("s-9", Some("w-9")), Err(Refusal::ScopeRefused));
+        let instance = [held(&[Right::Write], GrantScope::Instance)];
+        let view = GrantView {
+            grants: &instance,
+            ..view
+        };
+        let Decision::Allowed { scope, .. } =
+            authorize_with(&pane(), &stop, &json!({}), &closed(), &view)
+        else {
+            panic!("stop is allowed");
+        };
+        assert_eq!(scope, Scope::Instance);
+        let expired = GrantView {
+            now_ms: 1_000,
+            ..view
+        };
+        assert!(matches!(
+            authorize_with(&pane(), &send, &json!({}), &closed(), &expired),
+            Decision::Refused {
+                reason: Refusal::GateClosed { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn a_stale_grant_set_refuses_what_needs_a_grant_and_lets_the_rest_through() {
+        use crate::grants::GrantView;
+        let stale = GrantView {
+            grants: &[],
+            now_ms: 0,
+            generation: None,
+            synced: false,
+        };
+        let send = Descriptor::of::<surface::SendText>();
+        assert_eq!(
+            authorize_with(&pane(), &send, &json!({}), &closed(), &stale),
+            Decision::Refused {
+                reason: Refusal::GrantsUnsynced
+            }
+        );
+        let write = Descriptor::of::<host::PaneWrite>();
+        assert_eq!(
+            authorize_with(
+                &pane(),
+                &write,
+                &json!({"source_session": "s-1", "scope": "all"}),
+                &closed(),
+                &stale
+            ),
+            Decision::Refused {
+                reason: Refusal::GrantsUnsynced
+            }
+        );
+        let read = Descriptor::of::<surface::Read>();
+        assert!(matches!(
+            authorize_with(&pane(), &read, &json!({}), &closed(), &stale),
+            Decision::Allowed { .. }
+        ));
+        assert!(matches!(
+            authorize_with(&Principal::External, &send, &json!({}), &closed(), &stale),
+            Decision::Refused {
+                reason: Refusal::GateClosed { .. }
+            }
+        ));
+        let open = Policy {
+            section: Section::Set(Switches::OPEN),
+            ..Policy::default()
+        };
+        assert!(matches!(
+            authorize_with(&pane(), &send, &json!({}), &open, &stale),
             Decision::Allowed { .. }
         ));
     }

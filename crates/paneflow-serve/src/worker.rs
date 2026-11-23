@@ -173,6 +173,10 @@ fn open_with_build_id(
         agent_callers: Mutex::new(Default::default()),
         policy: paneflow_host::policy::PolicySource::for_home(home),
         acting: Default::default(),
+        pane_grants: crate::pane_grants::PaneGrantStore::open(home, now_ms()),
+        grant_profiles: crate::grant_methods::ProfileSource::new(paneflow_home::config_path_in(
+            home,
+        )),
     });
     let server = ServerHandle::spawn(Arc::clone(&worker), endpoint.clone()).map_err(|source| {
         WorkerError::Endpoint {
@@ -375,6 +379,7 @@ fn sweep(worker: &Arc<Worker>) {
     worker.broadcast_snapshot_if_changed(sessions);
     worker.absorb_turn_signals();
     worker.sweep_usage();
+    worker.reconcile_pane_grants();
 }
 
 fn core_poll_interval(following: bool) -> Duration {
@@ -403,10 +408,15 @@ fn refresh_core_snapshot(worker: &Arc<Worker>) {
     }
 }
 
-fn apply(worker: &Arc<Worker>, frame: CoreFrame, following: bool) -> bool {
+pub(crate) fn apply(worker: &Arc<Worker>, frame: CoreFrame, following: bool) -> bool {
+    let connected = matches!(frame, CoreFrame::Snapshot(_));
     let following = apply_frame(worker, frame, following);
     worker.absorb_state_events();
     worker.absorb_turn_signals();
+    worker.reconcile_pane_grants();
+    if connected {
+        worker.push_grants_to_host(&worker.pane_grants.set());
+    }
     following
 }
 

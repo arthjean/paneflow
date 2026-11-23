@@ -633,6 +633,33 @@ no new codes. `crates/paneflow-api/tests/decision_table.txt` pins every
 decision for every method and principal, and the host, the worker and the
 window each check their dispatch against the same table.
 
+Grants extend the policy per pane without a secret. The worker holds them
+(`crates/paneflow-serve/src/pane_grants.rs`, persisted to `serve/grants.json`)
+keyed by the holder's session and launch generation, with rights (`write`,
+`spawn`, `layout`), a scope (`workspace` or `instance`), an expiry and the
+grant they were delegated from. A grant comes from a `grant.request` prompt
+through the worker's prompt broker, an `agents.<name>.grants` profile the
+worker applies when the host's runtime observation sees that agent in a pane's
+foreground (a hook's self-declared `tool` is not enough), or `grant.delegate` toward
+a pane the holder split. The worker drops a grant whose holder ended or
+restarted on the next core frame, together with every grant delegated from
+it. `authorize_with` takes the caller's grants as a `GrantView`
+(`crates/paneflow-api/src/grants.rs`): a live grant of the caller at its
+current generation opens the gate of the right the method needs, and an
+`instance` grant widens the caller's scope. Only `write` and a `spawn` on
+`surface.split` can be held to one workspace: for the latter `pane_gates`
+sets `Gates::spawn_confined` and the worker's `surface_split` checks the
+anchor's workspace, while every other spawn or layout method needs an
+`instance` grant. The store holds at most `MAX_GRANTS` grants so that the
+full set fits one host control frame. After each change the worker
+writes the file, sends the full set to the host with `host.grants.set`
+(`PaneflowOnly`) and appends `grant.changed`; the window follows that event
+and reads `grant.list`. The host and the window hold the set in a
+`paneflow_host::pane_grants::GrantMirror`, which is stale while the announced
+revision or the one in `serve/grants.json` is newer than the one it holds; a
+stale mirror applies no grant and refuses what would need one with
+`grants_unsynced`.
+
 Ingress is treated as untrusted: session and config files are validated
 structurally (layout budgets, ratio clamps, id alphabets) before they touch
 app state.

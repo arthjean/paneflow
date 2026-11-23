@@ -164,6 +164,83 @@ refused request still answers with its former message, for example
 `surface.send_text disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable`:
 set `ipc.scripting` instead.
 
+### How does an agent get a grant?
+
+A grant lets one pane do what the closed gates refuse, for a scope and a
+time, without opening the gates for every pane. It names its holder (the
+pane's session and launch generation), its rights and its scope:
+
+| Right | Opens |
+| --- | --- |
+| `write` | The text and keystroke writes `ipc.scripting` gates |
+| `spawn` | A `surface.split`, `session.create` or `workspace.create` that launches a command, a prompt or environment variables |
+| `layout` | A `layout.apply`, `layout.adopt`, `workspace.up` or `workspace.restore_layout` that launches one |
+
+A `workspace` grant reaches the pane's own workspace; an `instance`
+grant reaches every workspace, as `ipc.orchestration` does for
+`--scope all`. With a `workspace` grant, `spawn` opens only a
+`surface.split` beside a surface of the pane's own workspace; a split in
+another workspace is refused with `scope_refused`. `session.create`,
+`workspace.create` and everything `layout` opens are not tied to one
+workspace, so they need an `instance` grant, and `grant.request`
+refuses `layout` with the `workspace` scope. A grant ends at its expiry,
+when its pane's session ends, or when the session restarts.
+
+Paneflow holds at most 128 grants, 16 per pane. Past that,
+`grant.request` and `grant.delegate` answer
+`{"granted": false, "reason": "grant_limit"}` and no prompt is shown.
+
+An agent asks for one with `grant.request`; Paneflow shows you a prompt
+that names the agent, its pane, the rights, the scope and the duration,
+and says so in the title when the scope is `instance` or there is no
+expiry:
+
+```bash
+paneflow api call grant.request --args '{"rights": ["write"], "scope": "workspace", "duration_secs": 600}'
+```
+
+The reply is `{"granted": true, "id": ..., "expires_at_ms": ...}`, or
+`{"granted": false, "reason": "denied"}` when you deny it, or
+`"unanswered"` when no window could show the prompt or nobody answered
+before it timed out. Only a process in a pane may ask.
+
+To grant a trusted agent without a prompt, list its grants under its
+name in `agents`. The pane receives them when Paneflow sees that agent
+run in its foreground, at launch or when it starts later in the pane,
+and keeps them until its session ends. An agent hook that only names an
+agent grants nothing, since any process in a pane can send one:
+
+```json
+{
+  "agents": {
+    "claude": {"grants": [{"rights": ["write"], "scope": "workspace"}]}
+  }
+}
+```
+
+A right Paneflow does not know is logged with the profile and the right
+when the configuration loads, for example
+`invalid config key agents.claude.grants: unknown right "root"`, and no
+grant of that profile is stored.
+
+An agent that split a pane with `surface.split` can pass it part of its
+own grant with `grant.delegate`: the rights and the scope must be within
+a grant it holds, and the expiry no later than that grant's
+(`grant_exceeds_holder` otherwise). A `workspace` grant passes only to a
+pane of the same workspace. A pane it did not spawn is refused
+with `not_spawned_by_caller`. Revoking a grant revokes everything
+delegated from it.
+
+`paneflow grants ls` lists the grants and `paneflow grants revoke <id>`
+revokes one. From outside every pane both reach every grant; from a
+pane, `ls` shows the grants it holds or delegated, and `revoke` reaches
+only a grant it delegated (`principal_refused` otherwise). Grants live
+in the background process, survive its restart while their sessions
+run, and reach the session host and the window within a moment of each
+change; a request that needs a grant during that moment is refused with
+`grants_unsynced` and the message `Grants are being synchronized; retry
+the call`.
+
 The host logs each
 accepted `session.input` from a control client at info level with the
 client name, the target session, and the byte count, never the content.

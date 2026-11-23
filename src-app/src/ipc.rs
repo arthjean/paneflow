@@ -125,6 +125,7 @@ pub fn start_server() -> (
     Arc<crate::ipc_events::EventBus>,
 ) {
     let policy = Arc::new(window_policy());
+    let grants = crate::ipc_grants::WindowGrants::start(paneflow_home::paneflow_home());
     let opened = policy
         .current()
         .gates_for(&paneflow_api::Principal::External);
@@ -215,6 +216,7 @@ pub fn start_server() -> (
             let active_subscriptions = Arc::new(AtomicUsize::new(0));
             let classifier = Arc::new(window_classifier());
             let policy = Arc::clone(&policy);
+            let grants = Arc::clone(&grants);
 
             loop {
                 match listener.accept() {
@@ -240,6 +242,7 @@ pub fn start_server() -> (
                         let subscriptions = Arc::clone(&active_subscriptions);
                         let classifier = Arc::clone(&classifier);
                         let policy = Arc::clone(&policy);
+                        let grants = Arc::clone(&grants);
                         if let Err(e) = std::thread::Builder::new()
                             .name("paneflow-ipc-conn".into())
                             .spawn(move || {
@@ -250,7 +253,7 @@ pub fn start_server() -> (
                                     bus,
                                     subscriptions,
                                     &classifier,
-                                    &policy,
+                                    (&policy, &grants),
                                 );
                             })
                         {
@@ -846,7 +849,10 @@ fn handle_connection(
     event_bus: Arc<crate::ipc_events::EventBus>,
     active_subscriptions: Arc<AtomicUsize>,
     classifier: &paneflow_host::peer::PeerClassifier,
-    policy: &paneflow_host::policy::PolicySource,
+    (policy, grants): (
+        &paneflow_host::policy::PolicySource,
+        &crate::ipc_grants::WindowGrants,
+    ),
 ) {
     let Ok(writer_stream) = stream.try_clone() else {
         return;
@@ -950,29 +956,25 @@ fn handle_connection(
                         };
 
                         let grant = request_grant(&req);
-                        let gates = match crate::app::ipc_handler::admit(
-                            &caller,
-                            &method,
-                            &mut params,
-                            &policy.current(),
-                        ) {
-                            crate::app::ipc_handler::Admission::Allowed(gates) => gates,
-                            crate::app::ipc_handler::Admission::Refused {
-                                code,
-                                message,
-                                data,
-                            } => {
-                                let envelope =
-                                    refusal_envelope(code, message, data, response_id.clone());
-                                if !suppress_reply && !write_envelope(&mut writer, &envelope) {
+                        let gates =
+                            match grants.admit(&caller, &method, &mut params, &policy.current()) {
+                                crate::app::ipc_handler::Admission::Allowed(gates) => gates,
+                                crate::app::ipc_handler::Admission::Refused {
+                                    code,
+                                    message,
+                                    data,
+                                } => {
+                                    let envelope =
+                                        refusal_envelope(code, message, data, response_id.clone());
+                                    if !suppress_reply && !write_envelope(&mut writer, &envelope) {
+                                        break;
+                                    }
+                                    #[cfg(windows)]
                                     break;
+                                    #[cfg(not(windows))]
+                                    continue;
                                 }
-                                #[cfg(windows)]
-                                break;
-                                #[cfg(not(windows))]
-                                continue;
-                            }
-                        };
+                            };
                         let route = crate::app::ipc_handler::registry().route(&method);
                         if let crate::app::ipc_handler::Route::Stream(entry) = route {
                             if let Err(error) = entry.validate(&params) {
@@ -2303,7 +2305,7 @@ mod counters_tests {
                 crate::ipc_events::EventBus::new(),
                 Arc::new(AtomicUsize::new(0)),
                 &classifier,
-                &window_policy(),
+                (&window_policy(), &crate::ipc_grants::detached_grants()),
             );
         });
         let name = path
@@ -2519,7 +2521,7 @@ mod caller_identity_tests {
                 crate::ipc_events::EventBus::new(),
                 Arc::new(AtomicUsize::new(0)),
                 &classifier,
-                &policy,
+                (&policy, &crate::ipc_grants::detached_grants()),
             );
         });
         let mut client = paneflow_host::HostClient::connect(
@@ -2642,7 +2644,7 @@ mod caller_identity_tests {
                         crate::ipc_events::EventBus::new(),
                         Arc::new(AtomicUsize::new(0)),
                         &classifier,
-                        &window_policy(),
+                        (&window_policy(), &crate::ipc_grants::detached_grants()),
                     );
                 });
             }

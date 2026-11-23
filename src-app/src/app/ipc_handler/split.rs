@@ -309,8 +309,7 @@ impl PaneFlowApp {
         params: &serde_json::Value,
         cx: &mut Context<Self>,
     ) -> IpcReply {
-        let spec = paneflow_api::methods::surface::Split::SPEC;
-        match self.prepare_split(params, spawn_gate_open(&spec, self.ipc_gates), cx) {
+        match self.prepare_split(params, self.ipc_gates, cx) {
             Ok(task) => IpcReply::Async(task),
             Err(error) => IpcReply::Ready(error.into_value()),
         }
@@ -319,7 +318,7 @@ impl PaneFlowApp {
     pub(super) fn prepare_split(
         &mut self,
         params: &serde_json::Value,
-        orchestration_allowed: bool,
+        gates: paneflow_api::Gates,
         cx: &mut Context<Self>,
     ) -> Result<gpui::Task<serde_json::Value>, JsonRpcError> {
         let spec = split_spec(params)?;
@@ -345,10 +344,11 @@ impl PaneFlowApp {
         let setup_runs = worktree_request
             .as_ref()
             .is_some_and(super::worktree_requests::runs_setup);
-        if (setup_runs || pane_spec_requires_orchestration(params)) && !orchestration_allowed {
-            return Err(spawn_gate_refusal(
-                &paneflow_api::methods::surface::Split::SPEC,
-            ));
+        let split = paneflow_api::methods::surface::Split::SPEC;
+        if (setup_runs || pane_spec_requires_orchestration(params))
+            && !spawn_gate_open(&split, gates)
+        {
+            return Err(spawn_gate_refusal(&split, gates));
         }
         let managed_worktree = parse_managed_worktree(params.get("managed_worktree"));
         let anchor = self.split_anchor(spec.surface_id)?;

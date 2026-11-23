@@ -2,13 +2,14 @@
 
 pub mod authorize;
 pub mod descriptor;
+pub mod grants;
 #[macro_use]
 pub mod methods;
 pub mod policy;
 pub mod principal;
 pub mod schema;
 
-pub use authorize::{Decision, Refusal, Scope, authorize};
+pub use authorize::{Decision, Refusal, Scope, authorize, authorize_with};
 pub use descriptor::{Audience, Descriptor, Example, Gate, Method, Owner, Reply, ScopeRule, Spec};
 pub use methods::{Catalog, DuplicateMethod, catalog, declarations, host_catalog};
 pub use policy::{Gates, Policy};

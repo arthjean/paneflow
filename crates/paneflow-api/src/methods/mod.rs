@@ -65,6 +65,7 @@ macro_rules! method {
 
 pub mod config;
 pub mod events;
+pub mod grant;
 pub mod host;
 pub mod layout;
 pub mod prompt;
@@ -280,6 +281,7 @@ pub fn host_protocol_declarations() -> Vec<Descriptor> {
         Descriptor::of::<session::ApprovalFollow>(),
         Descriptor::of::<session::ApprovalDecide>(),
         Descriptor::of::<session::AgentEvent>(),
+        Descriptor::of::<grant::HostGrantsSet>(),
     ]
 }
 
@@ -314,6 +316,10 @@ pub fn worker_declarations() -> Vec<Descriptor> {
         Descriptor::of::<layout::Adopt>(),
         Descriptor::of::<layout::Launch>(),
         Descriptor::of::<layout::Sweep>(),
+        Descriptor::of::<grant::Request>(),
+        Descriptor::of::<grant::List>(),
+        Descriptor::of::<grant::Revoke>(),
+        Descriptor::of::<grant::Delegate>(),
     ]
 }
 

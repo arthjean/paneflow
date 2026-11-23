@@ -29,6 +29,10 @@ impl Authority {
         self.gates.orchestration
     }
 
+    pub(crate) const fn spawns_in_own_workspace_only(&self) -> bool {
+        self.gates.spawn_confined
+    }
+
     pub(crate) const fn switch_open_for_variables(&self) -> bool {
         self.switches.orchestration
     }
@@ -84,6 +88,11 @@ pub(crate) fn refusal_error(method: &str, principal: &Principal, refusal: Refusa
             message: source_mismatch_message(method),
             data,
         },
+        Refusal::GrantsUnsynced => ServeError {
+            code: ERR_METHOD_NOT_FOUND,
+            message: paneflow_api::grants::GRANTS_UNSYNCED_MESSAGE.to_string(),
+            data,
+        },
         Refusal::ScopeRefused => ServeError {
             code: ERR_INVALID_PARAMS,
             message: scope_refusal_message(method, "?", None),
@@ -99,7 +108,14 @@ pub(crate) fn authorize_call(
     params: &mut Value,
 ) -> Result<Authority, ServeError> {
     let policy = worker.policy.current();
-    match paneflow_api::authorize(principal, descriptor, params, &policy) {
+    let (grants, generation) = worker.caller_grants(principal);
+    let view = paneflow_api::grants::GrantView {
+        grants: &grants,
+        now_ms: crate::state::now_ms(),
+        generation,
+        synced: true,
+    };
+    match paneflow_api::authorize_with(principal, descriptor, params, &policy, &view) {
         Decision::Refused { reason } => Err(refusal_error(descriptor.name(), principal, reason)),
         Decision::Allowed { scope, gates } => {
             if let Some(notice) = paneflow_api::policy::deprecation_notice(&policy, &gates) {

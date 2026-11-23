@@ -41,11 +41,12 @@ impl Gate {
         match self {
             Self::Open => None,
             Self::Scripting { .. } => Some(
-                "Refused with -32601 unless ipc.scripting or ai_unrestricted is true in paneflow.json.",
+                "Refused with -32601 unless ipc.scripting or ai_unrestricted is true in paneflow.json, or a write grant covers the calling pane.",
             ),
             Self::OrchestrationWhenSpawning => Some(
                 "A request that sets a command, a prompt or an env is refused with -32601 unless \
-                 ipc.orchestration, ipc.scripting or ai_unrestricted is true in paneflow.json.",
+                 ipc.orchestration, ipc.scripting or ai_unrestricted is true in paneflow.json, or a \
+                 spawn or layout grant covers the calling pane.",
             ),
         }
     }
@@ -55,6 +56,7 @@ impl Gate {
 pub enum Audience {
     Anyone,
     NotPane,
+    PaneOnly,
     PaneflowOnly,
 }
 
@@ -63,6 +65,7 @@ impl Audience {
         match self {
             Self::Anyone => "anyone",
             Self::NotPane => "not_pane",
+            Self::PaneOnly => "pane_only",
             Self::PaneflowOnly => "paneflow_only",
         }
     }

@@ -28,10 +28,12 @@ pub const ACTION_REPLY_DEADLINE: std::time::Duration = std::time::Duration::from
     2 * super::prompt::MAX_TIMEOUT_SECS + SLOW_REPLY_DEADLINE.as_secs(),
 );
 
+const GRANT_REQUEST: &str = "grant.request";
+
 pub fn reply_deadline(method: &str, default: std::time::Duration) -> std::time::Duration {
     if method == ACTION_INVOKE {
         ACTION_REPLY_DEADLINE
-    } else if method == super::prompt::AGENT_PROMPT_RESOLVE {
+    } else if method == super::prompt::AGENT_PROMPT_RESOLVE || method == GRANT_REQUEST {
         std::time::Duration::from_secs(
             super::prompt::AGENT_PROMPT_DEADLINE_SECS + SLOW_REPLY_DEADLINE.as_secs(),
         )

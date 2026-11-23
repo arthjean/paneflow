@@ -78,6 +78,9 @@ pub struct Policy {
 pub struct Gates {
     pub scripting: bool,
     pub orchestration: bool,
+    pub reach: bool,
+    pub spawn_confined: bool,
+    pub stale_grants: bool,
     pub from_deprecated_environment: bool,
 }
 
@@ -89,6 +92,9 @@ impl Gates {
         Self {
             scripting: switches.scripting,
             orchestration: switches.orchestration,
+            reach: switches.orchestration,
+            spawn_confined: false,
+            stale_grants: false,
             from_deprecated_environment: false,
         }
     }

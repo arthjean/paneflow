@@ -336,6 +336,27 @@ fn anchor_pane(
     Ok((index, tab.id, pane))
 }
 
+fn caller_workspace(state: &State, principal: &paneflow_api::Principal) -> Option<u64> {
+    let paneflow_api::Principal::Pane { session, .. } = principal else {
+        return None;
+    };
+    crate::agent_asks::place_of_session(state, session).map(|place| place.workspace)
+}
+
+fn spawn_outside_workspace(method: &str, authority: &crate::authority::Authority) -> ServeError {
+    ServeError {
+        code: crate::protocol::ERR_INVALID_PARAMS,
+        message: format!(
+            "{method} refused: the calling pane's spawn grant covers its own workspace; \
+             launching a command, a prompt or an env in another workspace needs an instance grant"
+        ),
+        data: Some(paneflow_api::authorize::refusal_data(
+            &authority.principal,
+            paneflow_api::Refusal::ScopeRefused,
+        )),
+    }
+}
+
 fn workspace_pane_count(state: &State, index: usize) -> usize {
     state.workspaces.get(index).map_or(0, |ws| {
         ws.tabs.iter().map(paneflow_layout::Tab::pane_count).sum()
@@ -363,6 +384,11 @@ pub(crate) fn surface_split(
     let state = worker.layout.current_state();
     let (ws_index, anchor_tab, anchor) = anchor_pane(&state, params.surface_id)?;
     let ws = &state.workspaces[ws_index];
+    let outside_own_workspace = call.authority.spawns_in_own_workspace_only()
+        && caller_workspace(&state, &call.authority.principal) != Some(ws.id.get());
+    if spawning && outside_own_workspace {
+        return Err(spawn_outside_workspace("surface.split", call.authority));
+    }
     let request = params
         .worktree
         .clone()
@@ -373,7 +399,7 @@ pub(crate) fn surface_split(
         ws.space.as_ref(),
         vec![request],
         "surface.split",
-        call.authority.may_spawn(),
+        call.authority.may_spawn() && !outside_own_workspace,
     )?;
     let created = match prepared.plans.first().and_then(Option::as_ref) {
         Some(plan) => Some((created_worktree(plan)?, created_worktree_cwd(plan)?)),
@@ -455,6 +481,15 @@ pub(crate) fn surface_split(
     };
     let mut built = apply(worker, op)?;
     prepared.keep();
+    if let (
+        paneflow_api::Principal::Pane {
+            session: parent, ..
+        },
+        Some(child),
+    ) = (&call.authority.principal, session_of(&built.state, surface))
+    {
+        worker.pane_grants.record_spawn(parent, child.as_str());
+    }
     let launch_error = built.launch_error.take();
     type_into(worker, &built.state, surface, params.command, params.prompt);
     let ws_index = built
