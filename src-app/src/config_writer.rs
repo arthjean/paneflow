@@ -424,7 +424,26 @@ pub fn save_setting_ordered(
     save_setting_ordered_at(&path, nested, key, value, sequence)
 }
 
-fn save_setting_ordered_at(
+pub fn stored_field(
+    config: &paneflow_config::schema::PaneFlowConfig,
+    key: &str,
+) -> serde_json::Value {
+    serde_json::to_value(config)
+        .ok()
+        .and_then(|config| config.get(key).cloned())
+        .unwrap_or(serde_json::Value::Null)
+}
+
+pub fn config_after_failed_write(
+    in_memory: &paneflow_config::schema::PaneFlowConfig,
+    nested: bool,
+    key: &str,
+    revert_to: Option<serde_json::Value>,
+) -> Option<paneflow_config::schema::PaneFlowConfig> {
+    revert_to.and_then(|stored| with_field(in_memory, nested, key, stored).ok())
+}
+
+pub(crate) fn save_setting_ordered_at(
     path: &PathBuf,
     nested: bool,
     key: &str,
@@ -687,6 +706,36 @@ mod tests {
             SettingWrite::Failed
         );
         assert_eq!(std::fs::read_to_string(&invalid).unwrap(), "{ not json");
+    }
+
+    #[test]
+    fn a_refused_semantic_tokens_write_leaves_the_file_and_restores_the_stored_value() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("paneflow.json");
+        let original = "{\n  \"editor\": { \"semantic_tokens\": false }\n}\n";
+        std::fs::write(&p, original).unwrap();
+        let mut permissions = std::fs::metadata(&p).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&p, permissions.clone()).unwrap();
+
+        let stored = paneflow_config::loader::try_parse_and_validate(original).unwrap();
+        let stored_editor = serde_json::to_value(&stored).unwrap()["editor"].clone();
+        let mut wanted = stored.editor;
+        wanted.semantic_tokens = Some(true);
+        let wanted = serde_json::to_value(wanted).unwrap();
+        let in_memory = with_field(&stored, false, "editor", wanted.clone()).unwrap();
+        assert!(in_memory.editor.semantic_tokens_enabled());
+
+        assert_eq!(
+            save_setting_ordered_at(&p, false, "editor", wanted, 1),
+            SettingWrite::Failed
+        );
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), original);
+        let restored = with_field(&in_memory, false, "editor", stored_editor).unwrap();
+        assert!(!restored.editor.semantic_tokens_enabled());
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(false);
+        std::fs::set_permissions(&p, permissions).unwrap();
     }
 
     #[test]

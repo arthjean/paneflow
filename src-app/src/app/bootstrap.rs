@@ -44,9 +44,20 @@ impl PaneFlowApp {
             .detach();
         let (ipc_rx, ipc_status, event_bus) = ipc::start_server();
         crate::startup_trace::mark("ipc_server_started");
-        cx.on_app_quit(|_, _| {
+        cx.on_app_quit(|_, cx| {
             ipc::release_own_socket();
-            async {}
+            let language_servers =
+                crate::app::diff_dock::code::language_server::client_for_quit(cx);
+            async move {
+                if let Some(client) = language_servers {
+                    smol::unblock(move || {
+                        client.shutdown_all(
+                            crate::app::diff_dock::code::language_server::QUIT_BUDGET,
+                        );
+                    })
+                    .await;
+                }
+            }
         })
         .detach();
         let (app_wake, wake_rx) = super::wake::AppWake::channel();

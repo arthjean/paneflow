@@ -37,6 +37,7 @@ focused library crates:
 | `paneflow-acp` | `crates/paneflow-acp/` | Legacy Claude/Codex identity enum plus the `CLAUDECODE` environment scrub |
 | `paneflow-colrv1` | `crates/paneflow-colrv1/` | COLRv1 color-glyph rasterizer (skrifa paint graph onto tiny-skia, gradients interpolated in linear light) called by the vendored `vendor/gpui_wgpu` Linux text system, whose swash backend reads only COLRv0 and CBDT emoji |
 | `paneflow-highlights` | `crates/paneflow-highlights/` | Pierre's 152 lexers (`@pierre/highlights`) translated to C by wasm2c, compiled by `cc` with bounds-checked memory and no signal handlers, behind a safe live-tokenizer API with byte ranges; layer 1 of the editor's highlighting |
+| `paneflow-lsp` | `crates/paneflow-lsp/` | Minimal Language Server Protocol client for semantic tokens: `Content-Length` framing with a 64 MiB message cap, one server per (server id, Files dock root) on background threads, one automatic restart, `shutdown` then `exit` then a kill after 5 s, incremental document sync in the negotiated `utf-8` or `utf-16` encoding, command resolution from `PATH` or an absolute path only, and the per-root consent store `~/.paneflow/language-server-trust.json` |
 | `paneflow-telemetry` | `crates/paneflow-telemetry/` | Opt-in telemetry plumbing (no event leaves the machine unless consent resolves to `true`) |
 
 `src-app` is the default workspace member, so bare `cargo run` starts the

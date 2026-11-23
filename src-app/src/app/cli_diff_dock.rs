@@ -262,7 +262,7 @@ impl PaneFlowApp {
                         }
                         let plan =
                             restored_dock_plan(&session, &root, |path| existing.contains(path));
-                        app.install_restored_dock(tab_id, session.open, plan, cx);
+                        app.install_restored_dock(tab_id, session.open, plan, root, cx);
                     }
                     cx.notify();
                 });
@@ -276,6 +276,7 @@ impl PaneFlowApp {
         tab_id: u64,
         open: bool,
         plan: RestoredDockPlan,
+        root: std::path::PathBuf,
         cx: &mut Context<Self>,
     ) {
         let tabs: Vec<DiffDockTab> = plan
@@ -285,7 +286,7 @@ impl PaneFlowApp {
                 RestoredDockEntry::Changes => DiffDockTab::Changes,
                 RestoredDockEntry::Files => DiffDockTab::PendingFile,
                 RestoredDockEntry::File(path) => {
-                    DiffDockTab::File(self.new_code_view(path, true, cx))
+                    DiffDockTab::File(self.new_code_view(path, Some(root.clone()), true, cx))
                 }
             })
             .collect();
@@ -573,6 +574,7 @@ impl PaneFlowApp {
         if display == editor_display() {
             return;
         }
+        let servers_changed = display.semantic_tokens != editor_display().semantic_tokens;
         set_editor_display(display);
         let live = self.diff_dock.diff_tabs.iter();
         let parked = self
@@ -582,7 +584,12 @@ impl PaneFlowApp {
             .flat_map(|slot| slot.tabs.iter());
         for tab in live.chain(parked) {
             if let DiffDockTab::File(view) = tab {
-                view.update(cx, |_, cx| cx.notify());
+                view.update(cx, |view, cx| {
+                    if servers_changed {
+                        view.refresh_language_server(cx);
+                    }
+                    cx.notify();
+                });
             }
         }
     }

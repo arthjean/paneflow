@@ -181,7 +181,8 @@ impl PaneFlowApp {
             }
             FileOpen::Insert(index) => {
                 let remembered = self.diff_dock.file_positions.get(&path);
-                let view = self.new_code_view(path, false, cx);
+                let root = self.files_dock_root();
+                let view = self.new_code_view(path, root, false, cx);
                 view.update(cx, |view, cx| {
                     if let Some(position) = remembered {
                         view.restore_position(position);
@@ -203,18 +204,28 @@ impl PaneFlowApp {
         self.focus_diff_tab(index, window, cx);
     }
 
+    pub(crate) fn files_dock_root(&self) -> Option<PathBuf> {
+        self.files_sidebar_root.clone().or_else(|| {
+            self.active_workspace()
+                .map(|workspace| PathBuf::from(&workspace.cwd))
+        })
+    }
+
     pub(crate) fn new_code_view(
         &mut self,
         path: PathBuf,
+        root: Option<PathBuf>,
         deferred: bool,
         cx: &mut Context<Self>,
     ) -> gpui::Entity<CodeView> {
         let view = cx.new(|cx| {
-            if deferred {
+            let mut view = if deferred {
                 CodeView::deferred(path, cx)
             } else {
                 CodeView::new(path, cx)
-            }
+            };
+            view.set_workspace_root(root);
+            view
         });
         let controls = view.read(cx).controls.clone();
         cx.subscribe(

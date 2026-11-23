@@ -191,6 +191,28 @@ impl PaneFlowApp {
         value: serde_json::Value,
         cx: &mut Context<Self>,
     ) {
+        self.persist_setting_with(nested, key, value, None, cx);
+    }
+
+    pub(crate) fn persist_setting_or_revert(
+        &mut self,
+        nested: bool,
+        key: &'static str,
+        value: serde_json::Value,
+        cx: &mut Context<Self>,
+    ) {
+        let stored = config_writer::stored_field(&self.cached_config, key);
+        self.persist_setting_with(nested, key, value, Some(stored), cx);
+    }
+
+    fn persist_setting_with(
+        &mut self,
+        nested: bool,
+        key: &'static str,
+        value: serde_json::Value,
+        revert_to: Option<serde_json::Value>,
+        cx: &mut Context<Self>,
+    ) {
         let default_shell_changed = !nested
             && key == "default_shell"
             && normalized_shell_setting(self.cached_config.default_shell.as_deref())
@@ -241,9 +263,23 @@ impl PaneFlowApp {
                     this.pending_settings.remove(&slot);
                 }
                 if outcome == config_writer::SettingWrite::Failed {
-                    log::warn!(
-                        "settings: failed to persist {key}; choice is in-memory only this session"
-                    );
+                    match config_writer::config_after_failed_write(
+                        &this.cached_config,
+                        nested,
+                        key,
+                        revert_to,
+                    ) {
+                        Some(restored) => {
+                            log::warn!("settings: failed to persist {key}; kept the stored value");
+                            this.cached_config = restored;
+                            crate::config_snapshot::publish(&this.cached_config, cx);
+                            this.apply_setting_effects(nested, key, cx);
+                            cx.notify();
+                        }
+                        None => log::warn!(
+                            "settings: failed to persist {key}; choice is in-memory only this session"
+                        ),
+                    }
                     this.show_toast(format!("Could not save setting: {key}"), cx);
                 }
             });

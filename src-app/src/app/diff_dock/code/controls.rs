@@ -19,6 +19,7 @@ pub(crate) struct EditorDisplay {
     pub(crate) word_wrap: bool,
     pub(crate) markdown_rendered: bool,
     pub(crate) csv_table: bool,
+    pub(crate) semantic_tokens: bool,
 }
 
 impl EditorDisplay {
@@ -29,6 +30,7 @@ impl EditorDisplay {
             word_wrap: config.word_wrap_enabled(),
             markdown_rendered: config.markdown_rendered_enabled(),
             csv_table: config.csv_table_enabled(),
+            semantic_tokens: config.semantic_tokens_enabled(),
         }
     }
 
@@ -39,6 +41,7 @@ impl EditorDisplay {
             "word_wrap": self.word_wrap,
             "markdown_rendered": self.markdown_rendered,
             "csv_table": self.csv_table,
+            "semantic_tokens": self.semantic_tokens,
         })
     }
 }
@@ -48,6 +51,7 @@ static EDITOR_SCROLLBAR: AtomicBool = AtomicBool::new(true);
 static EDITOR_WORD_WRAP: AtomicBool = AtomicBool::new(false);
 static EDITOR_MARKDOWN_RENDERED: AtomicBool = AtomicBool::new(false);
 static EDITOR_CSV_TABLE: AtomicBool = AtomicBool::new(true);
+static EDITOR_SEMANTIC_TOKENS: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn set_editor_display(display: EditorDisplay) {
     EDITOR_MINIMAP.store(display.minimap, Ordering::Relaxed);
@@ -55,6 +59,7 @@ pub(crate) fn set_editor_display(display: EditorDisplay) {
     EDITOR_WORD_WRAP.store(display.word_wrap, Ordering::Relaxed);
     EDITOR_MARKDOWN_RENDERED.store(display.markdown_rendered, Ordering::Relaxed);
     EDITOR_CSV_TABLE.store(display.csv_table, Ordering::Relaxed);
+    EDITOR_SEMANTIC_TOKENS.store(display.semantic_tokens, Ordering::Relaxed);
 }
 
 pub(crate) fn editor_display() -> EditorDisplay {
@@ -64,6 +69,7 @@ pub(crate) fn editor_display() -> EditorDisplay {
         word_wrap: EDITOR_WORD_WRAP.load(Ordering::Relaxed),
         markdown_rendered: EDITOR_MARKDOWN_RENDERED.load(Ordering::Relaxed),
         csv_table: EDITOR_CSV_TABLE.load(Ordering::Relaxed),
+        semantic_tokens: EDITOR_SEMANTIC_TOKENS.load(Ordering::Relaxed),
     }
 }
 
@@ -229,5 +235,29 @@ impl Render for EditorControls {
                     .text_color(if open { ui.text } else { ui.muted }),
             )
             .when(open, |button| button.child(self.menu(cx)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn writing_the_editor_display_keeps_semantic_tokens() {
+        let config = paneflow_config::schema::EditorDisplayConfig {
+            semantic_tokens: Some(true),
+            ..Default::default()
+        };
+        let display = EditorDisplay {
+            minimap: true,
+            ..EditorDisplay::from_config(&config)
+        };
+        let written = display.to_config_value();
+        assert_eq!(written["semantic_tokens"], serde_json::json!(true));
+        assert_eq!(written["minimap"], serde_json::json!(true));
+        let read: paneflow_config::schema::EditorDisplayConfig =
+            serde_json::from_value(written).expect("editor config");
+        assert!(read.semantic_tokens_enabled());
+        assert!(!paneflow_config::schema::EditorDisplayConfig::default().semantic_tokens_enabled());
     }
 }

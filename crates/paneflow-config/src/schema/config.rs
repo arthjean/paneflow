@@ -1,7 +1,7 @@
 use super::{
     AgentPanelConfig, AgentsConfig, CommandDefinition, CursorBlinkConfig, CursorShapeConfig,
-    OpenLinksInConfig, Osc52ClipboardConfig, SpaceConfig, SpaceId, TelemetryConfig, TerminalConfig,
-    UsageConfig,
+    LanguageServersConfig, OpenLinksInConfig, Osc52ClipboardConfig, SpaceConfig, SpaceId,
+    TelemetryConfig, TerminalConfig, UsageConfig,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -55,6 +55,8 @@ pub struct PaneFlowConfig {
     pub workspace_icon: Option<WorkspaceIcon>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub editor: EditorDisplayConfig,
+    #[serde(default, skip_serializing_if = "LanguageServersConfig::is_empty")]
+    pub language_servers: LanguageServersConfig,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub automation: AutomationConfig,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
@@ -155,6 +157,8 @@ pub struct EditorDisplayConfig {
     pub markdown_rendered: Option<bool>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub csv_table: Option<bool>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub semantic_tokens: Option<bool>,
 }
 
 impl EditorDisplayConfig {
@@ -176,6 +180,10 @@ impl EditorDisplayConfig {
 
     pub fn csv_table_enabled(&self) -> bool {
         self.csv_table.unwrap_or(true)
+    }
+
+    pub fn semantic_tokens_enabled(&self) -> bool {
+        self.semantic_tokens.unwrap_or(false)
     }
 }
 

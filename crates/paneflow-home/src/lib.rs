@@ -97,6 +97,10 @@ pub fn window_state_path() -> Option<PathBuf> {
     paneflow_home().map(|home| home.join("window-state.json"))
 }
 
+pub fn language_server_trust_path() -> Option<PathBuf> {
+    paneflow_home().map(|home| home.join("language-server-trust.json"))
+}
+
 pub fn cache_dir() -> Option<PathBuf> {
     paneflow_home().map(|home| cache_dir_in(&home))
 }
@@ -439,6 +443,10 @@ mod tests {
             home.join("path-history.json")
         );
         assert_eq!(cache_dir().expect("cache"), home.join("cache"));
+        assert_eq!(
+            language_server_trust_path().expect("language server trust"),
+            home.join("language-server-trust.json")
+        );
         assert_eq!(
             path_index_path().expect("path index"),
             home.join("cache").join("path-index.bin")

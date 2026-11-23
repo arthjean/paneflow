@@ -444,6 +444,7 @@ impl CodeView {
             self.open(path, cx);
             return;
         }
+        self.detach_language_server(cx);
         self.state = CodeLoadState::Failed(error);
         self.history.clear();
         self.saved_mark = edit::HistoryMark::default();
@@ -479,7 +480,9 @@ impl CodeView {
         {
             doc.set_read_only(None);
         }
+        self.replacing_from_disk = true;
         let replaced = self.splice_all(ops, after, EditGroup::Atomic, cx);
+        self.replacing_from_disk = false;
         if let Some(reason) = reason
             && let Some(doc) = self.state.document_mut()
         {

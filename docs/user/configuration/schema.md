@@ -78,7 +78,8 @@ JetBrains IDEs, Helix, and other JSON Schema-aware editors:
 | `linux_chrome_material` | boolean/null | `false` | Window/chrome render | Linux-only translucent veil behind the sidebar and the title bar, so a compositor blur shows through. The Blended background style sets it to `true`, Themed to `false`. Ignored on other platforms. |
 | `option_as_meta` | boolean/null | `true` on Linux and Windows, `false` on macOS | Hot reload | Sends Alt/Option as ESC-prefix Meta. On macOS, `true` makes Option plus a letter send Meta instead of composing a character; keep `false` when Option should type Unicode characters. A config reload applies it to open terminals. |
 | `shell_integration` | boolean/null | `true` | New terminal | Enables Paneflow shell snippets for OSC 7 CWD and OSC 133 command marks. |
-| `editor` | object/null | minimap off, scrollbar on | Hot reload | What the code editor draws beside the text: `minimap` adds a minimap along the right edge, `scrollbar` keeps the vertical scrollbar. Toggled from the editor's controls menu; the choice applies to every open file. |
+| `editor` | object/null | minimap off, scrollbar on, semantic tokens off | Hot reload | What the code editor draws beside the text: `minimap` adds a minimap along the right edge, `scrollbar` keeps the vertical scrollbar. Toggled from the editor's controls menu; the choice applies to every open file. `semantic_tokens` colors code with the semantic tokens of a language server from [`language_servers`](#language_servers), over the syntax colors; toggled from Settings > Editor > Semantic highlighting. |
+| `language_servers` | object | rust-analyzer and zls built in | Next file opened | Language servers for semantic highlighting, by server id. See [`language_servers`](#language_servers). |
 | `automation` | object/null | all off | Hot reload | Background work run after an agent turn: `tab_auto_naming` summarizes the session's recent exchange into a 2-5 word tab name through the agent's own CLI (`claude -p`, `codex exec`, `opencode run`, `pi --print`) with tools disabled, at most once per three minutes per session and only when the conversation grew. A name you typed is never replaced; "Reset name" reopens the tab to it. |
 | `submit_paste_delay_ms` | integer/null | `70` | IPC send | Floor delay between bracketed paste and Enter for `paneflow send --submit`. Range `10` to `5000`. |
 | `external_editor` | string/null | `auto` | Next open action | Editor that opens file links, including terminal file links: `auto`, `system`, `zed`, `cursor`, `webstorm`, `code`, or `visual_studio`. `auto` uses `$VISUAL`, then `$EDITOR`, then the first known editor on `PATH`; `system` always uses the OS opener. A named editor that is not on `PATH` falls back to `auto`. |
@@ -207,6 +208,60 @@ Delete drops the ref. A clean worktree leaves no snapshot.
   }
 }
 ```
+
+## `language_servers`
+
+With `editor.semantic_tokens` on, opening a file in the Files dock starts the
+language server that handles its extension, one process per server and Files
+dock root, shared by every open file of that root and stopped when the last of
+them closes. A file outside the Files dock root gets no server. Two servers are
+built in: `rust-analyzer` for `.rs` files and `zls` for `.zig` and `.zon` files.
+
+A language server can run the project it opens, for example its build scripts
+and procedural macros. The first time a server would start for a root, the
+editor asks with a banner naming both, and starts the server only on
+**Start**. The answer is kept in `~/.paneflow/language-server-trust.json`
+(`%USERPROFILE%\.paneflow\language-server-trust.json` on Windows), never in
+the repository; **Not now** asks again after Paneflow restarts. **Forget
+language server permissions** in Settings > Editor empties the file.
+
+Paneflow never downloads a server. A `command` that is a bare name is searched
+on `PATH`, an absolute path is used as written, and a relative path is
+rejected. A server that cannot be found does not start, and the next file
+starts it once it is installed and Paneflow restarts. A server that exits or
+breaks the protocol is restarted once; a second failure leaves it stopped.
+
+| Key | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `language_servers.<id>.command` | string | built-in value | Program to run: a bare name found on `PATH` or an absolute path. Required for an id that is not built in. |
+| `language_servers.<id>.args` | string array | `[]` | Arguments passed to the program. |
+| `language_servers.<id>.extensions` | string array | built-in value | File extensions, without the dot, whose files the server handles. Required for an id that is not built in. |
+| `language_servers.<id>.language_id` | string | built-in value | The LSP `languageId` sent when a document opens. Required for an id that is not built in. |
+| `language_servers.<id>.enabled` | boolean | `true` | `false` keeps the server from starting. |
+| `language_servers.<id>.initialization_options` | any | none | Sent as `initializationOptions` in the server's `initialize` request. |
+| `language_servers.<id>.settings` | any | none | Returned to the server's `workspace/configuration` requests: an item naming a section that is a key of this object gets that key's value, any other item the whole object. |
+
+An entry with a built-in id replaces only the fields it sets. Any other id adds
+a server. gopls, for example, sends semantic tokens only when its
+`semanticTokens` setting is on:
+
+```json
+{
+  "editor": { "semantic_tokens": true },
+  "language_servers": {
+    "rust-analyzer": { "command": "/opt/rust-analyzer/bin/rust-analyzer" },
+    "gopls": {
+      "command": "gopls",
+      "extensions": ["go"],
+      "language_id": "go",
+      "settings": { "semanticTokens": true }
+    }
+  }
+}
+```
+
+A malformed entry, an unknown field included, is skipped with a log line and
+the other entries still load.
 
 ## `agent_profiles`
 

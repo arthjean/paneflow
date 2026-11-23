@@ -114,6 +114,46 @@ impl CodeView {
             ),
             DiskState::InSync => {}
         }
+        if let Some(pair) = self.language_server_link().consent()
+            && !super::super::language_server::hub_declines(pair, cx)
+        {
+            out.push(
+                row()
+                    .bg(ui.overlay)
+                    .text_color(ui.text)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .debug_selector(|| CONSENT_TEXT.into())
+                            .child(consent_text(&pair.server_id, &pair.root)),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_none()
+                            .gap_2()
+                            .debug_selector(|| CONSENT_BUTTONS.into())
+                            .child(conflict_button(
+                                "code-language-server-start",
+                                "Start",
+                                ui,
+                                cx.listener(|this, _: &MouseDownEvent, _w, cx| {
+                                    this.start_language_server(cx)
+                                }),
+                            ))
+                            .child(conflict_button(
+                                "code-language-server-not-now",
+                                "Not now",
+                                ui,
+                                cx.listener(|this, _: &MouseDownEvent, _w, cx| {
+                                    this.decline_language_server(cx)
+                                }),
+                            )),
+                    )
+                    .into_any_element(),
+            );
+        }
         if let Some(message) = &self.save_error {
             out.push(
                 row()
@@ -352,6 +392,16 @@ fn read_only_text(reason: ReadOnlyReason) -> String {
     )
 }
 
+pub(super) const CONSENT_TEXT: &str = "code-language-server-consent-text";
+pub(super) const CONSENT_BUTTONS: &str = "code-language-server-consent-buttons";
+
+pub(super) fn consent_text(server_id: &str, root: &std::path::Path) -> String {
+    format!(
+        "Start {server_id} for {}? A language server can run this project's build scripts.",
+        root.display()
+    )
+}
+
 pub(super) fn conflict_button(
     id: &'static str,
     label: &'static str,
@@ -360,6 +410,8 @@ pub(super) fn conflict_button(
 ) -> AnyElement {
     div()
         .id(id)
+        .debug_selector(move || id.into())
+        .flex_none()
         .px_2()
         .py_0p5()
         .rounded_sm()

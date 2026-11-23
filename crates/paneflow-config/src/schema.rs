@@ -1,6 +1,7 @@
 mod agent_panel;
 mod config;
 mod identity;
+mod language_servers;
 mod layout;
 mod session;
 mod space;
@@ -9,6 +10,7 @@ mod terminal;
 pub use agent_panel::*;
 pub use config::*;
 pub use identity::*;
+pub use language_servers::*;
 pub use layout::*;
 pub use session::*;
 pub use space::*;
@@ -91,7 +93,20 @@ mod tests {
                 word_wrap: Some(true),
                 markdown_rendered: Some(true),
                 csv_table: Some(false),
+                semantic_tokens: Some(true),
             },
+            language_servers: LanguageServersConfig(BTreeMap::from([(
+                "gopls".to_string(),
+                LanguageServerEntry {
+                    command: Some("gopls".to_string()),
+                    args: Some(Vec::new()),
+                    extensions: Some(vec!["go".to_string()]),
+                    language_id: Some("go".to_string()),
+                    enabled: Some(true),
+                    initialization_options: Some(serde_json::json!({})),
+                    settings: Some(serde_json::json!({"semanticTokens": true})),
+                },
+            )])),
             automation: AutomationConfig {
                 tab_auto_naming: Some(true),
             },
@@ -218,6 +233,11 @@ mod tests {
             object_keys(&serialized["editor"]),
             object_keys(&schema["properties"]["editor"]["properties"]),
             "EditorDisplayConfig and public JSON Schema drifted"
+        );
+        assert_eq!(
+            object_keys(&serialized["language_servers"]["gopls"]),
+            object_keys(&schema["definitions"]["languageServer"]["properties"]),
+            "LanguageServerEntry and public JSON Schema drifted"
         );
         assert_eq!(
             object_keys(&serialized["automation"]),
@@ -380,6 +400,23 @@ mod tests {
             &doc,
             &schema["properties"]["sidebar_show"]["properties"],
             "sidebar_show",
+        );
+        assert!(
+            schema["properties"]["editor"]["properties"]
+                .get("semantic_tokens")
+                .is_some()
+                && doc.contains("`semantic_tokens`"),
+            "the schema and the docs describe editor.semantic_tokens"
+        );
+        assert_doc_mentions_property_keys(
+            &doc,
+            &schema["definitions"]["languageServer"]["properties"],
+            "languageServer",
+        );
+        assert!(
+            doc.contains("\"gopls\": {")
+                && doc.contains("\"settings\": { \"semanticTokens\": true }"),
+            "the language_servers docs show a gopls entry with semanticTokens in its settings"
         );
         assert_doc_mentions_property_keys(
             &doc,

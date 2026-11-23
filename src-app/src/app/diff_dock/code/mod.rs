@@ -8,6 +8,7 @@ pub(crate) mod edit;
 pub(crate) mod element;
 pub(crate) mod first_frame;
 pub(crate) mod highlight;
+pub(crate) mod language_server;
 #[cfg(test)]
 mod lexer_compare;
 #[cfg(test)]

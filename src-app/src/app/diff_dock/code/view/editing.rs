@@ -51,11 +51,20 @@ impl CodeView {
         let mut edits = Vec::with_capacity(ops.len());
         let mut deferred: Option<DeferredParse> = None;
         let mut changes = Vec::with_capacity(ops.len() * 2);
+        let mut server_edits = Vec::new();
+        let wants_server_edits = self.wants_language_server_edits();
         if let Some((doc, hl)) = self.state.editable() {
             for (range, text) in ops {
                 let Some(applied) = edit::splice(doc, range.clone(), text) else {
                     continue;
                 };
+                if wants_server_edits {
+                    server_edits.push(paneflow_lsp::TextChange {
+                        start_byte: applied.edit.start_byte,
+                        old_end_byte: applied.edit.old_end_byte,
+                        text: applied.record.inserted.clone(),
+                    });
+                }
                 if batched {
                     edits.push(applied.edit);
                 } else if let HighlightOutcome::Deferred(parse) = hl.edit(doc, &applied.edit) {
@@ -74,6 +83,7 @@ impl CodeView {
         if records.is_empty() {
             return false;
         }
+        self.send_language_server_edits(server_edits);
         self.history.push(records, before, after, group, now);
         self.note_changes(&changes, cx);
         self.finish_edit(after, deferred, cx);
@@ -332,8 +342,17 @@ impl CodeView {
         let mut deferred: Option<DeferredParse> = None;
         let mut restored = None;
         let mut changes = Vec::new();
+        let mut server_edits = Vec::new();
+        let wants_server_edits = self.wants_language_server_edits();
         if let Some((doc, hl)) = self.state.editable() {
             let mut highlight = |doc: &CodeDocument, edit: &CodeEdit| {
+                if wants_server_edits {
+                    server_edits.push(paneflow_lsp::TextChange {
+                        start_byte: edit.start_byte,
+                        old_end_byte: edit.old_end_byte,
+                        text: doc.slice_string(edit.start_byte..edit.new_end_byte),
+                    });
+                }
                 if let HighlightOutcome::Deferred(parse) = hl.edit(doc, edit) {
                     deferred = Some(parse);
                 }
@@ -351,6 +370,7 @@ impl CodeView {
         let Some(selection) = restored else {
             return;
         };
+        self.send_language_server_edits(server_edits);
         self.note_changes(&changes, cx);
         self.finish_edit(selection, deferred, cx);
     }

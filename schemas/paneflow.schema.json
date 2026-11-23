@@ -205,8 +205,19 @@
           "type": ["boolean", "null"],
           "description": "Show CSV and TSV files as a table in the dock rather than as source. The header's table and source toggle sets it for every delimited file. Default true.",
           "default": true
+        },
+        "semantic_tokens": {
+          "type": ["boolean", "null"],
+          "description": "Color code with the semantic tokens of a language server, over the syntax colors. A server listed in language_servers starts only for a file of its extensions inside the Files dock root, and only after you allow it once for that root, because a language server can run the project's build scripts. Toggled from Settings > Editor > Semantic highlighting. Default false.",
+          "default": false
         }
       }
+    },
+    "language_servers": {
+      "type": "object",
+      "description": "Language servers for semantic highlighting, by server id. rust-analyzer (rs, languageId rust) and zls (zig and zon, languageId zig) are built in; an entry with a built-in id replaces the fields it sets, and any other id adds a server, which needs command, extensions and language_id. Servers come only from PATH or an absolute path written here: Paneflow never downloads one, and a project's own files never configure one. A malformed entry is skipped with a log line.",
+      "additionalProperties": { "$ref": "#/definitions/languageServer" },
+      "default": {}
     },
     "automation": {
       "type": ["object", "null"],
@@ -671,6 +682,43 @@
     }
   },
   "definitions": {
+    "languageServer": {
+      "type": "object",
+      "description": "One language server.",
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "type": "string",
+          "description": "Program to run: a bare name searched on PATH, or an absolute path. A relative path is rejected."
+        },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Arguments passed to the program.",
+          "default": []
+        },
+        "extensions": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "File extensions, without the dot, whose files this server handles."
+        },
+        "language_id": {
+          "type": "string",
+          "description": "The LSP languageId sent when a document opens, for example rust, zig or go."
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "false keeps the server from starting. Default true.",
+          "default": true
+        },
+        "initialization_options": {
+          "description": "Sent as initializationOptions in the server's initialize request."
+        },
+        "settings": {
+          "description": "Returned to the server's workspace/configuration requests: an item naming a section that is a key of this object gets that key's value, any other item the whole object."
+        }
+      }
+    },
     "space": {
       "type": "object",
       "required": ["id", "name"],

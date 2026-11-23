@@ -42,6 +42,7 @@ fn test_serialization_roundtrip() {
         sidebar_group_by: None,
         workspace_icon: None,
         editor: EditorDisplayConfig::default(),
+        language_servers: Default::default(),
         automation: AutomationConfig::default(),
         worktrees: WorktreesConfig::default(),
         line_height: None,

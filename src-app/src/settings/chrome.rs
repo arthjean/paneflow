@@ -96,6 +96,21 @@ const NAV_GROUPS: &[NavGroup] = &[
                 keywords: &["cursor", "font", "font family", "font size"],
             },
             NavItem {
+                section: SettingsSection::Editor,
+                label: "Editor",
+                icon: "icons/settings/pencil-edit-02.svg",
+                keywords: &[
+                    "editor",
+                    "semantic",
+                    "highlighting",
+                    "language server",
+                    "lsp",
+                    "rust-analyzer",
+                    "zls",
+                    "permissions",
+                ],
+            },
+            NavItem {
                 section: SettingsSection::Workspaces,
                 label: "Workspaces",
                 icon: "icons/settings/dashboard-square-01.svg",
@@ -225,6 +240,7 @@ pub(crate) fn section_title(section: SettingsSection) -> &'static str {
         SettingsSection::Appearance => "Appearance",
         SettingsSection::Shortcuts => "Keyboard Shortcuts",
         SettingsSection::Terminal => "Terminal",
+        SettingsSection::Editor => "Editor",
         SettingsSection::Agents => "Agents",
         SettingsSection::Usage => "Usage",
         SettingsSection::McpServers => "Plugins",
@@ -461,6 +477,8 @@ impl PaneFlowApp {
             self.render_worktrees_heading(title_text)
         } else if section == SettingsSection::Terminal {
             self.render_terminal_heading(title_text)
+        } else if section == SettingsSection::Editor {
+            self.render_editor_heading(title_text)
         } else if section == SettingsSection::Appearance {
             self.render_appearance_heading(title_text)
         } else if section == SettingsSection::General {
@@ -512,6 +530,7 @@ impl PaneFlowApp {
                 .render_appearance_content(window, cx)
                 .into_any_element(),
             SettingsSection::Terminal => self.render_terminal_content(cx).into_any_element(),
+            SettingsSection::Editor => self.render_editor_content(cx).into_any_element(),
             SettingsSection::Agents => self.render_agents_content(cx),
             SettingsSection::Usage => self.render_usage_content(window, cx),
             SettingsSection::McpServers => self.render_mcp_servers_content(cx).into_any_element(),

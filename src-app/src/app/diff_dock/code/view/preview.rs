@@ -122,13 +122,18 @@ impl CodeView {
                 self.start_initial_parse(cx);
                 self.start_lexical(cx);
                 self.start_base_load(cx);
+                self.language_server_document_replaced(cx);
             }
             Ok(opened) => {
                 self.disk_stamp = stamp;
                 self.buffer_stamp = stamp;
+                self.detach_language_server(cx);
                 self.install_preview(opened, reuse, cx);
             }
-            Err(err) => self.state = CodeLoadState::Failed(err),
+            Err(err) => {
+                self.detach_language_server(cx);
+                self.state = CodeLoadState::Failed(err);
+            }
         }
     }
 

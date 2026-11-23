@@ -5,6 +5,7 @@ mod editing;
 mod find;
 mod input_handler;
 mod keymap;
+mod language_server_link;
 mod motion;
 mod pointer;
 mod preview;
@@ -243,6 +244,10 @@ pub(crate) struct CodeView {
     kind: crate::app::diff_dock::preview::PreviewKind,
     rendered: bool,
     rendered_views: preview::RenderedViews,
+    workspace_root: Option<PathBuf>,
+    language_server: super::language_server::LanguageServerLink,
+    language_server_generation: u64,
+    replacing_from_disk: bool,
     _watcher: Option<RecommendedWatcher>,
     _watch_bridge: Option<WatchBridge>,
 }
@@ -372,6 +377,10 @@ impl CodeView {
                 &path_kind,
             )),
             rendered_views: preview::RenderedViews::none(),
+            workspace_root: None,
+            language_server: super::language_server::LanguageServerLink::Off,
+            language_server_generation: 0,
+            replacing_from_disk: false,
             _watcher: None,
             _watch_bridge: None,
         }
@@ -455,6 +464,10 @@ impl CodeView {
                 &path_kind,
             )),
             rendered_views: preview::RenderedViews::none(),
+            workspace_root: None,
+            language_server: super::language_server::LanguageServerLink::Off,
+            language_server_generation: 0,
+            replacing_from_disk: false,
             _watcher: None,
             _watch_bridge: None,
         }
@@ -756,6 +769,7 @@ impl CodeView {
         self.element_id = format!("code-view:{}", path.display()).into();
         self.path = path;
         self.state = CodeLoadState::Loading;
+        self.language_server = super::language_server::LanguageServerLink::Off;
         self.h_offset = 0.0;
         self.selection = CodeSelection::default();
         self.goal_column = 0;

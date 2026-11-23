@@ -4418,6 +4418,7 @@ dependencies = [
  "paneflow-home",
  "paneflow-host",
  "paneflow-ipc-client",
+ "paneflow-lsp",
  "paneflow-mcp-install",
  "paneflow-minisign",
  "paneflow-process",

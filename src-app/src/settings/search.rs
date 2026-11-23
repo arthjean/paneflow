@@ -209,6 +209,20 @@ const TERMINAL_COPIES: &[&SettingCopy] = &[
     &SCROLLBAR,
     &MINIMUM_CONTRAST,
 ];
+pub(crate) const SEMANTIC_HIGHLIGHTING: SettingCopy = SettingCopy {
+    title: "Semantic highlighting",
+    description: "Color code with the semantic tokens of a language server, over the syntax \
+                  colors. A server starts for a project only after you allow it once in the \
+                  editor, because it can run the project's build scripts.",
+};
+pub(crate) const LANGUAGE_SERVER_PERMISSIONS: SettingCopy = SettingCopy {
+    title: "Language server permissions",
+    description: "Projects where you allowed a language server to start. Forgetting them makes \
+                  the editor ask again; servers already running keep running until their last \
+                  tab closes.",
+};
+const EDITOR_COPIES: &[&SettingCopy] = &[&SEMANTIC_HIGHLIGHTING, &LANGUAGE_SERVER_PERMISSIONS];
+const EDITOR_HEADERS: &[&str] = &["Language servers"];
 const WORKTREES_COPIES: &[&SettingCopy] =
     &[&WORKTREE_ROOT, &AUTO_REMOVE_WORKTREES, &WORKTREE_KEEP_LIMIT];
 const MCP_COPIES: &[&SettingCopy] = &[&MCP_BRIDGE];
@@ -251,6 +265,7 @@ fn section_copies(section: SettingsSection) -> &'static [&'static SettingCopy] {
         SettingsSection::Appearance => APPEARANCE_COPIES,
         SettingsSection::Terminal => TERMINAL_COPIES,
         SettingsSection::Worktrees => WORKTREES_COPIES,
+        SettingsSection::Editor => EDITOR_COPIES,
         SettingsSection::McpServers => MCP_COPIES,
         SettingsSection::Agents => AGENTS_COPIES,
         SettingsSection::Usage => USAGE_COPIES,
@@ -269,6 +284,7 @@ fn section_headers(section: SettingsSection) -> &'static [&'static str] {
         SettingsSection::Workspaces => WORKSPACES_HEADERS,
         SettingsSection::Spaces => SPACES_HEADERS,
         SettingsSection::Worktrees => WORKTREES_HEADERS,
+        SettingsSection::Editor => EDITOR_HEADERS,
         SettingsSection::Shortcuts => &[],
     }
 }
