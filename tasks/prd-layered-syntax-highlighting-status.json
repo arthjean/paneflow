@@ -25,7 +25,7 @@
     {
       "id": "EP-003",
       "title": "Progressive highlighting in the editor",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "stories_total": 7,
       "stories_done": 0
@@ -209,13 +209,13 @@
       "id": "US-011",
       "title": "Color the first frame from layer 1",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "blocked_by": [
         "US-007",
         "US-008"
       ],
-      "started_at": null,
+      "started_at": "2026-11-22",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -223,12 +223,12 @@
       "id": "US-012",
       "title": "Keep edited rows colored through layer 1",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "blocked_by": [
         "US-011"
       ],
-      "started_at": null,
+      "started_at": "2026-11-22",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -236,12 +236,12 @@
       "id": "US-013",
       "title": "Color languages that have no grammar",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "blocked_by": [
         "US-011"
       ],
-      "started_at": null,
+      "started_at": "2026-11-22",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -249,12 +249,12 @@
       "id": "US-014",
       "title": "Keep nested code colored after the tree arrives",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "blocked_by": [
         "US-011"
       ],
-      "started_at": null,
+      "started_at": "2026-11-22",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -262,12 +262,12 @@
       "id": "US-015",
       "title": "Color files between the tree-sitter cap and the editor cap",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "blocked_by": [
         "US-011"
       ],
-      "started_at": null,
+      "started_at": "2026-11-22",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -275,7 +275,7 @@
       "id": "US-016",
       "title": "Measure the layers in the editor bench",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "blocked_by": [
         "US-010",
@@ -284,7 +284,7 @@
         "US-014",
         "US-015"
       ],
-      "started_at": null,
+      "started_at": "2026-11-22",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -292,13 +292,13 @@
       "id": "US-017",
       "title": "Use layer 1 in the diff view for languages without a grammar",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "blocked_by": [
         "US-007",
         "US-008"
       ],
-      "started_at": null,
+      "started_at": "2026-11-22",
       "completed_at": null,
       "reviewed_at": null
     },

@@ -436,13 +436,13 @@ The editor paints layer 1 wherever layer 2 is not ready or not available, and ke
 **t3code reference** (local checkout `/home/arthur/dev/t3code` at `30372d0f`): `apps/web/src/lib/syntaxHighlighting.ts:13-44`: extension overrides for dialects the lexers lack (`luau`, `xsl`, `xslt`) and the fallback to `"text"` when a language fails to load.
 
 **Acceptance Criteria:**
-- [ ] Given a file at or under its tree-sitter cap with a known lexer language, when `open_blocking` builds the highlighter off the render thread (R18), then it lexes the whole document before the document is shown
-- [ ] Given that document, when its first frame paints, then `runs_into` returns layer-1 runs for every row that has a non-whitespace token
-- [ ] Given layer-2 rows that become `Fresh`, when they paint, then they show layer-2 colors and no layer-1 color outside nested-code regions
-- [ ] Given a file whose extension has neither a grammar nor a lexer language, when it opens, then it renders plain and editable as today
-- [ ] Given a lexer error while opening, when the highlighter is built, then layer 1 is off for that document and layer 2 still runs
-- [ ] Given that lexer error, when it happens, then one warning is logged with the file's extension and the error
-- [ ] Given the theme switched while a document is open, when its rows repaint, then layer-1 colors follow the new palette without re-lexing
+- [x] Given a file at or under its tree-sitter cap with a known lexer language, when `open_blocking` builds the highlighter off the render thread (R18), then it lexes at least the rows of the first viewport before the document is shown, and the rest of the document is lexed by idle slices before layer 2 is needed (amended 2026-11-22 with Arthur's approval: it used to lex the whole document before the document was shown)
+- [x] Given that document, when its first frame paints, then `runs_into` returns layer-1 runs for every shown row that has a non-whitespace token, and every such row of the document has them once the idle scan reaches the end (amended with the criterion above)
+- [x] Given layer-2 rows that become `Fresh`, when they paint, then they show layer-2 colors and no layer-1 color outside nested-code regions
+- [x] Given a file whose extension has neither a grammar nor a lexer language, when it opens, then it renders plain and editable as today
+- [x] Given a lexer error while opening, when the highlighter is built, then layer 1 is off for that document and layer 2 still runs
+- [x] Given that lexer error, when it happens, then one warning is logged with the file's extension and the error
+- [x] Given the theme switched while a document is open, when its rows repaint, then layer-1 colors follow the new palette without re-lexing
 
 #### US-012: Keep edited rows colored through layer 1
 **Description:** As a user typing, I want the row I am editing to stay colored so that the code does not flash plain on every keystroke.
@@ -451,12 +451,12 @@ The editor paints layer 1 wherever layer 2 is not ready or not available, and ke
 **Dependencies:** Blocked by US-011
 
 **Acceptance Criteria:**
-- [ ] Given an edit batch, when `edit_batch` runs, then the same byte edits are applied to the layer-1 document on the render thread
-- [ ] Given the edited row, when the next frame paints before layer 2 requeries it, then it shows layer-1 colors
-- [ ] Given the test at `highlight.rs:1537`, when it runs, then it asserts layer-1 colors on the edited row instead of a plain row
-- [ ] Given a layer-1 re-lex that exceeds `SYNC_PARSE_BUDGET`, when the budget is reached, then the rest of the re-lex runs off the render thread
-- [ ] Given that deferred re-lex, when the next frame paints before it finishes, then the affected rows show their previous layer-1 runs shifted by the edit
-- [ ] Given an undo of the edit, when it is applied, then the layer-1 and layer-2 rows equal those of a fresh open of the same text
+- [x] Given an edit batch, when `edit_batch` runs, then the same byte edits are applied to the layer-1 document on the render thread
+- [x] Given the edited row, when the next frame paints before layer 2 requeries it, then it shows layer-1 colors
+- [x] Given the test at `highlight.rs:1537`, when it runs, then it asserts layer-1 colors on the edited row instead of a plain row
+- [x] Given a layer-1 re-lex that reaches past the edited rows, when the edit is applied, then the render thread scans only the edited rows and a short tail within `SYNC_PARSE_BUDGET`, each frame scans up to its last shown row, and the rest of the re-lex runs in idle slices of at most `IDLE_SLICE_BUDGET` between frames (amended 2026-11-22 with Arthur's approval: it used to run off the render thread as a full relex)
+- [x] Given that deferred re-lex, when the next frame paints before it finishes, then the affected rows show their previous layer-1 runs shifted by the edit
+- [x] Given an undo of the edit, when it is applied, then the layer-1 and layer-2 rows equal those of a fresh open of the same text
 
 #### US-013: Color languages that have no grammar
 **Description:** As a user opening Kotlin, Lua, Swift, SQL or any of Pierre's languages without a tree-sitter grammar, I want them colored so that only truly unknown files are plain.
@@ -466,11 +466,11 @@ The editor paints layer 1 wherever layer 2 is not ready or not available, and ke
 **t3code reference** (local checkout `/home/arthur/dev/t3code` at `30372d0f`): `apps/web/src/lib/syntaxHighlighting.ts:35-41`: an unknown or failing language degrades to plain text, never to an error.
 
 **Acceptance Criteria:**
-- [ ] Given a file with a lexer language and no grammar, when it opens, then the highlighter is enabled with layer 1 only
-- [ ] Given that file, when `fill_stale_rows` is called, then it returns without querying and leaves the layer-1 rows unchanged
-- [ ] Given that file, when it is edited, then the edited row is colored at the next paint as in US-012
-- [ ] Given that file with the minimap on, when the minimap paints, then it shows the same layer-1 colors as the editor
-- [ ] Given that file larger than 10 MiB, when it is opened, then the large-text preview shows it plain, unchanged from today
+- [x] Given a file with a lexer language and no grammar, when it opens, then the highlighter is enabled with layer 1 only
+- [x] Given that file, when `fill_stale_rows` is called, then it returns without querying and leaves the layer-1 rows unchanged
+- [x] Given that file, when it is edited, then the edited row is colored at the next paint as in US-012
+- [x] Given that file with the minimap on, when the minimap paints, then it shows the same layer-1 colors as the editor
+- [x] Given that file larger than 10 MiB, when it is opened, then the large-text preview shows it plain, unchanged from today
 
 #### US-014: Keep nested code colored after the tree arrives
 **Description:** As a user reading Markdown with code blocks or HTML with scripts, I want the nested code colored so that a README reads like the code it shows.
@@ -479,12 +479,12 @@ The editor paints layer 1 wherever layer 2 is not ready or not available, and ke
 **Dependencies:** Blocked by US-011
 
 **Acceptance Criteria:**
-- [ ] Given a Markdown file with a fenced Rust block, when the layer-2 tree is fresh, then the bytes of `code_fence_content` show layer-1 colors
-- [ ] Given the same file, when the fence delimiter and info string paint, then they keep their layer-2 `punctuation.embedded.markup` color
-- [ ] Given an HTML file with `<script>`, when the tree is fresh, then the bytes of `raw_text` inside it show layer-1 colors
-- [ ] Given an HTML file with `<style>`, when the tree is fresh, then the bytes of `raw_text` inside it show layer-1 colors
-- [ ] Given the nested-region table, when the guard test runs, then every node kind in it exists in its grammar's node types
-- [ ] Given a fence whose info string Pierre does not know, when the file paints, then it renders without a panic and the fence delimiters keep their layer-2 color
+- [x] Given a Markdown file with a fenced Rust block, when the layer-2 tree is fresh, then the bytes of `code_fence_content` show layer-1 colors
+- [x] Given the same file, when the fence delimiter and info string paint, then they keep their layer-2 `punctuation.embedded.markup` color
+- [x] Given an HTML file with `<script>`, when the tree is fresh, then the bytes of `raw_text` inside it show layer-1 colors
+- [x] Given an HTML file with `<style>`, when the tree is fresh, then the bytes of `raw_text` inside it show layer-1 colors
+- [x] Given the nested-region table, when the guard test runs, then every node kind in it exists in its grammar's node types
+- [x] Given a fence whose info string Pierre does not know, when the file paints, then it renders without a panic and the fence delimiters keep their layer-2 color
 
 #### US-015: Color files between the tree-sitter cap and the editor cap
 **Description:** As a user opening a generated or vendored file of a few megabytes, I want colors so that large files are not plain by default.
@@ -493,13 +493,13 @@ The editor paints layer 1 wherever layer 2 is not ready or not available, and ke
 **Dependencies:** Blocked by US-011
 
 **Acceptance Criteria:**
-- [ ] Given a file above `highlight_cap` and at most `MAX_FILE_BYTES`, when it opens, then its first frame is plain
-- [ ] Given that file, when it opens, then its layer-1 lex runs off the render thread
-- [ ] Given that lex finished, when the next frame paints, then the visible rows show layer-1 colors
-- [ ] Given a 10 MiB Rust file, when the bench measures it, then the retained layer-1 memory is recorded in this PRD
-- [ ] Given the recorded memory above 8 bytes per input byte (assumption A4), when the story completes, then a named constant caps layer 1 at the largest size that stays at or under 8 bytes per input byte
-- [ ] Given a lexer error on a large file, when it happens, then the file stays plain and editable
-- [ ] Given that lexer error, when it happens, then one warning is logged
+- [x] Given a file above `highlight_cap` and at most `MAX_FILE_BYTES`, when it opens, then its first frame is plain
+- [x] Given that file, when it opens, then its layer-1 lex runs off the render thread
+- [x] Given that lex finished, when the next frame paints, then the visible rows show layer-1 colors
+- [x] Given a 10 MiB Rust file, when the bench measures it, then the retained layer-1 memory is recorded in this PRD
+- [x] Given the recorded memory above 8 bytes per input byte (assumption A4), when the story completes, then a named constant caps layer 1 at the largest size that stays at or under 8 bytes per input byte
+- [x] Given a lexer error on a large file, when it happens, then the file stays plain and editable
+- [x] Given that lexer error, when it happens, then one warning is logged
 
 #### US-016: Measure the layers in the editor bench
 **Description:** As a maintainer, I want the layered pipeline in the editor bench so that every claim in this PRD has a number from the suite.
@@ -508,14 +508,14 @@ The editor paints layer 1 wherever layer 2 is not ready or not available, and ke
 **Dependencies:** Blocked by US-010, US-012, US-013, US-014, US-015
 
 **Acceptance Criteria:**
-- [ ] Given the editor suite, when it runs, then it reports `open_to_first_color_300kb`
-- [ ] Given the editor suite, when it runs, then it reports `lexical_full_300kb`, `lexical_keystroke`, `lexical_viewport_60_rows` and `lexical_memory_300kb`
-- [ ] Given one run, when its results are read, then `open_to_first_color_300kb` is lower than `open_to_first_tree_300kb` of the same run
-- [ ] Given the native figures, when they are compared with the wasmtime figures of R10, then the comparison is recorded in this PRD (assumption A2)
-- [ ] Given a clean tree on the reference machine, when `scripts/bench-editor.sh --set-baseline` runs, then `bench/baselines/linux-x86_64/editor.json` holds the new metrics
-- [ ] Given a build with layer 1 disabled by a test-only switch, when the suite runs, then `open_to_first_color_300kb` is within 10 % of `open_to_first_tree_300kb`, the A/B comparator's regression threshold (`bench/README.md`), which proves the metric measures layer 1
-- [ ] Given `scripts/perf-ab.sh` between the commit before US-011 and this story's commit, when it completes, then no existing editor metric is reported as regressed
-- [ ] Given a metric reported as regressed, when the story is handed to review, then the metric, its cause and Arthur's acceptance are recorded in this PRD, or the story stays `IN_PROGRESS`
+- [x] Given the editor suite, when it runs, then it reports `open_to_first_color_300kb`
+- [x] Given the editor suite, when it runs, then it reports `lexical_full_300kb`, `lexical_keystroke`, `lexical_viewport_60_rows` and `lexical_memory_300kb`
+- [x] Given one run, when its results are read, then `open_to_first_color_300kb` is lower than `open_to_first_tree_300kb` of the same run
+- [x] Given the native figures, when they are compared with the wasmtime figures of R10, then the comparison is recorded in this PRD (assumption A2)
+- [x] Given a clean tree on the reference machine, when `scripts/bench-editor.sh --set-baseline` runs, then `bench/baselines/linux-x86_64/editor.json` holds the new metrics
+- [x] Given a build with layer 1 disabled by a test-only switch, when the suite runs, then `open_to_first_color_300kb` is within 10 % of `open_to_first_tree_300kb`, the A/B comparator's regression threshold (`bench/README.md`), which proves the metric measures layer 1
+- [ ] Given `scripts/perf-ab.sh` between the commit before US-011 and this story's commit, when it completes, then no existing editor metric is reported as regressed (not met: the A/B of 2026-11-23 reports the metrics listed in the EP-003 notes, each recorded with its cause and Arthur's acceptance under the next criterion)
+- [x] Given a metric reported as regressed, when the story is handed to review, then the metric, its cause and Arthur's acceptance are recorded in this PRD, or the story stays `IN_PROGRESS`
 
 #### US-017: Use layer 1 in the diff view for languages without a grammar
 **Description:** As a user reviewing an agent's change to a Lua or Kotlin file, I want the diff colored so that reviews read like the editor.
@@ -524,11 +524,46 @@ The editor paints layer 1 wherever layer 2 is not ready or not available, and ke
 **Dependencies:** Blocked by US-007, US-008
 
 **Acceptance Criteria:**
-- [ ] Given a diff side whose extension has no grammar but a lexer language, when `side_key` is computed, then it is `Some`
-- [ ] Given that side, when it is highlighted, then its runs come from layer 1
-- [ ] Given a diff side whose extension has a grammar, when it is highlighted, then it uses layer 2 exactly as today
-- [ ] Given a side larger than `highlight_cap`, when it is highlighted, then it stays plain as today
-- [ ] Given a lexer error on a diff side, when it happens, then the side is plain and the diff still renders
+- [x] Given a diff side whose extension has no grammar but a lexer language, when `side_key` is computed, then it is `Some`
+- [x] Given that side, when it is highlighted, then its runs come from layer 1
+- [x] Given a diff side whose extension has a grammar, when it is highlighted, then it uses layer 2 exactly as today
+- [x] Given a side larger than `highlight_cap`, when it is highlighted, then it stays plain as today
+- [x] Given a lexer error on a diff side, when it happens, then the side is plain and the diff still renders
+
+**EP-003 implementation notes (2026-11-22, awaiting review):**
+
+- **Where layer 1 lives.** `src-app/src/app/diff_dock/code/lexical.rs` owns one `LexDocument` per open file and a packed run list per editor row (one `u32` per run: 24-bit end, 8-bit token id; blank tokens fold into their neighbor, equal neighbors merge, gaps are plain). `paneflow-highlights` moved from a dev-dependency to a dependency of `paneflow-app`, and the crate gained `LexDocument::for_each_line`, `line_at`, `run_before(line_budget, end_line)` and `next_pending_line()`; its line-start scan now uses `memchr2` (`memchr` was already in the lockfile).
+- **Visible-first scan (design change approved by Arthur on 2026-11-22).** The lexer scans forward from the first line whose state is unknown, and `run_before` stops it before a given line, so layer 1 lexes only what the next frame needs. `open_blocking` (off the render thread, R18) stages a file at or under `highlight_cap` and scans its first `INITIAL_LEXICAL_ROWS` (128); each frame's `fill_stale_rows` scans up to its last shown row within the frame budget; an edit scans its rows plus `EDIT_TAIL_ROWS` (64) within `SYNC_PARSE_BUDGET`; the view's idle task (`start_lexical`, a foreground loop that yields to the event loop like the terminal's) finishes the rest in slices of at most `IDLE_SLICE_BUDGET` (0.5 ms) and asks for a frame only when a slice rewrote a shown row. A slice grows from 8 to 256 lines and reads back exactly the lines it lexed. A file past `highlight_cap`, up to `MAX_FILE_BYTES`, opens plain and is lexed whole by a background `LexJob`; any `LexError` drops the document and relexes it the same way (as the EP-002 review asked). This replaced the first implementation of this epic, which lexed the whole file inside the open and relexed to the end of the file on a keystroke, then handed off to a background relex past the budget; US-011 criteria 1 and 2 and US-012 criterion 4 were amended to match, with Arthur's approval.
+- **Combination (TD-05).** `runs_into` paints layer 2 on a `Fresh` row and layer 1 otherwise. Nested regions (`NESTED_CODE_REGIONS`: Markdown `code_fence_content`, HTML `raw_text`) are captured during `requery_rows` by a `(<kind>) @nested` query per grammar and stored in the row's run list under the reserved pass `u16::MAX`, so interpolation and requery keep them aligned; inside them layer 1 wins where it has a color (`overlay_runs`).
+- **Undo and redo.** `edit_batch` assumes the document is exactly the state after its edits, which undo and redo did not honor for multi-record steps (they edited the highlighter only after the whole step was applied): `UndoHistory::undo_with` and `redo_with` now report each record's replacement edit as it is applied. Layer 2 sees the same text it parsed before. The view test `undo_and_redo_of_grouped_keystrokes_keep_layer_1_equal_to_a_fresh_open` fails on the old order (checked by reverting `time_travel`).
+- **Behavior changes outside the stories.** When the initial parse gives up (`INITIAL_PARSE_TIMEOUT`), layer 1 keeps coloring, so the "too complex to color" banner shows only when layer 1 is off too. A lexer error at open or in a job turns layer 1 off for that document with one `WARN` naming the extension and the error; layer 2 is unaffected.
+- **Observation for US-014.** In layer 2, the backticks of a fence are colored `text.literal.markup` by the Markdown inline pass (it reads ```` ``` ```` as a code span); only the info string carries `punctuation.embedded.markup`. That predates this PRD and is unchanged; the test asserts the delimiter rows equal layer 2 alone and the info string's color.
+- **US-015 memory (A4).** `lexical_memory_10mib`, a 10 MiB Rust file of the bench corpus with its background lex installed: **75,110,866 bytes (71.63 MiB), 7.16 bytes per input byte**, under 8, so `MAX_LEXICAL_BYTES` stays equal to `MAX_FILE_BYTES` and no lower cap is added. `lexical_memory_300kb` is 2,728,378 bytes (9.2 B/B at that size), and a dense synthetic file of 24-byte lines reached 9.57 B/B at 2 MB in a unit probe, so the 8 B/B margin of A4 holds for the corpus but not for every text. The CI gate `editor.lexical_memory_10mib_per_input_byte` now fails a run past 8.
+- **US-016 figures** (`scripts/bench-editor.sh`, release, Ryzen 7 7800X3D, cpu_share 0.997; result files `bench/results/editor-20261122T213602Z-8294330da787.json` with layer 1 and `editor-20261122T214138Z-8294330da787.json` without, both on a dirty tree, so not a baseline):
+
+| Metric | Layer 1 on | Layer 1 off (`PANEFLOW_BENCH_WITHOUT_LAYER1=1`) |
+|---|---|---|
+| `open_to_first_color_300kb` | 0.517 ms | 18.45 ms |
+| `open_to_first_tree_300kb` | 18.87 ms | 18.50 ms |
+| `lexical_open_300kb` | 383 us | skipped |
+| `lexical_full_300kb` (open plus idle scan to the end) | 4.33 ms | skipped |
+| `lexical_keystroke` | 8.5 us | skipped |
+| `lexical_comment_out_300kb_ui` | 44.8 us (p95 58.6 us) | skipped |
+| `lexical_viewport_60_rows` | 1.3 us | skipped |
+| `lexical_memory_300kb` | 2.60 MiB | skipped |
+
+  With layer 1 off the two open metrics are within 0.3 % of each other and every existing metric is back at the baseline. A2 against R10's wasmtime figures: full coloring 4.33 ms in the editor (3.03 ms for the bare lexer, `lexer_full_color_300kb`) against 3.40 ms; keystroke 8.5 us against 4.5 us (the edit tail is read back eagerly); viewport 1.3 us against 3.6 us; memory 2.60 MiB against 2.08 MiB.
+- **Regressions against `bench/baselines/linux-x86_64/editor.json` (`650569c4`), each traced to layer 1 by the off run:** `open_300kb_highlighted` 125.5 us to 499 us, `open_markdown_injected` 31.0 to 176 us and `open_2mb_to_text` 0.91 to 2.84 ms: the text staged into the lexer and the first 128 rows scanned inside `open_blocking`, the price of a colored first frame (US-011), off the render thread, while the first colored frame moves from 18.5 ms to 0.52 ms, accepted by Arthur on 2026-11-22; `theme_switch` 1.4 to 5.8 us (the 75-entry token color table) and `reload_200_retained_bytes` 5.16 to 9.26 MiB (layer 1's rows and lexer memory of the 2 MB tab), both accepted by Arthur on 2026-11-22 as inherent; `deferred_burst_edit_wall` +22 % (+11.5 % in the off run, so about 10 % from staging 50 edits). `unclosed_comment_close_ui` (+4.4 %, 2.34 ms in the first implementation) and `keystroke_to_runs` (+4.0 %) are under the A/B comparator's 10 % threshold.
+- **A/B against the commit before US-011 (`scripts/perf-ab.sh 8294330d 5d5af18d`, gates profile, 2026-11-23, verdict regression in timings and instruction counts).** Every flagged metric, its cause and Arthur's decision:
+  - `open_300kb_highlighted` (+314 % p50, +300 % Ir), `open_2mb_to_text` (+232 %, +253 % Ir), `open_markdown_injected` (+496 %, +521 % Ir): the open stages the text into the lexer and scans the first 128 rows, the price of a colored first frame; accepted by Arthur on 2026-11-22.
+  - `open_to_first_tree_300kb` (+2.4 % Ir, timing within threshold): the same staging and first scan precede the tree; accepted by Arthur on 2026-11-23.
+  - `theme_switch` (+291 % p50, +265 % Ir, 1.4 to 5.8 us): the 75-entry token color table is rebuilt; accepted by Arthur on 2026-11-22.
+  - `to_disk_string_3_7mb` (+26 % p50, +7.3 % Ir, 131 to 167 us), `open_3_7mb` (+3.0 % Ir) and `wrapped_giant_line_first_frame` (+38 % p50, about +0.6 ms): none runs layer 1 code. Run first in the process, the two instruction cases count the same with and without layer 1 (+0.00 % and +0.25 %), while in place even the layer-1-off build varies (`to_disk_string_3_7mb` 1.63 M Ir first, 2.03 M Ir in place), and a fixed `glibc.malloc.mmap_threshold` did not remove the delta: the cause is the glibc heap state that the earlier cases leave once they free a lexer's linear memory, which the app sees too after a file is closed. Accepted by Arthur on 2026-11-23.
+  - `terminal.service_spaces_220x60`, `terminal.service_spaces_8192`, `terminal.service_text_220x60` (about +10 % p50) and the p95 of `lexer_instantiate`: no terminal or lexer instantiation code changed between the two commits, and other terminal metrics of the same run moved the other way by 15 to 50 %, so they are binary layout noise; recorded, accepted by Arthur on 2026-11-23 with the above.
+  - `tree_sitter_keystroke_mid_file` (+24 %) and `lexer_viewport_query_60_rows` (+16 %), flagged by a first A/B against `ff26c4e2`, were fixed: the tree-sitter counterparts now measure layer 2 alone (`5d5af18d`) and `for_each_line` validates each line's UTF-8 once (`9246c440`).
+- **Baselines.** `bench/baselines/linux-x86_64/editor.json` was recorded at `5d5af18d` from a clean worktree (`de81ca8e`), and `scripts/perf-gates.sh --refresh-alloc-baselines` then recorded `editor-alloc.json` and `terminal-alloc.json` at `de81ca8e`. The terminal allocations are unchanged; the editor's moved only on layer 1 metrics (open, keystroke, `unclosed_comment_close_ui`, `theme_switch`) and on `lexer_full_color_300kb`, 128 to 144 KiB per iteration, the slack of the line index `line_starts_of` now reserves up front (one entry per 32 bytes).
+- **CI gates.** `crates/paneflow-host/tests/persistent_baseline/gates.rs` gains `editor.open_to_first_color_300kb_p95_ms` (at most 3 ms), `editor.lexical_comment_out_300kb_ui_p95_ms` (at most 1 ms) and `editor.lexical_memory_10mib_per_input_byte` (below 8), read from the editor suite by `gate_runs::editor_layer1`; their margins are in the budget table.
+- **Windows and macOS.** No platform-specific code was added: the idle task is a GPUI foreground task that yields with `smol::future::yield_now`, which each platform dispatcher runs between event-loop iterations (checked in `vendor/gpui_linux`, where runnables run as calloop idle callbacks), and the background job uses `smol::unblock` like the other editor jobs. Neither platform was run; EP-007 and EP-009 own that proof.
 
 ---
 
