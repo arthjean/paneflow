@@ -19,6 +19,7 @@ bash scripts/check-workflows.sh                     # when .github/** changes: e
 uvx zizmor@1.32.0 --config .github/zizmor.yml --min-severity high .github   # when .github/** changes: the Workflow audit job; set GH_TOKEN for the online audits
 bash scripts/test-ci-scripts.sh                     # when a CI script changes: runs the scripts against fixtures
 bash scripts/check-test-wallclock.sh                # when a test changes: no new wall-clock budget
+bash scripts/sandbox-matrix.sh                      # when crates/paneflow-host/src/sandbox/** changes: the sandbox tests on each distribution's own kernel, in throwaway KVM machines (Linux host with /dev/kvm and podman; about 10 minutes)
 ```
 
 **`cargo fmt --check` before every `git commit` and every `git push` that
