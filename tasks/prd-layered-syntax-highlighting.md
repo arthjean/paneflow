@@ -5,6 +5,7 @@
 
 | Version | Date | Author | Summary |
 |---------|------|--------|---------|
+| 1.3 | 2026-11-23 | Arthur Jean | Every macOS-only proof moves to a final epic, EP-010, the way Windows moved to EP-009 in 1.1: US-034 from EP-007 and US-037 from EP-008, both unchanged. EP-007 and EP-008 keep Linux. 10 epics, 40 stories. |
 | 1.2 | 2026-11-23 | Arthur Jean | US-026's criterion on layer-3 colors disappearing when the switch is turned off moves to US-031, which owns the overlay; US-026 keeps what the setting itself does: closing every open document on its server and stopping each server after its last document. US-026 no longer waits for US-031. |
 | 1.1 | 2026-11-22 | Arthur Jean | Every Windows-only proof moves to a final epic, EP-009, run on Arthur's Windows 11 dual boot: the Windows CI leg and the PowerShell twin of US-005 and US-006, US-033 from EP-007, US-036 from EP-008, the Windows behaviors of US-020 and US-025, and the PowerShell twin of EP-001 on Windows (new US-039 and US-040). EP-007 and EP-008 keep macOS and Linux. 9 epics, 40 stories. |
 | 1.0 | 2026-11-22 | Arthur Jean | Initial PRD, from the investigation of missing Zig colors in the Files dock, a code map of t3code's highlighter, a probe of the Zig grammar under tree-sitter 0.26, a native compile of t3code's wasm2c output, a code map of the editor's highlighter, the LSP process model and the C build constraints, and two web research passes (LSP semantic tokens, wasm2c). Implements the two-layer decision of 2026-11-19 (`tasks/prd-files-experience.md`, version 1.4) with one change: layer 1 is Pierre's lexers translated to C by wasm2c instead of a hand rewrite. Adds LSP semantic tokens as layer 3. Reviewed against the PRD rubric by an independent reader in two passes; its findings are applied. 8 epics, 38 stories. |
@@ -37,7 +38,7 @@ Three layers, each painted over the one below, each usable alone.
 
 **Layer 3: LSP semantic tokens (EP-005, EP-006).** A new crate, `paneflow-lsp`, implements the part of the protocol this needs: `Content-Length` framing over stdio, server lifecycle, incremental document sync with negotiated position encoding, and the semantic token requests (`full`, `full/delta`, `range`, refresh). The feature is off by default, as in Zed (R11), resolves servers only from `PATH` or an absolute path in the user's own `paneflow.json`, never downloads anything, and asks once per project root before starting a server, because a language server can run the project's build scripts (R13). Tokens overlay layers 1 and 2 only where they map to a palette role; everything else stays transparent.
 
-**Real hardware last (EP-007, EP-008, EP-009).** Layers 1 and 2 are checked on Apple Silicon and on Linux Wayland and X11 (EP-007), and the language servers in a separate epic (EP-008) so layers 1 and 2 never wait for EP-006. Everything that only Windows can prove, the MSVC build on the Windows CI leg, the PowerShell twins, the Windows process and path behaviors of the LSP client, and both layers on screen, is gathered in a final epic run on Arthur's Windows 11 dual boot (EP-009). The Windows code itself still lands with each story, as `AGENTS.md` requires; only its proof waits for EP-009.
+**Real hardware last (EP-007, EP-008, EP-009, EP-010).** Layers 1 and 2 are checked on Linux Wayland and X11 (EP-007), and the language servers in a separate epic (EP-008) so layers 1 and 2 never wait for EP-006. Everything that only Windows can prove, the MSVC build on the Windows CI leg, the PowerShell twins, the Windows process and path behaviors of the LSP client, and both layers on screen, is gathered in an epic run on Arthur's Windows 11 dual boot (EP-009). Everything that only macOS can prove, the signed Apple Silicon build and all three layers on screen, is gathered in the final epic (EP-010). The Windows and macOS code still lands with each story, as `AGENTS.md` requires; only its proof waits for EP-009 and EP-010.
 
 ## Goals
 
@@ -564,7 +565,7 @@ The editor paints layer 1 wherever layer 2 is not ready or not available, and ke
   - `tree_sitter_keystroke_mid_file` (+24 %) and `lexer_viewport_query_60_rows` (+16 %), flagged by a first A/B against `ff26c4e2`, were fixed: the tree-sitter counterparts now measure layer 2 alone (`5d5af18d`) and `for_each_line` validates each line's UTF-8 once (`9246c440`).
 - **Baselines.** `bench/baselines/linux-x86_64/editor.json` was recorded at `5d5af18d` from a clean worktree (`de81ca8e`), and `scripts/perf-gates.sh --refresh-alloc-baselines` then recorded `editor-alloc.json` and `terminal-alloc.json` at `de81ca8e`. The terminal allocations are unchanged; the editor's moved only on layer 1 metrics (open, keystroke, `unclosed_comment_close_ui`, `theme_switch`) and on `lexer_full_color_300kb`, 128 to 144 KiB per iteration, the slack of the line index `line_starts_of` now reserves up front (one entry per 32 bytes).
 - **CI gates.** `crates/paneflow-host/tests/persistent_baseline/gates.rs` gains `editor.open_to_first_color_300kb_p95_ms` (at most 3 ms), `editor.lexical_comment_out_300kb_ui_p95_ms` (at most 1 ms) and `editor.lexical_memory_10mib_per_input_byte` (below 8), read from the editor suite by `gate_runs::editor_layer1`; their margins are in the budget table.
-- **Windows and macOS.** No platform-specific code was added: the idle task is a GPUI foreground task that yields with `smol::future::yield_now`, which each platform dispatcher runs between event-loop iterations (checked in `vendor/gpui_linux`, where runnables run as calloop idle callbacks), and the background job uses `smol::unblock` like the other editor jobs. Neither platform was run; EP-007 and EP-009 own that proof.
+- **Windows and macOS.** No platform-specific code was added: the idle task is a GPUI foreground task that yields with `smol::future::yield_now`, which each platform dispatcher runs between event-loop iterations (checked in `vendor/gpui_linux`, where runnables run as calloop idle callbacks), and the background job uses `smol::unblock` like the other editor jobs. Neither platform was run; EP-010 (macOS) and EP-009 (Windows) own that proof.
 
 **EP-003 review (2026-11-23):** US-011 to US-017 are `DONE`; no code was changed.
 
@@ -574,7 +575,7 @@ The editor paints layer 1 wherever layer 2 is not ready or not available, and ke
 - **US-016 criterion 7.** It stays unchecked: the A/B reports regressions. Each one is recorded above with its cause and Arthur's acceptance, which is the alternative the Definition of Done and criterion 8 allow, so the story is certified on that record; the A/B was not re-run by the review.
 - **Current bench evidence** (`scripts/bench-editor.sh`, release, clean tree at `834ef1fe`, cpu_share 0.995; result files kept out of the repository): layer 1 on, `open_to_first_color_300kb` 0.521 ms against `open_to_first_tree_300kb` 19.39 ms, `lexical_full_300kb` 4.26 ms, `lexical_keystroke` 8.7 us, `lexical_viewport_60_rows` 1.3 us, `lexical_comment_out_300kb_ui` 38.9 us, `lexical_memory_300kb` 2,728,378 bytes, `lexical_memory_10mib_per_input_byte` 7.16; with `PANEFLOW_BENCH_WITHOUT_LAYER1=1`, 18.56 ms against 18.70 ms (0.7 %, under the 10 % threshold).
 - **Not blocking, not applied.** `runs_into` allocates two run buffers for each row that holds a nested region (`std::mem::take(out)` drops the caller's capacity), a per-frame cost limited to Markdown fences and HTML `<script>`/`<style>` rows. The keystroke cost of layer 1 in a 10 MiB file (the lexer's `apply_edit` and line-index shift on the render thread) has no bench case; only the 300 KB keystroke is measured. `paneflow-ai-hook` is over its soft size cap (377,704 B of 307,200 B), unchanged by this epic.
-- **Evidence.** On the final tree: `cargo fmt --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo nextest run --workspace --locked --profile ci` (5347 passed, 28 skipped), `check-test-wallclock.sh`, `check-helper-sizes.sh` and `cargo deny check advisories licenses sources` pass. CI run 45184120194 on `834ef1fe` is green on every job that ran: Style, Tests (Linux x86_64), Linux aarch64, Windows x86_64 libghostty check, macOS aarch64 smoke build, Performance gates (with the three new layer 1 budgets) and cargo-deny. Windows and macOS were verified by CI build and tests only, not on screen; EP-007 and EP-009 own that.
+- **Evidence.** On the final tree: `cargo fmt --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `cargo nextest run --workspace --locked --profile ci` (5347 passed, 28 skipped), `check-test-wallclock.sh`, `check-helper-sizes.sh` and `cargo deny check advisories licenses sources` pass. CI run 45184120194 on `834ef1fe` is green on every job that ran: Style, Tests (Linux x86_64), Linux aarch64, Windows x86_64 libghostty check, macOS aarch64 smoke build, Performance gates (with the three new layer 1 budgets) and cargo-deny. Windows and macOS were verified by CI build and tests only, not on screen; EP-010 (macOS) and EP-009 (Windows) own that.
 
 ---
 
@@ -954,25 +955,11 @@ Tokens from the server color the editor over layers 1 and 2, stay aligned throug
 
 ---
 
-### EP-007: Real-hardware validation of layers 1 and 2 on macOS and Linux
+### EP-007: Real-hardware validation of layers 1 and 2 on Linux
 
-What CI cannot show for the lexical and tree-sitter layers, colors on screen and the Apple build, is checked on macOS and Linux. Windows is EP-009.
+What CI cannot show for the lexical and tree-sitter layers, colors on screen, is checked on Linux under Wayland and X11. Windows is EP-009, macOS is EP-010.
 
 **Definition of Done:** each story below has its report written as a section of this PRD; every defect found is fixed or recorded as a blocker on the story it belongs to.
-
-#### US-034: Validate layers 1 and 2 on macOS Apple Silicon
-**Description:** As the maintainer, I want the lexical and tree-sitter layers run on Apple Silicon so that the C11 thread-local build works there.
-
-**Priority:** P0
-**Dependencies:** Blocked by US-006, US-013, US-014, US-016
-
-**Acceptance Criteria:**
-- [ ] Given a signed release build, when a Zig file opens, then its first frame is colored, with a screenshot in the report
-- [ ] Given the same build, when a Kotlin file opens, then its first frame is colored, with a screenshot
-- [ ] Given the same build, when a Markdown file with a Rust fence opens, then the fence body is colored after the tree arrives, with a screenshot
-- [ ] Given two documents lexed at the same time in two tabs, when the report is written, then it states that their colors match a single-tab open
-- [ ] Given the signed build, when `codesign --verify --deep --strict` runs on the app, then the report records that it passes with the unchanged entitlements
-- [ ] Given a file whose extension Pierre does not know, when it opens, then the report states that it is plain and editable
 
 #### US-035: Visual pass of layers 1 and 2 on Linux, Wayland and X11
 **Description:** As the maintainer, I want the swap from layer 1 to layer 2 and the large-file delay watched on Linux so that they are judged by eye, not only by numbers.
@@ -988,23 +975,11 @@ What CI cannot show for the lexical and tree-sitter layers, colors on screen and
 
 ---
 
-### EP-008: Real-hardware validation of the language servers on macOS and Linux
+### EP-008: Real-hardware validation of the language servers on Linux
 
-What CI cannot show for layer 3, real servers on real machines, is checked on macOS and Linux. Windows is EP-009.
+What CI cannot show for layer 3, a real server on screen, is checked on Linux. Windows is EP-009, macOS is EP-010.
 
 **Definition of Done:** each story below has its report written as a section of this PRD; every defect found is fixed or recorded as a blocker on the story it belongs to.
-
-#### US-037: Validate language servers on macOS Apple Silicon
-**Description:** As the maintainer, I want rust-analyzer and zls run from Paneflow on macOS so that spawning and the lifecycle are facts there.
-
-**Priority:** P1
-**Dependencies:** Blocked by US-031, US-032
-
-**Acceptance Criteria:**
-- [ ] Given rust-analyzer from rustup and zls from Homebrew, semantic tokens on and consent given, when their files open, then both processes start
-- [ ] Given both running, when their files paint, then layer-3 colors appear, with a screenshot in the report
-- [ ] Given both servers, when their last tabs close, then the report states that both processes are gone
-- [ ] Given a `language_servers` entry whose command is not installed, when its file opens, then the missing-server banner appears
 
 #### US-038: Visual pass of layer 3 on Linux
 **Description:** As the maintainer, I want the semantic overlay watched on this repository so that wrong or stale tokens would be seen.
@@ -1080,6 +1055,42 @@ Every proof that only Windows can give, for every epic of this PRD, gathered in 
 - [ ] Given zls running, when the Zig file paints, then the report records whether layer-3 colors appeared
 - [ ] Given a server installed by npm as a `.cmd` shim and declared in `language_servers`, when its file opens, then the report states whether it started (assumption A10)
 - [ ] Given a server killed from Task Manager twice, when it dies the second time, then the crash banner appears
+
+---
+
+### EP-010: macOS validation on Apple Silicon
+
+Every proof that only macOS can give, for every epic of this PRD, gathered in one pass on Apple Silicon: the signed build with layers 1 and 2 on screen, and the language servers. The macOS code ships with each story and its build and tests run on the `macOS aarch64 smoke build` CI job; this epic runs the app.
+
+**Definition of Done:** each story below has its report written as a section of this PRD, with the commit and the build it ran on; every defect found is fixed or recorded as a blocker on the story it belongs to.
+
+#### US-034: Validate layers 1 and 2 on macOS Apple Silicon
+**Description:** As the maintainer, I want the lexical and tree-sitter layers run on Apple Silicon so that the C11 thread-local build works there.
+
+**Priority:** P0
+**Dependencies:** Blocked by US-006, US-013, US-014, US-016
+
+**Acceptance Criteria:**
+- [ ] Given a signed release build, when a Zig file opens, then its first frame is colored, with a screenshot in the report
+- [ ] Given the same build, when a Kotlin file opens, then its first frame is colored, with a screenshot
+- [ ] Given the same build, when a Markdown file with a Rust fence opens, then the fence body is colored after the tree arrives, with a screenshot
+- [ ] Given two documents lexed at the same time in two tabs, when the report is written, then it states that their colors match a single-tab open
+- [ ] Given the signed build, when `codesign --verify --deep --strict` runs on the app, then the report records that it passes with the unchanged entitlements
+- [ ] Given a file whose extension Pierre does not know, when it opens, then the report states that it is plain and editable
+
+**Prerequisites (2026-11-23).** Nothing was run. This epic runs in one session on a rented Apple Silicon Mac (a bare-metal Scaleway Mac mini, 24-hour minimum lease); a hosted `macos-15` runner is a virtual machine with a paravirtualized GPU and does not count. US-034 also needs a signed build that contains layers 1 and 2: the latest signed release, v0.20.0 (2026-11-19), predates the layer 1 commit `27704d4b`, so the session waits for the next signed release or a release candidate tag built by the release pipeline with its Apple secrets.
+
+#### US-037: Validate language servers on macOS Apple Silicon
+**Description:** As the maintainer, I want rust-analyzer and zls run from Paneflow on macOS so that spawning and the lifecycle are facts there.
+
+**Priority:** P1
+**Dependencies:** Blocked by US-031, US-032
+
+**Acceptance Criteria:**
+- [ ] Given rust-analyzer from rustup and zls from Homebrew, semantic tokens on and consent given, when their files open, then both processes start
+- [ ] Given both running, when their files paint, then layer-3 colors appear, with a screenshot in the report
+- [ ] Given both servers, when their last tabs close, then the report states that both processes are gone
+- [ ] Given a `language_servers` entry whose command is not installed, when its file opens, then the missing-server banner appears
 
 ## Edge Cases & Error States
 

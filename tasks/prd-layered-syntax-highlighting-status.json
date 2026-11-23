@@ -56,18 +56,18 @@
     },
     {
       "id": "EP-007",
-      "title": "Real-hardware validation of layers 1 and 2 on macOS and Linux",
+      "title": "Real-hardware validation of layers 1 and 2 on Linux",
       "status": "TODO",
       "priority": "P0",
-      "stories_total": 2,
+      "stories_total": 1,
       "stories_done": 0
     },
     {
       "id": "EP-008",
-      "title": "Real-hardware validation of the language servers on macOS and Linux",
+      "title": "Real-hardware validation of the language servers on Linux",
       "status": "TODO",
       "priority": "P1",
-      "stories_total": 2,
+      "stories_total": 1,
       "stories_done": 0
     },
     {
@@ -76,6 +76,14 @@
       "status": "TODO",
       "priority": "P0",
       "stories_total": 4,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-010",
+      "title": "macOS validation on Apple Silicon",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 2,
       "stories_done": 0
     }
   ],
@@ -502,22 +510,6 @@
       "reviewed_at": "2026-11-23"
     },
     {
-      "id": "US-034",
-      "title": "Validate layers 1 and 2 on macOS Apple Silicon",
-      "epic": "EP-007",
-      "status": "TODO",
-      "priority": "P0",
-      "blocked_by": [
-        "US-006",
-        "US-013",
-        "US-014",
-        "US-016"
-      ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
-    },
-    {
       "id": "US-035",
       "title": "Visual pass of layers 1 and 2 on Linux, Wayland and X11",
       "epic": "EP-007",
@@ -526,20 +518,6 @@
       "blocked_by": [
         "US-015",
         "US-016"
-      ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
-    },
-    {
-      "id": "US-037",
-      "title": "Validate language servers on macOS Apple Silicon",
-      "epic": "EP-008",
-      "status": "TODO",
-      "priority": "P1",
-      "blocked_by": [
-        "US-031",
-        "US-032"
       ],
       "started_at": null,
       "completed_at": null,
@@ -612,6 +590,36 @@
       "priority": "P1",
       "blocked_by": [
         "US-040",
+        "US-031",
+        "US-032"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-034",
+      "title": "Validate layers 1 and 2 on macOS Apple Silicon",
+      "epic": "EP-010",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-006",
+        "US-013",
+        "US-014",
+        "US-016"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-037",
+      "title": "Validate language servers on macOS Apple Silicon",
+      "epic": "EP-010",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
         "US-031",
         "US-032"
       ],
