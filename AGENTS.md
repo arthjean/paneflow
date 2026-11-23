@@ -215,6 +215,11 @@ and worker, and ignores a `PANEFLOW_SOCKET_PATH` it does not own unless
 tag's host and worker outlive the window: stop them with
 `PANEFLOW_HOME=~/.paneflow-dev-<name> target/debug/paneflow serve stop` and
 `... host stop` before trashing the home.
+Never stop a Paneflow process by name (`pkill paneflow-host`, `pkill -f
+"paneflow-host serve"`, `killall paneflow`): the installed app's host and
+worker carry the same names, and killing them ends every live pane of the
+user, the agent's own shell included. This happened on 2026-11-23. Stop a dev
+instance through its home's `stop` command or by the PID you started.
 
 Put unit tests beside the module when the logic is self-contained; keep broader
 UI and layout checks in `src-app/tests/`. Name tests descriptively, for example
