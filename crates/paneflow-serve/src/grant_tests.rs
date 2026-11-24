@@ -536,6 +536,80 @@ fn first_surface(state: &paneflow_layout::State, index: usize) -> (u64, SessionI
     )
 }
 
+fn split_beside(worker: &Arc<Worker>, anchor: u64, child: &SessionId) -> Value {
+    let state = worker.layout.current_state();
+    let target = state
+        .find_surface(paneflow_layout::SurfaceId(anchor))
+        .expect("the anchor is in the layout")
+        .pane;
+    let op = paneflow_layout::Op::Split {
+        target,
+        direction: paneflow_layout::Direction::Vertical,
+        edge: paneflow_layout::Edge::After,
+        pane: paneflow_layout::NewPane {
+            id: paneflow_layout::PaneId(worker.layout.reserve_id()),
+            surfaces: vec![paneflow_layout::NewSurface {
+                id: paneflow_layout::SurfaceId(worker.layout.reserve_id()),
+                definition: paneflow_config::schema::SurfaceDefinition {
+                    surface_type: Some("terminal".to_string()),
+                    session: Some(child.clone()),
+                    ..paneflow_config::schema::SurfaceDefinition::default()
+                },
+            }],
+            active: 0,
+        },
+        focus: false,
+    };
+    serde_json::to_value(op).unwrap()
+}
+
+#[test]
+fn a_split_the_window_makes_for_a_pane_is_recorded_as_spawned_by_that_pane_only_from_the_window() {
+    let home = tempfile::tempdir().unwrap();
+    let running = open_accepting(home.path(), CLOSED);
+    let worker = running.worker();
+    let cwd = tempfile::tempdir().unwrap();
+    call(
+        worker,
+        "workspace.up",
+        json!({"panes": [{"cwd": cwd.path()}]}),
+        &Principal::Window,
+    )
+    .unwrap();
+    let state = worker.layout.current_state();
+    let (anchor, parent) = first_surface(&state, state.workspaces.len() - 1);
+    let workspace = WorkspaceId::new();
+
+    let forged = SessionId::new();
+    for caller in [Principal::External, pane(&parent, &workspace)] {
+        let refused = call(
+            worker,
+            "layout.apply",
+            json!({"op": split_beside(worker, anchor, &forged), "spawned_by": parent}),
+            &caller,
+        );
+        assert!(
+            refused.is_err(),
+            "{caller:?} named the spawner: {refused:?}"
+        );
+    }
+    assert_eq!(worker.pane_grants.spawned_by(forged.as_str()), None);
+
+    let child = SessionId::new();
+    call(
+        worker,
+        "layout.apply",
+        json!({"op": split_beside(worker, anchor, &child), "spawned_by": parent}),
+        &Principal::Window,
+    )
+    .unwrap();
+    assert_eq!(
+        worker.pane_grants.spawned_by(child.as_str()).as_deref(),
+        Some(parent.to_string().as_str())
+    );
+    running.stop();
+}
+
 #[test]
 fn a_workspace_spawn_grant_launches_a_command_in_the_callers_workspace_only() {
     let home = tempfile::tempdir().unwrap();

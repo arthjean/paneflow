@@ -769,7 +769,10 @@ grant they were delegated from. A grant comes from a `grant.request` prompt
 through the worker's prompt broker, an `agents.<name>.grants` profile the
 worker applies when the host's runtime observation sees that agent in a pane's
 foreground (a hook's self-declared `tool` is not enough), or `grant.delegate` toward
-a pane the holder split. The worker drops a grant whose holder ended or
+a pane the holder split. The worker records the spawner of a `surface.split` it
+serves for a pane; for one the window serves, the window names the calling
+pane in the `spawned_by` of the `layout.apply` it forwards, a field the worker
+takes only from the attached window. The worker drops a grant whose holder ended or
 restarted on the next core frame, together with every grant delegated from
 it. `authorize_with` takes the caller's grants as a `GrantView`
 (`crates/paneflow-api/src/grants.rs`): a live grant of the caller at its

@@ -50,6 +50,7 @@ pub(crate) struct LayoutBridge {
     staged_workspaces: HashMap<WorkspaceId, Workspace>,
     held: HashMap<SessionId, HeldSurface>,
     pub(crate) sync: sync::LayoutSync,
+    pub(crate) acting_pane: Option<String>,
     #[cfg(test)]
     published: std::cell::RefCell<Vec<paneflow_api::methods::events::PublishedEvent>>,
 }
@@ -81,6 +82,7 @@ impl LayoutBridge {
             staged_workspaces: HashMap::new(),
             held: HashMap::new(),
             sync: sync::LayoutSync::default(),
+            acting_pane: None,
             #[cfg(test)]
             published: std::cell::RefCell::new(Vec::new()),
         }
@@ -127,7 +129,8 @@ impl LayoutBridge {
         let wire = op.clone();
         let applied = self.model.apply(op, now_ms)?;
         self.publish_applied(&applied);
-        self.sync.record_op(&wire, ids_from, applied.revision);
+        self.sync
+            .record_op(&wire, ids_from, applied.revision, self.acting_pane.clone());
         Ok(applied)
     }
 
@@ -346,7 +349,10 @@ impl PaneFlowApp {
             Ok(Ok(applied)) => {
                 self.layout.publish_applied(&applied);
                 if let Some(wire) = &wire {
-                    self.layout.sync.record_op(wire, ids_from, applied.revision);
+                    let spawned_by = self.layout.acting_pane.clone();
+                    self.layout
+                        .sync
+                        .record_op(wire, ids_from, applied.revision, spawned_by);
                 }
                 applied
             }

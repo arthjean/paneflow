@@ -127,7 +127,13 @@ impl LayoutSync {
         self.pending = self.pending.saturating_sub(1);
     }
 
-    pub(crate) fn record_op(&mut self, op: &Op, ids_from: u64, revision: u64) {
+    pub(crate) fn record_op(
+        &mut self,
+        op: &Op,
+        ids_from: u64,
+        revision: u64,
+        spawned_by: Option<String>,
+    ) {
         if self.phase != Phase::Live {
             return;
         }
@@ -137,6 +143,7 @@ impl LayoutSync {
                     op,
                     ids_from,
                     expected: revision,
+                    spawned_by,
                 });
             }
             Err(error) => {

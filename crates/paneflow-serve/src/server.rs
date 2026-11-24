@@ -989,14 +989,28 @@ pub(crate) fn register_methods(builder: RegistryBuilder) -> RegistryBuilder {
             worker.layout.lease(call.connection).and_then(to_value)
         })
         .ready::<layout::Apply>(|worker, call| {
+            let spawner = crate::structural::window_spawner(
+                call.params.spawned_by,
+                &call.authority.principal,
+            )?;
+            let op = serde_json::Value::Object(call.params.op.0);
+            let created = match spawner {
+                Some(_) => crate::structural::created_ids(&op),
+                None => Vec::new(),
+            };
             let outcome = worker.layout.apply(
                 call.connection,
-                serde_json::Value::Object(call.params.op.0),
+                op,
                 call.params.ids_from,
                 crate::state::now_ms(),
                 call.authority.may_spawn(),
             )?;
             worker.append_layout_events(outcome.events);
+            if let Some(parent) = spawner.as_deref()
+                && outcome.launch_error.is_none()
+            {
+                crate::structural::record_window_spawns(worker, parent, &created);
+            }
             match outcome.launch_error {
                 Some(error) => Err(error),
                 None => to_value(outcome.applied),

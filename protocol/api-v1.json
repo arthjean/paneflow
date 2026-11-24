@@ -6245,6 +6245,13 @@
           },
           "op": {
             "$ref": "#/$defs/LayoutOp"
+          },
+          "spawned_by": {
+            "description": "The session of the pane that asked the window for this op; the worker records it as the spawner of the terminals the op creates. Only the attached window may send it",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [

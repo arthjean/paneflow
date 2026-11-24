@@ -10,7 +10,7 @@ use super::Rig;
 use crate::PaneFlowApp;
 use crate::{ClosePane, SplitVertically};
 
-pub(super) const PINS: usize = 16;
+pub(super) const PINS: usize = 17;
 
 const PATIENCE: Duration = Duration::from_secs(60);
 
@@ -294,6 +294,49 @@ fn pin_a_keyboard_split_in_an_attached_window_is_started_by_the_worker(cx: &mut 
         Some(&surface.to_string())
     );
     assert_converged(&mut rig, &home);
+    finish(&mut rig, worker, &home);
+}
+
+fn recorded_spawner(home: &Path, child: &str) -> Option<String> {
+    let text = std::fs::read_to_string(paneflow_home::serve_grants_path_in(home)).ok()?;
+    let file: Value = serde_json::from_str(&text).ok()?;
+    file["spawned_by"][child].as_str().map(str::to_string)
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_a_split_a_pane_asks_the_attached_window_for_is_recorded_as_spawned_by_that_pane(
+    cx: &mut TestAppContext,
+) {
+    let home = home();
+    let mut rig = Rig::mount(cx);
+    rig.workspace("alpha");
+    let worker = Running::open(&home);
+    attach(&mut rig);
+    assert_converged(&mut rig, &home);
+    let parent = rig.session_of("a").to_string();
+    let caller = paneflow_api::Principal::Pane {
+        session: parent.clone(),
+        workspace: None,
+    };
+    let anchor = rig.surface_id("a");
+    let reply = rig.ipc_as(
+        "surface.split",
+        json!({"surface_id": anchor, "direction": "vertical"}),
+        paneflow_api::Gates::CLOSED,
+        &caller,
+    );
+    assert_eq!(reply["result"]["split"], json!(true), "{reply}");
+    assert_converged(&mut rig, &home);
+    let child = rig.session_of("b").to_string();
+    let deadline = Instant::now() + PATIENCE;
+    while recorded_spawner(&home, &child).as_deref() != Some(parent.as_str()) {
+        assert!(
+            Instant::now() < deadline,
+            "the worker never recorded a as the spawner of b"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
     finish(&mut rig, worker, &home);
 }
 

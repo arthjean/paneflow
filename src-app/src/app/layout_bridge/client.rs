@@ -40,6 +40,14 @@ const LAYOUT_EVENTS: [&str; 15] = [
 ];
 pub(crate) const LEASE_REFILL_BELOW: u64 = paneflow_layout::LEASE_BLOCK / 2;
 
+fn apply_params(op: &Value, ids_from: u64, spawned_by: Option<String>) -> Value {
+    let mut params = json!({"op": op, "ids_from": ids_from});
+    if let Some(parent) = spawned_by {
+        params["spawned_by"] = Value::String(parent);
+    }
+    params
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Request {
     Adopt {
@@ -51,6 +59,7 @@ pub(crate) enum Request {
         op: Value,
         ids_from: u64,
         expected: u64,
+        spawned_by: Option<String>,
     },
     Lease,
     View {
@@ -558,10 +567,11 @@ fn drain(shared: &Shared, control: &mut HostControl, generation: u64, inbox: &In
                 op,
                 ids_from,
                 expected,
+                spawned_by,
             } => match call(
                 control,
                 "layout.apply",
-                json!({"op": op, "ids_from": ids_from}),
+                apply_params(&op, ids_from, spawned_by),
             ) {
                 Ok(Answer::Result(applied)) => Incoming::Acked {
                     seq,

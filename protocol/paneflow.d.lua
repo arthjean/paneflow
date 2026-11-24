@@ -623,6 +623,7 @@ paneflow.layout.adopt = function(params) end
 ---@class paneflow.layout.apply.params
 ---@field ids_from? integer The client's next id when it applied the op; ids the op allocates are taken from the client's leases from here
 ---@field op table One layout operation, named by its op field: split, close_pane, focus_pane, rename_surface, set_ratios, bind_session and the others of paneflow-layout, with the ids it acts on
+---@field spawned_by? string The session of the pane that asked the window for this op; the worker records it as the spawner of the terminals the op creates. Only the attached window may send it
 
 ---@class paneflow.layout.apply.result
 ---@field events table[]

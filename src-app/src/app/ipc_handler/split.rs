@@ -279,6 +279,7 @@ struct SplitLaunch {
     profile: TerminalSurfaceProfile,
     label: Option<String>,
     managed_worktree: Option<crate::workspace::worktree::ManagedWorktree>,
+    spawned_by: Option<String>,
 }
 
 impl PaneFlowApp {
@@ -380,6 +381,7 @@ impl PaneFlowApp {
             profile: spec.profile,
             label: spec.label,
             managed_worktree,
+            spawned_by: self.ipc_caller_session().map(str::to_string),
         };
         Ok(cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
             let mut probe = probe;
@@ -467,7 +469,8 @@ impl PaneFlowApp {
             .as_ref()
             .map(|mw| mw.branch.clone())
             .unwrap_or_default();
-        if let Err(error) = self.place_split(
+        self.layout.acting_pane = launch.spawned_by;
+        let placed = self.place_split(
             ws_idx,
             decision.target,
             anchor_pane,
@@ -475,7 +478,9 @@ impl PaneFlowApp {
             new_pane,
             title,
             cx,
-        ) {
+        );
+        self.layout.acting_pane = None;
+        if let Err(error) = placed {
             return error.into_value();
         }
         if let Some(mw) = launch.managed_worktree {

@@ -109,6 +109,10 @@ pub struct ApplyParams {
         description = "The client's next id when it applied the op; ids the op allocates are taken from the client's leases from here"
     )]
     pub ids_from: Option<u64>,
+    #[schemars(
+        description = "The session of the pane that asked the window for this op; the worker records it as the spawner of the terminals the op creates. Only the attached window may send it"
+    )]
+    pub spawned_by: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]

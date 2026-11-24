@@ -558,6 +558,39 @@ pub(crate) fn surface_split(
     answer(launch_error, done)
 }
 
+pub(crate) fn window_spawner(
+    spawned_by: Option<String>,
+    principal: &paneflow_api::Principal,
+) -> Result<Option<String>, ServeError> {
+    let Some(parent) = spawned_by else {
+        return Ok(None);
+    };
+    if *principal != paneflow_api::Principal::Window {
+        return Err(invalid(
+            "spawned_by is accepted only from the attached Paneflow window",
+        ));
+    }
+    parent
+        .parse::<SessionId>()
+        .map(|session| Some(session.to_string()))
+        .map_err(|_| invalid("spawned_by is not a session id"))
+}
+
+pub(crate) fn created_ids(op: &Value) -> Vec<u64> {
+    serde_json::from_value::<Op>(op.clone())
+        .map(|op| op.new_ids())
+        .unwrap_or_default()
+}
+
+pub(crate) fn record_window_spawns(worker: &Worker, parent: &str, created: &[u64]) {
+    let state = worker.layout.current_state();
+    for id in created {
+        if let Some(child) = session_of(&state, SurfaceId(*id)) {
+            worker.pane_grants.record_spawn(parent, child.as_str());
+        }
+    }
+}
+
 fn surface_or_focused(state: &State, surface: Option<u64>) -> Result<SurfaceId, ServeError> {
     if let Some(surface) = surface {
         return state
