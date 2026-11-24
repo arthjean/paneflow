@@ -265,6 +265,8 @@ fn host_hello(kind: Option<&str>) -> paneflow_host::protocol::ClientHello {
 #[cfg(unix)]
 const ORPHAN_OF_ENV: &str = "PANEFLOW_FIXTURE_ORPHAN_OF";
 
+const SPAWNED_WHOAMI_ENV: &str = "PANEFLOW_FIXTURE_SPAWNED_WHOAMI";
+
 #[cfg(unix)]
 fn await_orphaning() {
     let Some(relay) = std::env::var(ORPHAN_OF_ENV)
@@ -368,6 +370,9 @@ fn whoami(args: &[String]) -> Result<(), u8> {
         None => {}
     }
     announce("whoami done")?;
+    if std::env::var_os(SPAWNED_WHOAMI_ENV).is_some() {
+        return Ok(());
+    }
     loop {
         std::thread::sleep(Duration::from_secs(3600));
     }
@@ -442,6 +447,7 @@ fn whoami_command(args: &[String], new_session: bool) -> Result<Command, u8> {
     command
         .arg("whoami")
         .args(args)
+        .env(SPAWNED_WHOAMI_ENV, "1")
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
