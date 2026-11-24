@@ -4381,6 +4381,11 @@ mod tests {
             .expect_err("a pane cannot write into another workspace");
         assert!(refused.contains(&theirs.to_string()), "{refused}");
         assert!(refused.contains("--scope all"), "{refused}");
+        assert!(
+            refused.contains("ipc.orchestration") && refused.contains("PANEFLOW_MCP_SCOPE=all"),
+            "{refused}"
+        );
+        assert!(!refused.contains("PANEFLOW_IPC_"), "{refused}");
         let raw_input = transport
             .call(
                 "session.input",
@@ -4397,7 +4402,7 @@ mod tests {
         let ungranted = send(&foreign.0, "echo pf-scope-all", json!({"scope": "all"}))
             .expect_err("scope all needs orchestration");
         assert!(
-            ungranted.contains("PANEFLOW_IPC_ORCHESTRATION"),
+            ungranted.contains("ipc.orchestration") && !ungranted.contains("PANEFLOW_IPC_"),
             "{ungranted}"
         );
 

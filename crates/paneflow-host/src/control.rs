@@ -352,11 +352,10 @@ pub fn authorize_write_scope(
             if permissions.stale_grants {
                 return Err(ControlError::GrantsUnsynced);
             }
-            return Err(ControlError::Disabled(
-                "scope all needs orchestration; set PANEFLOW_IPC_ORCHESTRATION=1 or \
-                 PANEFLOW_IPC_SCRIPTING=1 to write across workspaces"
-                    .to_string(),
-            ));
+            return Err(ControlError::Disabled(format!(
+                "scope all needs orchestration; {} to write across workspaces",
+                paneflow_api::policy::OPEN_ORCHESTRATION
+            )));
         }
         Some(_) => {
             return Err(ControlError::Params(
@@ -376,8 +375,8 @@ pub fn authorize_write_scope(
         |workspace| format!("workspace {workspace}"),
     );
     Err(ControlError::Params(format!(
-        "session {target} belongs to {place}, outside the workspace of the calling pane; \
-         rerun with --scope all (needs PANEFLOW_IPC_ORCHESTRATION=1) to write across workspaces"
+        "session {target} belongs to {place}, outside the workspace of the calling pane; {}",
+        paneflow_api::policy::cross_workspace_hint()
     )))
 }
 

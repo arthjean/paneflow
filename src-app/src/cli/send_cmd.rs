@@ -10,6 +10,14 @@ use paneflow_agent_config::delivery::{DeliveryRefusal, TurnStart};
 
 pub(super) use paneflow_agent_config::delivery::SUBMIT_START_TIMEOUT;
 const CALLER_SESSION_ENV: &str = "PANEFLOW_SESSION_ID";
+const SEND_DISABLED: &str = "send is disabled on the running Paneflow instance";
+
+fn write_gate_closed(verb_disabled: &str, what: &str) -> CliError {
+    CliError::runtime(format!(
+        "{verb_disabled}: {} (or hold a write grant) to enable {what}",
+        paneflow_api::policy::OPEN_SCRIPTING
+    ))
+}
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SendOptions {
@@ -163,10 +171,9 @@ fn send_to(
             }
             Ok(result)
         }
-        Err(e) if is_send_text_disabled_error(&e) => Err(CliError::runtime(format!(
-            "send is disabled on the running Paneflow instance; relaunch it with \
-             PANEFLOW_IPC_SCRIPTING=1 to enable text injection (server said: {e})"
-        ))),
+        Err(e) if is_send_text_disabled_error(&e) => {
+            Err(write_gate_closed(SEND_DISABLED, "text injection"))
+        }
         Err(e) => Err(CliError::runtime(e)),
     }
 }
@@ -221,7 +228,7 @@ fn send_broadcast(
                 "error": result["reason"],
             })),
             Ok(_) => sent.push(id),
-            Err(e) if e.message.contains("PANEFLOW_IPC_SCRIPTING") && sent.is_empty() => {
+            Err(e) if e.message.starts_with(SEND_DISABLED) && sent.is_empty() => {
                 return Err(e);
             }
             Err(e) => failed.push(json!({ "surface_id": id, "error": e.message })),
@@ -247,10 +254,10 @@ pub fn key(
             super::print_json(&result)?;
             Ok(EXIT_OK)
         }
-        Err(e) if is_send_keystroke_disabled_error(&e) => Err(CliError::runtime(format!(
-            "key is disabled on the running Paneflow instance; relaunch it with \
-             PANEFLOW_IPC_SCRIPTING=1 to enable keystroke injection (server said: {e})"
-        ))),
+        Err(e) if is_send_keystroke_disabled_error(&e) => Err(write_gate_closed(
+            "key is disabled on the running Paneflow instance",
+            "keystroke injection",
+        )),
         Err(e) => Err(CliError::runtime(e)),
     }
 }
@@ -265,7 +272,8 @@ fn is_send_keystroke_disabled_error(error: &str) -> bool {
 
 fn method_disabled_error(error: &str, method: &str) -> bool {
     let lower = error.to_ascii_lowercase();
-    lower.contains("-32601") && lower.contains(method) && lower.contains("disabled")
+    lower.contains(&format!("{method} disabled"))
+        || (lower.contains("-32601") && lower.contains(method) && lower.contains("disabled"))
 }
 
 #[cfg(test)]
@@ -620,7 +628,11 @@ mod tests {
         )]);
         let err = send(&fake, "shard", "x", opts(true, false, false), None).expect_err("gate off");
         assert_eq!(err.code, EXIT_RUNTIME);
-        assert!(err.message.contains("PANEFLOW_IPC_SCRIPTING"));
+        assert!(
+            err.message.contains("ipc.scripting") && !err.message.contains("PANEFLOW_IPC_"),
+            "{}",
+            err.message
+        );
         assert_eq!(fake.calls.borrow().len(), 1, "aborted after first reply");
     }
 
@@ -635,6 +647,12 @@ mod tests {
         assert!(!is_send_text_disabled_error(
             "server error -32601: surface.send_keystroke disabled"
         ));
+        assert!(
+            is_send_text_disabled_error(
+                "paneflow error -32602: surface.send_text disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable"
+            ),
+            "the host answers its gate refusal with -32602"
+        );
     }
 
     #[test]
@@ -684,7 +702,11 @@ mod tests {
             "server error -32601: surface.send_keystroke disabled".to_string(),
         )]);
         let err = key(&fake, "shard-api", "escape", false).expect_err("gate off");
-        assert!(err.message.contains("PANEFLOW_IPC_SCRIPTING"));
+        assert!(
+            err.message.contains("ipc.scripting") && !err.message.contains("PANEFLOW_IPC_"),
+            "{}",
+            err.message
+        );
 
         let fake = ScriptedTransport::new(vec![Ok(json!({ "sent": true }))]);
         assert_eq!(

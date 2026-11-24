@@ -79,10 +79,10 @@ fn check_orchestration_gate(client: &impl IpcTransport, dry_run: bool) -> Result
             let scripting = caps.get("scripting").and_then(Value::as_bool);
             match (orchestration, scripting) {
                 (Some(true), _) | (_, Some(true)) | (None, _) => Ok(()),
-                (Some(false), _) => Err(CliError::runtime(
-                    "this flow creates panes with commands/prompts: relaunch Paneflow with \
-                     PANEFLOW_IPC_ORCHESTRATION=1",
-                )),
+                (Some(false), _) => Err(CliError::runtime(format!(
+                    "this flow creates panes with commands/prompts: {}",
+                    paneflow_api::policy::OPEN_ORCHESTRATION
+                ))),
             }
         }
         Err(e) if dry_run => {
@@ -100,10 +100,10 @@ fn check_scripting_gate(client: &impl IpcTransport, dry_run: bool) -> Result<(),
     match client.call("system.capabilities", json!({})) {
         Ok(caps) => match caps.get("scripting").and_then(Value::as_bool) {
             Some(true) | None => Ok(()),
-            Some(false) => Err(CliError::runtime(
-                "this flow submits prompts: relaunch Paneflow with PANEFLOW_IPC_SCRIPTING=1 \
-                 (or drop the `submit = true` flags)",
-            )),
+            Some(false) => Err(CliError::runtime(format!(
+                "this flow submits prompts: {} (or drop the `submit = true` flags)",
+                paneflow_api::policy::OPEN_SCRIPTING
+            ))),
         },
         Err(e) if dry_run => {
             eprintln!(
@@ -638,8 +638,8 @@ impl<T: IpcTransport> Engine<'_, T> {
                 Ok(())
             }
             Err(e) if super::send_cmd::is_send_text_disabled_error(&e) => Err(format!(
-                "IPC gate is off on the instance; use PANEFLOW_IPC_ORCHESTRATION=1 for \
-                 pane spawning and PANEFLOW_IPC_SCRIPTING=1 for prompt submission ({e})"
+                "text injection is disabled on the instance: {}",
+                paneflow_api::policy::OPEN_SCRIPTING
             )),
             Err(e) => Err(format!("instance unreachable: {e}")),
         }
@@ -1208,7 +1208,7 @@ mod tests {
         let fake = FakeInstance::new(false);
         let err = run(&fake, file.to_str().unwrap(), true, false, false).expect_err("refused");
         assert!(
-            err.message.contains("PANEFLOW_IPC_SCRIPTING"),
+            err.message.contains("ipc.scripting") && !err.message.contains("PANEFLOW_IPC_"),
             "got: {}",
             err.message
         );
@@ -1229,7 +1229,7 @@ mod tests {
         let fake = FakeInstance::new(false);
         let err = run(&fake, file.to_str().unwrap(), false, false, false).expect_err("refused");
         assert!(
-            err.message.contains("PANEFLOW_IPC_ORCHESTRATION"),
+            err.message.contains("ipc.orchestration") && !err.message.contains("PANEFLOW_IPC_"),
             "got: {}",
             err.message
         );

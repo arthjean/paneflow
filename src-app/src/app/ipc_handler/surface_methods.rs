@@ -210,10 +210,10 @@ fn authorize_write_scope(
         None | Some(Some("workspace")) => {}
         Some(Some("all")) if reach => return Ok(()),
         Some(Some("all")) => {
-            return Err(JsonRpcError::method_not_enabled(
-                "scope all needs orchestration; set PANEFLOW_IPC_ORCHESTRATION=1 or \
-                 PANEFLOW_IPC_SCRIPTING=1 to write across workspaces",
-            ));
+            return Err(JsonRpcError::method_not_enabled(format!(
+                "scope all needs orchestration; {} to write across workspaces",
+                paneflow_api::policy::OPEN_ORCHESTRATION
+            )));
         }
         Some(_) => {
             return Err(JsonRpcError::invalid_params(
@@ -240,8 +240,8 @@ fn authorize_write_scope(
         |(id, title)| format!("workspace \"{title}\" (id {id})"),
     );
     Err(JsonRpcError::invalid_params(format!(
-        "surface {surface_id} belongs to {place}, outside the workspace of the calling pane; \
-         rerun with --scope all (needs PANEFLOW_IPC_ORCHESTRATION=1) to write across workspaces"
+        "surface {surface_id} belongs to {place}, outside the workspace of the calling pane; {}",
+        paneflow_api::policy::cross_workspace_hint()
     )))
 }
 
@@ -1217,7 +1217,9 @@ mod tests {
             refused.message
         );
         assert!(
-            refused.message.contains("--scope all"),
+            refused.message.contains("--scope all")
+                && refused.message.contains("ipc.orchestration")
+                && !refused.message.contains("PANEFLOW_IPC_"),
             "{}",
             refused.message
         );
@@ -1225,7 +1227,12 @@ mod tests {
         let widened = serde_json::json!({ "scope_session": "0a9e5266", "scope": "all" });
         let ungranted = authorize_write_scope(&widened, false, caller, 18, Some((9, "web")))
             .expect_err("scope all needs orchestration");
-        assert!(ungranted.message.contains("PANEFLOW_IPC_ORCHESTRATION"));
+        assert!(
+            ungranted.message.contains("ipc.orchestration")
+                && !ungranted.message.contains("PANEFLOW_IPC_"),
+            "{}",
+            ungranted.message
+        );
         assert!(authorize_write_scope(&widened, true, caller, 18, Some((9, "web"))).is_ok());
 
         let unknown = serde_json::json!({ "scope_session": "deadbeef" });

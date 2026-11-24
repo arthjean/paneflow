@@ -458,9 +458,10 @@ fn an_agent_pane_submits_to_its_workspace_with_the_migration_lines_and_is_refuse
     assert!(!refused.contains("pf-unmigrated-exit=0"), "{refused}");
     let joined: String = refused.lines().map(str::trim_end).collect();
     assert!(
-        joined.contains("disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable"),
+        joined.contains("send is disabled") && joined.contains("ipc.scripting"),
         "{refused}"
     );
+    assert!(!joined.contains("PANEFLOW_IPC_"), "{refused}");
     assert!(!instance.text(&target).contains("pf-unmigrated\n"));
 
     instance.stop(&[&target]);

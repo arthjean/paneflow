@@ -150,10 +150,10 @@ fn ensure_orchestration_gate(client: &impl IpcTransport) -> Result<(), CliError>
     let scripting = caps.get("scripting").and_then(Value::as_bool);
     match (orchestration, scripting) {
         (Some(true), _) | (_, Some(true)) | (None, _) => Ok(()),
-        (Some(false), _) => Err(CliError::runtime(
-            "workspace up requires pane orchestration: relaunch Paneflow with \
-             PANEFLOW_IPC_ORCHESTRATION=1",
-        )),
+        (Some(false), _) => Err(CliError::runtime(format!(
+            "workspace up requires pane orchestration: {}",
+            paneflow_api::policy::OPEN_ORCHESTRATION
+        ))),
     }
 }
 
@@ -563,6 +563,23 @@ mod tests {
         let (method, params) = calls.last().expect("workspace.up was called");
         assert_eq!(method, "workspace.up");
         assert_eq!(params["space"], "default");
+    }
+
+    struct ClosedGates;
+    impl IpcTransport for ClosedGates {
+        fn call(&self, _: &str, _: Value) -> Result<Value, String> {
+            Ok(json!({ "scripting": false, "orchestration": false }))
+        }
+    }
+
+    #[test]
+    fn a_closed_orchestration_gate_points_at_paneflow_json() {
+        let err = ensure_orchestration_gate(&ClosedGates).expect_err("gate closed");
+        assert!(
+            err.message.contains("ipc.orchestration") && !err.message.contains("PANEFLOW_IPC_"),
+            "{}",
+            err.message
+        );
     }
 
     #[test]

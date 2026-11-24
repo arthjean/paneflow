@@ -5,6 +5,16 @@ use crate::principal::Principal;
 pub const SCRIPTING_ENV: &str = "PANEFLOW_IPC_SCRIPTING";
 pub const ORCHESTRATION_ENV: &str = "PANEFLOW_IPC_ORCHESTRATION";
 
+pub const OPEN_SCRIPTING: &str = "set ipc.scripting to true in paneflow.json";
+pub const OPEN_ORCHESTRATION: &str = "set ipc.orchestration to true in paneflow.json";
+
+pub fn cross_workspace_hint() -> String {
+    format!(
+        "to write across workspaces, {OPEN_ORCHESTRATION} and pass --scope all \
+         (PANEFLOW_MCP_SCOPE=all for the MCP bridge)"
+    )
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Switches {
     pub scripting: bool,

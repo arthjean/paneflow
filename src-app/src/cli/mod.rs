@@ -229,7 +229,7 @@ enum Commands {
     },
     #[command(
         alias = "read_pane",
-        about = "Print a pane's scrollback (raw text by default)"
+        about = "Print a pane's scrollback, framed as untrusted output by default (--raw for plain text)"
     )]
     Read {
         #[arg(help = "Target: surface id, name, `cmdline:<substr>`, or `cwd:<path>`")]
@@ -310,7 +310,7 @@ enum Commands {
     },
     #[command(
         about = "Inject text into a pane WITHOUT submitting it (human-in-loop)",
-        long_about = "Inject text into a pane WITHOUT submitting it (human-in-loop).\n\nRequires `PANEFLOW_IPC_SCRIPTING=1` on the running instance; the text is written verbatim with no trailing newline so the user/agent reviews and presses Enter themselves - unless `--submit` is passed explicitly."
+        long_about = "Inject text into a pane WITHOUT submitting it (human-in-loop).\n\nRequires `ipc.scripting` set to true in paneflow.json (or a write grant); the text is written verbatim with no trailing newline so the user/agent reviews and presses Enter themselves - unless `--submit` is passed explicitly."
     )]
     Send {
         #[arg(help = "Target: surface id, name, `cmdline:<substr>`, or `cwd:<path>`")]
@@ -347,7 +347,7 @@ enum Commands {
             long,
             value_parser = ["workspace", "all"],
             default_value = "workspace",
-            help = "From inside a Paneflow pane, writes stay in that pane's workspace. `all` reaches every workspace and needs PANEFLOW_IPC_ORCHESTRATION=1 on the instance"
+            help = "From inside a Paneflow pane, writes stay in that pane's workspace. `all` reaches every workspace and needs `ipc.orchestration` set to true in paneflow.json"
         )]
         scope: String,
     },
@@ -358,7 +358,7 @@ enum Commands {
     },
     #[command(
         about = "Send a named keystroke (e.g. `escape`, `ctrl-c`, `tab`) to a pane",
-        long_about = "Send a named keystroke (e.g. `escape`, `ctrl-c`, `tab`) to a pane.\n\nRequires `PANEFLOW_IPC_SCRIPTING=1` on the running instance. Keystrokes that would submit a line (`enter`, `ctrl-m`, `ctrl-j`) are refused - submission is exclusive to `send --submit`."
+        long_about = "Send a named keystroke (e.g. `escape`, `ctrl-c`, `tab`) to a pane.\n\nRequires `ipc.scripting` set to true in paneflow.json (or a write grant). Keystrokes that would submit a line (`enter`, `ctrl-m`, `ctrl-j`) are refused - submission is exclusive to `send --submit`."
     )]
     Key {
         #[arg(help = "Target: surface id, name, `cmdline:<substr>`, or `cwd:<path>`")]
@@ -369,7 +369,7 @@ enum Commands {
             long,
             value_parser = ["workspace", "all"],
             default_value = "workspace",
-            help = "From inside a Paneflow pane, keystrokes stay in that pane's workspace. `all` reaches every workspace and needs PANEFLOW_IPC_ORCHESTRATION=1 on the instance"
+            help = "From inside a Paneflow pane, keystrokes stay in that pane's workspace. `all` reaches every workspace and needs `ipc.orchestration` set to true in paneflow.json"
         )]
         scope: String,
     },
@@ -523,7 +523,7 @@ enum FlowCommand {
             long,
             value_parser = ["workspace", "all"],
             default_value = "workspace",
-            help = "From inside a Paneflow pane, `send` steps that target a pane the flow did not spawn stay in that pane's workspace. `all` reaches every workspace and needs PANEFLOW_IPC_ORCHESTRATION=1 on the instance"
+            help = "From inside a Paneflow pane, `send` steps that target a pane the flow did not spawn stay in that pane's workspace. `all` reaches every workspace and needs `ipc.orchestration` set to true in paneflow.json"
         )]
         scope: String,
     },
@@ -1076,6 +1076,26 @@ mod tests {
                 assert!(is_cli_verb(Some(name)), "`{name}` is not routed to the CLI");
             }
         }
+    }
+
+    #[test]
+    fn help_points_at_the_paneflow_json_gates_and_the_framed_read() {
+        use clap::CommandFactory;
+
+        let mut cli = Cli::command();
+        let mut rendered = String::new();
+        for name in ["send", "key", "flow", "read"] {
+            let mut found = cli.find_subcommand_mut(name).expect(name).clone();
+            for sub in found.get_subcommands_mut() {
+                rendered.push_str(&sub.render_long_help().to_string());
+            }
+            rendered.push_str(&found.render_long_help().to_string());
+        }
+        rendered.push_str(&global_help("0.0.0", cfg!(target_os = "macos")));
+        assert!(!rendered.contains("PANEFLOW_IPC_"), "{rendered}");
+        assert!(rendered.contains("ipc.scripting"), "{rendered}");
+        assert!(rendered.contains("ipc.orchestration"), "{rendered}");
+        assert!(!rendered.contains("raw text by default"), "{rendered}");
     }
 
     #[test]
