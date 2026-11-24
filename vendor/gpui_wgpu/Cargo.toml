@@ -1,4 +1,4 @@
-# gpui_wgpu from zed-industries/zed 703b5ac3f4ffe1e87a073123ae56e22f72f095c4
+# gpui_wgpu from zed-industries/zed c016f436e60bfa5105de53837935e9de94eb0867
 # (crates/gpui_wgpu), applied through the root
 # `[patch."https://github.com/zed-industries/zed"]`. The Zed workspace
 # inheritance is written out with the values that revision's workspace
@@ -41,6 +41,19 @@
 #   spinner, sampled the neighboring tile through the linear filter at its
 #   edges and painted stray pixels outside its shape. An axis-aligned sprite
 #   only samples texel centers inside its tile, so its pixels do not change.
+# - `new_internal` and `new_offscreen` in src/wgpu_renderer.rs log at the info
+#   level which presentation a window got ("Window presentation: GPU swapchain
+#   of ..." or the shared-memory copy and why), so a bug report shows it.
+# - `recover` in src/wgpu_renderer.rs recreates a lost context through
+#   `WgpuContext::new_with_presentation_probe` when the window has a
+#   presentation probe, and keeps the probe and the window's
+#   `SoftwarePresenter` across the recovery, so a recovered window does not
+#   pick an adapter the compositor rejects.
+# - rustfmt.toml is a copy of the Zed root rustfmt.toml (edition and style
+#   edition 2024). The Windows CI leg runs `cargo fmt --all --check`, which
+#   also formats this path dependency, so the copy keeps upstream's rules
+#   written out instead of relying on the style edition rustfmt infers from
+#   this manifest, and upstream text is never reformatted to pass the gate.
 # Bump this copy together with the Zed revision in src-app/Cargo.toml, and
 # drop it once upstream GPUI carries these changes.
 

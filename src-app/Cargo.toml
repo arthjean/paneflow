@@ -25,8 +25,13 @@ path = "src/main.rs"
 # left and the fork was dropped along with the `markdown`, `theme`, `ui` and
 # `collections` Zed crates it forced into the graph.
 #
-# Bumping is now a four-value `rev` change plus `cargo update`, then the
-# workspace test, Clippy, format and `cargo deny check` gates. Keep an exact
+# Bumping moves the `rev` of the seven Zed entries in this manifest (`gpui`
+# and `gpui_platform` here, the Linux `gpui_platform` and `gpui_wgpu`, and the
+# test-only `gpui_wgpu`, `gpui_apple` and `gpui` below) together with the two
+# vendored manifests, vendor/gpui_wgpu/Cargo.toml and
+# vendor/gpui_linux/Cargo.toml, whose sources are rebased onto the new
+# revision as their headers describe. Then run the workspace test, Clippy,
+# format and `cargo deny check` gates. Keep an exact
 # revision - never a branch - so builds stay reproducible. Run the *test*
 # build too: `cargo build` skips test targets, so GPUI API breaks in
 # `#[cfg(test)]` code stay hidden until `cargo test` compiles them.
