@@ -3214,6 +3214,40 @@ fn the_final_text_is_served_while_its_cold_write_is_still_queued() {
     assert!(cold.available && cold.text == text.text);
 }
 
+#[test]
+fn every_read_across_a_session_exit_answers_with_its_text() {
+    let home = tempfile::tempdir().unwrap();
+    let host = SessionHost::open(home.path(), Path::new("read-across-exit")).unwrap();
+    let session = host.create(shell_request(80, 24)).unwrap().manifest.session;
+    let (marker, exit) = if cfg!(windows) {
+        ("echo EXIT_MAR^KER\r\n", "exit\r\n")
+    } else {
+        ("echo EXIT_MAR''KER\n", "exit\n")
+    };
+    host.input(&session, None, marker.as_bytes().to_vec())
+        .unwrap();
+    assert!(wait_until(Duration::from_secs(15), || {
+        host.text(&session)
+            .is_ok_and(|text| text.text.contains("EXIT_MARKER"))
+    }));
+    host.input(&session, None, exit.as_bytes().to_vec())
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(15);
+    loop {
+        let text = host
+            .text(&session)
+            .unwrap_or_else(|error| panic!("a read during the exit failed: {error}"));
+        if !text.live {
+            assert!(
+                text.available && text.text.contains("EXIT_MARKER"),
+                "{text:?}"
+            );
+            break;
+        }
+        assert!(Instant::now() < deadline, "the session never exited");
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn children_of_this_process() -> Vec<u32> {
     let mut children = Vec::new();

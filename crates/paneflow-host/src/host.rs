@@ -53,6 +53,7 @@ pub const MAX_CONCURRENT_CHECKPOINTS: usize = 2;
 pub const CHECKPOINT_STAGING_BUDGET_BYTES: usize = 256 * 1024 * 1024;
 pub const CHECKPOINT_ADMISSION_DEADLINE: Duration = Duration::from_secs(5);
 pub const MAX_TERMINAL_CELLS: u32 = 4_194_304;
+pub const FINAL_TEXT_SETTLE_DEADLINE: Duration = Duration::from_secs(2);
 
 pub type OperationId = u64;
 
@@ -147,6 +148,15 @@ impl SessionRecord {
             .completed
             .is_some_and(|completed| completed.generation == generation);
         (runtime.exit().is_some() && !recorded).then_some(generation)
+    }
+
+    fn awaits_final_text(&self) -> bool {
+        self.runtime.as_deref().is_some_and(|runtime| {
+            let generation = runtime.generation();
+            !self
+                .completed
+                .is_some_and(|completed| completed.generation == generation)
+        })
     }
 
     fn owns_process(&self) -> bool {
@@ -2329,6 +2339,48 @@ impl SessionHost {
     }
 
     pub fn text(&self, session: &SessionId) -> Result<SessionText, HostError> {
+        let deadline = Instant::now() + FINAL_TEXT_SETTLE_DEADLINE;
+        loop {
+            match self.text_now(session) {
+                Err(
+                    HostError::SessionNotLive(_)
+                    | HostError::Runtime(RuntimeError::NotLive | RuntimeError::Gone),
+                ) if self.final_text_settled(session, deadline) => {}
+                answer => return answer,
+            }
+        }
+    }
+
+    fn final_text_settled(&self, session: &SessionId, deadline: Instant) -> bool {
+        let mut sessions = self.lock_sessions();
+        let mut waited = false;
+        while sessions
+            .get(session)
+            .is_some_and(SessionRecord::awaits_final_text)
+        {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return false;
+            }
+            waited = true;
+            sessions = self
+                .completed_records
+                .wait_timeout(sessions, remaining)
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .0;
+        }
+        waited
+            || sessions.get(session).is_some_and(|record| {
+                record
+                    .manifest
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .final_output
+                    .is_some()
+            })
+    }
+
+    fn text_now(&self, session: &SessionId) -> Result<SessionText, HostError> {
         let (runtime, final_output, queued) = {
             let sessions = self.lock_sessions();
             let record = sessions
@@ -2352,13 +2404,18 @@ impl SessionHost {
             (live, manifest.final_output.clone(), queued)
         };
         if let Some(runtime) = runtime {
-            let text = runtime.text()?;
-            return Ok(SessionText {
-                text,
-                live: true,
-                available: true,
-                complete: false,
-            });
+            match runtime.text() {
+                Ok(text) => {
+                    return Ok(SessionText {
+                        text,
+                        live: true,
+                        available: true,
+                        complete: false,
+                    });
+                }
+                Err(RuntimeError::NotLive | RuntimeError::Gone) if final_output.is_some() => {}
+                Err(error) => return Err(error.into()),
+            }
         }
         let Some(final_output) = final_output else {
             return Err(HostError::SessionNotLive(session.clone()));
