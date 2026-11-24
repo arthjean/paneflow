@@ -236,7 +236,7 @@ impl Render for CodeView {
         }
         let popup = self.render_marker_popup(ui, window, cx);
         let comment_block = self.render_comment_block(ui, window, cx);
-        let comment_button = self.render_comment_button(ui, cx);
+        let comment_button = self.render_comment_button(cx);
         let editor_menu = self.render_editor_menu(window, cx);
         let key_context = if self.comment_focused(window, cx) {
             comment::COMMENT_KEY_CONTEXT

@@ -423,7 +423,7 @@ call site never branches on the style to pick a radius.
 | Scrollbar | width 6, gutter 10, minimum thumb 24, inset 2. Terminal panes overlay it: shown on any viewport move, held 1 s, faded out over 200 ms; hovering the gutter or dragging pins it, grows the thumb to the full gutter and reveals the track over 120 ms; `reduce_motion` snaps both |
 | Diff | body inset 8 on the sides and bottom, row 20, file header 32 and sticky at the same height, 8 after an expanded file, hunk separator 24 inset 8 with a 32 expand cell, a gap of 2 and radius 6, gutter of 2 characters, the line number (3 digits at least) and 1 character, then a 2 px gap in the background color and 1 character before the code, change bar 4, split divider 2, column header 30, minimum split column 360, revert chip 56 by 16 inset 10 |
 | Changes toolbar and tree | toolbar row 28 with 8 below, controls 24, layout segments 20 tall, icons 14; tree 40 % of the dock between 160 and 256 wide, header 28, rows 24 inset 6, indentation 12, icons 14, chevrons 12 |
-| Code editor | 12 px mono, caret 2, scrollbar 15, minimum thumb 25; git marker column 6 left of the numbers, bar 4 radius 2 inset 1, deleted dot 8, hover grows 3 to the left; rows 18 whether a line wraps or not; find bar 440 wide inset 6 from the top right, rows 36, controls 28 |
+| Code editor | 12 px mono, caret 2, scrollbar 15, minimum thumb 25; git marker column 6 left of the numbers, bar 4 radius 2 inset 1, deleted dot 8, hover grows 3 to the left; the numbers end 2 px inside a gutter at least 32 wide, and the code starts 16 px past it, room for the comment button as in T3 Code; rows 18 whether a line wraps or not; find bar 440 wide inset 6 from the top right, rows 36, controls 28 |
 
 ### 4.6 Typography
 
@@ -1380,10 +1380,15 @@ Opening a file at a line or a range of lines, `:N` in the find bar for
 instance, centers it and washes it with the same warm hue at 0.14. The
 wash leaves on the next keystroke, click or scroll.
 
-Resting the pointer on the editor gutter for 200 ms shows a 16 px `accent`
-square with a 10 px plus, radius 4, at the left of the hovered line's number,
-with the tooltip "Comment on this line (drag for a range)"; it then follows the
-pointer from line to line and leaves with it. A click comments that line and a
+Resting the pointer on the editor gutter for 200 ms shows the comment button
+of T3 Code's diff view: a square as tall as the row (18 px), radius 4, filled
+`#009eff`, with a 16 px plus (`icons/comment-plus.svg`, 1.5 px rounded strokes)
+in the code background color (`#171717` in dark themes, `white` in light
+ones). It sits right after the hovered line's number, from 2 px before the
+gutter edge to where the code text starts, so it covers neither the number nor
+the code; the pointer keeps it shown across its whole width. The tooltip reads
+"Comment on this line (drag for a range)"; the button follows the pointer from
+line to line and leaves with it. A click comments that line and a
 drag down or up the gutter comments the range in the comment palette below.
 A right click on the text opens
 a menu of 5.6: `Comment Selection`, disabled without a selection, then `Copy`,

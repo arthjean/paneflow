@@ -21,8 +21,9 @@ const SEND_HINT: &str = "/Ctrl Enter to send";
 const COMMAND_KEY_ICON: &str = "icons/command-key.svg";
 const COMMAND_KEY_SIZE: f32 = 9.0;
 const REPLACE_PROMPT: &str = "Replace the comment you are writing?";
-const COMMENT_BUTTON_SIZE: f32 = 16.0;
-const COMMENT_BUTTON_LEFT: f32 = 9.0;
+const COMMENT_BUTTON_RADIUS: f32 = 4.0;
+const COMMENT_BUTTON_ICON: &str = "icons/comment-plus.svg";
+const COMMENT_BUTTON_ICON_SIZE: f32 = 16.0;
 pub(crate) const GUTTER_SEAM: f32 = 2.0;
 const BLOCK_PAD_X: f32 = 12.0;
 const BLOCK_PAD_Y: f32 = 14.0;
@@ -57,6 +58,8 @@ pub(crate) struct CommentPalette {
     placeholder: Hsla,
     hint: Hsla,
     ghost_hover: Hsla,
+    add_button: Hsla,
+    add_glyph: Hsla,
 }
 
 fn hex(rgb: u32) -> Hsla {
@@ -80,6 +83,8 @@ pub(crate) fn comment_palette() -> CommentPalette {
             placeholder: muted,
             hint: muted.opacity(HINT_ALPHA),
             ghost_hover: gpui::black().opacity(0.05),
+            add_button: hex(0x009eff),
+            add_glyph: gpui::white(),
         }
     } else {
         let muted = hex(0xa3a3a3);
@@ -96,8 +101,14 @@ pub(crate) fn comment_palette() -> CommentPalette {
             placeholder: muted,
             hint: muted.opacity(HINT_ALPHA),
             ghost_hover: gpui::white().opacity(0.08),
+            add_button: hex(0x009eff),
+            add_glyph: hex(0x171717),
         }
     }
+}
+
+fn comment_button_left(gutter_w: f32) -> f32 {
+    (gutter_w - GUTTER_SEAM).max(0.0)
 }
 
 pub(crate) fn comment_block_rows(field_rows: usize) -> u32 {
@@ -459,7 +470,7 @@ impl CodeView {
             return None;
         }
         let x = f32::from(position.x - bounds.origin.x);
-        if x >= self.geometry.get().gutter_w {
+        if x >= comment_button_left(self.geometry.get().gutter_w) + CODE_ROW_HEIGHT {
             return None;
         }
         self.hits
@@ -650,12 +661,9 @@ impl CodeView {
         )
     }
 
-    pub(super) fn render_comment_button(
-        &self,
-        ui: crate::theme::UiColors,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
+    pub(super) fn render_comment_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let line = self.comment_button_line()?;
+        let palette = comment_palette();
         let top = {
             let map = self.scroll.map();
             rows_to_px(map.line_top(line) as f64 - self.scroll.rows()) as f32
@@ -665,14 +673,14 @@ impl CodeView {
                 .id("code-comment-add")
                 .debug_selector(|| "code-comment-add".into())
                 .absolute()
-                .left(px(COMMENT_BUTTON_LEFT))
-                .top(px(top + (CODE_ROW_HEIGHT - COMMENT_BUTTON_SIZE) / 2.0))
-                .size(px(COMMENT_BUTTON_SIZE))
+                .left(px(comment_button_left(self.geometry.get().gutter_w)))
+                .top(px(top))
+                .size(px(CODE_ROW_HEIGHT))
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(px(4.))
-                .bg(ui.accent)
+                .rounded(px(COMMENT_BUTTON_RADIUS))
+                .bg(palette.add_button)
                 .cursor(CursorStyle::PointingHand)
                 .role(gpui::accesskit::Role::Button)
                 .aria_label(COMMENT_BUTTON_TOOLTIP)
@@ -686,10 +694,10 @@ impl CodeView {
                 )
                 .child(
                     gpui::svg()
-                        .size(px(10.))
+                        .size(px(COMMENT_BUTTON_ICON_SIZE))
                         .flex_none()
-                        .path(crate::app::menu_icons::ADD)
-                        .text_color(ui.base),
+                        .path(COMMENT_BUTTON_ICON)
+                        .text_color(palette.add_glyph),
                 )
                 .into_any_element(),
         )
@@ -1197,6 +1205,38 @@ mod tests {
         assert_eq!(
             view.read_with(cx, |view, _| view.comment_button_line()),
             None
+        );
+    }
+
+    #[gpui::test]
+    fn the_gutter_button_spans_a_row_between_the_number_and_the_text(cx: &mut TestAppContext) {
+        let (view, cx) = commenting(cx, 50);
+        let origin = view.read_with(cx, |view, _| view.scroll.bounds().origin);
+        let gutter_w = view.read_with(cx, |view, _| view.geometry.get().gutter_w);
+        cx.simulate_mouse_move(
+            point(origin.x + px(20.), origin.y + px(CODE_ROW_HEIGHT * 3. + 9.)),
+            None,
+            Modifiers::default(),
+        );
+        cx.executor().advance_clock(GUTTER_HOVER_DELAY);
+        cx.run_until_parked();
+        let button = cx.debug_bounds("code-comment-add").expect("button");
+        assert_eq!(f32::from(button.size.width), CODE_ROW_HEIGHT);
+        assert_eq!(f32::from(button.size.height), CODE_ROW_HEIGHT);
+        assert_eq!(f32::from(button.top() - origin.y), CODE_ROW_HEIGHT * 3.);
+        assert_eq!(f32::from(button.left() - origin.x), gutter_w - GUTTER_SEAM);
+        let text_x = view.read_with(cx, |view, _| view.hits.borrow().text_x);
+        assert_eq!(f32::from(button.right()), text_x);
+        cx.simulate_mouse_move(
+            point(button.right() - px(2.), button.center().y),
+            None,
+            Modifiers::default(),
+        );
+        cx.run_until_parked();
+        assert_eq!(
+            view.read_with(cx, |view, _| view.comment_button_line()),
+            Some(3),
+            "the part of the button over the text margin keeps it shown"
         );
     }
 
