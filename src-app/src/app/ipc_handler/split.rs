@@ -220,6 +220,40 @@ pub(super) fn check_split_target(
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct PlacedSplit {
+    pub(super) tab_id: u64,
+    pub(super) new_tab: bool,
+}
+
+pub(super) fn split_done(
+    direction: &str,
+    panes: usize,
+    surface_id: u64,
+    placed: PlacedSplit,
+) -> serde_json::Value {
+    serde_json::json!({
+        "split": !placed.new_tab,
+        "new_tab": placed.new_tab,
+        "tab_id": placed.tab_id,
+        "direction": direction,
+        "panes": panes,
+        "surface_id": surface_id,
+    })
+}
+
+pub(super) fn worktree_request_cwd(
+    explicit: Option<&str>,
+    anchor_worktree: Option<&Path>,
+    workspace_cwd: &str,
+) -> Option<String> {
+    explicit
+        .filter(|cwd| !cwd.is_empty())
+        .map(str::to_owned)
+        .or_else(|| anchor_worktree.map(|path| path.to_string_lossy().into_owned()))
+        .or_else(|| (!workspace_cwd.is_empty()).then(|| workspace_cwd.to_owned()))
+}
+
 impl PaneFlowApp {
     #[expect(
         clippy::too_many_arguments,
@@ -234,7 +268,7 @@ impl PaneFlowApp {
         new_pane: Entity<Pane>,
         new_tab_title: String,
         cx: &mut Context<Self>,
-    ) -> Result<(), JsonRpcError> {
+    ) -> Result<PlacedSplit, JsonRpcError> {
         let ws = self
             .workspaces
             .get(ws_idx)
@@ -247,19 +281,33 @@ impl PaneFlowApp {
                     return Err(JsonRpcError::invalid_params("the target tab has no pane"));
                 }
                 self.split_tab_through_model(tab_id, anchor, direction, &new_pane, cx)
-                    .map_err(|_| JsonRpcError::invalid_params("Surface not found"))
+                    .map_err(|_| JsonRpcError::invalid_params("Surface not found"))?;
+                Ok(PlacedSplit {
+                    tab_id,
+                    new_tab: false,
+                })
             }
-            SplitTarget::NewTab(worktree) => self
-                .open_tab_through_model(
-                    ws_idx,
-                    new_tab_title,
-                    Some(LayoutTree::Leaf(new_pane)),
-                    Some(worktree.to_string_lossy().into_owned()),
-                    false,
-                    cx,
-                )
-                .map(|_| ())
-                .map_err(|_| JsonRpcError::invalid_params("Tab limit reached for this workspace")),
+            SplitTarget::NewTab(worktree) => {
+                let opened = self
+                    .open_tab_through_model(
+                        ws_idx,
+                        new_tab_title,
+                        Some(LayoutTree::Leaf(new_pane)),
+                        Some(worktree.to_string_lossy().into_owned()),
+                        false,
+                        cx,
+                    )
+                    .map_err(|_| {
+                        JsonRpcError::invalid_params("Tab limit reached for this workspace")
+                    })?;
+                let tab_id = self.layout_app_tab_id(opened).ok_or_else(|| {
+                    JsonRpcError::internal("the opened tab has no window identity")
+                })?;
+                Ok(PlacedSplit {
+                    tab_id,
+                    new_tab: true,
+                })
+            }
         }
     }
 }
@@ -332,7 +380,8 @@ impl PaneFlowApp {
                 ));
             }
         };
-        let worktree_request = super::worktree_requests::parse(params.get("worktree"), spec.cwd)?;
+        let mut worktree_request =
+            super::worktree_requests::parse(params.get("worktree"), spec.cwd)?;
         if worktree_request.is_some()
             && params
                 .get("managed_worktree")
@@ -360,6 +409,14 @@ impl PaneFlowApp {
             .ok_or_else(|| JsonRpcError::invalid_params("No active workspace"))?;
         if managed_worktree.is_none() && worktree_request.is_none() {
             check_split_target(ws, &SplitTarget::Tab(anchor.tab_id), anchor.pane.as_ref())?;
+        }
+        if let Some(request) = worktree_request.as_mut() {
+            let anchor_worktree = ws
+                .tabs()
+                .iter()
+                .find(|tab| tab.id == anchor.tab_id)
+                .and_then(|tab| tab.worktree.as_deref());
+            request.cwd = worktree_request_cwd(request.cwd.as_deref(), anchor_worktree, &ws.cwd);
         }
         let probe = SplitProbe {
             cwd: spec.cwd.map(str::to_owned),
@@ -480,9 +537,10 @@ impl PaneFlowApp {
             cx,
         );
         self.layout.acting_pane = None;
-        if let Err(error) = placed {
-            return error.into_value();
-        }
+        let placed = match placed {
+            Ok(placed) => placed,
+            Err(error) => return error.into_value(),
+        };
         if let Some(mw) = launch.managed_worktree {
             let fresh = self.not_yet_managed(vec![mw]);
             self.workspaces[ws_idx].managed_worktrees.extend(fresh);
@@ -495,10 +553,7 @@ impl PaneFlowApp {
         let panes = self.workspaces[ws_idx].pane_count();
         self.save_session(cx);
         cx.notify();
-        serde_json::json!({
-            "split": true, "direction": launch.direction_name, "panes": panes,
-            "surface_id": surface_id
-        })
+        split_done(&launch.direction_name, panes, surface_id, placed)
     }
 }
 

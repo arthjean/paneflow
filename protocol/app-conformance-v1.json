@@ -444,6 +444,8 @@
       "expect": {
         "result": {
           "split": "boolean",
+          "new_tab": "boolean",
+          "tab_id": "integer",
           "direction": "string",
           "panes": "integer",
           "surface_id": "integer"

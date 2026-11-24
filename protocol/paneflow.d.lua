@@ -996,9 +996,12 @@ paneflow.surface.send_text = function(params) end
 
 ---@class paneflow.surface.split.result
 ---@field direction string
+---@field new_tab boolean
+---@field notices? string[]
 ---@field panes integer
 ---@field split boolean
 ---@field surface_id integer
+---@field tab_id integer
 
 ---Split the pane holding a surface and start a terminal in the new pane.
 ---@param params paneflow.surface.split.params

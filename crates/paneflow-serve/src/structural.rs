@@ -132,6 +132,18 @@ pub struct Decision {
     pub cwd: Option<PathBuf>,
 }
 
+pub fn worktree_request_cwd(
+    explicit: Option<&str>,
+    anchor_worktree: Option<&str>,
+    workspace_cwd: &str,
+) -> Option<String> {
+    explicit
+        .filter(|cwd| !cwd.is_empty())
+        .or(anchor_worktree)
+        .or_else(|| (!workspace_cwd.is_empty()).then_some(workspace_cwd))
+        .map(str::to_owned)
+}
+
 pub fn decide_split(
     cwd: Option<&str>,
     worktree: Option<&Path>,
@@ -436,10 +448,17 @@ pub(crate) fn surface_split(
     if spawning && outside_own_workspace {
         return Err(spawn_outside_workspace("surface.split", call.authority));
     }
-    let request = params
-        .worktree
-        .clone()
-        .map(|request| crate::worktrees::request_of(request, params.cwd.clone()));
+    let request = params.worktree.clone().map(|request| {
+        let anchor_worktree = ws
+            .tabs
+            .iter()
+            .find(|tab| tab.id == anchor_tab)
+            .and_then(|tab| tab.worktree.as_deref());
+        crate::worktrees::request_of(
+            request,
+            worktree_request_cwd(params.cwd.as_deref(), anchor_worktree, &ws.cwd),
+        )
+    });
     let mut prepared = crate::worktrees::prepare(
         &load_config(worker),
         &state,
@@ -491,7 +510,8 @@ pub(crate) fn surface_split(
         }],
         active: 0,
     };
-    let op = match decision.target {
+    let new_tab = matches!(decision.target, Target::NewTab(_));
+    let (placed_tab, op) = match decision.target {
         Target::Tab(tab) => {
             let target = match anchor.filter(|_| tab == anchor_tab) {
                 Some(pane) => pane,
@@ -503,28 +523,35 @@ pub(crate) fn surface_split(
                     })
                     .ok_or_else(|| invalid("the target tab holds no pane"))?,
             };
-            Op::Split {
-                target,
-                direction,
-                edge: Edge::After,
-                pane: new_pane,
-                focus: false,
-            }
+            (
+                tab,
+                Op::Split {
+                    target,
+                    direction,
+                    edge: Edge::After,
+                    pane: new_pane,
+                    focus: false,
+                },
+            )
         }
-        Target::NewTab(path) => Op::OpenTab {
-            workspace: workspace_id,
-            tab: NewTab {
-                id: TabId(worker.layout.reserve_id()),
-                title: worktree
-                    .as_ref()
-                    .map(|worktree| worktree.branch.clone())
-                    .unwrap_or_default(),
-                title_source: TabTitleSource::Preset,
-                worktree: Some(path.display().to_string()),
-                root: Some(NewNode::Pane(new_pane)),
-            },
-            fill_empty_active: false,
-        },
+        Target::NewTab(path) => {
+            let placed_tab = TabId(worker.layout.reserve_id());
+            let op = Op::OpenTab {
+                workspace: workspace_id,
+                tab: NewTab {
+                    id: placed_tab,
+                    title: worktree
+                        .as_ref()
+                        .map(|worktree| worktree.branch.clone())
+                        .unwrap_or_default(),
+                    title_source: TabTitleSource::Preset,
+                    worktree: Some(path.display().to_string()),
+                    root: Some(NewNode::Pane(new_pane)),
+                },
+                fill_empty_active: false,
+            };
+            (placed_tab, op)
+        }
     };
     let mut built = apply(worker, op)?;
     prepared.keep();
@@ -547,7 +574,9 @@ pub(crate) fn surface_split(
         .workspace_index(workspace_id)
         .unwrap_or(ws_index);
     let mut done = json!({
-        "split": true,
+        "split": !new_tab,
+        "new_tab": new_tab,
+        "tab_id": placed_tab.get(),
         "direction": direction_name,
         "panes": workspace_pane_count(&built.state, ws_index),
         "surface_id": surface.get(),

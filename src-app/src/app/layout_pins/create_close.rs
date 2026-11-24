@@ -11,7 +11,7 @@ use crate::{
     SplitVertically, ToggleZoom, UndoClosePane,
 };
 
-pub(super) const PINS: usize = 25;
+pub(super) const PINS: usize = 26;
 
 fn split_v(rig: &mut Rig<'_>) {
     rig.act(|app, window, cx| app.handle_split_v(&SplitVertically, window, cx));
@@ -48,6 +48,7 @@ fn pin_split_by_ipc_spawns_next_to_the_anchor_and_leaves_focus(cx: &mut TestAppC
         json!({"surface_id": anchor, "direction": "horizontal"}),
     );
     assert_eq!(reply["result"]["split"], json!(true), "{reply}");
+    assert_eq!(reply["result"]["new_tab"], json!(false), "{reply}");
     assert_eq!(rig.shape(0, 0), "H(0.500 a, 0.500 b)");
     assert_eq!(rig.focused().as_deref(), Some("a"));
     assert_eq!(rig.requests(), ["create b"]);
@@ -117,6 +118,45 @@ fn pin_a_team_answers_tmux_only_to_a_process_in_the_pane_it_names(cx: &mut TestA
     assert_eq!(
         listed["result"],
         json!({"stdout": "%1", "stderr": "", "exit": 0})
+    );
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_an_ipc_worktree_split_without_a_cwd_uses_the_workspace_repository_and_reports_its_tab(
+    cx: &mut TestAppContext,
+) {
+    let root = tempfile::tempdir().expect("a repository root");
+    let repo = root.path().join("repo");
+    paneflow_git::fixture::committed_repo(&repo, &[("README.md", "init\n")]);
+    let mut rig = Rig::mount(cx);
+    let ws = rig.workspace("alpha");
+    rig.act(|app, _, _| app.workspaces[ws].cwd = repo.display().to_string());
+    let anchor = rig.surface_id("a");
+
+    let reply = rig.ipc(
+        "surface.split",
+        json!({"surface_id": anchor, "direction": "vertical",
+               "worktree": {"branch": "feat/pin", "copy_env": false}}),
+    );
+
+    let result = &reply["result"];
+    assert_eq!(result["split"], json!(false), "{reply}");
+    assert_eq!(result["new_tab"], json!(true), "{reply}");
+    let (tab_id, worktree) = rig.act(|app, _, _| {
+        let tab = &app.workspaces[ws].tabs()[1];
+        (tab.id, tab.worktree.clone())
+    });
+    assert_eq!(result["tab_id"], json!(tab_id), "{reply}");
+    let worktree = worktree.expect("the new tab is bound to the worktree");
+    assert!(
+        worktree.join("README.md").is_file(),
+        "{}",
+        worktree.display()
+    );
+    assert_eq!(
+        paneflow_git::fixture::run(&worktree, &["branch", "--show-current"]).trim(),
+        "feat/pin"
     );
 }
 

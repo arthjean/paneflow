@@ -287,10 +287,21 @@ pub struct SplitParams {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SplitDone {
+    #[schemars(
+        description = "true when the new pane sits beside an existing pane, false when it opened its own tab"
+    )]
     pub split: bool,
+    #[schemars(
+        description = "true when the new pane opened a tab of its own, as a pane bound to another worktree than the anchor's tab does"
+    )]
+    pub new_tab: bool,
+    #[schemars(description = "The tab that holds the new pane")]
+    pub tab_id: u64,
     pub direction: String,
     pub panes: usize,
     pub surface_id: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notices: Vec<String>,
 }
 
 method! {
@@ -524,6 +535,8 @@ method! {
         result: SplitDone,
         examples: [({"surface_id": 7, "direction": "vertical"} => {
             "split": true,
+            "new_tab": false,
+            "tab_id": 3,
             "direction": "vertical",
             "panes": 2,
             "surface_id": 9

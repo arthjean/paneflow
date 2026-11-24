@@ -247,7 +247,8 @@ fn a_split_with_a_worktree_opens_a_tab_for_it_beside_the_anchor() {
     )
     .expect("the worker creates the worktree for the split");
 
-    assert_eq!(split["split"], true);
+    assert_eq!(split["split"], false, "{split}");
+    assert_eq!(split["new_tab"], true, "{split}");
     let index = opened["index"].as_u64().unwrap() as usize;
     let ws = workspaces(home.path())[index].clone();
     let tabs = ws["tabs"].as_array().unwrap();
@@ -259,6 +260,39 @@ fn a_split_with_a_worktree_opens_a_tab_for_it_beside_the_anchor() {
         "copy_env false copies nothing"
     );
     assert!(branches(&repo.repo).contains("feat/side"));
+    worker.stop();
+}
+
+#[test]
+fn a_worktree_split_without_a_cwd_plans_from_the_workspace_folder_and_names_the_tab_it_opened() {
+    let _serial = one_worker_plans_worktrees_at_a_time();
+    let home = tempfile::tempdir().unwrap();
+    let repo = repo_with_a_local_file(home.path());
+    let worker = common::open_starting_terminals(home.path());
+    let opened = call(
+        home.path(),
+        "workspace.up",
+        json!({"name": "main", "panes": [{"cwd": repo.repo}]}),
+    )
+    .unwrap();
+    let anchor = opened["surface_ids"][0].as_u64().unwrap();
+
+    let split = call(
+        home.path(),
+        "surface.split",
+        json!({"surface_id": anchor, "direction": "vertical",
+               "worktree": {"branch": "feat/no-cwd", "copy_env": false}}),
+    )
+    .expect("the split takes the workspace folder as its repository");
+
+    let index = opened["index"].as_u64().unwrap() as usize;
+    let ws = workspaces(home.path())[index].clone();
+    let tabs = ws["tabs"].as_array().unwrap();
+    assert_eq!(tabs.len(), 2, "{ws}");
+    assert_eq!(split["split"], false, "{split}");
+    assert_eq!(split["new_tab"], true, "{split}");
+    assert_eq!(split["tab_id"], tabs[1]["id"], "{split} {ws}");
+    assert!(branches(&repo.repo).contains("feat/no-cwd"));
     worker.stop();
 }
 

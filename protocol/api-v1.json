@@ -1952,9 +1952,11 @@
           },
           "result": {
             "direction": "vertical",
+            "new_tab": false,
             "panes": 2,
             "split": true,
-            "surface_id": 9
+            "surface_id": 9,
+            "tab_id": 3
           }
         }
       ],
@@ -2165,15 +2167,32 @@
           "direction": {
             "type": "string"
           },
+          "new_tab": {
+            "description": "true when the new pane opened a tab of its own, as a pane bound to another worktree than the anchor's tab does",
+            "type": "boolean"
+          },
+          "notices": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "panes": {
             "format": "uint",
             "minimum": 0,
             "type": "integer"
           },
           "split": {
+            "description": "true when the new pane sits beside an existing pane, false when it opened its own tab",
             "type": "boolean"
           },
           "surface_id": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tab_id": {
+            "description": "The tab that holds the new pane",
             "format": "uint64",
             "minimum": 0,
             "type": "integer"
@@ -2181,6 +2200,8 @@
         },
         "required": [
           "split",
+          "new_tab",
+          "tab_id",
           "direction",
           "panes",
           "surface_id"
