@@ -45,6 +45,7 @@ fn backdrop_for(
         fullscreen_drops_alpha,
         window.is_fullscreen(),
         system_backdrop_available,
+        system_reduces_transparency(),
     );
     veil::Backdrop::new(style, surface_has_alpha, blur_support(window))
 }
@@ -53,8 +54,29 @@ fn surface_alpha_for(
     fullscreen_drops_alpha: bool,
     is_fullscreen: bool,
     system_backdrop_available: bool,
+    reduce_transparency: bool,
 ) -> bool {
-    !(fullscreen_drops_alpha && is_fullscreen) && system_backdrop_available
+    !(fullscreen_drops_alpha && is_fullscreen) && system_backdrop_available && !reduce_transparency
+}
+
+#[cfg(target_os = "macos")]
+fn system_reduces_transparency() -> bool {
+    use objc::runtime::{BOOL, NO, Object};
+    use objc::{class, msg_send, sel, sel_impl};
+
+    unsafe {
+        let workspace: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
+        if workspace.is_null() {
+            return false;
+        }
+        let reduce: BOOL = msg_send![workspace, accessibilityDisplayShouldReduceTransparency];
+        reduce != NO
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn system_reduces_transparency() -> bool {
+    false
 }
 
 #[cfg(target_os = "windows")]
@@ -189,10 +211,10 @@ mod backdrop_source_tests {
 
     #[test]
     fn a_platform_that_drops_alpha_in_fullscreen_keeps_it_windowed() {
-        assert!(surface_alpha_for(true, false, true));
-        assert!(!surface_alpha_for(true, true, true));
-        assert!(surface_alpha_for(false, true, true));
-        assert!(surface_alpha_for(false, false, true));
+        assert!(surface_alpha_for(true, false, true, false));
+        assert!(!surface_alpha_for(true, true, true, false));
+        assert!(surface_alpha_for(false, true, true, false));
+        assert!(surface_alpha_for(false, false, true, false));
     }
 
     #[test]
@@ -202,8 +224,25 @@ mod backdrop_source_tests {
                 assert!(!surface_alpha_for(
                     fullscreen_drops_alpha,
                     is_fullscreen,
+                    false,
                     false
                 ));
+            }
+        }
+    }
+
+    #[test]
+    fn reduce_transparency_takes_the_surface_alpha_away_everywhere() {
+        for fullscreen_drops_alpha in [true, false] {
+            for is_fullscreen in [true, false] {
+                for system_backdrop_available in [true, false] {
+                    assert!(!surface_alpha_for(
+                        fullscreen_drops_alpha,
+                        is_fullscreen,
+                        system_backdrop_available,
+                        true
+                    ));
+                }
             }
         }
     }
