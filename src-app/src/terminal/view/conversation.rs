@@ -778,29 +778,21 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) -> Option<gpui::AnyElement> {
         if let Some(request) = self.conversation.write_request.as_ref() {
-            let bar = banner_bar(request.message(), ui)
-                .child(crate::settings::components::secondary_button(
-                    "write-request-allow",
-                    ALLOW_WRITE_LABEL,
-                    ui,
-                    cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
-                        this.decide_write_request(true, cx);
-                    }),
-                ))
-                .child(crate::settings::components::secondary_button(
-                    "write-request-deny",
-                    DENY_WRITE_LABEL,
-                    ui,
-                    cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
-                        this.decide_write_request(false, cx);
-                    }),
-                ));
-            return Some(banner_frame(bar, ui));
+            return Some(write_request_banner(
+                request.message(),
+                ui,
+                cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                    this.decide_write_request(true, cx);
+                }),
+                cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                    this.decide_write_request(false, cx);
+                }),
+            ));
         }
         let banner = self.conversation.banner.as_ref()?;
-        let mut bar = banner_bar(banner.message(), ui);
+        let mut buttons = Vec::with_capacity(2);
         if let Some(label) = banner.primary_label() {
-            bar = bar.child(crate::settings::components::secondary_button(
+            buttons.push(banner_button(
                 "conversation-banner-action",
                 label,
                 ui,
@@ -809,7 +801,7 @@ impl TerminalView {
                 }),
             ));
         }
-        bar = bar.child(crate::settings::components::secondary_button(
+        buttons.push(banner_button(
             "conversation-banner-dismiss",
             "Dismiss",
             ui,
@@ -817,25 +809,79 @@ impl TerminalView {
                 this.dismiss_conversation_banner(cx);
             }),
         ));
-        Some(banner_frame(bar, ui))
+        Some(banner_frame(banner_bar(banner.message(), ui, buttons), ui))
     }
 }
 
-fn banner_bar(message: String, ui: crate::theme::UiColors) -> gpui::Div {
+pub(crate) const BANNER_TEXT: &str = "conversation-banner-text";
+pub(crate) const BANNER_BUTTONS: &str = "conversation-banner-buttons";
+pub(crate) const WRITE_ALLOW_BUTTON: &str = "write-request-allow";
+pub(crate) const WRITE_DENY_BUTTON: &str = "write-request-deny";
+const BANNER_TEXT_BASIS: f32 = 160.0;
+const BANNER_TEXT_LINES: usize = 3;
+
+pub(crate) fn write_request_banner(
+    message: String,
+    ui: crate::theme::UiColors,
+    on_allow: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
+    on_deny: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
+) -> gpui::AnyElement {
+    let buttons = vec![
+        banner_button(WRITE_ALLOW_BUTTON, ALLOW_WRITE_LABEL, ui, on_allow),
+        banner_button(WRITE_DENY_BUTTON, DENY_WRITE_LABEL, ui, on_deny),
+    ];
+    banner_frame(banner_bar(message, ui, buttons), ui)
+}
+
+fn banner_button(
+    id: &'static str,
+    label: &'static str,
+    ui: crate::theme::UiColors,
+    on_click: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
+) -> gpui::Stateful<gpui::Div> {
+    crate::settings::components::secondary_button(id, label, ui, on_click)
+        .debug_selector(move || id.into())
+        .min_w_0()
+        .max_w_full()
+}
+
+fn banner_bar(
+    message: String,
+    ui: crate::theme::UiColors,
+    buttons: Vec<gpui::Stateful<gpui::Div>>,
+) -> gpui::Div {
     div()
         .flex()
         .flex_row()
+        .flex_wrap()
         .items_center()
-        .gap(gpui::px(10.0))
+        .gap_x(gpui::px(10.0))
+        .gap_y(gpui::px(6.0))
         .px(gpui::px(12.0))
         .py(gpui::px(7.0))
+        .min_w_0()
         .child(
             div()
+                .flex_1()
+                .flex_basis(gpui::px(BANNER_TEXT_BASIS))
                 .min_w_0()
                 .text_xs()
                 .text_color(ui.muted)
-                .truncate()
+                .line_clamp(BANNER_TEXT_LINES)
+                .text_ellipsis()
+                .debug_selector(|| BANNER_TEXT.into())
                 .child(message),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(gpui::px(6.0))
+                .min_w_0()
+                .max_w_full()
+                .debug_selector(|| BANNER_BUTTONS.into())
+                .children(buttons),
         )
 }
 
@@ -851,7 +897,10 @@ fn banner_frame(bar: gpui::Div, ui: crate::theme::UiColors) -> gpui::AnyElement 
         .pt(gpui::px(10.0))
         .child(
             crate::ui_primitives::squircle_skin(
-                div().id("conversation-banner").max_w(gpui::px(480.0)),
+                div()
+                    .id("conversation-banner")
+                    .min_w_0()
+                    .max_w(gpui::px(480.0)),
                 "conversation-banner",
                 crate::ui_primitives::ROW_RADIUS,
                 Some(ui.overlay),
@@ -1507,5 +1556,65 @@ mod tests {
             );
             assert!(view.terminal.queued_raw_input_for_test().is_empty());
         });
+    }
+
+    #[gpui::test]
+    fn in_a_narrow_pane_the_write_request_keeps_allow_and_deny_inside_the_pane(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use gpui::{Modifiers, px, size};
+
+        let height = px(400.);
+
+        let (view, cx) = cx.add_window_view(|_, cx| TerminalView::display_only_for_test(1, cx));
+        for (id, width) in [
+            (1, px(crate::layout::MIN_PANE_SIZE)),
+            (2, px(240.)),
+            (3, px(380.)),
+        ] {
+            view.update(cx, |view, cx| {
+                view.show_write_request(
+                    Some(WriteRequest {
+                        id,
+                        source: "conductor-with-a-long-agent-name".to_string(),
+                    }),
+                    cx,
+                );
+            });
+            cx.simulate_resize(size(width, height));
+            cx.run_until_parked();
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            let text = cx
+                .debug_bounds(BANNER_TEXT)
+                .expect("the request text is painted");
+            assert!(text.right() <= width, "the text overflows at {width:?}");
+            for button in [WRITE_ALLOW_BUTTON, WRITE_DENY_BUTTON] {
+                let bounds = cx
+                    .debug_bounds(button)
+                    .unwrap_or_else(|| panic!("{button} is painted at {width:?}"));
+                assert!(
+                    bounds.left() >= px(0.) && bounds.right() <= width,
+                    "{button} spans {:?}..{:?}, outside the {width:?} pane",
+                    bounds.left(),
+                    bounds.right()
+                );
+                assert!(
+                    bounds.bottom() <= height,
+                    "{button} ends at {:?}, below the {height:?} pane at {width:?}",
+                    bounds.bottom()
+                );
+                assert!(bounds.size.width > px(0.) && bounds.size.height > px(0.));
+            }
+            let deny = cx.debug_bounds(WRITE_DENY_BUTTON).expect("Deny is painted");
+            cx.simulate_click(deny.center(), Modifiers::default());
+            cx.run_until_parked();
+            view.update(cx, |view, _cx| {
+                assert_eq!(
+                    view.write_request(),
+                    None,
+                    "clicking Deny at {width:?} answers the request"
+                );
+            });
+        }
     }
 }
