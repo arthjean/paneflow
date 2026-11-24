@@ -14,9 +14,53 @@ const SIDEBAR_ROW_PADDING_X: f32 = 8.0;
 const SIDEBAR_ROW_LINE_HEIGHT: f32 = 18.0;
 const LOADING_ICON: &str = "icons/dock/loader-circle.svg";
 pub(crate) const FOLDER_FAILED: &str = "Unable to load folder.";
+const FOLDER_LOADING: &str = "Loading";
+const FOLDER_CHANGED: &str = "Contains changes";
+pub(super) const FILES_TREE_LABEL: &str = "Files";
 
 pub(super) fn is_dimmed(node: &crate::app::files_tree::FileNode) -> bool {
     node.is_ignored || node.is_hidden
+}
+
+pub(super) fn row_description(row: &FileRow) -> Option<&'static str> {
+    match row.state {
+        DirState::Failed => return Some(FOLDER_FAILED),
+        DirState::Loading => return Some(FOLDER_LOADING),
+        DirState::Ready => {}
+    }
+    let (letter, _) = files_git::status_indicator(row.status, crate::theme::ui_colors())?;
+    if row.node.is_dir {
+        return Some(FOLDER_CHANGED);
+    }
+    Some(match letter {
+        "!" => "Conflicted",
+        "U" => "Untracked",
+        "D" => "Deleted",
+        "M" => "Modified",
+        "A" => "Added",
+        _ => "Changed",
+    })
+}
+
+pub(super) fn expose_file_row<E: StatefulInteractiveElement>(
+    row_element: E,
+    row: &FileRow,
+    selected: bool,
+) -> E {
+    let element = row_element
+        .role(gpui::Role::TreeItem)
+        .aria_label(row.label.clone())
+        .aria_level(row.depth + 1)
+        .aria_selected(selected);
+    let element = if row.node.is_dir {
+        element.aria_expanded(row.expanded)
+    } else {
+        element
+    };
+    match row_description(row) {
+        Some(description) => element.aria_description(description),
+        None => element,
+    }
 }
 
 pub(super) fn row_label_color(
@@ -102,7 +146,8 @@ impl FilesSidebar {
             })
             .collect::<Vec<_>>();
 
-        let mut el = squircle_skin(div().id(row.id.clone()), group, px(6.), resting, hovered)
+        let skin = squircle_skin(div().id(row.id.clone()), group, px(6.), resting, hovered);
+        let mut el = expose_file_row(skin, row, selected)
             .flex()
             .flex_row()
             .items_center()
@@ -234,6 +279,70 @@ impl FilesSidebar {
 mod tests {
     use super::*;
     use crate::app::files_tree::FileNode;
+
+    fn file_row(path: &str, is_dir: bool, depth: usize, expanded: bool) -> FileRow {
+        FileRow {
+            node: FileNode {
+                path: std::path::PathBuf::from(path),
+                is_dir,
+                is_ignored: false,
+                is_hidden: false,
+                size: 0,
+            },
+            depth,
+            expanded,
+            label: path.rsplit('/').next().unwrap_or(path).to_string().into(),
+            highlights: Vec::new(),
+            icon_token: "default",
+            id: format!("files-row-{path}").into(),
+            group: format!("files-row-group-{path}").into(),
+            status: files_git::GitSummary::default(),
+            state: DirState::Ready,
+        }
+    }
+
+    fn exposed(row: &FileRow, selected: bool) -> gpui::accesskit::Node {
+        use crate::ui_primitives::AccessibleControlExt as _;
+        let element =
+            expose_file_row(div().id(row.id.clone()), row, selected).on_activate(|_, _, _| {});
+        let role = gpui::Element::a11y_role(&element).expect("a role");
+        let mut node = gpui::accesskit::Node::new(role);
+        gpui::Element::write_a11y_info(&element, &mut node);
+        node
+    }
+
+    #[test]
+    fn a_files_row_is_a_tree_item_named_leveled_and_expanded_when_a_folder() {
+        use gpui::accesskit::{Action, Role};
+        let folder = exposed(&file_row("/w/src", true, 0, true), false);
+        assert_eq!(folder.role(), Role::TreeItem);
+        assert_eq!(folder.label(), Some("src"));
+        assert_eq!(folder.level(), Some(1));
+        assert_eq!(folder.is_expanded(), Some(true));
+        assert_eq!(folder.is_selected(), Some(false));
+        assert!(folder.supports_action(Action::Click));
+        let closed = exposed(&file_row("/w/src/app", true, 1, false), false);
+        assert_eq!(closed.is_expanded(), Some(false));
+        assert_eq!(closed.level(), Some(2));
+        let file = exposed(&file_row("/w/src/main.rs", false, 1, false), true);
+        assert_eq!(file.role(), Role::TreeItem);
+        assert_eq!(file.label(), Some("main.rs"));
+        assert_eq!(file.is_expanded(), None);
+        assert_eq!(file.is_selected(), Some(true));
+        assert_eq!(file.description(), None);
+        let mut modified = file_row("/w/src/lib.rs", false, 1, false);
+        modified.status.worktree.modified = 1;
+        assert_eq!(exposed(&modified, false).description(), Some("Modified"));
+        let mut failed = file_row("/w/locked", true, 0, false);
+        failed.state = DirState::Failed;
+        assert_eq!(exposed(&failed, false).description(), Some(FOLDER_FAILED));
+        let tree = super::super::list::files_tree();
+        let role = gpui::Element::a11y_role(&tree).expect("a role");
+        let mut node = gpui::accesskit::Node::new(role);
+        gpui::Element::write_a11y_info(&tree, &mut node);
+        assert_eq!(role, Role::Tree);
+        assert_eq!(node.label(), Some(FILES_TREE_LABEL));
+    }
 
     #[test]
     fn a_retired_binary_extension_row_is_neither_dimmed_nor_muted() {

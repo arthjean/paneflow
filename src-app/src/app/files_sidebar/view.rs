@@ -216,24 +216,25 @@ impl FilesSidebar {
             let message = message.debug_selector(|| "files-sidebar-message".into());
             return message.into_any_element();
         }
-        list::files_list(
-            self.row_count(),
-            &self.scroll,
-            cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
-                this.rows_in(range)
-                    .iter()
-                    .map(|row| {
-                        this.files_row(
-                            row,
-                            this.selected.as_deref() == Some(row.node.path.as_path()),
-                            ui,
-                            cx,
-                        )
-                    })
-                    .collect()
-            }),
-        )
-        .into_any_element()
+        list::files_tree()
+            .child(list::files_list(
+                self.row_count(),
+                &self.scroll,
+                cx.processor(move |this, range: std::ops::Range<usize>, _, cx| {
+                    this.rows_in(range)
+                        .iter()
+                        .map(|row| {
+                            this.files_row(
+                                row,
+                                this.selected.as_deref() == Some(row.node.path.as_path()),
+                                ui,
+                                cx,
+                            )
+                        })
+                        .collect()
+                }),
+            ))
+            .into_any_element()
     }
 }
 
