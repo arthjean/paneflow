@@ -986,6 +986,23 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      # Layered syntax highlighting US-039 (assumption A3): the MSVC compile
+      # of the wasm2c lexers is printed on every run. The crate's build script
+      # is cleaned first so a warm cache still compiles highlights.c, and the
+      # same profile overrides as the build above keep its dependencies fresh.
+      - name: Time the MSVC compile of highlights.c
+        env:
+          CARGO_PROFILE_RELEASE_LTO: "false"
+          CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+        run: |
+          cargo clean --release --target x86_64-pc-windows-msvc -p paneflow-highlights
+          cargo build --release --locked --target x86_64-pc-windows-msvc -p paneflow-highlights --timings
+          $report = Get-Content -Raw target/cargo-timings/cargo-timing.html
+          $unit = [regex]::Match($report, '\{[^{}]*"name": "paneflow-highlights"[^{}]*"mode": "run-custom-build"[^{}]*\}')
+          if (-not $unit.Success) { throw 'cargo-timing.html has no build-script run for paneflow-highlights' }
+          $seconds = [regex]::Match($unit.Value, '"duration": ([0-9.]+)').Groups[1].Value
+          "paneflow-highlights build script (MSVC compile of highlights.c and the wasm2c runtime): $seconds s"
+
       - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-nextest@0.9.146
