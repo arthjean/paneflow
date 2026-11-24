@@ -1,7 +1,8 @@
 use gpui::{
-    AnyElement, ClickEvent, Context, CursorStyle, Entity, Focusable, InteractiveElement,
-    IntoElement, KeyDownEvent, MouseButton, MouseUpEvent, ParentElement, ScrollHandle,
-    SharedString, Styled, WeakEntity, Window, deferred, div, prelude::*, px, svg,
+    AnyElement, ClickEvent, Context, CursorStyle, Div, Entity, Focusable, InteractiveElement,
+    IntoElement, KeyDownEvent, MouseButton, MouseUpEvent, ParentElement, Role, ScrollHandle,
+    SharedString, Stateful, Styled, Toggled, WeakEntity, Window, deferred, div, prelude::*, px,
+    svg,
 };
 use paneflow_config::schema::{ButtonCommand, PaneFlowConfig, TerminalSurfaceProfile};
 
@@ -14,11 +15,13 @@ use crate::settings::components::{
     menu_divider_color, menu_row, select_item, select_menu, with_alpha,
 };
 use crate::ui_primitives::squircle::squircle_fill;
-use crate::ui_primitives::squircle_skin;
+use crate::ui_primitives::{AccessibleControlExt, squircle_skin};
 use crate::widgets::text_input::TextInput;
 
 pub(crate) const PALETTE_TITLE: &str = "New pane";
 pub(crate) const PALETTE_TAB_TITLE: &str = "New tab";
+const NEW_BRANCH_TITLE: &str = "New branch";
+const NEW_BRANCH_ROW: &str = "New branch…";
 
 const PICKER_WIDTH: f32 = 260.0;
 
@@ -699,15 +702,12 @@ impl PaneFlowApp {
             .text_size(px(13.))
             .font_weight(gpui::FontWeight::SEMIBOLD)
             .text_color(ui.text)
-            .child(if draft_open {
-                "New branch"
-            } else {
-                PALETTE_TITLE
-            });
+            .child(palette_title(draft_open));
         if draft_open {
             title = title.child(
                 div()
                     .id("palette-new-branch-back")
+                    .accessible_control(Role::Button, "Back")
                     .absolute()
                     .left(px(0.))
                     .top(px(-2.))
@@ -763,6 +763,8 @@ impl PaneFlowApp {
 
         div()
             .id("pane-palette")
+            .role(Role::Group)
+            .aria_label(palette_title(draft_open))
             .size_full()
             .relative()
             .overflow_hidden()
@@ -883,114 +885,76 @@ impl PaneFlowApp {
             return Some(self.render_new_branch_form(draft, ws_idx, ui, cx));
         }
         let open = palette.branch_picker_open;
-        let fill = with_alpha(ui.text, 0.05);
 
-        let trigger = squircle_skin(
-            div()
-                .id("palette-branch")
-                .flex_none()
-                .h(px(28.))
-                .px(px(8.))
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(6.))
-                .w(px(PICKER_WIDTH)),
-            "palette-branch-group",
-            crate::settings::components::menu_item_radius(),
-            open.then_some(fill),
-            Some(fill),
-        )
-        .cursor(CursorStyle::PointingHand)
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-            if let Some(palette) = this.pane_palette.as_mut() {
-                palette.branch_picker_open = !open;
-                cx.notify();
-            }
-        }))
-        .child(
-            svg()
-                .size(px(11.))
-                .flex_none()
-                .path("icons/git-branch-sidebar.svg")
-                .text_color(ui.muted),
-        )
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .overflow_x_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .text_size(px(11.))
-                .text_color(ui.text)
-                .child(current),
-        )
-        .child(
-            svg()
-                .size(px(11.))
-                .flex_none()
-                .path("icons/chevron-down.svg")
-                .text_color(ui.muted),
-        )
-        .when(open, |trigger| {
-            let mut menu = select_menu("palette-branch-menu", ui)
-                .absolute()
-                .top(px(32.))
-                .left(px(0.))
-                .w(px(PICKER_WIDTH))
-                .occlude()
-                .on_mouse_up_out(
-                    MouseButton::Left,
-                    cx.listener(|this, _: &MouseUpEvent, _w, cx| {
-                        if let Some(palette) = this.pane_palette.as_mut() {
-                            palette.branch_picker_open = false;
-                            cx.notify();
-                        }
-                    }),
-                );
-            menu = menu
-                .child(
-                    menu_row("palette-branch-new", false, ui)
-                        .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                            this.pane_palette_open_new_branch(window, cx);
-                            cx.stop_propagation();
-                        }))
-                        .child(
-                            svg()
-                                .size(px(12.))
-                                .flex_none()
-                                .path("icons/plus.svg")
-                                .text_color(ui.text),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .text_color(ui.text)
-                                .child("New branch…"),
-                        ),
+        let trigger = palette_branch_trigger(current, open, ui)
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                if let Some(palette) = this.pane_palette.as_mut() {
+                    palette.branch_picker_open = !open;
+                    cx.notify();
+                }
+            }))
+            .when(open, |trigger| {
+                let mut menu = select_menu("palette-branch-menu", ui)
+                    .role(Role::Menu)
+                    .aria_label("Branches")
+                    .absolute()
+                    .top(px(32.))
+                    .left(px(0.))
+                    .w(px(PICKER_WIDTH))
+                    .occlude()
+                    .on_mouse_up_out(
+                        MouseButton::Left,
+                        cx.listener(|this, _: &MouseUpEvent, _w, cx| {
+                            if let Some(palette) = this.pane_palette.as_mut() {
+                                palette.branch_picker_open = false;
+                                cx.notify();
+                            }
+                        }),
+                    );
+                menu = menu
+                    .child(
+                        menu_row("palette-branch-new", false, ui)
+                            .role(Role::MenuItem)
+                            .aria_label(NEW_BRANCH_ROW)
+                            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                                this.pane_palette_open_new_branch(window, cx);
+                                cx.stop_propagation();
+                            }))
+                            .child(
+                                svg()
+                                    .size(px(12.))
+                                    .flex_none()
+                                    .path("icons/plus.svg")
+                                    .text_color(ui.text),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_color(ui.text)
+                                    .child(NEW_BRANCH_ROW),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .h(px(1.))
+                            .mx(crate::settings::components::menu_divider_inset(px(8.)))
+                            .my(px(4.))
+                            .bg(menu_divider_color(ui)),
+                    );
+                for option in options {
+                    menu = menu
+                        .child(self.render_palette_branch_option(option, ws_idx, tab_idx, ui, cx));
+                }
+                trigger.child(
+                    deferred(crate::ui_primitives::menu_reveal(
+                        "palette-branch-menu-reveal",
+                        menu,
+                    ))
+                    .with_priority(3),
                 )
-                .child(
-                    div()
-                        .h(px(1.))
-                        .mx(crate::settings::components::menu_divider_inset(px(8.)))
-                        .my(px(4.))
-                        .bg(menu_divider_color(ui)),
-                );
-            for option in options {
-                menu =
-                    menu.child(self.render_palette_branch_option(option, ws_idx, tab_idx, ui, cx));
-            }
-            trigger.child(
-                deferred(crate::ui_primitives::menu_reveal(
-                    "palette-branch-menu-reveal",
-                    menu,
-                ))
-                .with_priority(3),
-            )
-        });
+            });
 
         Some(crate::ui_primitives::menu_reveal(
             "palette-branch-row-reveal",
@@ -1041,6 +1005,9 @@ impl PaneFlowApp {
 
         let mut base_trigger = div()
             .id("palette-new-branch-base")
+            .role(Role::Button)
+            .aria_label(SharedString::from(format!("Base branch: {base_label}")))
+            .aria_expanded(base_open)
             .relative()
             .h(px(28.))
             .w(px(PICKER_WIDTH))
@@ -1091,6 +1058,8 @@ impl PaneFlowApp {
             }));
         if base_open {
             let mut menu = select_menu("palette-new-branch-base-menu", ui)
+                .role(Role::Menu)
+                .aria_label("Base branches")
                 .absolute()
                 .top(px(32.))
                 .left(px(0.))
@@ -1118,6 +1087,9 @@ impl PaneFlowApp {
                         selected,
                         ui,
                     )
+                    .role(Role::MenuItemRadio)
+                    .aria_label(SharedString::from(branch.clone()))
+                    .aria_toggled(toggled(selected))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                         if let Some(draft) = this
                             .pane_palette
@@ -1160,17 +1132,7 @@ impl PaneFlowApp {
             );
         }
 
-        let worktree_row = div()
-            .id("palette-new-branch-worktree")
-            .h(px(28.))
-            .w(px(PICKER_WIDTH))
-            .px(px(8.))
-            .flex()
-            .items_center()
-            .gap(px(6.))
-            .rounded(px(6.))
-            .hover(|style| style.bg(with_alpha(ui.text, 0.05)))
-            .cursor(CursorStyle::PointingHand)
+        let worktree_row = palette_worktree_switch(worktree, ui)
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 if let Some(draft) = this
@@ -1184,27 +1146,7 @@ impl PaneFlowApp {
                 next.for_new_branches = Some(!worktree);
                 this.persist_worktrees(next, cx);
                 cx.stop_propagation();
-            }))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_size(px(11.))
-                    .text_color(ui.text)
-                    .child("Worktree"),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .text_size(px(10.))
-                    .text_color(ui.muted)
-                    .child(if worktree {
-                        "separate folder"
-                    } else {
-                        "switch this checkout"
-                    }),
-            )
-            .child(compact_toggle(worktree, ui));
+            }));
 
         let destination = worktree
             .then(|| draft.worktrees_parent.clone())
@@ -1278,8 +1220,7 @@ impl PaneFlowApp {
             selected,
             needs_checkout,
         } = option;
-        let id = SharedString::from(format!("palette-branch-{label}"));
-        menu_row(id, selected, ui)
+        palette_branch_option_row(label, selected, needs_checkout, ui)
             .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 match target.clone() {
                     BranchTarget::Branch(branch) => {
@@ -1294,31 +1235,6 @@ impl PaneFlowApp {
                 }
                 cx.notify();
             }))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_x_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .text_color(ui.text)
-                    .child(label),
-            )
-            .child(div().w(px(13.)).flex_none().child(if selected {
-                svg()
-                    .size(px(13.))
-                    .path("icons/check.svg")
-                    .text_color(ui.text)
-                    .into_any_element()
-            } else if needs_checkout {
-                svg()
-                    .size(px(13.))
-                    .path("icons/folder-plus.svg")
-                    .text_color(with_alpha(ui.muted, 0.7))
-                    .into_any_element()
-            } else {
-                div().size(px(13.)).into_any_element()
-            }))
             .into_any_element()
     }
 
@@ -1330,52 +1246,216 @@ impl PaneFlowApp {
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let launchable = preset.ensure_launchable().is_ok();
-        let icon_path = preset.icon_path();
-        let icon = crate::settings::components::render_logo(
-            icon_path,
-            preset.icon_multicolor(),
-            px(14.),
-            preset.accent().map_or(ui.text, |c| gpui::rgb(c).into()),
-        );
+        palette_preset_row(idx, preset, idx == palette.selected, ui)
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.pane_palette_launch(idx, window, cx);
+                cx.stop_propagation();
+            }))
+            .into_any_element()
+    }
+}
 
-        let mut button = select_item(
-            SharedString::from(format!("pane-palette-row-{idx}")),
-            idx == palette.selected,
-            ui,
+const PRESET_NOT_INSTALLED: &str = "not installed";
+
+fn palette_preset_row(
+    idx: usize,
+    preset: &Preset,
+    selected: bool,
+    ui: crate::theme::UiColors,
+) -> Stateful<Div> {
+    let launchable = preset.ensure_launchable().is_ok();
+    let icon = crate::settings::components::render_logo(
+        preset.icon_path(),
+        preset.icon_multicolor(),
+        px(14.),
+        preset.accent().map_or(ui.text, |c| gpui::rgb(c).into()),
+    );
+    select_item(
+        SharedString::from(format!("pane-palette-row-{idx}")),
+        selected,
+        ui,
+    )
+    .role(Role::Button)
+    .aria_label(SharedString::from(preset.label.clone()))
+    .when(!launchable, |row| {
+        row.aria_description(PRESET_NOT_INSTALLED)
+    })
+    .cursor(CursorStyle::PointingHand)
+    .gap(px(8.))
+    .h(px(34.))
+    .child(icon)
+    .child(
+        div()
+            .flex_1()
+            .min_w_0()
+            .overflow_x_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis()
+            .text_color(if launchable { ui.text } else { ui.muted })
+            .child(preset.label.clone()),
+    )
+    .when(!launchable, |row| {
+        row.child(
+            div()
+                .flex_none()
+                .text_size(px(10.))
+                .text_color(ui.muted)
+                .child(PRESET_NOT_INSTALLED),
         )
+    })
+}
+
+fn palette_branch_trigger(
+    current: String,
+    open: bool,
+    ui: crate::theme::UiColors,
+) -> Stateful<Div> {
+    let fill = with_alpha(ui.text, 0.05);
+    squircle_skin(
+        div()
+            .id("palette-branch")
+            .flex_none()
+            .h(px(28.))
+            .px(px(8.))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(6.))
+            .w(px(PICKER_WIDTH)),
+        "palette-branch-group",
+        crate::settings::components::menu_item_radius(),
+        open.then_some(fill),
+        Some(fill),
+    )
+    .role(Role::Button)
+    .aria_label(SharedString::from(branch_trigger_label(&current)))
+    .aria_expanded(open)
+    .cursor(CursorStyle::PointingHand)
+    .child(
+        svg()
+            .size(px(11.))
+            .flex_none()
+            .path("icons/git-branch-sidebar.svg")
+            .text_color(ui.muted),
+    )
+    .child(
+        div()
+            .flex_1()
+            .min_w_0()
+            .overflow_x_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis()
+            .text_size(px(11.))
+            .text_color(ui.text)
+            .child(current),
+    )
+    .child(
+        svg()
+            .size(px(11.))
+            .flex_none()
+            .path("icons/chevron-down.svg")
+            .text_color(ui.muted),
+    )
+}
+
+fn palette_worktree_switch(worktree: bool, ui: crate::theme::UiColors) -> Stateful<Div> {
+    div()
+        .id("palette-new-branch-worktree")
+        .role(Role::Switch)
+        .aria_label("Worktree")
+        .aria_description(worktree_mode(worktree))
+        .aria_toggled(toggled(worktree))
+        .h(px(28.))
+        .w(px(PICKER_WIDTH))
+        .px(px(8.))
+        .flex()
+        .items_center()
+        .gap(px(6.))
+        .rounded(px(6.))
+        .hover(|style| style.bg(with_alpha(ui.text, 0.05)))
         .cursor(CursorStyle::PointingHand)
-        .gap(px(8.))
-        .h(px(34.))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-            this.pane_palette_launch(idx, window, cx);
-            cx.stop_propagation();
-        }))
-        .child(icon)
         .child(
             div()
                 .flex_1()
                 .min_w_0()
-                .overflow_x_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .text_color(if launchable { ui.text } else { ui.muted })
-                .child(preset.label.clone()),
-        );
+                .text_size(px(11.))
+                .text_color(ui.text)
+                .child("Worktree"),
+        )
+        .child(
+            div()
+                .flex_none()
+                .text_size(px(10.))
+                .text_color(ui.muted)
+                .child(worktree_mode(worktree)),
+        )
+        .child(compact_toggle(worktree, ui))
+}
 
-        if !launchable {
-            button = button.child(
-                div()
-                    .flex_none()
-                    .text_size(px(10.))
-                    .text_color(ui.muted)
-                    .child("not installed"),
-            );
-        }
+fn palette_branch_option_row(
+    label: String,
+    selected: bool,
+    needs_checkout: bool,
+    ui: crate::theme::UiColors,
+) -> Stateful<Div> {
+    menu_row(
+        SharedString::from(format!("palette-branch-option-{label}")),
+        selected,
+        ui,
+    )
+    .role(Role::MenuItemRadio)
+    .aria_label(SharedString::from(label.clone()))
+    .aria_toggled(toggled(selected))
+    .child(
+        div()
+            .flex_1()
+            .min_w_0()
+            .overflow_x_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis()
+            .text_color(ui.text)
+            .child(label),
+    )
+    .child(div().w(px(13.)).flex_none().child(if selected {
+        svg()
+            .size(px(13.))
+            .path("icons/check.svg")
+            .text_color(ui.text)
+            .into_any_element()
+    } else if needs_checkout {
+        svg()
+            .size(px(13.))
+            .path("icons/folder-plus.svg")
+            .text_color(with_alpha(ui.muted, 0.7))
+            .into_any_element()
+    } else {
+        div().size(px(13.)).into_any_element()
+    }))
+}
 
-        button.into_any_element()
+fn palette_title(draft_open: bool) -> &'static str {
+    if draft_open {
+        NEW_BRANCH_TITLE
+    } else {
+        PALETTE_TITLE
     }
+}
+
+fn branch_trigger_label(current: &str) -> String {
+    format!("Branch: {current}")
+}
+
+fn worktree_mode(worktree: bool) -> &'static str {
+    if worktree {
+        "separate folder"
+    } else {
+        "switch this checkout"
+    }
+}
+
+fn toggled(on: bool) -> Toggled {
+    if on { Toggled::True } else { Toggled::False }
 }
 
 fn compact_toggle(on: bool, ui: crate::theme::UiColors) -> impl IntoElement {
@@ -1395,4 +1475,80 @@ fn compact_toggle(on: bool, ui: crate::theme::UiColors) -> impl IntoElement {
         .bg(track_bg)
         .when(on, |track| track.justify_end())
         .child(div().size(px(12.)).rounded_full().bg(gpui::white()))
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{Role, Toggled, accesskit::Node};
+
+    use super::*;
+
+    fn exposed<E: gpui::Element>(element: &E) -> (Role, Node) {
+        let role = element
+            .a11y_role()
+            .expect("the control exposes an accessibility role");
+        let mut node = Node::new(role);
+        element.write_a11y_info(&mut node);
+        (role, node)
+    }
+
+    #[test]
+    fn each_palette_preset_row_is_a_button_named_after_its_preset() {
+        let ui = crate::theme::ui_colors();
+        let preset = Preset {
+            label: "Terminal".to_string(),
+            source: PresetSource::Shell,
+        };
+        let (role, node) = exposed(&palette_preset_row(0, &preset, true, ui));
+        assert_eq!(role, Role::Button);
+        assert_eq!(node.label(), Some("Terminal"));
+        assert_eq!(node.description(), None);
+    }
+
+    #[test]
+    fn the_branch_row_is_a_button_that_names_the_branch_and_reports_its_menu() {
+        let ui = crate::theme::ui_colors();
+        for open in [false, true] {
+            let (role, node) = exposed(&palette_branch_trigger("main".to_string(), open, ui));
+            assert_eq!(role, Role::Button);
+            assert_eq!(node.label(), Some("Branch: main"));
+            assert_eq!(node.is_expanded(), Some(open));
+        }
+    }
+
+    #[test]
+    fn each_branch_option_is_a_radio_menu_item_checked_when_selected() {
+        let ui = crate::theme::ui_colors();
+        for selected in [false, true] {
+            let (role, node) = exposed(&palette_branch_option_row(
+                "feature/x".to_string(),
+                selected,
+                !selected,
+                ui,
+            ));
+            assert_eq!(role, Role::MenuItemRadio);
+            assert_eq!(node.label(), Some("feature/x"));
+            assert_eq!(node.toggled(), Some(toggled(selected)));
+        }
+        assert_eq!(toggled(true), Toggled::True);
+    }
+
+    #[test]
+    fn the_new_branch_worktree_row_is_a_switch_that_reports_its_mode() {
+        let ui = crate::theme::ui_colors();
+        for worktree in [false, true] {
+            let (role, node) = exposed(&palette_worktree_switch(worktree, ui));
+            assert_eq!(role, Role::Switch);
+            assert_eq!(node.label(), Some("Worktree"));
+            assert_eq!(node.description(), Some(worktree_mode(worktree)));
+            assert_eq!(
+                node.toggled(),
+                Some(if worktree {
+                    Toggled::True
+                } else {
+                    Toggled::False
+                })
+            );
+        }
+    }
 }
