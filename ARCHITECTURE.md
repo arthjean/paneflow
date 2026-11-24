@@ -1463,6 +1463,12 @@ draws a workspace another client opened takes the model's id
 (`layout_bridge/project.rs`) rather than minting its own. Workspace-scoped
 checks (`pane.write`, `grant.delegate`) compare these ids, so two ids for one
 workspace refuse writes between its own panes.
+The window keeps the git location of every workspace it draws (repository
+root, worktree root, branch), which feeds the branch label, the Changes dock and
+the branch row of the New pane palette. The model carries only the cwd, so the
+projection probes git off the render thread (`spawn_initial_git_stats`) for each
+workspace it mints from another client's op and for each one whose cwd the
+model moves, as the window's own create paths and session restore do.
 
 ### Persistence service and resource budgets
 

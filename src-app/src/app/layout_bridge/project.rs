@@ -24,21 +24,28 @@ impl PaneFlowApp {
                 .app_workspace_id(model_ws.id)
                 .and_then(|id| previous.remove(&id));
             let staged = self.layout.staged_workspaces.remove(&model_ws.id);
-            let mut ws = match known.or(staged) {
-                Some(ws) => ws,
-                None => Workspace::empty_with_cwd_and_id(
-                    crate::workspace::restored_workspace_id_in(
-                        model_ws.id.0,
-                        model_ws.space.as_ref(),
+            let (mut ws, minted) = match known.or(staged) {
+                Some(ws) => (ws, false),
+                None => (
+                    Workspace::empty_with_cwd_and_id(
+                        crate::workspace::restored_workspace_id_in(
+                            model_ws.id.0,
+                            model_ws.space.as_ref(),
+                        ),
+                        model_ws.title.clone(),
+                        std::path::PathBuf::from(&model_ws.cwd),
                     ),
-                    model_ws.title.clone(),
-                    std::path::PathBuf::from(&model_ws.cwd),
+                    true,
                 ),
             };
             self.layout.workspace_ids.insert(ws.id, model_ws.id);
             self.layout.workspaces.insert(model_ws.id, ws.id);
             ws.title.clone_from(&model_ws.title);
+            let moved = ws.cwd != model_ws.cwd;
             ws.cwd.clone_from(&model_ws.cwd);
+            if minted || moved {
+                Self::spawn_initial_git_stats(ws.id, ws.cwd.clone(), cx);
+            }
             adopt_recorded_worktrees(&mut ws, &model_ws.extras.managed_worktrees);
             if ws.space != model_ws.space {
                 ws.set_space(model_ws.space.clone());

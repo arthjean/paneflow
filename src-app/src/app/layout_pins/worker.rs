@@ -10,7 +10,7 @@ use super::Rig;
 use crate::PaneFlowApp;
 use crate::{ClosePane, SplitVertically};
 
-pub(super) const PINS: usize = 15;
+pub(super) const PINS: usize = 16;
 
 const PATIENCE: Duration = Duration::from_secs(60);
 
@@ -538,6 +538,58 @@ fn pin_every_pane_of_a_workspace_another_client_opens_shares_its_durable_id(
         .find(|ws| ws.title == "remote")
         .and_then(|ws| ws.extras.durable_id.clone());
     assert_eq!(model_durable, Some(window_durable));
+    finish(&mut rig, worker, &home);
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_a_workspace_another_client_opens_in_a_repository_gets_its_git_location(
+    cx: &mut TestAppContext,
+) {
+    let home = home();
+    let repo = tempfile::tempdir().expect("a repository root");
+    crate::git_fixture::committed_repo(repo.path(), &[("README.md", "one\n")]);
+    let expected = repo.path().canonicalize().expect("a canonical repository");
+    let mut rig = Rig::mount(cx);
+    rig.workspace("alpha");
+    let worker = Running::open(&home);
+    attach(&mut rig);
+    control(&home)
+        .request(
+            "workspace.create",
+            json!({"name": "remote", "cwd": repo.path().display().to_string()}),
+        )
+        .expect("the worker opens the workspace");
+    pump(
+        &mut rig,
+        "the window probing the remote repository",
+        |app| {
+            app.workspaces
+                .iter()
+                .find(|ws| ws.title == "remote")
+                .is_some_and(|ws| ws.repo_root.is_some() && ws.is_git_repo)
+        },
+    );
+    let app = rig.app.clone();
+    let (root, branch) = rig.cx.update(|_, cx| {
+        let remote = app
+            .read(cx)
+            .workspaces
+            .iter()
+            .find(|ws| ws.title == "remote")
+            .expect("the remote workspace");
+        (remote.repo_root.clone(), remote.git_branch.clone())
+    });
+    assert_eq!(
+        root.and_then(|root| root.canonicalize().ok()),
+        Some(expected),
+        "the window knows the repository of the workspace"
+    );
+    assert!(
+        !branch.is_empty(),
+        "the window knows the checked out branch"
+    );
+    assert_converged(&mut rig, &home);
     finish(&mut rig, worker, &home);
 }
 
