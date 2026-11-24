@@ -174,6 +174,18 @@ impl Instance {
         self.wait_done(&session)
     }
 
+    fn wait_reported(&self, session: &SessionId, label: &str) {
+        let mut client = self.client();
+        let deadline = Instant::now() + PATIENCE;
+        while !reports(&client.text(session).unwrap().text)
+            .iter()
+            .any(|line| line["label"] == label)
+        {
+            assert!(Instant::now() < deadline, "the pane never reported {label}");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
     fn wait_done(&self, session: &SessionId) -> Vec<Value> {
         let mut client = self.client();
         let deadline = Instant::now() + Duration::from_secs(120);
@@ -377,6 +389,7 @@ fn the_host_applies_the_set_the_worker_pushes_and_refuses_while_it_lags() {
     let instance = Instance::closed();
     let workspace = WorkspaceId::new();
     let target = instance.idle(&workspace);
+    let mirrored_marker = instance.home.path().join("mirrored-marker");
     let marker = instance.home.path().join("lagging-marker");
     let human = Human::answering(instance.home.path(), vec!["allow"]);
     let session = instance.create(
@@ -387,6 +400,7 @@ fn the_host_applies_the_set_the_worker_pushes_and_refuses_while_it_lags() {
                 json!([
                     {"label": "request", "method": "grant.request",
                      "params": {"rights": ["write"], "duration_secs": 600}},
+                    {"wait_file": mirrored_marker.display().to_string()},
                     input("synced", &target),
                     {"wait_file": marker.display().to_string()},
                     input("lagging", &target)
@@ -410,6 +424,8 @@ fn the_host_applies_the_set_the_worker_pushes_and_refuses_while_it_lags() {
     assert!(mirrored.synced);
     let published = paneflow_host::pane_grants::published_revision(&grants_file);
     assert_eq!(instance.host.pane_grants().held_revision(), published);
+    std::fs::write(&mirrored_marker, "go").unwrap();
+    instance.wait_reported(&session, "synced");
     let mut file: Value = serde_json::from_slice(&std::fs::read(&grants_file).unwrap()).unwrap();
     file["revision"] = json!(published + 1);
     std::fs::write(&grants_file, serde_json::to_vec(&file).unwrap()).unwrap();
