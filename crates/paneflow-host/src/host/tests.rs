@@ -3055,6 +3055,7 @@ fn a_program_exit_retires_its_declared_blocker_everywhere_it_is_published() {
         app: String::new(),
         title: String::new(),
         message: message.to_string(),
+        turns: 0,
     };
     host.commit_scan(&target, |record| {
         record.declared_status = Some(declared("blocked", "Apply?"));

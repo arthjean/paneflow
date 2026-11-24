@@ -120,6 +120,7 @@ pub struct ViewportScan {
     pub title: Option<String>,
     pub progress: Option<&'static str>,
     pub program_status: Option<ghostty::ProgramStatusReport>,
+    pub program_turns: u64,
     pub program_status_capable: bool,
 }
 
@@ -1572,6 +1573,7 @@ impl Session {
             title: self.title.clone(),
             progress: self.progress,
             program_status: self.program_status.published(),
+            program_turns: self.program_status.turns(),
             program_status_capable: self.program_status_capable,
         })
     }

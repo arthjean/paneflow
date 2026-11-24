@@ -34,6 +34,7 @@ pub struct ViewportTracker {
 pub struct ScreenView<'a> {
     pub title: Option<&'a str>,
     pub program_status: Option<&'a ProgramStatusReport>,
+    pub program_turns: u64,
     pub program_status_capable: bool,
 }
 
@@ -42,6 +43,7 @@ impl<'a> ScreenView<'a> {
         Self {
             title: scan.title.as_deref(),
             program_status: scan.program_status.as_ref(),
+            program_turns: scan.program_turns,
             program_status_capable: scan.program_status_capable,
         }
     }
@@ -113,7 +115,9 @@ impl ViewportTracker {
         observation: Option<RuntimeObservation>,
     ) -> ViewportEdges {
         let observation = observation.filter(|observed| observed.confirmed_by_title(view.title));
-        let declared_status = view.program_status.map(DeclaredStatus::of);
+        let declared_status = view
+            .program_status
+            .map(|report| DeclaredStatus::of(report).with_turns(view.program_turns));
 
         let write_due = declared_status != self.declared_status
             || view.program_status_capable != self.program_status_capable
@@ -316,6 +320,7 @@ mod tests {
                 app: "terraform".to_string(),
                 title: String::new(),
                 message: "Apply the plan?".to_string(),
+                turns: 0,
             })
         );
         assert!(edges.write_due);
@@ -334,6 +339,31 @@ mod tests {
         let edges = observe_declared(&mut tracker, None);
         assert_eq!(edges.declared_status, None);
         assert!(edges.write_due, "a removed record is written");
+    }
+
+    #[test]
+    fn a_turn_that_started_and_ended_between_two_scans_is_written() {
+        let mut tracker = ViewportTracker::default();
+        let done = declared(ProgramStatusState::Done, "");
+        let observe_turns = |tracker: &mut ViewportTracker, turns: u64| {
+            tracker.observe(
+                ScreenView {
+                    program_status: Some(&done),
+                    program_turns: turns,
+                    ..ScreenView::default()
+                },
+                None,
+            )
+        };
+        observe_turns(&mut tracker, 1);
+        assert!(!observe_turns(&mut tracker, 1).write_due);
+
+        let edges = observe_turns(&mut tracker, 2);
+        assert!(
+            edges.write_due,
+            "the same state after a new turn is an edge"
+        );
+        assert_eq!(edges.declared_status.map(|status| status.turns), Some(2));
     }
 
     #[test]
@@ -457,6 +487,7 @@ mod tests {
                 ScreenView {
                     title,
                     program_status: None,
+                    program_turns: 0,
                     program_status_capable: false,
                 },
                 Some(fx_observation()),
@@ -468,6 +499,7 @@ mod tests {
             ScreenView {
                 title: Some("fx v0.0.12 | paneflow"),
                 program_status: None,
+                program_turns: 0,
                 program_status_capable: false,
             },
             Some(fx_observation()),

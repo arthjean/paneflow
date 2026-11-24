@@ -344,6 +344,34 @@ impl SessionEntry {
         self.runtime().and(self.declared_status.as_ref())
     }
 
+    fn missed_a_declared_turn(&self, before: Option<&DeclaredStatus>) -> bool {
+        let Some(declared) = self.agent_declaration() else {
+            return false;
+        };
+        let turns_before = before.map_or(0, |before| before.turns);
+        declared.turns > turns_before
+            && self.status != Status::Busy
+            && self.declared_verdict().0 != Status::Busy
+    }
+
+    fn advance_to(&mut self, next: Status) -> StateEvent {
+        self.state_seq += 1;
+        let tool = self
+            .activity
+            .as_ref()
+            .map(|summary| summary.tool.clone())
+            .or_else(|| self.foreground_runtime.map(str::to_owned));
+        StateEvent::new(
+            AGENT_STATE_CHANGED,
+            &self.session,
+            json!({
+                "tool": tool,
+                "previous": self.status.wire_str(),
+                "state": next.wire_str(),
+            }),
+        )
+    }
+
     fn declared_verdict(&self) -> (Status, ActivitySource) {
         let Some(declared) = self.agent_declaration() else {
             return (Status::Idle, ActivitySource::None);
@@ -789,6 +817,7 @@ impl WorkerState {
                 continue;
             }
             let held = self.sessions.remove(&session);
+            let held_generation = held.as_ref().map(|entry| entry.generation);
             if held.is_none() {
                 discovered.insert(session.clone());
             }
@@ -817,7 +846,12 @@ impl WorkerState {
                 program_status_moved.insert(session.clone());
             }
             entry.refresh_health();
+            let missed_turn = held_generation == Some(entry.generation)
+                && entry.missed_a_declared_turn(declared_before.as_ref());
             self.sessions.insert(entry.session.clone(), entry);
+            if missed_turn {
+                self.pass_through_missed_turn(&session);
+            }
             for field in ["activity_event", "event"] {
                 if let Some(frame) = raw["last_hook"][field].as_object()
                     && let Some(projection) = self.apply_core_event(&Value::Object(frame.clone()))
@@ -854,6 +888,15 @@ impl WorkerState {
                 announce.then_some(projection)
             })
             .collect()
+    }
+
+    fn pass_through_missed_turn(&mut self, session: &SessionId) {
+        let Some(entry) = self.sessions.get_mut(session) else {
+            return;
+        };
+        self.events.push(entry.advance_to(Status::Busy));
+        entry.status = Status::Busy;
+        self.push_turn_signal(session, TurnInput::Working, now_ms(), 0);
     }
 
     pub fn sweep(&mut self) -> Vec<Projection> {
@@ -942,21 +985,7 @@ impl WorkerState {
             .then(|| turn_input_between(entry.status, status))
             .flatten();
         if entry.status != status {
-            entry.state_seq += 1;
-            let tool = entry
-                .activity
-                .as_ref()
-                .map(|summary| summary.tool.clone())
-                .or_else(|| entry.foreground_runtime.map(str::to_owned));
-            self.events.push(StateEvent::new(
-                AGENT_STATE_CHANGED,
-                session,
-                json!({
-                    "tool": tool,
-                    "previous": entry.status.wire_str(),
-                    "state": status.wire_str(),
-                }),
-            ));
+            self.events.push(entry.advance_to(status));
         }
         entry.status = status;
         entry.activity_source = source;
@@ -2148,6 +2177,52 @@ mod tests {
             .expect("the completion projects");
         assert_eq!(projection.session["state_seq"], start + 2);
         assert_eq!(projection.session["status"], "idle");
+    }
+
+    #[test]
+    fn a_declared_turn_that_ended_between_two_core_rows_still_passes_through_busy() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = WorkerState::new(home.path());
+        let mut row = with_declared(agent_row(&session), "done", "");
+        row["declared_status"]["turns"] = json!(3);
+        state.apply_core_snapshot(&[row.clone()]);
+        let start = state.get(&session).unwrap().state_seq;
+        let _ = state.drain_events();
+
+        row["declared_status"]["turns"] = json!(4);
+        let projections = state.apply_core_session(&row);
+        let projection = projections
+            .iter()
+            .find(|projection| projection.session["session"] == json!(session))
+            .expect("the completed turn projects");
+        assert_eq!(projection.session["state_seq"], start + 2);
+        assert_eq!(projection.session["status"], "idle");
+        let moves: Vec<(String, String)> = state
+            .drain_events()
+            .into_iter()
+            .filter(|event| event.kind == AGENT_STATE_CHANGED)
+            .map(|event| {
+                (
+                    event.data["previous"].as_str().unwrap().to_string(),
+                    event.data["state"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            moves,
+            vec![
+                ("idle".to_string(), "busy".to_string()),
+                ("busy".to_string(), "idle".to_string())
+            ]
+        );
+
+        state.apply_core_session(&row);
+        assert_eq!(
+            state.get(&session).unwrap().state_seq,
+            start + 2,
+            "the same turn count is not another turn"
+        );
     }
 
     #[derive(Clone, Copy)]

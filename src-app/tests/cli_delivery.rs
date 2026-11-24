@@ -185,6 +185,13 @@ fn declare_command(state: &str) -> String {
     return format!("printf '\\033]7501;state={state}\\007'\n");
 }
 
+fn instant_turn_command() -> String {
+    #[cfg(windows)]
+    return "powershell -NoProfile -Command \"[Console]::Write([char]27 + ']7501;state=working' + [char]7 + [char]27 + ']7501;state=done' + [char]7)\"".to_string();
+    #[cfg(unix)]
+    return "printf '\\033]7501;state=working\\007\\033]7501;state=done\\007'".to_string();
+}
+
 fn reply(output: &Output) -> Value {
     serde_json::from_slice(&output.stdout).unwrap_or_else(|_| {
         panic!(
@@ -292,6 +299,36 @@ fn a_submit_reports_a_start_only_after_a_state_transition() {
     assert_eq!(confirmed["started"], true, "{confirmed}");
     assert_eq!(confirmed["reason"], "state_transition");
     assert_eq!(confirmed["state"], "working");
+
+    instance.stop(&[&session]);
+}
+
+#[test]
+fn a_submit_reports_the_start_of_a_turn_that_ended_before_any_sample() {
+    let mut instance = Instance::open();
+    let (session, generation) = instance.create("agent-quick", None);
+    instance.start_worker();
+    instance.hook(&session, generation, "ai.prompt_submit", "UserPromptSubmit");
+    instance.declare(&session, generation, "done");
+    instance.await_state("agent-quick", "finished");
+
+    let quick_turn = instant_turn_command();
+    let sent = instance.run(
+        &[
+            "send",
+            "agent-quick",
+            quick_turn.as_str(),
+            "--submit",
+            "--force",
+        ],
+        None,
+    );
+    assert_eq!(sent.status.code(), Some(0), "{}", stderr(&sent));
+    let confirmed = reply(&sent);
+    assert_eq!(confirmed["delivered"], true, "{confirmed}");
+    assert_eq!(confirmed["started"], true, "{confirmed}");
+    assert_eq!(confirmed["reason"], "state_transition", "{confirmed}");
+    assert_eq!(confirmed["state"], "idle", "{confirmed}");
 
     instance.stop(&[&session]);
 }

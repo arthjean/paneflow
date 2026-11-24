@@ -388,6 +388,7 @@ mod tests {
             app: String::new(),
             title: String::new(),
             message: String::new(),
+            turns: 0,
         }
     }
 

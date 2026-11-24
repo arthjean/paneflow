@@ -1341,6 +1341,7 @@ mod tests {
                 app: "terraform".to_string(),
                 title: String::new(),
                 message: "Apply the plan?".to_string(),
+                turns: 0,
             },
         });
         worker.apply_core_snapshot(&[host_row]);

@@ -22,6 +22,12 @@ pub struct DeclaredStatus {
     pub title: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub message: String,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub turns: u64,
+}
+
+fn is_zero(turns: &u64) -> bool {
+    *turns == 0
 }
 
 impl DeclaredStatus {
@@ -33,7 +39,13 @@ impl DeclaredStatus {
             app: bounded(&report.app, MAX_DECLARED_LABEL_BYTES),
             title: bounded(&report.title, MAX_DECLARED_LABEL_BYTES),
             message: bounded(&report.message, MAX_DECLARED_MESSAGE_BYTES),
+            turns: 0,
         }
+    }
+
+    pub fn with_turns(mut self, turns: u64) -> Self {
+        self.turns = turns;
+        self
     }
 
     pub fn is(&self, state: ProgramStatusState) -> bool {
@@ -63,10 +75,28 @@ struct Record {
 pub struct ProgramStatusRecords {
     records: Vec<Record>,
     clock: u64,
+    turns: u64,
 }
 
 impl ProgramStatusRecords {
     pub fn apply(&mut self, report: ProgramStatusReport) {
+        let was_working = self.is_working();
+        self.record(report);
+        if !was_working && self.is_working() {
+            self.turns = self.turns.wrapping_add(1);
+        }
+    }
+
+    pub fn turns(&self) -> u64 {
+        self.turns
+    }
+
+    fn is_working(&self) -> bool {
+        self.current()
+            .is_some_and(|report| report.state == ProgramStatusState::Working)
+    }
+
+    fn record(&mut self, report: ProgramStatusReport) {
         if report.state == ProgramStatusState::Clear {
             self.clear_subtree(&report.id);
             return;
@@ -223,6 +253,26 @@ mod tests {
             title: String::new(),
             message: String::new(),
         }
+    }
+
+    #[test]
+    fn each_entry_into_working_counts_one_turn_and_a_repeat_does_not() {
+        let mut records = ProgramStatusRecords::default();
+        assert_eq!(records.turns(), 0);
+        records.apply(report("", ProgramStatusState::Working));
+        records.apply(report("", ProgramStatusState::Working));
+        records.apply(report("", ProgramStatusState::Done));
+        assert_eq!(records.turns(), 1);
+        records.apply(report("", ProgramStatusState::Working));
+        records.apply(report("", ProgramStatusState::Idle));
+        assert_eq!(
+            records.turns(),
+            2,
+            "a turn as short as one write still counts"
+        );
+        records.clear();
+        records.apply(report("", ProgramStatusState::Working));
+        assert_eq!(records.turns(), 3, "a clear does not rewind the count");
     }
 
     fn ids(records: &ProgramStatusRecords) -> Vec<&str> {

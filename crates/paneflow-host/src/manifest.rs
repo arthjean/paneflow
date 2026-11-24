@@ -453,6 +453,7 @@ mod tests {
             app: label.clone(),
             title: label,
             message,
+            turns: u64::MAX,
         });
 
         let path = write_manifest(home.path(), &manifest).unwrap();

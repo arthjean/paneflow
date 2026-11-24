@@ -866,7 +866,11 @@ stale code.
   records `failed` (with the declared message), `working` clears it, and every
   outcome lands in the worker's bounded activity log (`agent.activity_log`).
   `state_seq` counts each change of the reduced state, which is what
-  `paneflow send --submit` and `paneflow wait --idle` follow.
+  `paneflow send --submit` and `paneflow wait --idle` follow. A turn shorter
+  than the scan still counts: when `declared_status.turns` grows while the
+  worker held a state other than busy and the new record is not busy either,
+  the worker passes through busy first (two `agent.state_changed` events, two
+  steps of `state_seq`, and the `Finished` notice of a completed turn).
 - **Generations reject stale events.** A frame naming a runtime generation
   below the manifest's is refused, and a hook revision at or below the one the
   worker holds is ignored, so a snapshot recovers an event the stream lost
@@ -888,8 +892,10 @@ stale code.
   `paneflow-host-viewport` asks each live session whose output moved for its
   title, its OSC 7501 record and capability, and its foreground process group,
   then edge-writes the manifest: `declared_status` with the session's current
-  OSC 7501 record (state, kind, progress, app, title, and a message bounded to
-  2,048 bytes), `program_status_capable`, and `observed_runtime` with the
+  OSC 7501 record (state, kind, progress, app, title, a message bounded to
+  2,048 bytes, and `turns`, the number of times the session's record entered
+  `working`, counted per report by the runtime and not per scan),
+  `program_status_capable`, and `observed_runtime` with the
   foreground runtime identity, dropped when the runtime declares a
   `title_prefix` the pane title does not carry.
   `declared_status` is written for every session, agent or not, and a typed key
