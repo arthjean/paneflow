@@ -557,6 +557,7 @@ impl PaneFlowApp {
         Self::spawn_initial_git_stats(ws_id, ws.cwd.clone(), cx);
         let idx = self.add_workspace_in(ws, space, cx);
         self.activate_workspace_without_window(idx, cx);
+        self.enforce_worktree_limit(cx);
         if let Some(pane) = requested_focus.and_then(|i| panes.get(i)) {
             self.pending_pane_focus = Some(pane.clone());
         }

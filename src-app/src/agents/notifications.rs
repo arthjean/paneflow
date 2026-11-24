@@ -49,6 +49,14 @@ pub(crate) fn is_window_active(window_id: WindowId) -> bool {
         .contains(&window_id)
 }
 
+#[cfg(test)]
+pub(crate) fn forget_active_windows() {
+    ACTIVE_WINDOWS
+        .lock()
+        .unwrap_or_else(|err| err.into_inner())
+        .clear();
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DesktopNotificationUrgency {
     Normal,

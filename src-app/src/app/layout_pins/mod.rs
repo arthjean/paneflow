@@ -7,6 +7,7 @@ mod prompts;
 mod rearrange;
 mod sidebar;
 mod worker;
+mod worktree_flows;
 mod worktrees;
 
 use std::cell::RefCell;
@@ -77,6 +78,7 @@ fn every_layout_pin_holds_in_an_isolated_home() {
                 + rearrange::PINS
                 + sidebar::PINS
                 + worker::PINS
+                + worktree_flows::PINS
                 + worktrees::PINS,
         "only {passed} layout pins ran\n{stdout}"
     );

@@ -544,6 +544,7 @@ impl PaneFlowApp {
         if let Some(mw) = launch.managed_worktree {
             let fresh = self.not_yet_managed(vec![mw]);
             self.workspaces[ws_idx].managed_worktrees.extend(fresh);
+            self.enforce_worktree_limit(cx);
         }
         if let Some(cmd) = launch.command {
             Self::schedule_launch_command(&new_terminal, cmd, launch.prompt, usize::MAX, cx);

@@ -172,6 +172,15 @@ impl PaneFlowApp {
         due
     }
 
+    pub(crate) fn git_poll_tick(
+        &mut self,
+        now: std::time::Instant,
+        cx: &mut Context<Self>,
+    ) -> Vec<String> {
+        self.enforce_worktree_limit(cx);
+        self.due_git_poll_cwds(now, cx)
+    }
+
     pub(crate) fn probe_workspace_git_now(&mut self, ws_idx: usize, cx: &mut Context<Self>) {
         if !crate::agents::notifications::window_active() {
             return;
@@ -357,7 +366,7 @@ impl PaneFlowApp {
 
                     let cwds = cx.update(|cx| {
                         this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                            app.due_git_poll_cwds(std::time::Instant::now(), cx)
+                            app.git_poll_tick(std::time::Instant::now(), cx)
                         })
                     });
                     let cwds = match cwds {
@@ -374,7 +383,6 @@ impl PaneFlowApp {
                         this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
                             app.apply_git_probe(&results, cx);
                             app.refresh_pull_requests(cx);
-                            app.enforce_worktree_limit(cx);
                         })
                     });
                     if apply.is_err() {
