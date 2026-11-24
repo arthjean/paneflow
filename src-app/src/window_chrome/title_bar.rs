@@ -271,38 +271,20 @@ impl TitleBar {
             .gap(px(4.))
             .pl(brand_pl)
             .pr(px(4.))
-            .child(
-                div()
-                    .id("toggle-primary-sidebar")
-                    .flex_none()
-                    .size(TITLE_BAR_CONTROL_SIZE)
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(5.))
-                    .animated_hover(move |style, delta| {
-                        style.bg(lerp_color(
-                            toggle_sidebar_resting_bg,
-                            control_hover_bg,
-                            delta,
-                        ));
-                    })
-                    .accessible_control(gpui::accesskit::Role::Button, sidebar_tooltip)
-                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                        cx.stop_propagation();
-                        if let Some(entity) = toggle_sidebar_handle.upgrade() {
-                            entity.update(cx, |_this, cx| {
-                                cx.emit(TitleBarEvent::ToggleSidebar);
-                            });
-                        }
-                    })
-                    .child(
-                        svg()
-                            .size(px(14.))
-                            .path("icons/sidebar.svg")
-                            .text_color(ui.muted),
-                    ),
-            )
+            .child(title_bar_toggle(
+                "toggle-primary-sidebar",
+                sidebar_tooltip,
+                "icons/sidebar.svg",
+                (toggle_sidebar_resting_bg, control_hover_bg),
+                ui.muted,
+                move |cx| {
+                    if let Some(entity) = toggle_sidebar_handle.upgrade() {
+                        entity.update(cx, |_this, cx| {
+                            cx.emit(TitleBarEvent::ToggleSidebar);
+                        });
+                    }
+                },
+            ))
             .child(
                 div()
                     .id("title-bar-files-menu-trigger")
@@ -445,32 +427,20 @@ impl TitleBar {
                 "Show Changes dock"
             }
             .into();
-            let toggle = div()
-                .id("toggle-diff-dock")
-                .flex_none()
-                .size(TITLE_BAR_CONTROL_SIZE)
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(px(5.))
-                .animated_hover(move |style, delta| {
-                    style.bg(lerp_color(resting_bg, control_hover_bg, delta));
-                })
-                .accessible_control(gpui::accesskit::Role::Button, tooltip)
-                .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                    cx.stop_propagation();
+            let toggle = title_bar_toggle(
+                "toggle-diff-dock",
+                tooltip,
+                "icons/layout-sidebar-right.svg",
+                (resting_bg, control_hover_bg),
+                ui.muted,
+                move |cx| {
                     if let Some(entity) = toggle_diff_dock_handle.upgrade() {
                         entity.update(cx, |_this, cx| {
                             cx.emit(TitleBarEvent::ToggleDiffDock);
                         });
                     }
-                })
-                .child(
-                    svg()
-                        .size(px(14.))
-                        .path("icons/layout-sidebar-right.svg")
-                        .text_color(ui.muted),
-                );
+                },
+            );
             #[cfg(test)]
             let toggle = toggle.debug_selector(|| "toggle-diff-dock".into());
             div()
@@ -663,10 +633,61 @@ impl Render for TitleBar {
     }
 }
 
+fn title_bar_toggle(
+    id: &'static str,
+    label: gpui::SharedString,
+    icon: &'static str,
+    (resting_bg, hover_bg): (gpui::Hsla, gpui::Hsla),
+    icon_color: gpui::Hsla,
+    on_press: impl Fn(&mut gpui::App) + 'static,
+) -> crate::ui_primitives::AnimatedHover {
+    div()
+        .id(id)
+        .flex_none()
+        .size(TITLE_BAR_CONTROL_SIZE)
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(5.))
+        .animated_hover(move |style, delta| {
+            style.bg(lerp_color(resting_bg, hover_bg, delta));
+        })
+        .accessible_control(gpui::accesskit::Role::Button, label)
+        .on_pointer_press(move |_, _, cx| on_press(cx))
+        .child(svg().size(px(14.)).path(icon).text_color(icon_color))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use gpui::{AvailableSpace, point, size};
+
+    #[test]
+    fn the_sidebar_and_changes_dock_toggles_answer_an_accessibility_press() {
+        for (id, label) in [
+            ("toggle-primary-sidebar", "Hide sidebar"),
+            ("toggle-diff-dock", "Show Changes dock"),
+        ] {
+            let ui = crate::theme::ui_colors();
+            let toggle = title_bar_toggle(
+                id,
+                label.into(),
+                "icons/sidebar.svg",
+                (ui.subtle, ui.subtle),
+                ui.muted,
+                |_| {},
+            );
+            let role = gpui::Element::a11y_role(&toggle);
+            assert_eq!(role, Some(gpui::accesskit::Role::Button), "{label}");
+            let mut node = gpui::accesskit::Node::new(gpui::accesskit::Role::Button);
+            gpui::Element::write_a11y_info(&toggle, &mut node);
+            assert_eq!(node.label(), Some(label));
+            assert!(
+                node.supports_action(gpui::accesskit::Action::Click),
+                "{label} must advertise an accessibility press"
+            );
+        }
+    }
 
     #[gpui::test]
     fn the_update_pill_paints_in_the_cockpit_shell(cx: &mut gpui::TestAppContext) {
