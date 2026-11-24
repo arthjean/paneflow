@@ -22,8 +22,15 @@ fn welcome_row(
     shortcut: Option<String>,
     ui: crate::theme::UiColors,
 ) -> Stateful<gpui::Div> {
-    select_item(SharedString::from(id.to_string()), false, ui)
-        .w_full()
+    let label: SharedString = label.into();
+    let row = select_item(SharedString::from(id.to_string()), false, ui)
+        .role(gpui::Role::Button)
+        .aria_label(label.clone());
+    let row = match &shortcut {
+        Some(key) => row.aria_keyshortcuts(SharedString::from(key.clone())),
+        None => row,
+    };
+    row.w_full()
         .justify_between()
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .child(
@@ -47,7 +54,7 @@ fn welcome_row(
                         .whitespace_nowrap()
                         .text_ellipsis()
                         .text_color(ui.text)
-                        .child(label.into()),
+                        .child(label),
                 ),
         )
         .when_some(shortcut, |row, key| {
@@ -363,5 +370,50 @@ impl PaneFlowApp {
             ))
             .child(column)
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::welcome_row;
+    use crate::ui_primitives::AccessibleControlExt as _;
+    use gpui::accesskit::{Action, Node, Role};
+
+    fn exposed<E: gpui::Element>(element: &E) -> Node {
+        let role = element
+            .a11y_role()
+            .expect("the element exposes an accessibility role");
+        let mut node = Node::new(role);
+        element.write_a11y_info(&mut node);
+        node
+    }
+
+    #[test]
+    fn a_welcome_row_is_a_button_named_after_its_label_with_its_shortcut() {
+        let ui = crate::theme::ui_colors();
+        let open = exposed(
+            &welcome_row(
+                "welcome-open-folder",
+                "icons/folder-open.svg",
+                "Open folder…",
+                Some("⌘⇧N".to_string()),
+                ui,
+            )
+            .on_activate(|_, _, _| {}),
+        );
+        assert_eq!(open.role(), Role::Button);
+        assert_eq!(open.label(), Some("Open folder…"));
+        assert_eq!(open.keyboard_shortcut(), Some("⌘⇧N"));
+        assert!(open.supports_action(Action::Click));
+        let recent = exposed(&welcome_row(
+            "welcome-recent-0",
+            "icons/folder.svg",
+            "paneflow",
+            None,
+            ui,
+        ));
+        assert_eq!(recent.role(), Role::Button);
+        assert_eq!(recent.label(), Some("paneflow"));
+        assert_eq!(recent.keyboard_shortcut(), None);
     }
 }

@@ -52,14 +52,26 @@ use crate::{
 };
 
 const SIDEBAR_EMPTY_STATE_WIDTH: f32 = 192.0;
+const SIDEBAR_EMPTY_OPEN_FOLDER: &str = "Open folder";
+const SIDEBAR_EMPTY_CLONE_REPO: &str = "Clone repository";
 
 fn sidebar_empty_state_button(
     id: &'static str,
+    label: &'static str,
+    shortcut: Option<&str>,
     ui: crate::theme::UiColors,
 ) -> gpui::Stateful<gpui::Div> {
-    crate::settings::components::select_item(SharedString::from(id), false, ui)
+    let button = crate::settings::components::select_item(SharedString::from(id), false, ui)
+        .role(gpui::Role::Button)
+        .aria_label(label);
+    let button = match shortcut {
+        Some(key) => button.aria_keyshortcuts(SharedString::from(key.to_string())),
+        None => button,
+    };
+    button
         .w_full()
         .justify_center()
+        .child(div().text_color(ui.text).child(label))
 }
 
 fn sidebar_motion_topology(workspaces: &[Workspace], shown: &[usize]) -> Vec<(u64, Vec<u64>)> {
@@ -580,20 +592,24 @@ impl PaneFlowApp {
                             .child(self.sidebar_empty_state_message()),
                     )
                     .child(
-                        sidebar_empty_state_button("sidebar-empty-open-folder", ui)
-                            .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
-                                this.create_workspace_with_picker(window, cx);
-                            }))
-                            .child(div().text_color(ui.text).child("Open folder"))
-                            .when_some(open_key, |button, key| {
-                                button.child(
-                                    div()
-                                        .flex_none()
-                                        .text_size(px(11.))
-                                        .text_color(ui.muted)
-                                        .child(key),
-                                )
-                            }),
+                        sidebar_empty_state_button(
+                            "sidebar-empty-open-folder",
+                            SIDEBAR_EMPTY_OPEN_FOLDER,
+                            open_key.as_deref(),
+                            ui,
+                        )
+                        .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
+                            this.create_workspace_with_picker(window, cx);
+                        }))
+                        .when_some(open_key, |button, key| {
+                            button.child(
+                                div()
+                                    .flex_none()
+                                    .text_size(px(11.))
+                                    .text_color(ui.muted)
+                                    .child(key),
+                            )
+                        }),
                     )
                     .child(
                         div()
@@ -613,11 +629,17 @@ impl PaneFlowApp {
                             .child(divider()),
                     )
                     .child(
-                        sidebar_empty_state_button("sidebar-empty-clone-repo", ui)
-                            .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
+                        sidebar_empty_state_button(
+                            "sidebar-empty-clone-repo",
+                            SIDEBAR_EMPTY_CLONE_REPO,
+                            None,
+                            ui,
+                        )
+                        .on_activate(cx.listener(
+                            |this, _: &ClickEvent, window, cx| {
                                 this.open_clone_repo(window, cx);
-                            }))
-                            .child(div().text_color(ui.text).child("Clone repository")),
+                            },
+                        )),
                     ),
             )
     }
@@ -907,6 +929,35 @@ impl PaneFlowApp {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_empty_sidebar_offers_open_folder_and_clone_repository_as_named_buttons() {
+        use crate::ui_primitives::AccessibleControlExt as _;
+        use gpui::accesskit::{Action, Node, Role};
+        let ui = crate::theme::ui_colors();
+        for (id, label, shortcut) in [
+            (
+                "sidebar-empty-open-folder",
+                super::SIDEBAR_EMPTY_OPEN_FOLDER,
+                Some("⌘⇧N"),
+            ),
+            (
+                "sidebar-empty-clone-repo",
+                super::SIDEBAR_EMPTY_CLONE_REPO,
+                None,
+            ),
+        ] {
+            let button = super::sidebar_empty_state_button(id, label, shortcut, ui)
+                .on_activate(|_, _, _| {});
+            let role = gpui::Element::a11y_role(&button).expect("a role");
+            let mut node = Node::new(role);
+            gpui::Element::write_a11y_info(&button, &mut node);
+            assert_eq!(role, Role::Button, "{label}");
+            assert_eq!(node.label(), Some(label));
+            assert_eq!(node.keyboard_shortcut(), shortcut);
+            assert!(node.supports_action(Action::Click), "{label}");
+        }
+    }
+
     fn space(n: u8) -> paneflow_config::schema::SpaceId {
         paneflow_config::schema::SpaceId::parse(&format!(
             "550e8400-e29b-41d4-a716-4466554400{n:02}"
