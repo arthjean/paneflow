@@ -8,6 +8,7 @@ pub(crate) mod scroll_edge_fade;
 pub(crate) mod shimmer;
 pub(crate) mod squircle;
 pub(crate) mod stroke;
+pub(crate) mod view_cache;
 
 use gpui::{
     AnimationExt, AnyElement, AnyView, App, Bounds, ClickEvent, CursorStyle, Div, Element,

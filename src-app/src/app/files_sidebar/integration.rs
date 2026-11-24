@@ -84,10 +84,11 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn render_files_sidebar_fill(&self) -> AnyElement {
-        self.files_sidebar
-            .clone()
-            .cached(StyleRefinement::default().size_full())
-            .into_any_element()
+        crate::ui_primitives::view_cache::cached_view(
+            self.files_sidebar.clone(),
+            StyleRefinement::default().size_full(),
+        )
+        .into_any_element()
     }
 
     pub(crate) fn render_files_tree_column(
@@ -214,14 +215,13 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn render_files_sidebar(&self, width: f32) -> AnyElement {
-        self.files_sidebar
-            .clone()
-            .cached(
-                StyleRefinement::default()
-                    .w(px(width))
-                    .h_full()
-                    .flex_shrink_0(),
-            )
-            .into_any_element()
+        crate::ui_primitives::view_cache::cached_view(
+            self.files_sidebar.clone(),
+            StyleRefinement::default()
+                .w(px(width))
+                .h_full()
+                .flex_shrink_0(),
+        )
+        .into_any_element()
     }
 }

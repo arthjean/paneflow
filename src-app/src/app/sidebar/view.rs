@@ -52,7 +52,10 @@ impl SidebarView {
             .overflow_hidden()
             .opacity(opacity)
             .pt(top)
-            .child(sidebar.cached(Self::cached_style(sidebar_width)))
+            .child(crate::ui_primitives::view_cache::cached_view(
+                sidebar,
+                Self::cached_style(sidebar_width),
+            ))
     }
 
     fn watch_worker_boot(&mut self, boot: &WorkerBoot, cx: &mut Context<Self>) {

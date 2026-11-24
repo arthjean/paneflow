@@ -2175,7 +2175,10 @@ impl Render for Pane {
         self.backdrop = crate::window_chrome::window_backdrop(&self.cached_config, window);
         let terminal_selected = matches!(self.surface(), PaneSurface::Terminal(_));
         let body = match self.surface() {
-            PaneSurface::Terminal(t) => t.clone().cached(cached_surface_style()).into_any_element(),
+            PaneSurface::Terminal(t) => {
+                crate::ui_primitives::view_cache::cached_view(t.clone(), cached_surface_style())
+                    .into_any_element()
+            }
             PaneSurface::Markdown(m) => m.clone().into_any_element(),
         };
         let theme = crate::theme::active_theme();

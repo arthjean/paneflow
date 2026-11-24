@@ -520,9 +520,16 @@ run, so the roles of a cached `SidebarView` or `TerminalView` leave the tree on
 frames that reuse it and come back when it rebuilds. This is upstream
 zed-industries/zed#66690, open. GPUI's test platform has no accessibility
 adapter, so no unit test can observe it; on Windows the sidebar was seen
-dropping from 60 to 12 accessibility references once it stopped re-rendering.
-No workaround is carried: disabling the cache for those views costs the
-rebuild the cache exists to avoid, and the choice is Arthur's.
+dropping from 60 to 12 accessibility references once it stopped re-rendering,
+and on macOS the sidebar left the tree while the New pane palette was open.
+Production code caches a view only through `ui_primitives::view_cache`,
+which caches it as before while no assistive technology is connected and
+renders it uncached while `Window::is_a11y_active` holds, so every frame
+carries its nodes. The rebuild the cache avoids is paid only while an
+accessibility client has activated AccessKit (VoiceOver, an automation tool,
+some launchers and window managers). A guard test,
+`production_code_caches_views_only_through_view_cache`, fails on a direct
+`.cached(` outside test code.
 
 The debug `PANEFLOW_LATENCY_PROBE=1` measures input-handler time and time to
 the end of CPU painting. It does not identify the echoed character or observe
