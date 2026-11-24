@@ -403,7 +403,7 @@ enum Commands {
         #[arg(
             long,
             required_unless_present = "idle",
-            help = "Regex to wait for in the pane's recent scrollback. Required unless `--idle` is set. With `--idle` it is an optional sentinel: it is checked on each new output and EITHER signal (pattern match OR going idle) returns first (EP-003 US-008)"
+            help = "Regex to wait for in the pane's recent scrollback. Only output that arrives after the wait starts can match, so a line already on screen does not end it. Required unless `--idle` is set. With `--idle` it is an optional sentinel: it is checked on each new output and EITHER signal (pattern match OR going idle) returns first (EP-003 US-008)"
         )]
         pattern: Option<String>,
         #[arg(

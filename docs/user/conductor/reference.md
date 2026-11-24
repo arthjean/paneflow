@@ -111,7 +111,7 @@ When a client receives `dropped`, it should resync with `paneflow ps --json` or 
 
 ## `wait`
 
-`wait --idle` uses the event stream when available and falls back safely when needed. `wait --pattern` polls recent scrollback every 500 ms and scans the latest 500 lines.
+`wait --idle` uses the event stream when available and falls back safely when needed. `wait --pattern` polls recent scrollback every 500 ms and scans the latest 500 lines, but only text that arrives after the wait starts counts: a line already on screen does not match, so a sentinel left over from an earlier turn cannot end the wait. Use `paneflow search` to check what is already there.
 
 | Mode | Example | Use |
 | --- | --- | --- |
