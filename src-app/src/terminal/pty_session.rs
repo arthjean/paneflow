@@ -270,6 +270,13 @@ impl TerminalState {
         self.flush_ghostty_pending_input();
     }
 
+    pub(crate) fn exit_overlay_code(&self) -> Option<i32> {
+        if matches!(self.host_link, HostLinkState::Ended(_)) {
+            return None;
+        }
+        self.exited
+    }
+
     pub(super) fn mark_host_link(&mut self, state: HostLinkState) {
         if !state.accepts_input()
             && let Ok(mut pending) = self.pending_input.lock()
@@ -1223,6 +1230,18 @@ mod tests {
             Some(1),
             "US-003: a later failure must not clobber the real exit code"
         );
+    }
+
+    #[test]
+    fn the_centered_exit_line_gives_way_to_the_session_ended_banner() {
+        let mut state = TerminalState::new_display_only(24, 80);
+        state.exited = Some(130);
+        assert_eq!(state.exit_overlay_code(), Some(130));
+
+        state.mark_host_link(HostLinkState::Ended(
+            super::super::host_link::HostLinkEnd::exited(130, None),
+        ));
+        assert_eq!(state.exit_overlay_code(), None);
     }
 
     #[test]

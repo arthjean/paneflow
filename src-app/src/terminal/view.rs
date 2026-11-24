@@ -1810,7 +1810,7 @@ impl Render for TerminalView {
             self.terminal.session_backend(),
             cursor_visible,
             focused,
-            self.terminal.exited,
+            self.terminal.exit_overlay_code(),
             self.terminal.exit_signal.clone(),
             self.element_origin.clone(),
             search_match_rects,

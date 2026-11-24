@@ -271,6 +271,7 @@ impl HostLinkEnd {
     pub(crate) fn exited(code: i32, signal: Option<String>) -> Self {
         let detail = match &signal {
             Some(signal) => format!("Session ended ({signal})"),
+            None if code != 0 => format!("Session ended (exit {code})"),
             None => "Session ended".to_string(),
         };
         Self {
@@ -1278,7 +1279,8 @@ mod tests {
         let exited = HostLinkEnd::exited(3, None);
         assert_eq!(exited.exit(), Some((3, None)));
         assert!(exited.restartable());
-        assert_eq!(exited.detail, "Session ended");
+        assert_eq!(exited.detail, "Session ended (exit 3)");
+        assert_eq!(HostLinkEnd::exited(0, None).detail, "Session ended");
         assert_eq!(exited.action_label(), Some("Restart"));
         assert_eq!(
             exited.intent(Some(SessionGeneration::FIRST)),
