@@ -180,7 +180,11 @@ pub(crate) fn client_side_window_shell(
     window.set_client_inset(declared_client_inset(decorations, window.is_fullscreen()));
     window.set_client_corner_radii(corner_radii);
 
-    let mut outer = div().id("window-backdrop").relative().size_full();
+    let mut outer = div()
+        .id("window-backdrop")
+        .key_context(crate::keybindings::APP_KEY_CONTEXT)
+        .relative()
+        .size_full();
     let mut surface = div()
         .id("window-surface")
         .size_full()
@@ -577,7 +581,52 @@ mod tests {
         ClientDecorationGeometry, WindowOutline, client_content_frame, client_frame,
         declared_client_inset, rounded_window_corners, window_outline,
     };
-    use gpui::{Corners, Decorations, Tiling, px};
+    use gpui::{
+        Corners, Decorations, FocusHandle, Hsla, InteractiveElement as _, Styled as _, Tiling, px,
+    };
+
+    struct ShellProbe {
+        content_focus: FocusHandle,
+        new_file_tabs: usize,
+    }
+
+    impl gpui::Render for ShellProbe {
+        fn render(
+            &mut self,
+            window: &mut gpui::Window,
+            cx: &mut gpui::Context<Self>,
+        ) -> impl gpui::IntoElement {
+            let content = gpui::div()
+                .size_full()
+                .track_focus(&self.content_focus)
+                .on_action(cx.listener(|probe, _: &crate::DiffNewFileTab, _, _| {
+                    probe.new_file_tabs += 1;
+                }));
+            super::client_side_window_shell(content, window, Hsla::default(), Hsla::default())
+        }
+    }
+
+    #[gpui::test]
+    fn a_dock_chord_reaches_focus_held_by_a_view_without_a_key_context(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| {
+            crate::keybindings::apply_keybindings(cx, &std::collections::HashMap::new())
+        });
+        let (probe, cx) = cx.add_window_view(|_, cx| ShellProbe {
+            content_focus: cx.focus_handle(),
+            new_file_tabs: 0,
+        });
+        cx.update(|window, cx| probe.read(cx).content_focus.clone().focus(window, cx));
+        cx.run_until_parked();
+        cx.simulate_keystrokes("secondary-g");
+        cx.run_until_parked();
+        assert_eq!(
+            cx.update(|_, cx| probe.read(cx).new_file_tabs),
+            1,
+            "a chord scoped to !Terminal && !TextInput && !CodeEditor fires from a files tree"
+        );
+    }
 
     #[test]
     fn a_fullscreen_window_keeps_declaring_the_inset_it_returns_to() {

@@ -14,6 +14,8 @@ pub use display::{
 };
 pub use registry::ShortcutGroup;
 
+pub const APP_KEY_CONTEXT: &str = "Paneflow";
+
 pub fn action_for_name(name: &str) -> Option<Box<dyn gpui::Action>> {
     registry::action_from_name(name)
 }
