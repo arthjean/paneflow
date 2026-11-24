@@ -100,3 +100,97 @@ fn whoami_answers_pane_from_a_pane_and_external_outside_on_the_host_and_the_work
     let _ = core.request_shutdown(true);
     core_server.stop().unwrap();
 }
+
+fn worker_call(
+    control: &mut paneflow_ipc_client::host_control::HostControl,
+    method: &str,
+    params: Value,
+) -> Result<Value, Value> {
+    let id = control
+        .write_request(method, params)
+        .expect("the request is written");
+    loop {
+        let line = control
+            .read_stream_line(Duration::from_secs(30))
+            .expect("the worker answers")
+            .expect("the connection stays open");
+        let envelope: Value = serde_json::from_str(&line).expect("a JSON frame");
+        if envelope["id"].as_u64() != Some(id) {
+            continue;
+        }
+        if envelope["error"].is_object() {
+            return Err(envelope["error"].clone());
+        }
+        return Ok(envelope["result"].clone());
+    }
+}
+
+fn attach_as_window_then_whoami_and_sweep(home: &Path) -> (Value, Result<Value, Value>) {
+    let endpoint = paneflow_home::serve_endpoint_path(home);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut control = loop {
+        match paneflow_ipc_client::host_control::HostControl::connect(&endpoint, "window") {
+            Ok(control) => break control,
+            Err(error) => {
+                assert!(
+                    Instant::now() < deadline,
+                    "the worker never answered: {error}"
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    };
+    worker_call(
+        &mut control,
+        "layout.attach",
+        serde_json::json!({"client": "window"}),
+    )
+    .expect("layout.attach answers");
+    let whoami = worker_call(&mut control, "system.whoami", serde_json::json!({}))
+        .expect("system.whoami answers");
+    let sweep = worker_call(
+        &mut control,
+        "layout.sweep",
+        serde_json::json!({"live": false}),
+    );
+    (whoami, sweep)
+}
+
+struct DetachedWorker<'a> {
+    home: &'a Path,
+}
+
+impl Drop for DetachedWorker<'_> {
+    fn drop(&mut self) {
+        let _ = paneflow(self.home, &["serve", "stop"]);
+        let _ = paneflow(self.home, &["host", "stop", "--force"]);
+    }
+}
+
+#[test]
+fn a_process_that_is_not_paneflow_attaching_as_the_window_stays_external_on_the_worker() {
+    let home = tempfile::tempdir().expect("a temporary home");
+    let started = paneflow(home.path(), &["serve", "start"]);
+    let _worker = DetachedWorker { home: home.path() };
+    assert!(
+        started.status.success(),
+        "{}",
+        String::from_utf8_lossy(&started.stderr)
+    );
+    let (whoami, sweep) = attach_as_window_then_whoami_and_sweep(home.path());
+    assert_eq!(whoami, serde_json::json!({"principal": "external"}));
+    let refused = sweep.expect_err("layout.sweep belongs to the attached window");
+    assert_eq!(refused["data"]["principal"], "external", "{refused}");
+}
+
+#[test]
+fn a_worker_in_this_process_lets_this_executable_attach_as_the_window() {
+    let home = tempfile::tempdir().expect("a temporary home");
+    let worker = paneflow_serve::open(home.path()).expect("the worker takes the home");
+    let (whoami, sweep) = attach_as_window_then_whoami_and_sweep(home.path());
+    assert_eq!(whoami, serde_json::json!({"principal": "window"}));
+    if let Err(error) = &sweep {
+        assert_ne!(error["data"]["reason"], "principal_refused", "{error}");
+    }
+    drop(worker);
+}

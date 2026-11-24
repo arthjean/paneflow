@@ -171,6 +171,8 @@ fn open_with_build_id(
             "paneflow-serve-classify",
         ),
         principals: Mutex::new(Default::default()),
+        outside_callers: Mutex::new(Default::default()),
+        genuine_callers: paneflow_host::genuine::GenuineCallers::of_this_installation(),
         agent_callers: Mutex::new(Default::default()),
         policy: paneflow_host::policy::PolicySource::for_home(home),
         acting: Default::default(),

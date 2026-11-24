@@ -25,6 +25,7 @@ use crate::usage::Usage;
 use crate::usage::probe::{self, ProbeSlots};
 use paneflow_agent_config::usage::accounts::UsageAgent;
 use paneflow_api::Principal;
+use paneflow_peer::{PeerIdentity, PeerRead};
 
 const MAX_CONNECTIONS: usize = 128;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -55,6 +56,8 @@ pub struct Worker {
     pub layout: Arc<crate::layout_authority::LayoutAuthority>,
     pub classifier: paneflow_host::peer::PeerClassifier,
     pub principals: Mutex<std::collections::HashMap<ConnectionId, Principal>>,
+    pub outside_callers: Mutex<std::collections::HashMap<ConnectionId, PeerIdentity>>,
+    pub genuine_callers: paneflow_host::genuine::GenuineCallers,
     pub agent_callers:
         Mutex<std::collections::HashMap<ConnectionId, crate::agent_caller::CallerVerdict>>,
     pub policy: paneflow_host::policy::PolicySource,
@@ -117,7 +120,20 @@ impl Worker {
             );
             self.lock_agent_callers().insert(connection, verdict);
         }
+        if principal == Principal::External
+            && let PeerRead::Identified(identity) = read
+        {
+            self.lock_outside_callers().insert(connection, identity);
+        }
         self.lock_principals().insert(connection, principal);
+    }
+
+    fn lock_outside_callers(
+        &self,
+    ) -> std::sync::MutexGuard<'_, std::collections::HashMap<ConnectionId, PeerIdentity>> {
+        self.outside_callers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     pub fn agent_caller(
@@ -140,6 +156,20 @@ impl Worker {
 
     fn attached_as(&self, connection: ConnectionId, client: Option<&str>) {
         if client != Some(WINDOW_LAYOUT_CLIENT) {
+            return;
+        }
+        if self.principal_of(connection) != Principal::External {
+            return;
+        }
+        let genuine = {
+            let callers = self.lock_outside_callers();
+            self.genuine_callers.vouches_for(
+                "worker",
+                Principal::Window.kind(),
+                callers.get(&connection),
+            )
+        };
+        if !genuine {
             return;
         }
         let mut principals = self.lock_principals();
@@ -188,6 +218,7 @@ impl Worker {
 
     fn forget_connection(&self, connection: ConnectionId) {
         self.lock_principals().remove(&connection);
+        self.lock_outside_callers().remove(&connection);
         self.lock_agent_callers().remove(&connection);
     }
 
