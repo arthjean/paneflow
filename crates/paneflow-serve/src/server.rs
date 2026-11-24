@@ -27,7 +27,7 @@ use paneflow_agent_config::usage::accounts::UsageAgent;
 use paneflow_api::Principal;
 use paneflow_peer::{PeerIdentity, PeerRead};
 
-const MAX_CONNECTIONS: usize = 128;
+pub const MAX_CONNECTIONS: usize = 128;
 const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const ACCEPT_WAKE_RETRY: Duration = Duration::from_millis(10);
 const FOLLOW_KEEPALIVE: Duration = Duration::from_secs(2);

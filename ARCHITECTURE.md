@@ -823,7 +823,10 @@ and reads `grant.list`. The host and the window hold the set in a
 `paneflow_host::pane_grants::GrantMirror`, which is stale while the announced
 revision or the one in `serve/grants.json` is newer than the one it holds; a
 stale mirror applies no grant and refuses what would need one with
-`grants_unsynced`.
+`grants_unsynced`. A window process holds one mirror and one follower per
+home (`ipc_grants::followed_mirror`), shared by every `PaneFlowApp` it
+starts: the follower never ends, so one per app would pile up held
+connections until the worker's `MAX_CONNECTIONS` cap refuses other clients.
 
 A sandboxed pane carries its identity in the endpoint it connects to, after
 Wayland's `security-context-v1`. An agent profile with `sandbox: "paneflow"`

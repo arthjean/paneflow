@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use paneflow_api::methods::grant::GRANT_CHANGED;
@@ -62,22 +62,34 @@ fn follow(mirror: &GrantMirror, endpoint: &Path) {
     }
 }
 
+static FOLLOWED_HOMES: Mutex<Vec<(PathBuf, Arc<GrantMirror>)>> = Mutex::new(Vec::new());
+
+fn followed_mirror(home: &Path) -> Arc<GrantMirror> {
+    let mut followed = FOLLOWED_HOMES
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    if let Some((_, mirror)) = followed.iter().find(|(known, _)| known == home) {
+        return Arc::clone(mirror);
+    }
+    let mirror = Arc::new(GrantMirror::for_home(home));
+    let endpoint = paneflow_home::serve_endpoint_path(home);
+    let follower = Arc::clone(&mirror);
+    match std::thread::Builder::new()
+        .name("paneflow-grant-follow".into())
+        .spawn(move || follow(&follower, &endpoint))
+    {
+        Ok(_) => followed.push((home.to_path_buf(), Arc::clone(&mirror))),
+        Err(error) => log::warn!("paneflow: cannot follow the worker's grants: {error}"),
+    }
+    mirror
+}
+
 impl WindowGrants {
     pub(crate) fn start(home: Option<PathBuf>) -> Arc<Self> {
-        let mirror = Arc::new(match home.as_deref() {
-            Some(home) => GrantMirror::for_home(home),
-            None => GrantMirror::new(None),
-        });
-        if let Some(home) = home.as_deref() {
-            let endpoint = paneflow_home::serve_endpoint_path(home);
-            let follower = Arc::clone(&mirror);
-            if let Err(error) = std::thread::Builder::new()
-                .name("paneflow-grant-follow".into())
-                .spawn(move || follow(&follower, &endpoint))
-            {
-                log::warn!("paneflow: cannot follow the worker's grants: {error}");
-            }
-        }
+        let mirror = match home.as_deref() {
+            Some(home) => followed_mirror(home),
+            None => Arc::new(GrantMirror::new(None)),
+        };
         Arc::new(Self { mirror, home })
     }
 
@@ -303,6 +315,41 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(20));
         }
+        running.stop();
+    }
+
+    #[test]
+    fn windows_beyond_the_worker_connection_cap_share_one_grant_follower_and_the_worker_still_answers()
+     {
+        let home = tempfile::tempdir().unwrap();
+        let running = paneflow_serve::open(home.path()).unwrap();
+        let windows: Vec<Arc<WindowGrants>> = (0..paneflow_serve::server::MAX_CONNECTIONS + 32)
+            .map(|_| WindowGrants::start(Some(home.path().to_path_buf())))
+            .collect();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while Instant::now() < deadline
+            && windows
+                .iter()
+                .any(|window| window.mirror.held_revision() == 0)
+        {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let answered = paneflow_ipc_client::host_control::HostControl::connect(
+            &paneflow_home::serve_endpoint_path(home.path()),
+            "grant-windows",
+        )
+        .map(drop);
+        assert_eq!(answered, Ok(()), "the worker answers another client");
+        let unsynced = windows
+            .iter()
+            .filter(|window| window.mirror.held_revision() == 0)
+            .count();
+        assert_eq!(unsynced, 0, "every window read the grant set");
+        assert_eq!(
+            running.worker().events.follower_count(),
+            1,
+            "one follower serves every window of the process"
+        );
         running.stop();
     }
 }
