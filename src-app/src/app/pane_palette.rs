@@ -1316,7 +1316,7 @@ impl PaneFlowApp {
                         this.bind_tab_to_branch(ws_idx, tab_idx, branch, cx)
                     }
                     BranchTarget::Checkout(path) => {
-                        this.set_tab_worktree(ws_idx, tab_idx, Some(path), cx)
+                        this.bind_tab_to_checkout(ws_idx, tab_idx, path, cx)
                     }
                 }
                 if let Some(palette) = this.pane_palette.as_mut() {

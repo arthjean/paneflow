@@ -449,7 +449,7 @@ impl PaneFlowApp {
                 self.bind_tab_to_branch(ws_idx, tab_idx, branch.clone(), cx);
             }
             TabMenuAction::BindWorktree(path) => {
-                self.set_tab_worktree(ws_idx, tab_idx, Some(path.clone()), cx);
+                self.bind_tab_to_checkout(ws_idx, tab_idx, path.clone(), cx);
             }
             TabMenuAction::CreateBranchHere(path) => {
                 self.open_branch_prompt(ws_idx, path.clone(), window, cx);

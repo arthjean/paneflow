@@ -7,6 +7,7 @@ use crate::workspace::{
     worktree::{Snapshot, WorktreeEntry},
 };
 use gpui::Context;
+use paneflow_config::schema::TabTitleSource;
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct CheckoutGit {
@@ -163,6 +164,55 @@ impl PaneFlowApp {
         }
     }
 
+    pub(crate) fn title_tab_after_checkout(
+        &mut self,
+        ws_id: u64,
+        tab_id: u64,
+        label: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let label = label.trim();
+        let Some((ws_idx, tab_idx)) = self.tab_position(ws_id, tab_id) else {
+            return;
+        };
+        let tab = &self.workspaces[ws_idx].tabs()[tab_idx];
+        if label.is_empty() || tab.title_is_user_owned() {
+            return;
+        }
+        if !tab.title_source().yields_to(TabTitleSource::Generated) {
+            self.unlock_tab_title_through_model(ws_idx, tab_idx, cx);
+        }
+        self.retitle_tab_through_model(ws_idx, tab_idx, label, TabTitleSource::Generated, cx);
+    }
+
+    pub(crate) fn bind_tab_to_checkout(
+        &mut self,
+        ws_idx: usize,
+        tab_idx: usize,
+        path: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ws) = self.workspaces.get(ws_idx) else {
+            return;
+        };
+        let Some(tab_id) = ws.tabs().get(tab_idx).map(|tab| tab.id) else {
+            return;
+        };
+        let ws_id = ws.id;
+        let root = ws
+            .repo_root
+            .clone()
+            .unwrap_or_else(|| ws.worktree_root.clone());
+        let branch = self
+            .workspace_worktree_listing(ws_idx)
+            .iter()
+            .find(|entry| entry.path == path)
+            .and_then(|entry| entry.branch.clone());
+        let label = crate::workspace::worktree::checkout_label(branch.as_deref(), &path, &root);
+        self.set_tab_worktree(ws_idx, tab_idx, Some(path), cx);
+        self.title_tab_after_checkout(ws_id, tab_id, &label, cx);
+    }
+
     pub(crate) fn spawn_worktree_listing(&mut self, ws_idx: usize, cx: &mut Context<Self>) {
         let Some(repo_root) = self
             .workspaces
@@ -258,6 +308,7 @@ impl PaneFlowApp {
         {
             let path = (entry.path != repo_root).then(|| entry.path.clone());
             self.set_tab_worktree(ws_idx, tab_idx, path, cx);
+            self.title_tab_after_checkout(ws_id, tab_id, &branch, cx);
             return;
         }
 
@@ -291,6 +342,7 @@ impl PaneFlowApp {
                                 };
                                 let path = (prepared.path != repo_root).then_some(prepared.path);
                                 app.set_tab_worktree(ws_idx, tab_idx, path, cx);
+                                app.title_tab_after_checkout(ws_id, tab_id, &branch, cx);
                                 app.spawn_worktree_listing(ws_idx, cx);
                             }
                             Err(message) => app.show_toast(message, cx),
@@ -354,7 +406,7 @@ impl PaneFlowApp {
         } else {
             branch.clone()
         };
-        let generation = self.begin_tab_checkout(ws_idx, tab_idx, label, cx);
+        let generation = self.begin_tab_checkout(ws_idx, tab_idx, label.clone(), cx);
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 let probe = repo_root.clone();
@@ -374,6 +426,7 @@ impl PaneFlowApp {
                                 );
                                 if let Some((ws_idx, tab_idx)) = bindable {
                                     app.set_tab_worktree(ws_idx, tab_idx, None, cx);
+                                    app.title_tab_after_checkout(ws_id, tab_id, &label, cx);
                                     app.spawn_worktree_listing(ws_idx, cx);
                                     app.pane_palette_branch_created(tab_id, launch_preset, cx);
                                 }
@@ -454,6 +507,7 @@ impl PaneFlowApp {
                                 }
                                 if let Some((ws_idx, tab_idx)) = bindable {
                                     app.set_tab_worktree(ws_idx, tab_idx, Some(path), cx);
+                                    app.title_tab_after_checkout(ws_id, tab_id, &record, cx);
                                     app.spawn_worktree_listing(ws_idx, cx);
                                     app.pane_palette_branch_created(tab_id, launch_preset, cx);
                                 } else if let Some((ws_idx, _)) = app.tab_position(ws_id, tab_id) {
@@ -916,7 +970,8 @@ impl PaneFlowApp {
         let ws_id = ws.id;
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                let (probe_root, probe_path, name) = (repo_root.clone(), path.clone(), branch);
+                let (probe_root, probe_path, name) =
+                    (repo_root.clone(), path.clone(), branch.clone());
                 let result = smol::unblock(move || {
                     crate::workspace::worktree::create_branch_here(&probe_root, &probe_path, &name)
                 })
@@ -924,6 +979,9 @@ impl PaneFlowApp {
                 let _ = cx.update(|cx| {
                     this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
                         app.branch_prompt_finished(result.clone(), cx);
+                        if result.is_ok() {
+                            app.title_tabs_bound_to(&path, &branch, cx);
+                        }
                         if result.is_ok()
                             && let Some(ws_idx) =
                                 app.workspaces.iter().position(|ws| ws.id == ws_id)
@@ -941,6 +999,22 @@ impl PaneFlowApp {
             },
         )
         .detach();
+    }
+
+    fn title_tabs_bound_to(&mut self, path: &std::path::Path, label: &str, cx: &mut Context<Self>) {
+        let bound: Vec<(u64, u64)> = self
+            .workspaces
+            .iter()
+            .flat_map(|ws| {
+                ws.tabs()
+                    .iter()
+                    .filter(|tab| tab.worktree.as_deref() == Some(path))
+                    .map(move |tab| (ws.id, tab.id))
+            })
+            .collect();
+        for (ws_id, tab_id) in bound {
+            self.title_tab_after_checkout(ws_id, tab_id, label, cx);
+        }
     }
 
     fn adopt_created_worktree(

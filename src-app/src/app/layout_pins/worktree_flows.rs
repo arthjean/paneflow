@@ -8,7 +8,7 @@ use super::Rig;
 use crate::PaneFlowApp;
 use crate::workspace::worktree::{ManagedWorktree, TeardownPolicy};
 
-pub(super) const PINS: usize = 4;
+pub(super) const PINS: usize = 5;
 
 const OUTCOME_WAIT: Duration = Duration::from_secs(60);
 const PUMP_INTERVAL: Duration = Duration::from_millis(5);
@@ -242,4 +242,48 @@ fn pin_the_tab_menu_new_branch_binds_the_clicked_tab_and_adds_its_pane_there(
         "the new pane starts in {}",
         worktree.display()
     );
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_a_new_branch_titles_its_tab_unless_the_user_named_it(cx: &mut TestAppContext) {
+    let root = tempfile::tempdir().expect("a repository root");
+    let repo = committed_repo(root.path());
+    let mut rig = Rig::mount(cx);
+    let ws = project(&mut rig, &repo);
+    let title = |rig: &mut Rig<'_>, tab: usize| {
+        rig.act(move |app, _, _| app.workspaces[ws].tabs()[tab].title().to_string())
+    };
+
+    rig.act(|app, window, cx| app.open_pane_palette(ws, window, cx));
+    launch_from_palette(&mut rig, "mouse-one");
+    assert_eq!(title(&mut rig, 1), "mouse-one");
+
+    rig.act(|app, window, cx| app.open_pane_palette(ws, window, cx));
+    launch_from_palette(&mut rig, "");
+    let detached = rig
+        .act(|app, _, _| app.workspaces[ws].tabs()[2].worktree.clone())
+        .expect("the detached tab is bound to its worktree");
+    let label = detached
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .expect("a worktree folder name");
+    assert_eq!(title(&mut rig, 2), label);
+
+    rig.act(|app, _, cx| {
+        app.retitle_tab_through_model(
+            ws,
+            0,
+            "mine",
+            paneflow_config::schema::TabTitleSource::User,
+            cx,
+        )
+    });
+    rig.act(|app, window, cx| app.open_new_branch_for_tab(ws, 0, window, cx));
+    launch_from_palette(&mut rig, "feat/renamed");
+    assert!(
+        rig.act(|app, _, _| app.workspaces[ws].tabs()[0].worktree.is_some()),
+        "the renamed tab is still bound"
+    );
+    assert_eq!(title(&mut rig, 0), "mine");
 }
