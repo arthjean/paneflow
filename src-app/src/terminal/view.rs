@@ -306,6 +306,7 @@ pub struct TerminalView {
     pub(super) scrollbar_drag: Option<ScrollbarDrag>,
     pub(super) scrollbar_reveal: super::scrollbar_reveal::ScrollbarReveal,
     pub(super) scrollbar_hide_scheduled: bool,
+    progress_expiry_armed: bool,
     pub(super) scrollbar_seen_offset: usize,
     pub(super) scrollbar_visible: bool,
     pub(super) scrollbar_enabled: bool,
@@ -401,6 +402,33 @@ impl TerminalView {
     pub(crate) fn apply_backend_wakeup(&mut self, cx: &mut Context<Self>) {
         self.terminal.process_backend_wakeup();
         self.process_dirty_terminal(cx);
+    }
+
+    fn arm_progress_expiry(&mut self, cx: &mut Context<Self>) {
+        if self.progress_expiry_armed {
+            return;
+        }
+        let Some(expires_at) = self.terminal.progress_expires_at() else {
+            return;
+        };
+        self.progress_expiry_armed = true;
+        let delay = expires_at.saturating_duration_since(std::time::Instant::now());
+        cx.spawn(
+            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                cx.background_executor().timer(delay).await;
+                let _ = this.update(cx, |view, cx| {
+                    view.progress_expiry_armed = false;
+                    if view
+                        .terminal
+                        .expire_stale_progress(std::time::Instant::now())
+                    {
+                        cx.notify();
+                    }
+                    view.arm_progress_expiry(cx);
+                });
+            },
+        )
+        .detach();
     }
 
     fn process_dirty_terminal(&mut self, cx: &mut Context<Self>) {
@@ -775,6 +803,7 @@ impl TerminalView {
             scrollbar_drag: None,
             scrollbar_reveal: super::scrollbar_reveal::ScrollbarReveal::default(),
             scrollbar_hide_scheduled: false,
+            progress_expiry_armed: false,
             scrollbar_seen_offset: 0,
             scrollbar_visible: false,
             scrollbar_enabled,
@@ -1664,6 +1693,7 @@ fn spawn_event_pump_task(
                                 cx.emit(TerminalEvent::ShellPromptReady);
                             }
 
+                            view.arm_progress_expiry(cx);
                             view.process_dirty_terminal(cx);
                             view.relaunch_when_ended(cx);
                             true

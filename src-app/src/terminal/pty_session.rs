@@ -45,6 +45,7 @@ pub(super) use spawn_env::*;
 const DEFAULT_SCROLLBACK_LINES: usize = TerminalConfig::DEFAULT_SCROLLBACK_LINES;
 const MAX_PENDING_CLIPBOARD_OPS: usize = 8;
 const MAX_PENDING_NOTIFICATIONS: usize = 8;
+pub(crate) const PROGRESS_STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(15);
 
 #[cfg(test)]
 fn resolved_scrollback_lines(profile: TerminalSurfaceProfile) -> usize {
@@ -151,6 +152,7 @@ pub struct TerminalState {
     pub title: String,
     pub current_cwd: Option<String>,
     pub progress: Option<paneflow_terminal_ghostty::ProgressReport>,
+    progress_reported_at: Option<std::time::Instant>,
     pub custom_name: Option<String>,
     pub detected_agent: Option<crate::agent_launcher::TerminalAgent>,
     pub agent_confirmed: bool,
@@ -484,6 +486,7 @@ impl TerminalState {
             child_pid: 0,
             current_cwd: None,
             progress: None,
+            progress_reported_at: None,
             custom_name: None,
             detected_agent: None,
             agent_confirmed: false,
@@ -555,6 +558,38 @@ impl TerminalState {
         }
     }
 
+    fn record_progress(
+        &mut self,
+        report: paneflow_terminal_ghostty::ProgressReport,
+        now: std::time::Instant,
+    ) {
+        if report.state == paneflow_terminal_ghostty::ProgressState::Remove {
+            self.progress = None;
+            self.progress_reported_at = None;
+        } else {
+            self.progress = Some(report);
+            self.progress_reported_at = Some(now);
+        }
+    }
+
+    pub(crate) fn progress_expires_at(&self) -> Option<std::time::Instant> {
+        self.progress
+            .and(self.progress_reported_at)
+            .map(|reported_at| reported_at + PROGRESS_STALE_AFTER)
+    }
+
+    pub(crate) fn expire_stale_progress(&mut self, now: std::time::Instant) -> bool {
+        if self
+            .progress_expires_at()
+            .is_none_or(|expires_at| now < expires_at)
+        {
+            return false;
+        }
+        self.progress = None;
+        self.progress_reported_at = None;
+        true
+    }
+
     pub(crate) fn take_resolved_hover_link(&mut self) -> Option<(Point, Option<HyperlinkZone>)> {
         self.resolved_hover_link.take()
     }
@@ -596,10 +631,7 @@ impl TerminalState {
             }
             GhosttyUiEvent::Progress(events) => {
                 if let Some(report) = events.take_progress() {
-                    self.progress = match report.state {
-                        paneflow_terminal_ghostty::ProgressState::Remove => None,
-                        _ => Some(report),
-                    };
+                    self.record_progress(report, std::time::Instant::now());
                 }
             }
             GhosttyUiEvent::Notification(events) => {
@@ -1196,6 +1228,64 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    fn shows_progress(state: &mut TerminalState) -> bool {
+        for _ in 0..200 {
+            state.sync();
+            if state.progress.is_some() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        false
+    }
+
+    #[test]
+    fn a_progress_its_program_stopped_updating_is_removed_once_stale() {
+        let mut state = TerminalState::new_display_only(24, 80);
+        state.write_output(b"\x1b]9;4;1;40\x07");
+        assert!(
+            shows_progress(&mut state),
+            "the OSC 9;4 report reaches the pane"
+        );
+        let reported = state
+            .progress_expires_at()
+            .expect("a live progress expires")
+            - PROGRESS_STALE_AFTER;
+
+        assert!(!state.expire_stale_progress(reported + PROGRESS_STALE_AFTER / 2));
+        assert!(state.progress.is_some(), "a fresh progress stays");
+
+        assert!(state.expire_stale_progress(reported + PROGRESS_STALE_AFTER));
+        assert_eq!(state.progress, None, "a stale progress is removed");
+        assert_eq!(state.progress_expires_at(), None);
+    }
+
+    #[test]
+    fn each_progress_update_restarts_the_staleness_clock_and_a_removal_stops_it() {
+        let mut state = TerminalState::new_display_only(24, 80);
+        let start = std::time::Instant::now();
+        let set = |percent| paneflow_terminal_ghostty::ProgressReport {
+            state: paneflow_terminal_ghostty::ProgressState::Set,
+            percent: Some(percent),
+        };
+        state.record_progress(set(10), start);
+        state.record_progress(set(60), start + PROGRESS_STALE_AFTER / 2);
+        assert!(!state.expire_stale_progress(start + PROGRESS_STALE_AFTER));
+        assert_eq!(state.progress, Some(set(60)));
+        assert!(state.expire_stale_progress(start + PROGRESS_STALE_AFTER * 2));
+
+        state.record_progress(set(10), start);
+        state.record_progress(
+            paneflow_terminal_ghostty::ProgressReport {
+                state: paneflow_terminal_ghostty::ProgressState::Remove,
+                percent: None,
+            },
+            start,
+        );
+        assert_eq!(state.progress, None);
+        assert_eq!(state.progress_expires_at(), None);
     }
 
     #[test]

@@ -629,6 +629,12 @@ agent CLI (claude, codex, opencode, …)
   RIS: records, OSC 9;4 progress and title are emptied. Pending status events
   are budgeted at 256 KiB per terminal; a burst past it clears every record
   and the progress instead of keeping a partial state, and logs a warning.
+- **OSC 9;4 progress goes stale like Ghostty's.** The protocol has no owner
+  or end, so the pane's progress chip is removed 15 s after the last OSC 9;4
+  report (`PROGRESS_STALE_AFTER` in `src-app/src/terminal/pty_session.rs`),
+  as in Ghostty, and each report restarts that clock. State 0 removes it at
+  once, and so does the child's exit or the end of the host link. A program
+  that wants the chip to stay sends an update at least every few seconds.
 - **OSC 7501 capability.** Each host runtime carries one more flag,
   `program_status_capable`, that says whether the program in the pane speaks
   the protocol at all. It turns true when the engine's reply to
