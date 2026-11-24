@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -66,6 +66,8 @@ pub fn run(
         anchor: None,
         caller: super::send_cmd::caller_session(),
         scope_all,
+        created: HashSet::new(),
+        shown: HashSet::new(),
     }
     .execute()
 }
@@ -215,6 +217,7 @@ enum State {
         last_generation: Option<u64>,
         stable: u8,
         since: Instant,
+        appear_within: Duration,
     },
     Polling {
         deadline: Instant,
@@ -285,6 +288,8 @@ struct Engine<'c, T: IpcTransport> {
     anchor: Option<u64>,
     caller: Option<String>,
     scope_all: bool,
+    created: HashSet<u64>,
+    shown: HashSet<u64>,
 }
 
 impl<T: IpcTransport> Engine<'_, T> {
@@ -391,6 +396,7 @@ impl<T: IpcTransport> Engine<'_, T> {
         self.anchor = ids.first().copied();
         let now = Instant::now();
         for (&i, sid) in roots.iter().zip(ids) {
+            self.created.insert(sid);
             self.runs[i].surface_id = Some(sid);
             self.runs[i].started = Some(now);
             self.enter_post_action_state(i);
@@ -409,6 +415,11 @@ impl<T: IpcTransport> Engine<'_, T> {
                 last_generation: None,
                 stable: 0,
                 since: Instant::now(),
+                appear_within: r
+                    .unit
+                    .ready
+                    .as_ref()
+                    .map_or(SETTLE_MAX, |(_, timeout)| Duration::from_secs(*timeout)),
             }
         } else {
             self.barrier_or_ready(i, None)
@@ -441,6 +452,17 @@ impl<T: IpcTransport> Engine<'_, T> {
                     let (deadline, re, baseline) = (*deadline, re.clone(), baseline.clone());
                     let sid = self.runs[i].surface_id.expect("polling has a surface");
                     match self.read_window(sid, READ_WINDOW_LINES)? {
+                        SurfaceRead::Gone if self.not_shown_yet(sid) => {
+                            if Instant::now() >= deadline {
+                                let (_, timeout) =
+                                    self.runs[i].unit.ready.clone().expect("polling has ready");
+                                self.fail(
+                                    i,
+                                    &format!("pane {sid} never appeared within {timeout}s"),
+                                    true,
+                                );
+                            }
+                        }
                         SurfaceRead::Gone => {
                             self.fail(i, "pane closed before the pattern appeared", false);
                         }
@@ -484,9 +506,35 @@ impl<T: IpcTransport> Engine<'_, T> {
                     last_generation,
                     stable,
                     since,
+                    appear_within,
                 } => {
-                    let (last_generation, mut stable, since) = (*last_generation, *stable, *since);
+                    let (last_generation, mut stable, since, appear_within) =
+                        (*last_generation, *stable, *since, *appear_within);
                     let sid = self.runs[i].surface_id.expect("settling has a surface");
+                    if self.not_shown_yet(sid) {
+                        match self.read_window(sid, SETTLE_WINDOW_LINES)? {
+                            SurfaceRead::Snapshot(snapshot) => {
+                                self.runs[i].state = State::Settling {
+                                    last_generation: snapshot.output_generation,
+                                    stable: 0,
+                                    since: Instant::now(),
+                                    appear_within,
+                                };
+                            }
+                            SurfaceRead::Gone if since.elapsed() >= appear_within => {
+                                self.fail(
+                                    i,
+                                    &format!(
+                                        "pane {sid} never appeared within {}s",
+                                        appear_within.as_secs()
+                                    ),
+                                    true,
+                                );
+                            }
+                            SurfaceRead::Gone | SurfaceRead::Skipped => {}
+                        }
+                        continue;
+                    }
                     let elapsed = since.elapsed();
                     let mut fire = elapsed >= SETTLE_MAX;
                     if !fire {
@@ -509,6 +557,7 @@ impl<T: IpcTransport> Engine<'_, T> {
                                         last_generation: output_generation,
                                         stable,
                                         since,
+                                        appear_within,
                                     };
                                 }
                             }
@@ -684,11 +733,12 @@ impl<T: IpcTransport> Engine<'_, T> {
                             return Ok(());
                         }
                         self.runs[i].surface_id = result.get("surface_id").and_then(Value::as_u64);
-                        if self.runs[i].surface_id.is_none() {
+                        let Some(sid) = self.runs[i].surface_id else {
                             self.rollback_unit_worktree(i, created_worktree);
                             self.fail(i, "surface.split returned no surface_id", false);
                             return Ok(());
-                        }
+                        };
+                        self.created.insert(sid);
                         self.enter_post_action_state(i);
                     }
                     Err(e) => {
@@ -768,8 +818,17 @@ impl<T: IpcTransport> Engine<'_, T> {
         }
     }
 
-    fn read_window(&self, sid: u64, lines: u64) -> Result<SurfaceRead, String> {
-        read_surface(self.client, sid, lines).map_err(|e| format!("instance unreachable: {e}"))
+    fn read_window(&mut self, sid: u64, lines: u64) -> Result<SurfaceRead, String> {
+        let read = read_surface(self.client, sid, lines)
+            .map_err(|e| format!("instance unreachable: {e}"))?;
+        if matches!(read, SurfaceRead::Snapshot(_)) {
+            self.shown.insert(sid);
+        }
+        Ok(read)
+    }
+
+    fn not_shown_yet(&self, sid: u64) -> bool {
+        self.created.contains(&sid) && !self.shown.contains(&sid)
     }
 
     fn fail(&mut self, i: usize, error: &str, timeout: bool) {
@@ -1037,6 +1096,8 @@ mod tests {
             anchor: Some(42),
             caller: Some("0a9e5266".to_string()),
             scope_all: false,
+            created: HashSet::new(),
+            shown: HashSet::new(),
         };
         assert_eq!(
             engine
@@ -1075,7 +1136,7 @@ mod tests {
 
     struct FakeInstance {
         calls: RefCell<Vec<(String, Value)>>,
-        reads: RefCell<HashMap<u64, Vec<String>>>,
+        reads: RefCell<HashMap<u64, Vec<Option<String>>>>,
         scripting: bool,
     }
     impl FakeInstance {
@@ -1089,7 +1150,13 @@ mod tests {
         fn push_reads(&self, sid: u64, texts: &[&str]) {
             self.reads
                 .borrow_mut()
-                .insert(sid, texts.iter().map(|s| s.to_string()).collect());
+                .insert(sid, texts.iter().map(|s| Some(s.to_string())).collect());
+        }
+        fn push_script(&self, sid: u64, reads: &[Option<&str>]) {
+            self.reads.borrow_mut().insert(
+                sid,
+                reads.iter().map(|read| read.map(str::to_string)).collect(),
+            );
         }
     }
     impl IpcTransport for FakeInstance {
@@ -1112,12 +1179,15 @@ mod tests {
                     let sid = params["surface_id"].as_u64().unwrap_or(0);
                     let mut reads = self.reads.borrow_mut();
                     let texts = reads.entry(sid).or_default();
-                    let text = if texts.len() > 1 {
+                    let read = if texts.len() > 1 {
                         texts.remove(0)
                     } else {
-                        texts.first().cloned().unwrap_or_default()
+                        texts.first().cloned().unwrap_or(Some(String::new()))
                     };
-                    Ok(json!({ "text": text }))
+                    match read {
+                        Some(text) => Ok(json!({ "text": text })),
+                        None => Err(format!("paneflow error -32602: surface_id {sid} not found")),
+                    }
                 }
                 "surface.send_text" => Ok(json!({ "sent": true })),
                 other => Err(format!("unexpected method {other}")),
@@ -1254,6 +1324,80 @@ mod tests {
                 .iter()
                 .all(|(m, _)| m != "surface.send_text"),
             "skipped dependent must not send"
+        );
+    }
+
+    fn flow_file(dir: &tempfile::TempDir, body: &str) -> std::path::PathBuf {
+        let file = dir.path().join("flow.toml");
+        std::fs::write(&file, body).unwrap();
+        file
+    }
+
+    fn run_flow(fake: &FakeInstance, file: &std::path::Path) -> i32 {
+        run(fake, file.to_str().unwrap(), false, true, false).expect("report")
+    }
+
+    #[test]
+    fn a_ready_barrier_waits_for_a_pane_the_window_has_not_shown_yet() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let _root = crate::workspace::worktree::test_support::scoped_root(dir.path().join("wt"));
+        let file = flow_file(
+            &dir,
+            "[defaults]\ntimeout_secs = 30\n\n[[step]]\nid = \"impl\"\npane = { command = \"true\" }\nready = { pattern = \"tests passed\" }\n",
+        );
+        let fake = FakeInstance::new(true);
+        fake.push_script(1, &[None, None, Some("tests passed")]);
+        let code = run_flow(&fake, &file);
+        assert_eq!(code, EXIT_OK, "a pane not shown yet is not a closed pane");
+    }
+
+    #[test]
+    fn a_send_waits_for_a_flow_pane_the_window_has_not_shown_yet() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let _root = crate::workspace::worktree::test_support::scoped_root(dir.path().join("wt"));
+        let file = flow_file(
+            &dir,
+            "[defaults]\ntimeout_secs = 30\n\n[[step]]\nid = \"root\"\npane = { command = \"true\" }\n\n[[step]]\nid = \"go\"\nneeds = [\"root\"]\nsend = { target = \"root\", text = \"x\" }\n",
+        );
+        let fake = FakeInstance::new(true);
+        fake.push_script(1, &[None, None, Some("$ ")]);
+        let code = run_flow(&fake, &file);
+        assert_eq!(code, EXIT_OK, "the text is fed once the pane shows");
+        let sent = fake
+            .calls
+            .borrow()
+            .iter()
+            .filter(|(method, _)| method == "surface.send_text")
+            .count();
+        assert_eq!(sent, 1);
+    }
+
+    #[test]
+    fn a_pane_seen_then_gone_is_closed_and_one_never_shown_times_out() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let _root = crate::workspace::worktree::test_support::scoped_root(dir.path().join("wt"));
+        let file = flow_file(
+            &dir,
+            "[defaults]\ntimeout_secs = 30\n\n[[step]]\nid = \"impl\"\npane = { command = \"true\" }\nready = { pattern = \"never\" }\n",
+        );
+        let fake = FakeInstance::new(true);
+        fake.push_script(1, &[Some("building"), None]);
+        let code = run_flow(&fake, &file);
+        assert_eq!(
+            code, EXIT_RUNTIME,
+            "a pane that vanished after showing is closed"
+        );
+
+        let file = flow_file(
+            &dir,
+            "[defaults]\ntimeout_secs = 1\n\n[[step]]\nid = \"impl\"\npane = { command = \"true\" }\nready = { pattern = \"never\" }\n",
+        );
+        let fake = FakeInstance::new(true);
+        fake.push_script(1, &[None]);
+        let code = run_flow(&fake, &file);
+        assert_eq!(
+            code, EXIT_TIMEOUT,
+            "a pane that never shows fails on the step's own timeout"
         );
     }
 }
