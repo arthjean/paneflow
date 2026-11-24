@@ -824,7 +824,10 @@ each of the three servers: the worker for `surface.split`, `workspace.up`,
 `surface.split` and `workspace.up` (`ipc_panes::confine_spawn`, which
 refuses `workspace.create`, `workspace.restore_layout` and
 `client.dispatch_action` from a sandboxed pane), while a `tmux.compat` split
-inherits the sandbox of its team anchor. The worker refuses `layout.apply`,
+inherits the sandbox of its team anchor. The window answers `tmux.compat`
+only when the caller's verified pane principal is the pane its `surface_id`
+names, so the team token alone, readable in the lead's environment, does not
+let another pane or an outside process act as a team pane. The worker refuses `layout.apply`,
 `layout.adopt` and `action.invoke` to a sandboxed pane
 (`authority::REFUSED_IN_SANDBOX`): those either carry surface definitions it
 does not rewrite or run code that reaches the window under another identity.

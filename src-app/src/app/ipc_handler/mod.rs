@@ -137,8 +137,14 @@ impl PaneFlowApp {
                 scripting: req.gates.scripting || granted,
                 ..req.gates
             };
-            let result = match self.handle_ipc(&req.method, &req.params, req.caller_pid, gates, cx)
-            {
+            let result = match self.handle_ipc_as(
+                &req.caller,
+                &req.method,
+                &req.params,
+                req.caller_pid,
+                gates,
+                cx,
+            ) {
                 IpcReply::Ready(result) => result,
                 IpcReply::Deferred(job) => {
                     answer_off_thread(job, req.response_tx).detach();
@@ -189,6 +195,28 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) -> IpcReply {
         registry().serve(self, method, params, caller_pid, gates, cx)
+    }
+
+    pub(crate) fn handle_ipc_as(
+        &mut self,
+        caller: &paneflow_api::Principal,
+        method: &str,
+        params: &serde_json::Value,
+        caller_pid: Option<i64>,
+        gates: paneflow_api::Gates,
+        cx: &mut Context<Self>,
+    ) -> IpcReply {
+        let outer = std::mem::replace(&mut self.ipc_caller, caller.clone());
+        let reply = self.handle_ipc(method, params, caller_pid, gates, cx);
+        self.ipc_caller = outer;
+        reply
+    }
+
+    pub(crate) fn ipc_caller_session(&self) -> Option<&str> {
+        match &self.ipc_caller {
+            paneflow_api::Principal::Pane { session, .. } => Some(session.as_str()),
+            _ => None,
+        }
     }
 }
 
@@ -295,6 +323,7 @@ mod tests {
                 state
             },
             caller_pid: None,
+            caller: paneflow_api::Principal::External,
             grant: None,
             gates: paneflow_api::Gates::CLOSED,
         }

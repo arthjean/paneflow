@@ -376,6 +376,7 @@ impl PaneFlowApp {
             session_save_error_shown: false,
             cached_config,
             ipc_gates: paneflow_api::Gates::CLOSED,
+            ipc_caller: paneflow_api::Principal::Window,
             app_wake,
             ipc_status,
             event_bus,

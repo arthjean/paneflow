@@ -11,7 +11,7 @@ use crate::{
     SplitVertically, ToggleZoom, UndoClosePane,
 };
 
-pub(super) const PINS: usize = 24;
+pub(super) const PINS: usize = 25;
 
 fn split_v(rig: &mut Rig<'_>) {
     rig.act(|app, window, cx| app.handle_split_v(&SplitVertically, window, cx));
@@ -51,6 +51,73 @@ fn pin_split_by_ipc_spawns_next_to_the_anchor_and_leaves_focus(cx: &mut TestAppC
     assert_eq!(rig.shape(0, 0), "H(0.500 a, 0.500 b)");
     assert_eq!(rig.focused().as_deref(), Some("a"));
     assert_eq!(rig.requests(), ["create b"]);
+}
+
+fn pane_principal(rig: &mut Rig<'_>, name: &str) -> paneflow_api::Principal {
+    paneflow_api::Principal::Pane {
+        session: rig.session_of(name).to_string(),
+        workspace: None,
+    }
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_a_team_answers_tmux_only_to_a_process_in_the_pane_it_names(cx: &mut TestAppContext) {
+    let mut rig = Rig::mount(cx);
+    rig.workspace("alpha");
+    rig.focus("a");
+    split_v(&mut rig);
+    rig.requests();
+    let lead = rig.surface_id("a");
+    let token = rig.act(|app, _, _| app.tmux_teams.issue());
+    let closed = paneflow_api::Gates::CLOSED;
+    let split = json!({"team": token, "surface_id": lead, "argv": [
+        "split-window", "-h", "-P", "-F", "#{pane_id}", "echo spawned-through-the-team-token"
+    ]});
+    let outsider = pane_principal(&mut rig, "b");
+    for caller in [outsider, paneflow_api::Principal::External] {
+        let refused = rig.ipc_as("tmux.compat", split.clone(), closed, &caller);
+        assert_eq!(refused["result"]["exit"], json!(1), "{refused}");
+        assert!(
+            refused["result"]["stderr"]
+                .as_str()
+                .is_some_and(|stderr| stderr.contains("does not run in")),
+            "{refused}"
+        );
+    }
+    assert_eq!(rig.shape(0, 0), "V(0.500 a, 0.500 b)");
+    assert_eq!(rig.requests(), Vec::<String>::new());
+
+    let leader = pane_principal(&mut rig, "a");
+    let shown = rig.ipc_as(
+        "tmux.compat",
+        json!({"team": token, "surface_id": lead, "argv": ["display-message", "-p", "#{pane_id}"]}),
+        closed,
+        &leader,
+    );
+    assert_eq!(
+        shown["result"],
+        json!({"stdout": "%0", "stderr": "", "exit": 0})
+    );
+    let opened = rig.ipc_as("tmux.compat", split, closed, &leader);
+    assert_eq!(
+        opened["result"],
+        json!({"stdout": "%1", "stderr": "", "exit": 0})
+    );
+    assert_eq!(rig.requests(), ["create c"]);
+    let teammate = pane_principal(&mut rig, "c");
+    let teammate_surface = rig.surface_id("c");
+    let listed = rig.ipc_as(
+        "tmux.compat",
+        json!({"team": token, "surface_id": teammate_surface,
+            "argv": ["display-message", "-p", "#{pane_id}"]}),
+        closed,
+        &teammate,
+    );
+    assert_eq!(
+        listed["result"],
+        json!({"stdout": "%1", "stderr": "", "exit": 0})
+    );
 }
 
 #[gpui::test]

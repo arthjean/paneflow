@@ -228,6 +228,7 @@ struct PaneFlowApp {
     session_save_error_shown: bool,
     cached_config: paneflow_config::schema::PaneFlowConfig,
     ipc_gates: paneflow_api::Gates,
+    ipc_caller: paneflow_api::Principal,
     app_wake: app::wake::AppWake,
     ipc_status: ipc::IpcStatus,
     event_bus: std::sync::Arc<ipc_events::EventBus>,

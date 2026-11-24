@@ -429,6 +429,7 @@ fn send_text_with(
         response_tx,
         state: std::sync::Arc::new(crate::ipc::RequestState::default()),
         caller_pid: None,
+        caller: paneflow_api::Principal::External,
         grant,
         gates: paneflow_api::Gates::CLOSED,
     };

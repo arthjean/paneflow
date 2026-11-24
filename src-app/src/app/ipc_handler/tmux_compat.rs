@@ -75,6 +75,14 @@ fn error_message(value: &serde_json::Value) -> String {
 }
 
 impl PaneFlowApp {
+    fn caller_runs_in(&self, surface: u64, cx: &App) -> bool {
+        let Some(session) = self.ipc_caller_session() else {
+            return false;
+        };
+        self.terminal_for_surface(surface)
+            .is_some_and(|terminal| terminal.read(cx).terminal.session_id.as_str() == session)
+    }
+
     pub(super) fn tmux_compat_reply(
         &mut self,
         params: &serde_json::Value,
@@ -85,6 +93,18 @@ impl PaneFlowApp {
             Ok(request) => request,
             Err(error) => return IpcReply::Ready(error.into_value()),
         };
+        if !self.caller_runs_in(request.surface_id, cx) {
+            log::warn!(
+                "tmux-compat: a caller outside surface {} spoke for it ({:?})",
+                request.surface_id,
+                self.ipc_caller.kind()
+            );
+            return IpcReply::Ready(failure(format!(
+                "paneflow tmux-compat: the calling process does not run in surface {}; \
+                 a team pane can only speak for itself",
+                request.surface_id
+            )));
+        }
         let live: HashSet<u64> = self
             .collect_surface_generations(cx)
             .into_iter()

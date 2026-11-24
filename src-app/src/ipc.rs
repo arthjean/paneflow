@@ -23,6 +23,7 @@ pub struct IpcRequest {
     pub response_tx: mpsc::Sender<Value>,
     pub state: Arc<RequestState>,
     pub caller_pid: Option<i64>,
+    pub caller: paneflow_api::Principal,
     pub grant: Option<String>,
     pub gates: paneflow_api::Gates,
 }
@@ -1080,7 +1081,7 @@ fn handle_connection(
                                 method,
                                 params,
                                 response_id,
-                                caller_pid,
+                                (caller_pid, caller.clone()),
                                 grant,
                                 gates,
                             ),
@@ -1419,7 +1420,7 @@ fn dispatch_to_gpui(
     method: String,
     params: Value,
     id: Value,
-    caller_pid: Option<i64>,
+    (caller_pid, caller): (Option<i64>, paneflow_api::Principal),
     grant: Option<String>,
     gates: paneflow_api::Gates,
 ) -> Value {
@@ -1431,6 +1432,7 @@ fn dispatch_to_gpui(
         response_tx: resp_tx,
         state: Arc::clone(&state),
         caller_pid,
+        caller,
         grant,
         gates,
     };
@@ -1991,6 +1993,7 @@ mod dispatch_tests {
             response_tx,
             state: Arc::new(RequestState::default()),
             caller_pid: None,
+            caller: paneflow_api::Principal::External,
             grant: None,
             gates: paneflow_api::Gates::CLOSED,
         }
@@ -2006,7 +2009,7 @@ mod dispatch_tests {
             "surface.read".to_string(),
             json!({ "surface_id": 1 }),
             json!("req-overload"),
-            None,
+            (None, paneflow_api::Principal::External),
             None,
             paneflow_api::Gates::CLOSED,
         );
@@ -2026,7 +2029,7 @@ mod dispatch_tests {
             "surface.read".to_string(),
             json!({ "surface_id": 1 }),
             json!("req-closed"),
-            None,
+            (None, paneflow_api::Principal::External),
             None,
             paneflow_api::Gates::CLOSED,
         );
