@@ -62,10 +62,10 @@ font-kit = ["dep:font-kit"]
 test-support = ["gpui/test-support", "dep:image"]
 
 [dependencies]
-gpui = { git = "https://github.com/zed-industries/zed", rev = "703b5ac3f4ffe1e87a073123ae56e22f72f095c4", default-features = false }
+gpui = { git = "https://github.com/zed-industries/zed", rev = "c016f436e60bfa5105de53837935e9de94eb0867", default-features = false }
 anyhow = "1.0.86"
 bytemuck = "1"
-collections = { git = "https://github.com/zed-industries/zed", rev = "703b5ac3f4ffe1e87a073123ae56e22f72f095c4", version = "0.1.0" }
+collections = { git = "https://github.com/zed-industries/zed", rev = "c016f436e60bfa5105de53837935e9de94eb0867", version = "0.1.0" }
 cosmic-text = "0.19.0"
 etagere = "0.2"
 itertools = "0.14.0"
@@ -96,7 +96,7 @@ unicode-bidi = { version = "0.3.18", default-features = false, features = [
     "hardcoded-data",
 ] }
 unicode-segmentation = "1.10"
-gpui_util = { git = "https://github.com/zed-industries/zed", rev = "703b5ac3f4ffe1e87a073123ae56e22f72f095c4" }
+gpui_util = { git = "https://github.com/zed-industries/zed", rev = "c016f436e60bfa5105de53837935e9de94eb0867" }
 paneflow-colrv1 = { path = "../../crates/paneflow-colrv1" }
 
 # Optional: only needed on platforms with multiple font sources (e.g. Linux)

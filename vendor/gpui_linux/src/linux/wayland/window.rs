@@ -554,7 +554,6 @@ pub struct WaylandWindowStatePtr {
     callbacks: Rc<RefCell<Callbacks>>,
     frame_loop: Rc<Cell<FrameLoop>>,
     frame_ping: Ping,
-    scheduled_frame_at: Rc<Cell<Option<Instant>>>,
 }
 
 impl WaylandWindowState {
@@ -904,7 +903,6 @@ impl WaylandWindow {
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
             frame_loop: Rc::new(Cell::new(FrameLoop::Unconfigured)),
             frame_ping,
-            scheduled_frame_at: Rc::new(Cell::new(None)),
         });
 
         // Kick things off
@@ -1079,8 +1077,12 @@ impl WaylandWindowStatePtr {
 
     pub fn scheduled_frame_fired(&self) {
         if self.frame_loop.get() == FrameLoop::Scheduled {
+            // Stamped when the frame turn starts rather than when it was
+            // scheduled, as display-driven signals are on other platforms:
+            // input dispatched before then isn't the frame's work. The wait
+            // from the first invalidation is journaled as the pending frame.
             self.frame(
-                self.scheduled_frame_at.take(),
+                PlatformFrameSignal::capture(Instant::now),
                 FrameRequestSource::LocalSchedule,
             );
         }
@@ -1103,8 +1105,6 @@ impl WaylandWindowStatePtr {
         match self.frame_loop.get() {
             FrameLoop::Parked => {
                 self.frame_loop.set(FrameLoop::Scheduled);
-                self.scheduled_frame_at
-                    .set(PlatformFrameSignal::capture(Instant::now));
                 self.frame_ping.ping();
             }
             FrameLoop::Ticking => {
