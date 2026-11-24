@@ -113,6 +113,21 @@ are the two `paths_*` cases (now 0), `keystroke_3_7mb_plain` (4.05 back to
 4.0) and `pipeline_corpus_mib_s` (3.83 to 3.54, grapheme clustering since
 `38726003`) ([summary](results/gpui-bump-703b5ac3-2026-11-16.md)).
 
+Since 2026-11-25, `editor`, `tree` and `startup` of `linux-x86_64` point at
+`226032bf`, a clean tree whose code is that of the GPUI upgrade to
+`zed@c016f436` (US-001 to US-004 of `tasks/prd-gpui-c016f436-upgrade.md`), from
+`--set-baseline` runs on the Fedora machine (CPU share 0.99 for the two
+in-process suites). `terminal` stays at `650569c4`: `scripts/bench-terminal.sh
+--set-baseline` refuses every run of the current suite, whose CPU share reads
+0.88 to 0.89 on both pins since `e26aec3d` added the
+`layout_split_request_to_updated_layout` case, so no timing baseline can be
+recorded until that case leaves the CPU-share window or the threshold is
+revisited. The allocation baselines are unchanged: interleaved runs against
+`a3f53dbb`, the commit before the upgrade, give the same allocation columns
+except `shape_cold_60_rows`, 960 bytes more per iteration (0.05 %), and put
+every timing within 3.5 % of the old pin
+([summary](results/gpui-bump-c016f436-2026-11-25.md)).
+
 The first three suites share one harness, `src-app/src/bench_harness.rs`: the metric
 type, the timing helpers, the JSON document, the comparison table, and the
 single `#[global_allocator]` the test binary installs. That allocator counts
