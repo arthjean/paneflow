@@ -748,6 +748,10 @@ fn terminal_bool(
     read(&app.cached_config.terminal.clone().unwrap_or_default())
 }
 
+fn worktrees_auto_remove_shown(worktrees: &paneflow_config::schema::WorktreesConfig) -> bool {
+    worktrees.auto_remove_enabled()
+}
+
 fn sidebar_show_toggle(
     app: &mut PaneFlowApp,
     field: &'static str,
@@ -1551,7 +1555,7 @@ pub(crate) const COMMANDS: &[Command] = &[
         needs: Needs::Always,
         section: Section::Paneflow,
         kind: Kind::Toggle {
-            read: |app| app.cached_config.worktrees.auto_remove.unwrap_or(false),
+            read: |app| worktrees_auto_remove_shown(&app.cached_config.worktrees),
             write: |app, next, cx| {
                 let mut worktrees = serde_json::to_value(app.cached_config.worktrees.clone())
                     .unwrap_or_else(|_| json!({}));
@@ -1727,6 +1731,18 @@ mod tests {
             palette_workspace_order(&workspaces, &config, None),
             [0, 2, 1]
         );
+    }
+
+    #[test]
+    fn the_worktree_removal_toggle_shows_the_setting_paneflow_applies() {
+        let unset = paneflow_config::schema::WorktreesConfig::default();
+        assert!(unset.auto_remove_enabled());
+        assert!(worktrees_auto_remove_shown(&unset));
+        let off = paneflow_config::schema::WorktreesConfig {
+            auto_remove: Some(false),
+            ..unset
+        };
+        assert!(!worktrees_auto_remove_shown(&off));
     }
 
     #[test]
