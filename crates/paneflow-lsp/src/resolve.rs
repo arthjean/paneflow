@@ -148,4 +148,32 @@ mod tests {
             Err(ResolveError::RelativePath("bin/rel-ls".to_string()))
         );
     }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_bare_name_tries_each_pathext_extension_in_its_order() {
+        let dir = tempfile::tempdir().unwrap();
+        let search_path = Some(dir.path().as_os_str().to_owned());
+        for (name, extension) in [("npm-ls", "cmd"), ("batch-ls", "bat")] {
+            let shim = dir.path().join(format!("{name}.{extension}"));
+            std::fs::write(&shim, b"@echo off\r\n").unwrap();
+            let found = resolve_command_in(name, search_path.clone()).unwrap();
+            assert_eq!(found.canonicalize().unwrap(), shim.canonicalize().unwrap());
+        }
+
+        let pathext = std::env::var("PATHEXT").unwrap().to_ascii_lowercase();
+        let rank = |extension: &str| pathext.split(';').position(|entry| entry == extension);
+        let first = if rank(".exe") < rank(".cmd") {
+            "exe"
+        } else {
+            "cmd"
+        };
+        std::fs::write(dir.path().join("both-ls.cmd"), b"@echo off\r\n").unwrap();
+        std::fs::write(dir.path().join("both-ls.exe"), b"").unwrap();
+        let found = resolve_command_in("both-ls", search_path).unwrap();
+        assert_eq!(
+            found.extension().unwrap().to_ascii_lowercase(),
+            std::ffi::OsStr::new(first)
+        );
+    }
 }

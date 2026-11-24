@@ -565,9 +565,12 @@ mod windows_job {
                 .map_err(|error| io::Error::other(error.to_string()))
         }
 
+        pub(super) fn raw_handle(&self) -> HANDLE {
+            self.0.handle() as HANDLE
+        }
+
         pub(super) fn terminate(&self) -> io::Result<()> {
-            let handle = self.0.handle() as HANDLE;
-            if unsafe { TerminateJobObject(handle, 1) } == 0 {
+            if unsafe { TerminateJobObject(self.raw_handle(), 1) } == 0 {
                 Err(io::Error::last_os_error())
             } else {
                 Ok(())
@@ -1803,5 +1806,152 @@ mod tests {
             closed.recv_timeout(Duration::from_secs(120)).is_ok(),
             "a descendant still holds the stdout pipe after the session was dropped"
         );
+    }
+
+    #[cfg(windows)]
+    const CONSOLE_WINDOW_THEN_DESCENDANT_SCRIPT: &str = "Add-Type -Namespace PaneflowProbe \
+         -Name Console -MemberDefinition \
+         '[DllImport(\"kernel32.dll\")] public static extern IntPtr GetConsoleWindow(); \
+         [DllImport(\"kernel32.dll\")] public static extern uint GetConsoleProcessList(uint[] ids, uint count);'; \
+         $attached = [PaneflowProbe.Console]::GetConsoleProcessList((New-Object UInt32[] 64), 64); \
+         $window = [PaneflowProbe.Console]::GetConsoleWindow(); \
+         [Console]::Out.WriteLine(\"window=$window attached=$attached\"); \
+         [Console]::Out.Flush(); \
+         Start-Process -FilePath ping.exe -ArgumentList '-n','300','127.0.0.1' -NoNewWindow; \
+         Start-Sleep -Seconds 300";
+
+    #[cfg(windows)]
+    fn job_process_ids(job: windows_sys::Win32::Foundation::HANDLE) -> Vec<u32> {
+        use windows_sys::Win32::System::JobObjects::{
+            JobObjectBasicProcessIdList, QueryInformationJobObject, JOBOBJECT_BASIC_PROCESS_ID_LIST,
+        };
+        #[repr(C)]
+        struct ProcessIds {
+            header: JOBOBJECT_BASIC_PROCESS_ID_LIST,
+            more: [usize; 255],
+        }
+        let mut ids = ProcessIds {
+            header: unsafe { std::mem::zeroed() },
+            more: [0; 255],
+        };
+        let queried = unsafe {
+            QueryInformationJobObject(
+                job,
+                JobObjectBasicProcessIdList,
+                std::ptr::from_mut(&mut ids).cast(),
+                u32::try_from(std::mem::size_of::<ProcessIds>()).unwrap(),
+                std::ptr::null_mut(),
+            )
+        };
+        assert_ne!(queried, 0, "{}", io::Error::last_os_error());
+        let count = ids.header.NumberOfProcessIdsInList as usize;
+        std::iter::once(ids.header.ProcessIdList[0])
+            .chain(ids.more)
+            .take(count)
+            .map(|id| u32::try_from(id).unwrap())
+            .collect()
+    }
+
+    #[cfg(windows)]
+    fn task_list_image(pid: u32) -> Option<String> {
+        let output = Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .find(|line| line.contains(&format!(",\"{pid}\",")))
+            .and_then(|line| line.split(',').next())
+            .map(|image| image.trim_matches('"').to_ascii_lowercase())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_stdio_child_has_no_console_window_and_its_whole_job_leaves_the_task_list_on_drop() {
+        use std::io::BufRead;
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::System::JobObjects::{
+            IsProcessInJob, JobObjectBasicLimitInformation, QueryInformationJobObject,
+            JOBOBJECT_BASIC_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        };
+
+        let mut command = Command::new("powershell.exe");
+        command
+            .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"])
+            .arg(CONSOLE_WINDOW_THEN_DESCENDANT_SCRIPT);
+        let mut session = spawn_stdio_session(command).unwrap();
+        let stdout = session.take_stdout().unwrap();
+        let (sender, first_line) = mpsc::channel();
+        thread::spawn(move || {
+            let mut line = String::new();
+            let _ = std::io::BufReader::new(stdout).read_line(&mut line);
+            let _ = sender.send(line);
+        });
+        let console = first_line.recv_timeout(Duration::from_secs(120)).unwrap();
+        assert_eq!(
+            console.trim(),
+            "window=0 attached=1",
+            "the child of spawn_stdio_session must own a console of its own with no window"
+        );
+
+        let job = session.process.tree.job.raw_handle();
+        let child = session.process.child.as_ref().unwrap().as_raw_handle();
+        let mut in_job = 0;
+        assert_ne!(
+            unsafe { IsProcessInJob(child.cast(), job, &raw mut in_job) },
+            0
+        );
+        assert_ne!(in_job, 0, "the child is not in the session's job");
+        let mut limits: JOBOBJECT_BASIC_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+        let queried = unsafe {
+            QueryInformationJobObject(
+                job,
+                JobObjectBasicLimitInformation,
+                std::ptr::from_mut(&mut limits).cast(),
+                u32::try_from(std::mem::size_of::<JOBOBJECT_BASIC_LIMIT_INFORMATION>()).unwrap(),
+                std::ptr::null_mut(),
+            )
+        };
+        assert_ne!(queried, 0, "{}", io::Error::last_os_error());
+        assert_ne!(
+            limits.LimitFlags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            0,
+            "the session's job does not kill its processes on close"
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(120);
+        let mut tree = job_process_ids(job);
+        while !tree
+            .iter()
+            .any(|pid| task_list_image(*pid).as_deref() == Some("ping.exe"))
+        {
+            assert!(
+                Instant::now() < deadline,
+                "the descendant never joined the job: {tree:?}"
+            );
+            thread::sleep(Duration::from_millis(100));
+            tree = job_process_ids(job);
+        }
+
+        let tree: Vec<(u32, String)> = tree
+            .into_iter()
+            .filter_map(|pid| task_list_image(pid).map(|image| (pid, image)))
+            .collect();
+        drop(session);
+        let deadline = Instant::now() + Duration::from_secs(120);
+        loop {
+            let alive: Vec<&(u32, String)> = tree
+                .iter()
+                .filter(|(pid, image)| task_list_image(*pid).as_ref() == Some(image))
+                .collect();
+            if alive.is_empty() {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "still in the task list after the drop: {alive:?}"
+            );
+            thread::sleep(Duration::from_millis(100));
+        }
     }
 }
