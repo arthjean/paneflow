@@ -430,6 +430,11 @@ winresource = "0.1.31"
 # `test-support` exposes `WgpuHeadlessRenderer`: the sprite tests render a
 # frame through the real wgpu shaders and read its pixels back.
 gpui_wgpu = { git = "https://github.com/zed-industries/zed", rev = "c016f436e60bfa5105de53837935e9de94eb0867", features = ["test-support"] }
+# `tests/vendored_wgsl_shaders.rs` validates every WGSL variant the vendored
+# renderer builds with the naga wgpu already locks, including the subpixel
+# ones an adapter without dual-source blending never compiles. Upstream's own
+# naga tests live in vendor/gpui_wgpu, which no workspace test run reaches.
+naga = { git = "https://github.com/gfx-rs/wgpu", rev = "cddb2f5d80dc0009b2ef6767635140cacf90a007", features = ["wgsl-in"] }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 # The CoreText text system on its own: `MacPlatform::new` asserts the main

@@ -4479,6 +4479,7 @@ dependencies = [
  "memchr",
  "minisign",
  "minisign-verify",
+ "naga",
  "notify",
  "notify-rust",
  "objc",
