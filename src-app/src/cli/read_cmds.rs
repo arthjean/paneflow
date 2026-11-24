@@ -5,11 +5,7 @@ use super::selector::resolve_target;
 use super::{CliError, EXIT_OK};
 
 pub fn ls(client: &impl IpcTransport, human: bool) -> Result<i32, CliError> {
-    let result = super::reject_legacy_error(
-        client
-            .call("surface.list", json!({}))
-            .map_err(CliError::runtime)?,
-    )?;
+    let result = active_workspace_panes(client)?;
     if human {
         print_surfaces_table(&result);
     } else {
@@ -80,6 +76,28 @@ pub fn search(
         super::print_json(&result)?;
     }
     Ok(EXIT_OK)
+}
+
+fn active_workspace_panes(client: &impl IpcTransport) -> Result<Value, CliError> {
+    let listed = super::reject_legacy_error(
+        client
+            .call("surface.list", json!({}))
+            .map_err(CliError::runtime)?,
+    )?;
+    Ok(active_workspace_listing(listed))
+}
+
+fn active_workspace_listing(mut listed: Value) -> Value {
+    if !listed["scope_workspace_id"].is_null() {
+        return listed;
+    }
+    let Some(active) = listed["workspace"].as_u64() else {
+        return listed;
+    };
+    if let Some(surfaces) = listed["surfaces"].as_array_mut() {
+        surfaces.retain(|surface| surface["workspace"].as_u64() == Some(active));
+    }
+    listed
 }
 
 fn print_surfaces_table(result: &Value) {
@@ -191,5 +209,52 @@ mod tests {
         );
         assert_eq!(surface_space_label(&json!({ "space": null })), "Default");
         assert_eq!(surface_space_label(&json!({})), "Default");
+    }
+
+    fn surface_ids(listed: &Value) -> Vec<u64> {
+        listed["surfaces"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|surface| surface["surface_id"].as_u64())
+            .collect()
+    }
+
+    struct ListingTransport(Value);
+
+    impl IpcTransport for ListingTransport {
+        fn call(&self, method: &str, _params: Value) -> Result<Value, String> {
+            assert_eq!(method, "surface.list");
+            Ok(self.0.clone())
+        }
+    }
+
+    #[test]
+    fn ls_keeps_only_the_surfaces_of_the_workspace_the_listing_describes() {
+        let listed = json!({
+            "pane_count": 2,
+            "workspace": 0,
+            "scope_workspace_id": null,
+            "surfaces": [
+                {"surface_id": 1026, "workspace": 0},
+                {"surface_id": 2053, "workspace": 0},
+                {"surface_id": 5137, "workspace": 1}
+            ]
+        });
+        let shown = active_workspace_panes(&ListingTransport(listed)).expect("listed");
+        assert_eq!(surface_ids(&shown), vec![1026, 2053]);
+        assert_eq!(shown["pane_count"], 2);
+        assert_eq!(shown["workspace"], 0);
+    }
+
+    #[test]
+    fn ls_lists_every_host_session_when_no_workspace_is_known() {
+        let listed = json!({
+            "pane_count": 2,
+            "workspace": null,
+            "surfaces": [{"surface_id": 1}, {"surface_id": 2}]
+        });
+        let shown = active_workspace_panes(&ListingTransport(listed)).expect("listed");
+        assert_eq!(surface_ids(&shown), vec![1, 2]);
     }
 }

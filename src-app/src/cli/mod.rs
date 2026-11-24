@@ -222,7 +222,7 @@ enum Commands {
         about = "List or revoke the grants agents in panes hold over Paneflow"
     )]
     Grants(grants_cmd::GrantsCommand),
-    #[command(alias = "list_panes", about = "List terminal surfaces")]
+    #[command(alias = "list_panes", about = "List the panes of the active workspace")]
     Ls {
         #[arg(long, help = "Human-readable table instead of the default JSON")]
         human: bool,

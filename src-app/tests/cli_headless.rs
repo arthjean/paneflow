@@ -90,6 +90,16 @@ fn the_layout_verbs_work_with_a_worker_and_a_host_and_no_window() {
 
     let selected = ok(home.path(), &["select", &notes.to_string()]);
     assert_eq!(selected, json!({"selected": notes}));
+    let shown = ok(home.path(), &["ls"]);
+    let notes_rows = shown["surfaces"].as_array().unwrap();
+    assert_eq!(
+        notes_rows.len(),
+        1,
+        "ls follows the selected workspace: {shown}"
+    );
+    assert_eq!(shown["pane_count"], 1, "{shown}");
+    assert_eq!(notes_rows[0]["workspace"], notes, "{shown}");
+    let notes_pane = notes_rows[0]["surface_id"].as_u64().unwrap().to_string();
 
     let focused = ok(home.path(), &["focus", &logs.to_string()]);
     assert_eq!(focused["focused"], true, "{focused}");
@@ -101,8 +111,13 @@ fn the_layout_verbs_work_with_a_worker_and_a_host_and_no_window() {
         .iter()
         .map(|row| row["surface_id"].as_u64().unwrap())
         .collect();
-    assert!(ids.contains(&server) && ids.contains(&logs), "{listed}");
-    assert_eq!(ids.len(), 3, "{listed}");
+    assert_eq!(
+        ids,
+        vec![server, logs],
+        "ls lists the active workspace: {listed}"
+    );
+    assert_eq!(listed["pane_count"], 2, "{listed}");
+    assert_eq!(listed["workspace"], 0, "{listed}");
     let named = rows.iter().find(|row| row["surface_id"] == server).unwrap();
     assert_eq!(named["name"], "server");
 
@@ -122,6 +137,11 @@ fn the_layout_verbs_work_with_a_worker_and_a_host_and_no_window() {
     assert_eq!(code, 0, "the host serves read by the layout id: {stderr}");
     let (code, _, stderr) = paneflow(home.path(), &["search", &server.to_string(), "anything"]);
     assert_eq!(code, 0, "the host serves search by the layout id: {stderr}");
+    let (code, _, stderr) = paneflow(home.path(), &["read", &notes_pane]);
+    assert_eq!(
+        code, 0,
+        "a target outside the active workspace still resolves: {stderr}"
+    );
 
     let (code, _, stderr) = paneflow(
         home.path(),
