@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::fmt;
 
+use paneflow_ipc_client::headless::{self, WorkerLayout};
 use paneflow_ipc_client::IpcTransport;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -101,7 +102,8 @@ impl<'de> Deserialize<'de> for SurfaceTarget {
 pub struct Surface {
     pub surface_id: u64,
     pub name: String,
-    pub title: String,
+    #[serde(default)]
+    pub title: Option<String>,
     pub cwd: Option<String>,
     pub cmd: Option<String>,
     pub workspace_id: Option<u64>,
@@ -145,6 +147,8 @@ pub enum HostLink<'a> {
     Missing(String),
 }
 
+pub type LayoutSource<'a> = Box<dyn Fn() -> Option<WorkerLayout> + 'a>;
+
 pub enum WorkerLink<'a> {
     #[cfg(test)]
     Borrowed(&'a dyn IpcTransport),
@@ -172,6 +176,7 @@ pub struct Bridge<'a, T: IpcTransport + ?Sized> {
     host: HostLink<'a>,
     host_transport: RefCell<Option<Box<dyn IpcTransport>>>,
     worker: WorkerLink<'a>,
+    layout: Option<LayoutSource<'a>>,
     agent: RefCell<Option<String>>,
 }
 
@@ -199,6 +204,7 @@ impl<'a, T: IpcTransport + ?Sized> Bridge<'a, T> {
                 "no Paneflow worker endpoint is known, so no question can reach a window"
                     .to_string(),
             ),
+            layout: None,
             agent: RefCell::new(None),
         }
     }
@@ -218,6 +224,15 @@ impl<'a, T: IpcTransport + ?Sized> Bridge<'a, T> {
     pub fn with_worker(mut self, worker: WorkerLink<'a>) -> Self {
         self.worker = worker;
         self
+    }
+
+    pub fn with_layout(mut self, layout: LayoutSource<'a>) -> Self {
+        self.layout = Some(layout);
+        self
+    }
+
+    fn worker_layout(&self) -> Option<WorkerLayout> {
+        self.layout.as_ref().and_then(|source| source())
     }
 
     pub fn ask(&self, question: &Question) -> Result<Value, BridgeError> {
@@ -374,7 +389,20 @@ impl<'a, T: IpcTransport + ?Sized> Bridge<'a, T> {
 
     pub fn surfaces(&self) -> Result<Vec<Surface>, BridgeError> {
         self.require_scope()?;
-        let value: Value = self.call("surface.list", self.scope.ipc_params())?;
+        let value = self
+            .transport
+            .call("surface.list", self.scope.ipc_params())
+            .map_err(|message| BridgeError::Transport {
+                method: "surface.list",
+                message,
+            })?;
+        let value = match self.worker_layout() {
+            Some(layout) => {
+                let layout = layout.listed_sessions_only(&value);
+                headless::with_layout_ids(value, &layout, |_, _| {})
+            }
+            None => value,
+        };
         let result: SurfaceListResult =
             serde_json::from_value(value.clone()).map_err(|error| BridgeError::Protocol {
                 method: "surface.list",
@@ -464,6 +492,10 @@ impl<'a, T: IpcTransport + ?Sized> Bridge<'a, T> {
         method: &'static str,
         params: Value,
     ) -> Result<R, BridgeError> {
+        let params = match self.worker_layout() {
+            Some(layout) => headless::name_sessions(params, &layout),
+            None => params,
+        };
         let value = self
             .transport
             .call(method, params)

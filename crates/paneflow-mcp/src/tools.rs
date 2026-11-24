@@ -587,6 +587,7 @@ mod tests {
     use super::*;
     use crate::scope::BridgeScope;
     use crate::test_support::FakeTransport;
+    use paneflow_ipc_client::headless::{LayoutSurface, WorkerLayout};
 
     const MAX_TOOLS_LIST_BYTES: usize = 16 * 1024;
     const MAX_TOOL_SPEC_BYTES: usize = 4 * 1024;
@@ -761,6 +762,128 @@ mod tests {
             "the bridge relays the text untouched"
         );
         assert_eq!(params["submit"], true);
+    }
+
+    fn host_row(surface_id: u64, name: &str, workspace: &str) -> Value {
+        json!({
+            "surface_id": surface_id,
+            "session": format!("2b5e0c1e-9a51-4f52-9e64-0d3f2c1a7b8{surface_id}"),
+            "generation": 1,
+            "name": name,
+            "title": null,
+            "cwd": "/home/me/dev",
+            "cmd": "/bin/zsh",
+            "workspace_id": null,
+            "workspace": workspace,
+            "scope": "host",
+            "live": true,
+            "lifecycle": "running",
+            "tab_id": null,
+            "tab_title": null,
+            "sandboxed": false
+        })
+    }
+
+    #[test]
+    fn with_no_window_the_host_answers_every_pane_tool() {
+        let workspace = "bdf606c3-64dc-49de-bcde-f75afe5f578a";
+        let transport = FakeTransport::new()
+            .with(
+                "surface.list",
+                json!({
+                    "pane_count": 2,
+                    "workspace": null,
+                    "surfaces": [host_row(1, "dev", workspace), host_row(2, "dev", workspace)],
+                    "scope_workspace": workspace
+                }),
+            )
+            .with(
+                "surface.read",
+                json!({"surface_id": 2, "text": "ok\nPASS", "lines": 2, "total_lines": 2, "eof": true, "output_generation": 0, "truncated": false}),
+            )
+            .with(
+                "surface.search",
+                json!({"matches": [{"line": 1, "text": "PASS"}], "truncated": false}),
+            )
+            .with(
+                "surface.status",
+                json!({"hooked": false, "surface_id": 2, "session": "2b5e0c1e-9a51-4f52-9e64-0d3f2c1a7b82", "generation": 1}),
+            )
+            .with(
+                "pane.write",
+                json!({"status": "no_window", "request": 1, "message": "no Paneflow window is open to approve this write; nothing was written and the request expires in 120 s"}),
+            );
+        let layout_surface = |surface_id: u64, name: &str, alias: u64| LayoutSurface {
+            surface_id,
+            session: Some(format!("2b5e0c1e-9a51-4f52-9e64-0d3f2c1a7b8{alias}")),
+            name: Some(name.to_string()),
+            workspace_index: 0,
+            workspace_id: 1027,
+            workspace_title: "ws-a".to_string(),
+            space: None,
+            tab_id: 1028,
+            tab_title: String::new(),
+        };
+        let bridge = Bridge::new(&transport, BridgeScope::Session("0a9e5266".into()))
+            .with_writer(Some("0a9e5266".into()), crate::bridge::HostLink::Shared)
+            .with_layout(Box::new(move || {
+                Some(WorkerLayout {
+                    surfaces: vec![
+                        layout_surface(1026, "caller", 1),
+                        layout_surface(3081, "tests", 2),
+                        layout_surface(4000, "elsewhere", 9),
+                    ],
+                    active_workspace: 0,
+                    active_pane_count: 3,
+                })
+            }));
+
+        let listed = call(&json!({"name": "list_panes", "arguments": {}}), &bridge);
+        assert_eq!(listed["isError"], false, "{listed}");
+        let listed = listed["content"][0]["text"].as_str().unwrap();
+        assert!(
+            listed.contains("\"tests\"") && listed.contains("3081"),
+            "{listed}"
+        );
+        assert!(
+            !listed.contains("elsewhere"),
+            "a layout surface the scoped host did not list stays hidden: {listed}"
+        );
+
+        let read = call(
+            &json!({"name": "read_pane", "arguments": {"target": "tests", "lines": 2}}),
+            &bridge,
+        );
+        assert_eq!(read["isError"], false, "{read}");
+        assert!(read["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("PASS"));
+        let params = transport.last_params("surface.read").unwrap();
+        assert_eq!(
+            params["session"], "2b5e0c1e-9a51-4f52-9e64-0d3f2c1a7b82",
+            "the layout surface reaches the host as its session: {params}"
+        );
+        assert!(params.get("surface_id").is_none(), "{params}");
+
+        let searched = call(
+            &json!({"name": "search_pane", "arguments": {"target": "tests", "pattern": "PASS"}}),
+            &bridge,
+        );
+        assert_eq!(searched["isError"], false, "{searched}");
+
+        let written = call(
+            &json!({"name": "write_pane", "arguments": {"target": "tests", "text": "no window"}}),
+            &bridge,
+        );
+        assert_eq!(written["isError"], true, "{written}");
+        assert!(
+            written["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("no Paneflow window is open to approve this write"),
+            "{written}"
+        );
     }
 
     #[test]

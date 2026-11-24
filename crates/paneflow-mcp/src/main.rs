@@ -48,11 +48,14 @@ impl IpcTransport for WorkerTransport {
     }
 }
 
-fn worker_link(host_endpoint: Option<&std::path::Path>) -> WorkerLink<'static> {
-    let endpoint = host_endpoint
+fn worker_endpoint(host_endpoint: Option<&std::path::Path>) -> Option<PathBuf> {
+    host_endpoint
         .and_then(paneflow_home::serve_endpoint_beside_host_endpoint)
-        .or_else(paneflow_home::serve_endpoint_path_for_current_home);
-    match endpoint {
+        .or_else(paneflow_home::serve_endpoint_path_for_current_home)
+}
+
+fn worker_link(host_endpoint: Option<&std::path::Path>) -> WorkerLink<'static> {
+    match worker_endpoint(host_endpoint) {
         Some(endpoint) => WorkerLink::Connect(Box::new(move || {
             Ok(Box::new(WorkerTransport {
                 endpoint: endpoint.clone(),
@@ -85,6 +88,10 @@ fn main() -> ExitCode {
     };
 
     let worker = worker_link(host_endpoint.as_deref());
+    let layout_endpoint = match &target {
+        ControlTarget::Host(_) => worker_endpoint(host_endpoint.as_deref()),
+        ControlTarget::Controller(_) => None,
+    };
     let host_link = match (&target, host_endpoint) {
         (ControlTarget::Host(_), _) => HostLink::Shared,
         (ControlTarget::Controller(_), Some(endpoint)) => HostLink::Connect(Box::new(move || {
@@ -118,6 +125,12 @@ fn main() -> ExitCode {
         .with_writer(scope::calling_session(), host_link)
         .with_worker(worker)
         .with_agent(std::env::var("PANEFLOW_AI_TOOL").ok());
+    let bridge = match layout_endpoint {
+        Some(endpoint) => bridge.with_layout(Box::new(move || {
+            paneflow_ipc_client::headless::worker_layout(&endpoint, CLIENT_NAME)
+        })),
+        None => bridge,
+    };
 
     match mcp::serve(stdin, stdout, &bridge) {
         Ok(()) => ExitCode::SUCCESS,

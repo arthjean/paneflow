@@ -1,10 +1,13 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::Path;
 use std::time::Instant;
 
 use paneflow_config::schema::{PaneFlowConfig, SpaceId};
-use paneflow_ipc_client::host_control::{HostControl, REQUEST_DEADLINE};
 use serde_json::{Value, json};
+
+pub(super) use paneflow_ipc_client::headless::{
+    LayoutSurface, WorkerLayout, name_sessions, requested_layout_surface, with_requested_surface,
+    worker_layout_of,
+};
 
 use super::CLIENT_NAME;
 use crate::agent_launcher::TerminalAgent;
@@ -25,122 +28,18 @@ const WINDOW_STATUS_FIELDS: [&str; 8] = [
     "idle_ms",
 ];
 
-#[derive(Debug, Clone, PartialEq)]
-pub(super) struct LayoutSurface {
-    pub(super) surface_id: u64,
-    pub(super) session: Option<String>,
-    pub(super) name: Option<String>,
-    pub(super) workspace_index: usize,
-    pub(super) workspace_id: u64,
-    pub(super) workspace_title: String,
-    pub(super) space: Option<SpaceId>,
-    pub(super) tab_id: u64,
-    pub(super) tab_title: String,
-}
-
-#[derive(Debug, Clone, Default, PartialEq)]
-pub(super) struct WorkerLayout {
-    pub(super) surfaces: Vec<LayoutSurface>,
-    pub(super) active_workspace: usize,
-    pub(super) active_pane_count: usize,
-}
-
-impl WorkerLayout {
-    fn holds_session_surface(&self, surface_id: u64) -> bool {
-        self.surfaces
-            .iter()
-            .any(|surface| surface.surface_id == surface_id && surface.session.is_some())
-    }
-}
-
-pub(super) fn worker_layout_of(snapshot: &paneflow_layout::Snapshot) -> WorkerLayout {
-    let state = &snapshot.state;
-    let mut surfaces = Vec::new();
-    for (workspace_index, ws) in state.workspaces.iter().enumerate() {
-        for tab in &ws.tabs {
-            let Some(root) = tab.root.as_ref() else {
-                continue;
-            };
-            for pane in root.panes() {
-                for surface in &pane.surfaces {
-                    surfaces.push(LayoutSurface {
-                        surface_id: surface.id.get(),
-                        session: surface.session().map(ToString::to_string),
-                        name: surface.display_name().map(str::to_owned),
-                        workspace_index,
-                        workspace_id: ws.id.get(),
-                        workspace_title: ws.title.clone(),
-                        space: ws.space.clone(),
-                        tab_id: tab.id.get(),
-                        tab_title: tab.title.clone(),
-                    });
-                }
-            }
-        }
-    }
-    let active_pane_count = state
-        .workspaces
-        .get(state.active_workspace)
-        .map_or(0, |ws| {
-            ws.tabs
-                .iter()
-                .filter_map(|tab| tab.root.as_ref())
-                .map(|root| root.panes().len())
-                .sum()
-        });
-    WorkerLayout {
-        surfaces,
-        active_workspace: state.active_workspace,
-        active_pane_count,
-    }
-}
-
-pub(super) fn worker_layout(endpoint: &Path) -> Option<WorkerLayout> {
-    let mut control = HostControl::open(endpoint, CLIENT_NAME, REQUEST_DEADLINE).ok()?;
-    let view = control.request("layout.view", json!({})).ok()?;
-    let snapshot: paneflow_layout::Snapshot = serde_json::from_value(view["view"].clone()).ok()?;
-    Some(worker_layout_of(&snapshot))
-}
-
 pub(super) fn current_worker_layout() -> Option<WorkerLayout> {
-    worker_layout(&paneflow_home::serve_endpoint_path_for_current_home()?)
+    paneflow_ipc_client::headless::worker_layout(
+        &paneflow_home::serve_endpoint_path_for_current_home()?,
+        CLIENT_NAME,
+    )
 }
 
-pub(super) fn requested_layout_surface(params: &Value, layout: &WorkerLayout) -> Option<u64> {
-    params
-        .get("surface_id")
-        .and_then(Value::as_u64)
-        .filter(|surface_id| layout.holds_session_surface(*surface_id))
-}
-
-pub(super) fn name_sessions(params: Value, layout: &WorkerLayout) -> Value {
-    let Some(surface_id) = params.get("surface_id").and_then(Value::as_u64) else {
-        return params;
-    };
-    let Some(session) = layout
-        .surfaces
-        .iter()
-        .find(|surface| surface.surface_id == surface_id)
-        .and_then(|surface| surface.session.clone())
-    else {
-        return params;
-    };
-    let mut params = params;
-    if let Some(object) = params.as_object_mut() {
-        object.remove("surface_id");
-        object.insert("session".to_string(), json!(session));
-    }
-    params
-}
-
-pub(super) fn with_requested_surface(mut result: Value, requested: Option<u64>) -> Value {
-    if let Some(surface_id) = requested
-        && let Some(object) = result.as_object_mut()
-        && object.contains_key("surface_id")
-    {
-        object.insert("surface_id".to_string(), json!(surface_id));
-    }
-    result
+fn space_of(surface: &LayoutSurface) -> Option<SpaceId> {
+    surface
+        .space
+        .as_deref()
+        .and_then(|raw| SpaceId::parse(raw).ok())
 }
 
 pub(super) fn with_layout_ids(
@@ -148,67 +47,16 @@ pub(super) fn with_layout_ids(
     layout: &WorkerLayout,
     config: &PaneFlowConfig,
 ) -> Value {
-    let by_session: HashMap<&str, &Value> = listed["surfaces"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|row| row["session"].as_str().map(|session| (session, row)))
-        .collect();
-    let surfaces: Vec<Value> = layout
-        .surfaces
-        .iter()
-        .map(|surface| {
-            let host = surface
-                .session
-                .as_deref()
-                .and_then(|session| by_session.get(session).copied());
-            let mut row = host.cloned().unwrap_or_else(|| {
-                json!({
-                    "session": surface.session,
-                    "cmd": Value::Null,
-                    "live": false,
-                    "lifecycle": if surface.session.is_some() { "unknown" } else { "unstarted" },
-                })
-            });
-            row["surface_id"] = json!(surface.surface_id);
-            row["workspace_id"] = json!(surface.workspace_id);
+    let mut result =
+        paneflow_ipc_client::headless::with_layout_ids(listed, layout, |surface, row| {
             row["workspace"] = json!(surface.workspace_index);
-            row["workspace_title"] = json!(surface.workspace_title);
-            row["space"] = crate::app::spaces::space_json(config, surface.space.as_ref());
-            row["tab_id"] = json!(surface.tab_id);
-            row["tab_title"] = json!(surface.tab_title);
-            row["scope"] = json!("layout");
-            if let Some(name) = &surface.name {
-                row["name"] = json!(name);
-            }
-            row
-        })
-        .collect();
-    let named: HashSet<&str> = layout
-        .surfaces
-        .iter()
-        .filter_map(|surface| surface.session.as_deref())
-        .collect();
-    let mut surfaces = surfaces;
-    surfaces.extend(
-        listed["surfaces"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter(|row| {
-                row["session"]
-                    .as_str()
-                    .is_none_or(|session| !named.contains(session))
-            })
-            .cloned(),
-    );
-    let mut result = listed;
+            row["space"] = crate::app::spaces::space_json(config, space_of(surface).as_ref());
+        });
     result["pane_count"] = json!(layout.active_pane_count);
     result["workspace"] = json!(layout.active_workspace);
     if result.get("scope_workspace_id").is_none() {
         result["scope_workspace_id"] = Value::Null;
     }
-    result["surfaces"] = json!(surfaces);
     result
 }
 
@@ -394,7 +242,7 @@ mod tests {
         .expect("config");
         let mut layout = layout();
         let mut other = surface(43, Some(AGENT), 1);
-        other.space = Some(work.clone());
+        other.space = Some(work.to_string());
         layout.surfaces.push(other);
         let listed = json!({"pane_count": 9, "workspace": null, "surfaces": [
             {"surface_id": 1, "session": SERVER, "workspace": "bdf606c3-64dc-49de-bcde-f75afe5f578a", "cmd": null, "scope": "host"},
@@ -416,24 +264,135 @@ mod tests {
         assert_eq!(rows[2]["cmd"], "amp");
     }
 
-    #[test]
-    fn a_layout_surface_id_is_sent_to_the_host_as_its_session_and_comes_back() {
-        let params = name_sessions(json!({"surface_id": 41, "lines": 10}), &layout());
-        assert_eq!(params, json!({"session": SERVER, "lines": 10}));
-        let unknown = name_sessions(json!({"surface_id": 7}), &layout());
-        assert_eq!(unknown, json!({"surface_id": 7}), "an alias stays an alias");
+    fn typed_walk(snapshot: &paneflow_layout::Snapshot) -> WorkerLayout {
+        let state = &snapshot.state;
+        let mut surfaces = Vec::new();
+        for (workspace_index, ws) in state.workspaces.iter().enumerate() {
+            for tab in &ws.tabs {
+                let Some(root) = tab.root.as_ref() else {
+                    continue;
+                };
+                for pane in root.panes() {
+                    for surface in &pane.surfaces {
+                        surfaces.push(LayoutSurface {
+                            surface_id: surface.id.get(),
+                            session: surface.session().map(ToString::to_string),
+                            name: surface.display_name().map(str::to_owned),
+                            workspace_index,
+                            workspace_id: ws.id.get(),
+                            workspace_title: ws.title.clone(),
+                            space: ws.space.as_ref().map(ToString::to_string),
+                            tab_id: tab.id.get(),
+                            tab_title: tab.title.clone(),
+                        });
+                    }
+                }
+            }
+        }
+        let active_pane_count = state
+            .workspaces
+            .get(state.active_workspace)
+            .map_or(0, |ws| {
+                ws.tabs
+                    .iter()
+                    .filter_map(|tab| tab.root.as_ref())
+                    .map(|root| root.panes().len())
+                    .sum()
+            });
+        WorkerLayout {
+            surfaces,
+            active_workspace: state.active_workspace,
+            active_pane_count,
+        }
+    }
 
-        let requested = requested_layout_surface(&json!({"surface_id": 41}), &layout());
-        assert_eq!(requested, Some(41));
-        assert_eq!(
-            requested_layout_surface(&json!({"surface_id": 42}), &layout()),
-            None,
-            "a surface without a session is never sent as one"
-        );
-        let status = with_requested_surface(json!({"surface_id": 0, "hooked": false}), requested);
-        assert_eq!(status["surface_id"], 41);
-        let sent = with_requested_surface(json!({"sent": true}), requested);
-        assert!(sent.get("surface_id").is_none());
+    fn layout_surface(
+        id: u64,
+        kind: &str,
+        custom: Option<&str>,
+        name: Option<&str>,
+        session: &str,
+    ) -> Value {
+        json!({"id": id, "definition": {
+            "surface_type": kind,
+            "name": name,
+            "custom_name": custom,
+            "command": null,
+            "cwd": "/tmp",
+            "env": null,
+            "focus": null,
+            "session": session
+        }})
+    }
+
+    fn pane(id: u64, surfaces: Vec<Value>) -> Value {
+        json!({"kind": "pane", "id": id, "surfaces": surfaces, "active": 0, "detached": false})
+    }
+
+    fn workspace(id: u64, title: &str, space: Option<&SpaceId>, root: Value) -> Value {
+        json!({
+            "id": id,
+            "title": title,
+            "cwd": "/tmp",
+            "space": space,
+            "tabs": [{
+                "id": id + 100,
+                "title": "main",
+                "title_source": "preset",
+                "root": root,
+                "focused": null,
+                "zoomed": null,
+                "worktree": null,
+                "extras": {"worktree_raw": null, "unread": false, "pull_request": null, "dock": null}
+            }],
+            "active_tab": 0,
+            "extras": {
+                "durable_id": "9a344e15-99c2-4749-9699-de8c5b12bf29",
+                "legacy_layout": null,
+                "custom_buttons": [],
+                "expanded_paths": [],
+                "managed_worktrees": [],
+                "sidebar_collapsed": false,
+                "muted": false
+            }
+        })
+    }
+
+    #[test]
+    fn the_shared_layout_walk_matches_the_typed_layout_model() {
+        let work = SpaceId::new();
+        let split = json!({"kind": "split", "id": 8, "direction": "vertical", "children": [
+            {"node": pane(3, vec![
+                layout_surface(1, "terminal", Some("tests"), None, SERVER),
+                layout_surface(9, "markdown", None, Some("notes"), AGENT),
+            ]), "ratio": 0.5},
+            {"node": {"kind": "split", "id": 10, "direction": "horizontal", "children": [
+                {"node": pane(4, vec![
+                    layout_surface(2, "terminal", None, Some("caller"), "0aa99b53-e5c7-4587-ae7f-588cf7c4cb77"),
+                ]), "ratio": 1.0}
+            ]}, "ratio": 0.5}
+        ]});
+        let view = json!({
+            "revision": 4,
+            "state": {
+                "version": 3,
+                "workspaces": [
+                    workspace(6, "probe", None, split),
+                    workspace(20, "work", Some(&work), pane(21, vec![
+                        layout_surface(22, "terminal", None, None, "0aa99b53-e5c7-4587-ae7f-588cf7c4cb70"),
+                    ])),
+                ],
+                "active_workspace": 1,
+                "active_space": null
+            }
+        });
+        let snapshot: paneflow_layout::Snapshot =
+            serde_json::from_value(view).expect("a layout.view snapshot");
+        let wire = serde_json::to_value(&snapshot).expect("the snapshot serializes");
+        let typed = typed_walk(&snapshot);
+        assert_eq!(typed.surfaces.len(), 4, "{typed:?}");
+        assert_eq!(typed.active_pane_count, 1);
+        assert_eq!(worker_layout_of(&wire), typed);
     }
 
     #[test]

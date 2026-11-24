@@ -131,11 +131,7 @@ fn layout_holds(client: &impl IpcTransport, selector: &Selector<'_>) -> bool {
     let Ok(view) = client.call("layout.view", json!({})) else {
         return false;
     };
-    let Ok(snapshot) = serde_json::from_value::<paneflow_layout::Snapshot>(view["view"].clone())
-    else {
-        return false;
-    };
-    let rows: Vec<Surface> = super::headless::worker_layout_of(&snapshot)
+    let rows: Vec<Surface> = super::headless::worker_layout_of(&view["view"])
         .surfaces
         .into_iter()
         .map(|surface| Surface {
