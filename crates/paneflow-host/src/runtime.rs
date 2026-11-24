@@ -1115,7 +1115,7 @@ fn start(
     let cell = spec.cell.unwrap_or(DEFAULT_CELL);
     let pair = crate::pty::open(pty_size(spec.cols, spec.rows, cell))
         .map_err(|e| format!("failed to open a native PTY: {e}"))?;
-    let (program, args) = match &spec.sandbox {
+    let (program, args, sandbox_env) = match &spec.sandbox {
         Some(plan) => {
             let wrapped = plan.wrap(&spec.shell, &spec.args)?;
             log::debug!(
@@ -1123,9 +1123,9 @@ fn start(
                 plan.session,
                 plan.describe()
             );
-            (wrapped.program, wrapped.args)
+            (wrapped.program, wrapped.args, wrapped.env)
         }
-        None => (spec.shell.clone(), spec.args.clone()),
+        None => (spec.shell.clone(), spec.args.clone(), Vec::new()),
     };
     let mut command = CommandBuilder::new(&program);
     command.args(&args);
@@ -1133,7 +1133,11 @@ fn start(
     for key in crate::env::inherited_env_keys_to_strip() {
         command.env_remove(&key);
     }
-    for (key, value) in &spec.env {
+    for (key, value) in spec
+        .env
+        .iter()
+        .chain(sandbox_env.iter().map(|(key, value)| (key, value)))
+    {
         command.env(key, value);
     }
     #[cfg(debug_assertions)]

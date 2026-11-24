@@ -281,6 +281,7 @@ fn wrap_with(
     Ok(Wrapped {
         program: bwrap.display().to_string(),
         args: bwrap_args(plan, &helper, shell, args),
+        env: Vec::new(),
     })
 }
 

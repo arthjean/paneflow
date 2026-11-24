@@ -85,6 +85,7 @@ pub fn wrap(plan: &SandboxPlan, shell: &str, args: &[String]) -> Result<Wrapped,
     Ok(Wrapped {
         program: SANDBOX_EXEC.to_string(),
         args: wrapped,
+        env: Vec::new(),
     })
 }
 

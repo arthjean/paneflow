@@ -227,17 +227,18 @@ fn bind_pane_endpoint(
     #[cfg(windows)]
     {
         let _ = home;
-        let sddl = pane_pipe_sddl(session);
+        let sddl = pane_pipe_sddl(session).map_err(io::Error::other)?;
         crate::server::bind_with_sddl(endpoint, server.stem(), &sddl)
     }
 }
 
 #[cfg(windows)]
-pub fn pane_pipe_sddl(session: &str) -> String {
-    format!(
-        "D:P(A;;GA;;;OW)(A;;GRGW;;;{})",
+pub fn pane_pipe_sddl(session: &str) -> Result<String, String> {
+    Ok(format!(
+        "D:P(A;;GA;;;{})(A;;GRGW;;;{})",
+        crate::sandbox::current_user_sid()?,
         paneflow_home::pane_sandbox_sid(session)
-    )
+    ))
 }
 
 #[derive(Default)]

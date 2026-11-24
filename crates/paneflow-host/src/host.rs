@@ -43,6 +43,8 @@ pub const PEER_LAUNCH_SETTLE_DEADLINE: Duration = Duration::from_secs(2);
 const MAX_LAUNCH_ARGS: usize = 64;
 const MAX_LAUNCH_ENV_ENTRIES: usize = 256;
 const MAX_HOOK_RECEIPTS: usize = 16;
+#[cfg(debug_assertions)]
+const SANDBOX_SID_OVERRIDE_ENV: &str = "PANEFLOW_TEST_SANDBOX_SID";
 const MAX_PLAN_LIMITS_BYTES: usize = 4096;
 pub const PLAN_LIMITS_FRAME: &str = "plan_limits";
 const LATE_LAUNCH_WAIT: Duration = Duration::from_secs(3600);
@@ -1017,6 +1019,10 @@ impl SessionHost {
                 window,
             ),
         );
+        #[cfg(debug_assertions)]
+        if let Some(sid) = user.get(SANDBOX_SID_OVERRIDE_ENV) {
+            plan.pane_sid.clone_from(sid);
+        }
         if let Some(helper) = self
             .sandbox_helper
             .lock()

@@ -15,6 +15,7 @@ pub const HOST_EXECUTABLE_STEM: &str = "paneflow-host";
 pub struct SandboxPlan {
     pub home: PathBuf,
     pub session: String,
+    pub pane_sid: String,
     pub pane_dir: PathBuf,
     pub session_data_dir: PathBuf,
     pub shared_endpoints: Vec<PathBuf>,
@@ -28,6 +29,7 @@ pub struct SandboxPlan {
 pub struct Wrapped {
     pub program: String,
     pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
 }
 
 impl SandboxPlan {
@@ -46,6 +48,7 @@ impl SandboxPlan {
         Self {
             home: home.to_path_buf(),
             session: session.to_string(),
+            pane_sid: paneflow_home::pane_sandbox_sid(session),
             pane_dir: paneflow_home::pane_dir_in(home, session),
             session_data_dir: paneflow_home::host_session_data_dir_in(home, session),
             shared_endpoints: endpoints,
@@ -91,6 +94,11 @@ impl SandboxPlan {
             String::from(platform_mechanism())
         }
     }
+}
+
+#[cfg(windows)]
+pub fn current_user_sid() -> Result<String, String> {
+    windows::current_user_sid()
 }
 
 pub fn landlock_abi() -> i64 {
