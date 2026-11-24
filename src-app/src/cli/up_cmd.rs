@@ -41,7 +41,7 @@ pub fn up(client: &impl IpcTransport, file: &str, dry_run: bool) -> Result<i32, 
             substitute_env(pane.env.as_ref(), offsets[idx]),
         )?;
         let mut pane_params = json!({
-            "cwd": pane.cwd,
+            "cwd": resolve_cwd(idx, pane)?,
             "command": command,
             "prompt": pane.prompt,
             "focus": pane.focus,
@@ -104,6 +104,15 @@ pub(super) fn worktree_request_json(request: &paneflow_git::worktree_plan::Reque
         "setup_timeout_secs": request.setup_timeout_secs,
         "teardown": request.teardown,
     })
+}
+
+fn resolve_cwd(idx: usize, pane: &PaneSpec) -> Result<Option<String>, CliError> {
+    match pane.cwd.as_deref() {
+        Some(raw) if pane.worktree.is_none() => paneflow_launch::cwd::canonical_dir(raw)
+            .map(|cwd| Some(cwd.to_string_lossy().into_owned()))
+            .map_err(|error| CliError::runtime(format!("pane {idx}: {error}"))),
+        _ => Ok(pane.cwd.clone()),
+    }
 }
 
 fn check_space(config: &PaneFlowConfig, space: Option<&str>) -> Result<(), CliError> {
@@ -554,6 +563,47 @@ mod tests {
         let (method, params) = calls.last().expect("workspace.up was called");
         assert_eq!(method, "workspace.up");
         assert_eq!(params["space"], "default");
+    }
+
+    #[test]
+    fn dry_run_refuses_a_missing_cwd_like_the_real_run() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("paneflow.workspace.toml");
+        let missing = dir.path().join("does-not-exist");
+        let missing = missing.to_string_lossy().replace('\\', "/");
+        std::fs::write(&file, format!("[[panes]]\ncwd = \"{missing}\"\n")).expect("write spec");
+        let fake = RecordingTransport(std::cell::RefCell::new(Vec::new()));
+
+        for dry_run in [true, false] {
+            let err = up(&fake, file.to_str().expect("utf-8 path"), dry_run)
+                .expect_err("a cwd that does not exist is refused");
+            assert_eq!(err.code, crate::cli::EXIT_RUNTIME);
+            assert!(
+                err.message
+                    .starts_with("pane 0: cwd does not exist or is unreadable"),
+                "dry_run={dry_run}: {}",
+                err.message
+            );
+        }
+        assert!(fake.0.borrow().is_empty(), "nothing reaches the instance");
+    }
+
+    #[test]
+    fn up_sends_the_resolved_cwd_with_the_home_expanded() {
+        let Some(home) = dirs::home_dir().and_then(|home| std::fs::canonicalize(home).ok()) else {
+            return;
+        };
+        let home = paneflow_launch::cwd::strip_verbatim_prefix(home);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let file = dir.path().join("paneflow.workspace.toml");
+        std::fs::write(&file, "[[panes]]\ncwd = \"~\"\n").expect("write spec");
+        let fake = RecordingTransport(std::cell::RefCell::new(Vec::new()));
+
+        up(&fake, file.to_str().expect("utf-8 path"), false).expect("ok");
+
+        let calls = fake.0.borrow();
+        let (_, params) = calls.last().expect("workspace.up was called");
+        assert_eq!(params["panes"][0]["cwd"], json!(home.to_string_lossy()));
     }
 
     #[test]

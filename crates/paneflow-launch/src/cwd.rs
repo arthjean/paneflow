@@ -28,6 +28,29 @@ pub fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
     stripped.unwrap_or(path)
 }
 
+pub fn canonical_dir(raw: &str) -> Result<PathBuf, String> {
+    let expanded = expand_tilde(raw, dirs::home_dir().as_deref());
+    let canonical = std::fs::canonicalize(&expanded)
+        .map_err(|error| format!("cwd does not exist or is unreadable: {raw} ({error})"))?;
+    let meta = std::fs::metadata(&canonical)
+        .map_err(|error| format!("cwd metadata read failed for {raw}: {error}"))?;
+    if !meta.is_dir() {
+        return Err(format!("cwd is not a directory: {raw}"));
+    }
+    Ok(strip_verbatim_prefix(canonical))
+}
+
+fn expand_tilde(raw: &str, home: Option<&Path>) -> PathBuf {
+    match raw {
+        "~" => home.map_or_else(|| PathBuf::from(raw), Path::to_path_buf),
+        _ => raw
+            .strip_prefix("~/")
+            .or_else(|| raw.strip_prefix("~\\"))
+            .and_then(|rest| home.map(|home| home.join(rest)))
+            .unwrap_or_else(|| PathBuf::from(raw)),
+    }
+}
+
 pub fn run_bounded<T: Send + 'static>(
     timeout: Duration,
     work: impl FnOnce() -> T + Send + 'static,
@@ -204,6 +227,42 @@ mod tests {
             },
         );
         assert_eq!(stuck, Some(fallback));
+    }
+
+    #[test]
+    fn canonical_dir_expands_home_and_refuses_what_is_not_a_directory() {
+        let home = PathBuf::from(if cfg!(windows) {
+            r"C:\Users\Arthur"
+        } else {
+            "/home/arthur"
+        });
+        assert_eq!(expand_tilde("~", Some(&home)), home);
+        assert_eq!(
+            expand_tilde("~/dev/backend", Some(&home)),
+            home.join("dev/backend")
+        );
+        assert_eq!(
+            expand_tilde("~\\dev\\backend", Some(&home)),
+            home.join("dev\\backend")
+        );
+        assert_eq!(
+            expand_tilde("rel/~not-home", Some(&home)),
+            PathBuf::from("rel/~not-home")
+        );
+
+        let tmp = tempfile::tempdir().unwrap();
+        let resolved = canonical_dir(tmp.path().to_str().unwrap()).unwrap();
+        assert!(resolved.is_absolute() && resolved.is_dir());
+        assert!(!resolved.to_string_lossy().starts_with(r"\\?\"));
+
+        let missing = tmp.path().join("missing");
+        let error = canonical_dir(missing.to_str().unwrap()).unwrap_err();
+        assert!(error.contains("does not exist"), "{error}");
+
+        let file = tmp.path().join("file");
+        std::fs::write(&file, "").unwrap();
+        let error = canonical_dir(file.to_str().unwrap()).unwrap_err();
+        assert!(error.contains("not a directory"), "{error}");
     }
 
     #[test]

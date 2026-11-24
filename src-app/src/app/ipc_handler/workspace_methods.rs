@@ -287,40 +287,10 @@ pub(super) fn parse_managed_worktree(
 }
 
 pub(crate) fn canonicalize_workspace_cwd(raw: &str) -> Result<std::path::PathBuf, JsonRpcError> {
-    let expanded = expand_tilde(raw);
-    let canonical = std::fs::canonicalize(&expanded).map_err(|e| {
-        JsonRpcError::invalid_params(format!("cwd does not exist or is unreadable: {raw} ({e})"))
-    })?;
-    let meta = std::fs::metadata(&canonical).map_err(|e| {
-        JsonRpcError::invalid_params(format!("cwd metadata read failed for {raw}: {e}"))
-    })?;
-    if !meta.is_dir() {
-        return Err(JsonRpcError::invalid_params(format!(
-            "cwd is not a directory: {raw}"
-        )));
-    }
-    let spawn_cwd = crate::runtime_paths::strip_verbatim_prefix(canonical.clone());
-    log::info!(
-        "ipc::workspace.create: canonical cwd resolved {raw:?} -> {canonical:?}; spawn cwd {spawn_cwd:?}"
-    );
+    let spawn_cwd =
+        paneflow_launch::cwd::canonical_dir(raw).map_err(JsonRpcError::invalid_params)?;
+    log::info!("ipc::workspace.create: cwd resolved {raw:?} -> {spawn_cwd:?}");
     Ok(spawn_cwd)
-}
-
-fn expand_tilde(raw: &str) -> PathBuf {
-    expand_tilde_with_home(raw, dirs::home_dir().as_deref())
-}
-
-fn expand_tilde_with_home(raw: &str, home: Option<&std::path::Path>) -> PathBuf {
-    match raw {
-        "~" => home
-            .map(std::path::Path::to_path_buf)
-            .unwrap_or_else(|| PathBuf::from(raw)),
-        _ => raw
-            .strip_prefix("~/")
-            .or_else(|| raw.strip_prefix("~\\"))
-            .and_then(|rest| home.map(|home| home.join(rest)))
-            .unwrap_or_else(|| PathBuf::from(raw)),
-    }
 }
 
 pub(super) fn prompt_input(prompt: &str) -> std::borrow::Cow<'_, str> {
@@ -1102,32 +1072,6 @@ mod tests {
             .expect("real dir must canonicalize");
         assert!(resolved.is_absolute());
         assert!(resolved.is_dir());
-    }
-
-    #[test]
-    fn workspace_cwd_expands_home_prefix_before_canonicalize() {
-        let home = PathBuf::from(if cfg!(windows) {
-            r"C:\Users\Arthur"
-        } else {
-            "/home/arthur"
-        });
-
-        assert_eq!(
-            super::expand_tilde_with_home("~", Some(&home)),
-            home.clone()
-        );
-        assert_eq!(
-            super::expand_tilde_with_home("~/dev/backend", Some(&home)),
-            home.join("dev/backend")
-        );
-        assert_eq!(
-            super::expand_tilde_with_home("~\\dev\\backend", Some(&home)),
-            home.join("dev\\backend")
-        );
-        assert_eq!(
-            super::expand_tilde_with_home("rel/~not-home", Some(&home)),
-            PathBuf::from("rel/~not-home")
-        );
     }
 
     #[cfg(windows)]

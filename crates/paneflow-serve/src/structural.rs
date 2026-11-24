@@ -75,31 +75,8 @@ fn label_of(label: Option<&String>, name: Option<&String>) -> Option<String> {
     label.or(name).and_then(|raw| sanitize_pane_name(raw))
 }
 
-fn expand_tilde(raw: &str) -> PathBuf {
-    let home = paneflow_agent_config::home_dir();
-    match raw {
-        "~" => home.unwrap_or_else(|| PathBuf::from(raw)),
-        _ => raw
-            .strip_prefix("~/")
-            .or_else(|| raw.strip_prefix("~\\"))
-            .and_then(|rest| home.map(|home| home.join(rest)))
-            .unwrap_or_else(|| PathBuf::from(raw)),
-    }
-}
-
 pub fn canonical_cwd(raw: &str) -> Result<PathBuf, ServeError> {
-    let expanded = expand_tilde(raw);
-    let canonical = std::fs::canonicalize(&expanded).map_err(|error| {
-        invalid(format!(
-            "cwd does not exist or is unreadable: {raw} ({error})"
-        ))
-    })?;
-    let meta = std::fs::metadata(&canonical)
-        .map_err(|error| invalid(format!("cwd metadata read failed for {raw}: {error}")))?;
-    if !meta.is_dir() {
-        return Err(invalid(format!("cwd is not a directory: {raw}")));
-    }
-    Ok(paneflow_launch::cwd::strip_verbatim_prefix(canonical))
+    paneflow_launch::cwd::canonical_dir(raw).map_err(invalid)
 }
 
 fn canonical_dir(path: &Path) -> Option<PathBuf> {
