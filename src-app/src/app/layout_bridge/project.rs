@@ -42,6 +42,14 @@ impl PaneFlowApp {
             if ws.space != model_ws.space {
                 ws.set_space(model_ws.space.clone());
             }
+            if let Some(durable) = model_ws
+                .extras
+                .durable_id
+                .as_ref()
+                .filter(|durable| **durable != ws.durable_id)
+            {
+                ws.set_durable_id(durable.clone());
+            }
             let app_ws = ws.id;
             let mut old_tabs: HashMap<u64, Tab> = ws
                 .take_tabs()

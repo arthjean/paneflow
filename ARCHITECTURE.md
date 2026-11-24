@@ -1455,6 +1455,15 @@ with kernel start time, agent summary). A manifest or PID alone never proves
 ownership: a new host instance marks inherited running records `lost` and
 refuses to signal them.
 
+A workspace has one `WorkspaceId`, held by the layout model in
+`extras.durable_id`. The client that creates the workspace assigns it (the
+window, or the worker for `workspace.create` and `workspace.up`), every
+launch path passes it to the host as the session's workspace, and a window that
+draws a workspace another client opened takes the model's id
+(`layout_bridge/project.rs`) rather than minting its own. Workspace-scoped
+checks (`pane.write`, `grant.delegate`) compare these ids, so two ids for one
+workspace refuse writes between its own panes.
+
 ### Persistence service and resource budgets
 
 Nothing on the PTY path, the runtime thread, or a control connection writes a

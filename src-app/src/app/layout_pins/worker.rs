@@ -10,7 +10,7 @@ use super::Rig;
 use crate::PaneFlowApp;
 use crate::{ClosePane, SplitVertically};
 
-pub(super) const PINS: usize = 13;
+pub(super) const PINS: usize = 14;
 
 const PATIENCE: Duration = Duration::from_secs(60);
 
@@ -460,6 +460,84 @@ fn pin_a_workspace_another_client_opens_is_drawn_with_its_terminal(cx: &mut Test
     });
     assert_eq!(terminals, [1], "the remote pane shows its terminal");
     assert_converged(&mut rig, &home);
+    finish(&mut rig, worker, &home);
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_every_pane_of_a_workspace_another_client_opens_shares_its_durable_id(
+    cx: &mut TestAppContext,
+) {
+    let home = home();
+    let mut rig = Rig::mount(cx);
+    rig.workspace("alpha");
+    let worker = Running::open(&home);
+    attach(&mut rig);
+    control(&home)
+        .request("workspace.create", json!({"name": "remote"}))
+        .expect("the worker opens the workspace");
+    pump(&mut rig, "the window drawing the remote workspace", |app| {
+        app.workspaces.iter().any(|ws| ws.title == "remote")
+    });
+    rig.act(|app, _, cx| app.adopt_layout(cx));
+    assert_converged(&mut rig, &home);
+    let remote_surface = |snapshot: &Snapshot| {
+        snapshot
+            .state
+            .workspaces
+            .iter()
+            .find(|ws| ws.title == "remote")
+            .and_then(|ws| ws.tabs.first())
+            .and_then(|tab| tab.root.as_ref())
+            .and_then(|root| root.first_pane())
+            .and_then(|pane| pane.surfaces.first())
+            .map(|surface| surface.id.0)
+            .expect("the remote workspace holds a surface")
+    };
+    let anchor = remote_surface(&worker_view(&home));
+    let split: Value = control(&home)
+        .request(
+            "surface.split",
+            json!({"surface_id": anchor, "direction": "vertical"}),
+        )
+        .expect("the worker splits the remote pane");
+    assert_eq!(split["split"], true, "{split}");
+    pump(&mut rig, "the window drawing the split", |app| {
+        app.workspaces
+            .iter()
+            .find(|ws| ws.title == "remote")
+            .is_some_and(|ws| crate::workspace::panes_across(std::slice::from_ref(ws)).len() == 2)
+    });
+    assert_converged(&mut rig, &home);
+
+    let window_durable = {
+        let app = rig.app.clone();
+        rig.cx.update(|_, cx| {
+            app.read(cx)
+                .workspaces
+                .iter()
+                .find(|ws| ws.title == "remote")
+                .map(|ws| ws.durable_id.clone())
+                .expect("the remote workspace")
+        })
+    };
+    let registered: Vec<Option<paneflow_config::schema::WorkspaceId>> = worker
+        .created()
+        .into_iter()
+        .map(|request| request.workspace)
+        .collect();
+    assert_eq!(
+        registered,
+        vec![Some(window_durable.clone()), Some(window_durable.clone())],
+        "the host registers both panes under the window's workspace"
+    );
+    let model_durable = worker_view(&home)
+        .state
+        .workspaces
+        .iter()
+        .find(|ws| ws.title == "remote")
+        .and_then(|ws| ws.extras.durable_id.clone());
+    assert_eq!(model_durable, Some(window_durable));
     finish(&mut rig, worker, &home);
 }
 
