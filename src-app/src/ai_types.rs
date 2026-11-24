@@ -29,6 +29,10 @@ pub fn surface_session_key(surface_id: u64) -> u32 {
     SURFACE_KEY_BAND | (surface_id as u32 & !SURFACE_KEY_BAND)
 }
 
+pub fn process_id_of_session_key(key: u32) -> Option<u32> {
+    (key & SURFACE_KEY_BAND == 0).then_some(key)
+}
+
 pub fn insert_session_for_surface(
     sessions: &mut HashMap<u32, AgentSession>,
     key: u32,

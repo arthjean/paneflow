@@ -475,7 +475,7 @@ fn build_fleet_rows(
                 s.tool.display_rank(),
                 *pid,
                 serde_json::json!({
-                    "pid": *pid,
+                    "pid": ai_types::process_id_of_session_key(*pid),
                     "tool": s.tool.binary(),
                     "state": s.state.wire_str(),
                     "hooked": session_is_hooked(s),
@@ -1667,6 +1667,29 @@ mod tests {
         assert_eq!(rows[0]["hooked"], true);
         assert_eq!(rows[0]["surface_id"], 42);
         assert_eq!(rows[0]["surface_name"], "backend");
+    }
+
+    #[test]
+    fn build_fleet_rows_names_no_pid_for_a_session_held_under_its_surface_key() {
+        use crate::agent_launcher::TerminalAgent;
+        use crate::ai_types::{AgentSession, AgentState, surface_session_key};
+        let mut sessions = HashMap::new();
+        let mut s = AgentSession::new(TerminalAgent::ClaudeCode, AgentState::Thinking);
+        s.surface_id = Some(42);
+        sessions.insert(surface_session_key(42), s);
+        let detected = HashSet::new();
+        let fleets = [WsFleet {
+            idx: 0,
+            sessions: &sessions,
+            detected: &detected,
+        }];
+        let rows = build_fleet_rows(&fleets, &HashMap::new(), std::time::Instant::now());
+        assert_eq!(rows[0]["surface_id"], 42);
+        assert_eq!(
+            rows[0]["pid"],
+            serde_json::Value::Null,
+            "a surface key is not a process id"
+        );
     }
 
     #[test]

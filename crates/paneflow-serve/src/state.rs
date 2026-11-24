@@ -377,12 +377,16 @@ impl SessionEntry {
 
     fn reconcile_declared_activity(&mut self, source: ActivitySource, now_ms: u64) -> bool {
         if source == ActivitySource::Declared {
-            if self.activity.is_some() {
-                return false;
-            }
             let Some(observation) = self.observed_runtime.as_ref() else {
                 return false;
             };
+            if let Some(summary) = self.activity.as_mut() {
+                if !self.declared_activity || summary.pid == Some(observation.pid) {
+                    return false;
+                }
+                summary.pid = Some(observation.pid);
+                return true;
+            }
             let Some(tool) = observation
                 .runtime()
                 .and_then(|runtime| runtime.detection.command_aliases.first())
@@ -1763,6 +1767,38 @@ mod tests {
         state.apply_core_snapshot(&[agent_row(&session)]);
 
         assert!(state.get(&session).unwrap().activity.is_none());
+    }
+
+    #[test]
+    fn a_declared_activity_follows_the_agent_relaunched_in_the_same_pane() {
+        let home = tempfile::tempdir().unwrap();
+        let session = SessionId::new();
+        let mut state = WorkerState::new(home.path());
+        let activity_pid = |state: &WorkerState| {
+            state
+                .get(&session)
+                .and_then(|entry| entry.activity.as_ref())
+                .and_then(|summary| summary.pid)
+        };
+        state.apply_core_snapshot(&[with_declared(agent_row(&session), "working", "")]);
+        assert_eq!(activity_pid(&state), Some(10));
+
+        state.apply_core_snapshot(&[with_declared(core_row(&session), "done", "")]);
+        let mut relaunched = with_declared(core_row(&session), "working", "");
+        relaunched["observed_runtime"] = serde_json::to_value(observation(CLAUDE, 20, 9)).unwrap();
+        let projections = state.apply_core_snapshot(&[relaunched]);
+
+        assert_eq!(
+            activity_pid(&state),
+            Some(20),
+            "the row names the process that runs now, not the one stopped with Ctrl-C"
+        );
+        assert!(
+            projections
+                .iter()
+                .any(|projection| projection.session["activity"]["pid"] == 20),
+            "the new pid is announced to followers"
+        );
     }
 
     #[test]
