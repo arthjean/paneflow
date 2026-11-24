@@ -4,8 +4,9 @@ use std::rc::Rc;
 use gpui::prelude::FluentBuilder;
 use gpui::{
     Anchor, AnyElement, Bounds, ClickEvent, Context, Focusable, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, Pixels, Point, Render, ScrollStrategy, SharedString, Size, Styled,
-    Window, anchored, deferred, div, img, point, px, svg, uniform_list,
+    MouseButton, ParentElement, Pixels, Point, Render, Role, ScrollStrategy, SharedString, Size,
+    StatefulInteractiveElement, Styled, Window, anchored, deferred, div, img, point, px, svg,
+    uniform_list,
 };
 
 use super::listing::{Listing, Row};
@@ -13,9 +14,9 @@ use super::{PathPicker, PathPickerEvent};
 use crate::settings::components::{select_item_shaped, select_menu_surface, with_alpha};
 use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::quick_pick::{
-    FIELD_GAP, FIELD_INSET, ICON_GAP, ICON_SIZE, LABEL_SIZE, PANEL_PADDING, ROW_GAP,
-    ROW_TEXT_INSET, highlighted_label, panel_radius, row_colors, row_height, row_radius,
-    row_spacing,
+    FIELD_GAP, FIELD_INSET, ICON_GAP, ICON_SIZE, LABEL_SIZE, PANEL_PADDING, PickOption, ROW_GAP,
+    ROW_TEXT_INSET, expose_option, highlighted_label, list_box, panel_radius, row_colors,
+    row_height, row_radius, row_spacing,
 };
 use crate::ui_primitives::squircle::{squircle_border, squircle_fill_beneath_border};
 use crate::ui_primitives::{FilterFieldStyle, filter_field, menu_reveal};
@@ -26,6 +27,8 @@ const MAX_VISIBLE_ROWS: usize = 10;
 const CURSOR_GAP: f32 = 4.;
 const WINDOW_MARGIN: f32 = 8.;
 const RECENT_ICON_SIZE: f32 = 13.;
+const PICKER_LIST_LABEL: &str = "Paths";
+const RECENT_DESCRIPTION: &str = "Recent";
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Placement {
@@ -103,9 +106,19 @@ impl PathPicker {
         .into_any_element()
     }
 
-    fn render_row(&self, index: usize, row: &Row, cx: &mut Context<Self>) -> AnyElement {
+    fn render_row(
+        &self,
+        index: usize,
+        row: &Row,
+        position: usize,
+        count: usize,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let ui = crate::theme::ui_colors();
         let selected = index == self.selected;
+        let option = PickOption::new(row.label.clone(), position, count)
+            .selected(selected)
+            .description(row.recent.then_some(RECENT_DESCRIPTION));
         let colors = row_colors(selected, ui);
         let label_color = colors.label;
         let muted_color = colors.muted;
@@ -127,53 +140,54 @@ impl PathPicker {
                 .size(px(ICON_SIZE))
                 .into_any_element()
         };
-        select_item_shaped(
+        let element = select_item_shaped(
             SharedString::from(format!("path-picker-row-{index}")),
             selected,
             ui,
             colors.fill,
             row_radius(),
-        )
-        .h(px(row_height()))
-        .px(px(ROW_TEXT_INSET))
-        .gap(px(ROW_GAP))
-        .text_size(px(LABEL_SIZE))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_activate(cx.listener(move |picker, _: &ClickEvent, _, cx| {
-            picker.pick(index, cx);
-            cx.stop_propagation();
-        }))
-        .child(
-            div()
-                .relative()
-                .flex_1()
-                .min_w_0()
-                .flex()
-                .items_center()
-                .gap(px(ICON_GAP))
-                .child(icon)
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .overflow_x_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis_middle()
-                        .text_color(label_color)
-                        .child(highlighted_label(&row.label, &row.highlights)),
-                ),
-        )
-        .when(row.recent, |element| {
-            element.child(
-                svg()
+        );
+        expose_option(element, option)
+            .h(px(row_height()))
+            .px(px(ROW_TEXT_INSET))
+            .gap(px(ROW_GAP))
+            .text_size(px(LABEL_SIZE))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_activate(cx.listener(move |picker, _: &ClickEvent, _, cx| {
+                picker.pick(index, cx);
+                cx.stop_propagation();
+            }))
+            .child(
+                div()
                     .relative()
-                    .flex_none()
-                    .size(px(RECENT_ICON_SIZE))
-                    .path("icons/clock.svg")
-                    .text_color(muted_color),
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .items_center()
+                    .gap(px(ICON_GAP))
+                    .child(icon)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_x_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis_middle()
+                            .text_color(label_color)
+                            .child(highlighted_label(&row.label, &row.highlights)),
+                    ),
             )
-        })
-        .into_any_element()
+            .when(row.recent, |element| {
+                element.child(
+                    svg()
+                        .relative()
+                        .flex_none()
+                        .size(px(RECENT_ICON_SIZE))
+                        .path("icons/clock.svg")
+                        .text_color(muted_color),
+                )
+            })
+            .into_any_element()
     }
 
     fn render_body(&self, list_max: Pixels, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -182,6 +196,9 @@ impl PathPicker {
             Listing::Status(status) => {
                 return Some(
                     div()
+                        .id("path-picker-status")
+                        .role(Role::Label)
+                        .aria_label(status.text())
                         .h(px(row_height()))
                         .px(px(ROW_TEXT_INSET))
                         .flex()
@@ -198,30 +215,35 @@ impl PathPicker {
         let count = rows.len();
         let above = self.above;
         Some(
-            uniform_list(
-                "path-picker-list",
-                count,
-                cx.processor(move |picker, visible: Range<usize>, _, cx| {
-                    visible
-                        .filter_map(|visual| {
-                            let index = if above { count - 1 - visual } else { visual };
-                            let row = rows.get(index)?;
-                            Some(
-                                div()
-                                    .w_full()
-                                    .flex()
-                                    .flex_col()
-                                    .pb(px(row_spacing()))
-                                    .child(picker.render_row(index, row, cx)),
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                }),
-            )
-            .w_full()
-            .h((row_stride() * count as f32).min(list_max))
-            .track_scroll(&self.scroll)
-            .into_any_element(),
+            list_box("path-picker-options", PICKER_LIST_LABEL)
+                .child(
+                    uniform_list(
+                        "path-picker-list",
+                        count,
+                        cx.processor(move |picker, visible: Range<usize>, _, cx| {
+                            visible
+                                .filter_map(|visual| {
+                                    let index = if above { count - 1 - visual } else { visual };
+                                    let row = rows.get(index)?;
+                                    Some(
+                                        div()
+                                            .w_full()
+                                            .flex()
+                                            .flex_col()
+                                            .pb(px(row_spacing()))
+                                            .child(
+                                                picker.render_row(index, row, visual, count, cx),
+                                            ),
+                                    )
+                                })
+                                .collect::<Vec<_>>()
+                        }),
+                    )
+                    .w_full()
+                    .h((row_stride() * count as f32).min(list_max))
+                    .track_scroll(&self.scroll),
+                )
+                .into_any_element(),
         )
     }
 }

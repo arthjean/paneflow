@@ -4,9 +4,10 @@ use std::sync::Arc;
 
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    AnyElement, ClickEvent, Context, FontWeight, InteractiveElement, IntoElement, KeyDownEvent,
-    MouseButton, ParentElement, Pixels, ScrollStrategy, SharedString, StatefulInteractiveElement,
-    Styled, UniformListScrollHandle, Window, deferred, div, px, svg, uniform_list,
+    AnyElement, ClickEvent, Context, Div, FontWeight, InteractiveElement, IntoElement,
+    KeyDownEvent, MouseButton, ParentElement, Pixels, Role, ScrollStrategy, SharedString, Stateful,
+    StatefulInteractiveElement, Styled, UniformListScrollHandle, Window, deferred, div, px, svg,
+    uniform_list,
 };
 use paneflow_api::methods::prompt::{OtherAnswer, PickItem, PromptAnswer, PromptKind, PromptSpec};
 
@@ -36,6 +37,7 @@ const PICK_PLACEHOLDER: &str = "Filter…";
 const DEFAULT_CONFIRM: &str = "Confirm";
 const NO_ITEMS: &str = "No items";
 const NO_MATCHING_ITEM: &str = "No matching item";
+const PROMPT_LIST_LABEL: &str = "Choices";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RowKind {
@@ -213,6 +215,131 @@ impl ShownPrompt {
             .iter()
             .any(|row| matches!(row.kind, RowKind::Item(_) | RowKind::Other(_)))
     }
+
+    fn row_state(&self, index: usize, row: &PromptRow) -> RowState {
+        let multiple = self.prompt.spec.multiple();
+        RowState {
+            selected: index == self.selected,
+            count: self.rows.len(),
+            ticked: match row.kind {
+                RowKind::Item(item) => {
+                    let ticked = self.ticked.get(item).copied().unwrap_or(false);
+                    (multiple || ticked).then_some(ticked)
+                }
+                RowKind::Other(_) | RowKind::Confirm => None,
+            },
+            trailing: match row.kind {
+                RowKind::Confirm if multiple => Some(format!("{} selected", self.ticked_count())),
+                _ => row.detail.clone(),
+            },
+        }
+    }
+}
+
+pub(crate) struct RowState {
+    pub(crate) selected: bool,
+    pub(crate) count: usize,
+    pub(crate) ticked: Option<bool>,
+    pub(crate) trailing: Option<String>,
+}
+
+fn row_description(row: &PromptRow, trailing: Option<&str>) -> Option<String> {
+    let parts: Vec<&str> = [row.subtitle.as_deref(), trailing]
+        .into_iter()
+        .flatten()
+        .filter(|part| !part.trim().is_empty())
+        .collect();
+    (!parts.is_empty()).then(|| parts.join(", "))
+}
+
+pub(crate) fn prompt_option(
+    index: usize,
+    row: &PromptRow,
+    state: RowState,
+    ui: crate::theme::UiColors,
+    on_press: impl Fn(&ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
+) -> Stateful<Div> {
+    let colors = quick_pick::row_colors(state.selected, ui);
+    let mut label = div()
+        .relative()
+        .flex_1()
+        .min_w_0()
+        .flex()
+        .items_center()
+        .gap(px(ICON_GAP));
+    if let Some(icon) = row.icon.as_deref().and_then(icon_path) {
+        label = label.child(
+            svg()
+                .flex_none()
+                .size(px(ICON_SIZE))
+                .path(icon)
+                .text_color(with_alpha(colors.label, 0.8)),
+        );
+    }
+    label = label.child(
+        div()
+            .flex_none()
+            .max_w_full()
+            .overflow_x_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis()
+            .text_color(colors.label)
+            .child(highlighted_label(&row.label, &row.highlights)),
+    );
+    if let Some(subtitle) = &row.subtitle {
+        label = label.child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .overflow_x_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .text_color(colors.muted)
+                .child(SharedString::from(subtitle.clone())),
+        );
+    }
+    let option = quick_pick::PickOption::new(row.label.clone(), index, state.count)
+        .selected(state.selected)
+        .description(row_description(row, state.trailing.as_deref()))
+        .checked(state.ticked);
+    let element = select_item_shaped(
+        SharedString::from(format!("prompt-row-{index}")),
+        state.selected,
+        ui,
+        colors.fill,
+        ROW_RADIUS,
+    )
+    .h(px(ROW_HEIGHT))
+    .px(px(ROW_TEXT_INSET))
+    .gap(px(ROW_GAP))
+    .text_size(px(LABEL_SIZE))
+    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+    .on_activate(on_press)
+    .child(label);
+    quick_pick::expose_option(element, option)
+        .when_some(state.trailing, |row, value| {
+            row.child(
+                div()
+                    .relative()
+                    .flex_none()
+                    .max_w(px(DETAIL_MAX_WIDTH))
+                    .overflow_x_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_color(colors.muted)
+                    .child(SharedString::from(value)),
+            )
+        })
+        .when(state.ticked == Some(true), |row| {
+            row.child(
+                svg()
+                    .relative()
+                    .flex_none()
+                    .size(px(13.))
+                    .path("icons/check.svg")
+                    .text_color(colors.label),
+            )
+        })
 }
 
 fn body_room(has_body: bool) -> f32 {
@@ -432,93 +559,16 @@ impl PaneFlowApp {
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let selected = index == shown.selected;
-        let colors = quick_pick::row_colors(selected, ui);
-        let mut label = div()
-            .relative()
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .items_center()
-            .gap(px(ICON_GAP));
-        if let Some(icon) = row.icon.as_deref().and_then(icon_path) {
-            label = label.child(
-                svg()
-                    .flex_none()
-                    .size(px(ICON_SIZE))
-                    .path(icon)
-                    .text_color(with_alpha(colors.label, 0.8)),
-            );
-        }
-        label = label.child(
-            div()
-                .flex_none()
-                .max_w_full()
-                .overflow_x_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .text_color(colors.label)
-                .child(highlighted_label(&row.label, &row.highlights)),
-        );
-        if let Some(subtitle) = &row.subtitle {
-            label = label.child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_x_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .text_color(colors.muted)
-                    .child(SharedString::from(subtitle.clone())),
-            );
-        }
-        let trailing_value = match &row.kind {
-            RowKind::Confirm if shown.prompt.spec.multiple() => {
-                Some(format!("{} selected", shown.ticked_count()))
-            }
-            _ => row.detail.clone(),
-        };
-        let ticked = matches!(row.kind, RowKind::Item(item) if shown.ticked.get(item).copied().unwrap_or(false));
-        select_item_shaped(
-            SharedString::from(format!("prompt-row-{index}")),
-            selected,
+        prompt_option(
+            index,
+            row,
+            shown.row_state(index, row),
             ui,
-            colors.fill,
-            ROW_RADIUS,
+            cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.activate_prompt_row(index, cx);
+                cx.stop_propagation();
+            }),
         )
-        .h(px(ROW_HEIGHT))
-        .px(px(ROW_TEXT_INSET))
-        .gap(px(ROW_GAP))
-        .text_size(px(LABEL_SIZE))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_activate(cx.listener(move |this, _: &ClickEvent, _, cx| {
-            this.activate_prompt_row(index, cx);
-            cx.stop_propagation();
-        }))
-        .child(label)
-        .when_some(trailing_value, |row, value| {
-            row.child(
-                div()
-                    .relative()
-                    .flex_none()
-                    .max_w(px(DETAIL_MAX_WIDTH))
-                    .overflow_x_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .text_color(colors.muted)
-                    .child(SharedString::from(value)),
-            )
-        })
-        .when(ticked, |row| {
-            row.child(
-                svg()
-                    .relative()
-                    .flex_none()
-                    .size(px(13.))
-                    .path("icons/check.svg")
-                    .text_color(colors.label),
-            )
-        })
         .into_any_element()
     }
 
@@ -628,56 +678,56 @@ impl PaneFlowApp {
         let list = div()
             .flex()
             .flex_col()
-            .children(empty.map(|message| {
-                div()
-                    .h(px(ROW_HEIGHT))
-                    .px(px(ROW_TEXT_INSET))
-                    .flex()
-                    .items_center()
-                    .text_size(px(LABEL_SIZE))
-                    .text_color(ui.muted)
-                    .child(message)
-            }))
+            .children(empty.map(|message| quick_pick::empty_notice("prompt-empty", message, ui)))
             .when(!rows.is_empty(), |list| {
                 let items = rows.clone();
                 list.child(
-                    uniform_list(
-                        "prompt-list",
-                        rows.len(),
-                        cx.processor(move |this, range: Range<usize>, _, cx| {
-                            let Some(shown) = this.prompts.shown.as_ref() else {
-                                return Vec::new();
-                            };
-                            range
-                                .filter_map(|index| {
-                                    let row = items.get(index)?;
-                                    Some(
-                                        div().w_full().flex().flex_col().pb(px(ROW_SPACING)).child(
-                                            with_rounded_shape(|| {
-                                                this.render_prompt_row(index, row, shown, ui, cx)
-                                            }),
-                                        ),
-                                    )
-                                })
-                                .collect::<Vec<_>>()
-                        }),
-                    )
-                    .w_full()
-                    .h(list_height(
-                        rows.len(),
-                        f32::from(window.viewport_size().height),
-                        shown.prompt.spec.body.is_some(),
-                    ))
-                    .track_scroll(&shown.scroll),
+                    quick_pick::list_box("prompt-options", PROMPT_LIST_LABEL).child(
+                        uniform_list(
+                            "prompt-list",
+                            rows.len(),
+                            cx.processor(move |this, range: Range<usize>, _, cx| {
+                                let Some(shown) = this.prompts.shown.as_ref() else {
+                                    return Vec::new();
+                                };
+                                range
+                                    .filter_map(|index| {
+                                        let row = items.get(index)?;
+                                        Some(
+                                            div()
+                                                .w_full()
+                                                .flex()
+                                                .flex_col()
+                                                .pb(px(ROW_SPACING))
+                                                .child(with_rounded_shape(|| {
+                                                    this.render_prompt_row(
+                                                        index, row, shown, ui, cx,
+                                                    )
+                                                })),
+                                        )
+                                    })
+                                    .collect::<Vec<_>>()
+                            }),
+                        )
+                        .w_full()
+                        .h(list_height(
+                            rows.len(),
+                            f32::from(window.viewport_size().height),
+                            shown.prompt.spec.body.is_some(),
+                        ))
+                        .track_scroll(&shown.scroll),
+                    ),
                 )
             })
             .into_any_element();
-        let panel = div()
-            .id("prompt")
-            .occlude()
-            .on_key_down(cx.listener(Self::handle_prompt_key_down))
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| this.cancel_prompt(cx)))
-            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation());
+        let panel = prompt_group(
+            &shown.prompt.spec,
+            self.prompt_origin_line(&shown.prompt, cx),
+        )
+        .occlude()
+        .on_key_down(cx.listener(Self::handle_prompt_key_down))
+        .on_mouse_down_out(cx.listener(|this, _, _, cx| this.cancel_prompt(cx)))
+        .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation());
         let panel = quick_pick::shell(panel, px(PROMPT_WIDTH), ui, header, list);
         deferred(
             div()
@@ -695,6 +745,22 @@ impl PaneFlowApp {
         .with_priority(7)
         .into_any_element()
     }
+}
+
+pub(crate) fn prompt_group(spec: &PromptSpec, origin: String) -> Stateful<Div> {
+    let description = spec
+        .body
+        .iter()
+        .map(String::as_str)
+        .chain(std::iter::once(origin.as_str()))
+        .filter(|part| !part.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    div()
+        .id("prompt")
+        .role(Role::Group)
+        .aria_label(SharedString::from(one_line(&spec.title)))
+        .aria_description(SharedString::from(description))
 }
 
 fn filter_off_thread(spec: &Arc<PromptSpec>, typed: &str) -> Vec<PromptRow> {
@@ -738,6 +804,162 @@ mod tests {
             spec.extend(extra.clone());
         }
         serde_json::from_value(spec).unwrap()
+    }
+
+    fn exposed<E: gpui::Element>(element: &E) -> gpui::accesskit::Node {
+        let role = element
+            .a11y_role()
+            .expect("the element exposes an accessibility role");
+        let mut node = gpui::accesskit::Node::new(role);
+        element.write_a11y_info(&mut node);
+        node
+    }
+
+    fn exposed_rows(
+        spec: &PromptSpec,
+        query: &str,
+        selected: usize,
+        ticked: &[bool],
+    ) -> Vec<gpui::accesskit::Node> {
+        let shown = ShownPrompt {
+            prompt: PendingPrompt {
+                id: 1,
+                spec: Arc::new(spec.clone()),
+                origin: None,
+                asked_at: std::time::Instant::now(),
+                token: None,
+            },
+            selected,
+            ticked: ticked.to_vec(),
+            rows: Rc::new(pick_rows(spec, query)),
+            query: query.to_string(),
+            generation: 0,
+            filtering: false,
+            scroll: UniformListScrollHandle::new(),
+            return_focus: crate::FocusReturn::default(),
+        };
+        shown
+            .rows
+            .iter()
+            .enumerate()
+            .map(|(index, row)| {
+                exposed(&prompt_option(
+                    index,
+                    row,
+                    shown.row_state(index, row),
+                    crate::theme::ui_colors(),
+                    |_, _, _| {},
+                ))
+            })
+            .collect()
+    }
+
+    fn grant_prompt() -> PromptSpec {
+        serde_json::from_value(serde_json::json!({
+            "kind": "pick",
+            "title": "Allow an agent in pane a0c439b1 to write in its own workspace for 2 min?",
+            "body": "Rights: write\nScope: workspace\nDuration: for 2 min",
+            "items": [{"id": "allow", "title": "Allow"}, {"id": "deny", "title": "Deny"}],
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn the_grant_prompt_exposes_allow_and_deny_as_options_a_press_answers() {
+        use gpui::accesskit::{Action, Role};
+        let spec = grant_prompt();
+        let rows = pick_rows(&spec, "");
+        for selected in [0, 1] {
+            let nodes = exposed_rows(&spec, "", selected, &[false, false]);
+            let seen: Vec<_> = nodes
+                .iter()
+                .map(|node| {
+                    (
+                        node.role(),
+                        node.label(),
+                        node.is_selected(),
+                        node.position_in_set(),
+                        node.size_of_set(),
+                    )
+                })
+                .collect();
+            assert_eq!(
+                seen,
+                [
+                    (
+                        Role::ListBoxOption,
+                        Some("Allow"),
+                        Some(selected == 0),
+                        Some(1),
+                        Some(2)
+                    ),
+                    (
+                        Role::ListBoxOption,
+                        Some("Deny"),
+                        Some(selected == 1),
+                        Some(2),
+                        Some(2)
+                    ),
+                ]
+            );
+            assert!(
+                nodes.iter().all(|node| node.supports_action(Action::Click)),
+                "an accessibility press answers like Return"
+            );
+            assert!(nodes.iter().all(|node| node.toggled().is_none()));
+        }
+        assert_eq!(
+            answer_for(&spec, &rows[1].kind, "", &[false, false]),
+            Some(PromptAnswer::Text("deny".into()))
+        );
+        let group = exposed(&prompt_group(&spec, "Asked by an agent in gsh".into()));
+        assert_eq!(group.role(), Role::Group);
+        assert_eq!(group.label(), Some(spec.title.as_str()));
+        assert_eq!(
+            group.description(),
+            Some("Rights: write\nScope: workspace\nDuration: for 2 min\nAsked by an agent in gsh")
+        );
+        let list = exposed(&quick_pick::list_box("prompt-options", PROMPT_LIST_LABEL));
+        assert_eq!(list.role(), Role::ListBox);
+        assert_eq!(list.label(), Some(PROMPT_LIST_LABEL));
+    }
+
+    #[test]
+    fn a_filtered_prompt_numbers_its_options_among_the_rows_it_keeps() {
+        let spec = pick(
+            serde_json::json!(["api", {"id": "web", "title": "Website", "subtitle": "Next.js", "detail": "3 days"}, "docs"]),
+            serde_json::json!({"multiple": true, "confirm": "Open"}),
+        );
+        let nodes = exposed_rows(&spec, "web", 0, &[true, true, false]);
+        let seen: Vec<_> = nodes
+            .iter()
+            .map(|node| {
+                (
+                    node.label(),
+                    node.position_in_set(),
+                    node.size_of_set(),
+                    node.is_selected(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            seen,
+            [
+                (Some("Website"), Some(1), Some(2), Some(true)),
+                (Some("Open"), Some(2), Some(2), Some(false)),
+            ]
+        );
+        assert_eq!(nodes[0].description(), Some("Next.js, 3 days"));
+        assert_eq!(nodes[0].toggled(), Some(gpui::accesskit::Toggled::True));
+        assert_eq!(nodes[1].description(), Some("2 selected"));
+        assert_eq!(nodes[1].toggled(), None);
+        let empty = exposed(&quick_pick::empty_notice(
+            "prompt-empty",
+            NO_MATCHING_ITEM,
+            crate::theme::ui_colors(),
+        ));
+        assert_eq!(empty.role(), gpui::accesskit::Role::Label);
+        assert_eq!(empty.label(), Some(NO_MATCHING_ITEM));
     }
 
     #[test]

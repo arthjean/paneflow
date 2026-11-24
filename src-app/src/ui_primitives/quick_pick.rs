@@ -1,8 +1,10 @@
 use std::ops::Range;
 
 use gpui::{
-    AnyElement, Div, FontWeight, HighlightStyle, Hsla, ParentElement, Pixels, Stateful, Styled,
-    StyledText, px,
+    AnyElement, Div, ElementId, FontWeight, HighlightStyle, Hsla, InteractiveElement,
+    ParentElement, Pixels, SharedString, Stateful, StatefulInteractiveElement, Styled, StyledText,
+    accesskit::{Role, Toggled},
+    div, px,
 };
 
 use crate::settings::components::{MENU_RADIUS, select_menu_surface, surface_edge, with_alpha};
@@ -102,6 +104,102 @@ pub(crate) fn highlighted_label(label: &str, highlights: &[Range<usize>]) -> Sty
     }))
 }
 
+pub(crate) struct PickOption {
+    pub(crate) label: SharedString,
+    pub(crate) description: Option<SharedString>,
+    pub(crate) shortcut: Option<SharedString>,
+    pub(crate) checked: Option<bool>,
+    pub(crate) selected: bool,
+    pub(crate) index: usize,
+    pub(crate) count: usize,
+}
+
+impl PickOption {
+    pub(crate) fn new(label: impl Into<SharedString>, index: usize, count: usize) -> Self {
+        Self {
+            label: label.into(),
+            description: None,
+            shortcut: None,
+            checked: None,
+            selected: false,
+            index,
+            count,
+        }
+    }
+
+    pub(crate) fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
+    }
+
+    pub(crate) fn description(mut self, description: Option<impl Into<SharedString>>) -> Self {
+        self.description = description.map(Into::into);
+        self
+    }
+
+    pub(crate) fn shortcut(mut self, shortcut: Option<impl Into<SharedString>>) -> Self {
+        self.shortcut = shortcut.map(Into::into);
+        self
+    }
+
+    pub(crate) fn checked(mut self, checked: Option<bool>) -> Self {
+        self.checked = checked;
+        self
+    }
+}
+
+pub(crate) fn list_box(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Stateful<Div> {
+    div()
+        .id(id)
+        .role(Role::ListBox)
+        .aria_label(label)
+        .w_full()
+        .flex()
+        .flex_col()
+}
+
+pub(crate) fn expose_option<E: StatefulInteractiveElement>(row: E, option: PickOption) -> E {
+    let mut row = row
+        .role(Role::ListBoxOption)
+        .aria_label(option.label)
+        .aria_selected(option.selected)
+        .aria_position_in_set(option.index + 1)
+        .aria_size_of_set(option.count);
+    if let Some(description) = option.description {
+        row = row.aria_description(description);
+    }
+    if let Some(shortcut) = option.shortcut {
+        row = row.aria_keyshortcuts(shortcut);
+    }
+    if let Some(checked) = option.checked {
+        row = row.aria_toggled(if checked {
+            Toggled::True
+        } else {
+            Toggled::False
+        });
+    }
+    row
+}
+
+pub(crate) fn empty_notice(
+    id: impl Into<ElementId>,
+    message: impl Into<SharedString>,
+    ui: UiColors,
+) -> Stateful<Div> {
+    let message: SharedString = message.into();
+    div()
+        .id(id)
+        .role(Role::Label)
+        .aria_label(message.clone())
+        .h(px(ROW_HEIGHT))
+        .px(px(ROW_TEXT_INSET))
+        .flex()
+        .items_center()
+        .text_size(px(LABEL_SIZE))
+        .text_color(ui.muted)
+        .child(message)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,5 +230,86 @@ mod tests {
                 assert_eq!(row_colors(true, ui).fill, crate::theme::selection_color());
             });
         });
+    }
+
+    fn exposed<E: gpui::Element>(element: &E) -> gpui::accesskit::Node {
+        let role = element
+            .a11y_role()
+            .expect("the element exposes an accessibility role");
+        let mut node = gpui::accesskit::Node::new(role);
+        element.write_a11y_info(&mut node);
+        node
+    }
+
+    #[test]
+    fn a_pick_option_reports_its_name_state_and_place_in_the_visible_list() {
+        let plain = exposed(&expose_option(
+            div().id("plain"),
+            PickOption::new("Split right", 0, 3),
+        ));
+        assert_eq!(plain.role(), Role::ListBoxOption);
+        assert_eq!(plain.label(), Some("Split right"));
+        assert_eq!(plain.is_selected(), Some(false));
+        assert_eq!(plain.position_in_set(), Some(1));
+        assert_eq!(plain.size_of_set(), Some(3));
+        assert_eq!(plain.description(), None);
+        assert_eq!(plain.keyboard_shortcut(), None);
+        assert_eq!(plain.toggled(), None);
+        let full = exposed(&expose_option(
+            div().id("full"),
+            PickOption::new("Word wrap", 2, 3)
+                .selected(true)
+                .description(Some("Editor"))
+                .shortcut(Some("⌥Z"))
+                .checked(Some(false)),
+        ));
+        assert_eq!(full.is_selected(), Some(true));
+        assert_eq!(full.position_in_set(), Some(3));
+        assert_eq!(full.description(), Some("Editor"));
+        assert_eq!(full.keyboard_shortcut(), Some("⌥Z"));
+        assert_eq!(full.toggled(), Some(Toggled::False));
+    }
+
+    #[test]
+    fn every_quick_pick_list_exposes_its_rows_as_options() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut stack = vec![root.clone()];
+        let mut pickers = Vec::new();
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if path.extension().and_then(|ext| ext.to_str()) != Some("rs")
+                    || path.ends_with("ui_primitives/quick_pick.rs")
+                {
+                    continue;
+                }
+                let source = std::fs::read_to_string(&path).unwrap();
+                let production = source.split("#[cfg(test)]").next().unwrap_or_default();
+                if production.contains("row_colors(") {
+                    pickers.push((path, production.to_string()));
+                }
+            }
+        }
+        assert!(
+            pickers.len() >= 5,
+            "{} quick pick lists found",
+            pickers.len()
+        );
+        let missing: Vec<String> = pickers
+            .iter()
+            .filter(|(_, source)| {
+                !source.contains("expose_option(")
+                    || !(source.contains("list_box(") || source.contains("Role::ListBox"))
+            })
+            .map(|(path, _)| path.strip_prefix(&root).unwrap().display().to_string())
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "a quick pick row must be a list box option inside a list box, through expose_option and list_box: {missing:?}"
+        );
     }
 }

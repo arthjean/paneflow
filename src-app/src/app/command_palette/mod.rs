@@ -6,9 +6,10 @@ use std::rc::Rc;
 
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    AnyElement, App, ClickEvent, Context, InteractiveElement, IntoElement, KeyDownEvent,
-    MouseButton, ParentElement, Pixels, ScrollStrategy, SharedString, Styled,
-    UniformListScrollHandle, Window, deferred, div, px, svg, uniform_list,
+    AnyElement, App, ClickEvent, Context, Div, InteractiveElement, IntoElement, KeyDownEvent,
+    MouseButton, ParentElement, Pixels, Role, ScrollStrategy, SharedString, Stateful,
+    StatefulInteractiveElement, Styled, UniformListScrollHandle, Window, deferred, div, px, svg,
+    uniform_list,
 };
 
 use crate::PaneFlowApp;
@@ -28,6 +29,9 @@ pub(crate) use catalog::{Scope, Section};
 
 const PALETTE_WIDTH: f32 = 560.;
 const PALETTE_PLACEHOLDER: &str = "Search commands…";
+const PALETTE_LABEL: &str = "Command palette";
+const PALETTE_LIST_LABEL: &str = "Commands";
+const PALETTE_EMPTY: &str = "No matching command";
 const CHIP_HEIGHT: f32 = 24.;
 const CHIP_RADIUS: gpui::Pixels = px(6.);
 const SHORTCUT_SIZE: f32 = 13.;
@@ -764,109 +768,35 @@ impl PaneFlowApp {
         &self,
         idx: usize,
         row: &PaletteRow,
+        count: usize,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let selected = idx == self.command_palette_selected;
-        let colors = quick_pick::row_colors(selected, ui);
-        let label_color = colors.label;
-        let muted_color = colors.muted;
-
-        let mut label = div()
-            .relative()
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .items_center()
-            .gap(px(ICON_GAP));
-        if let Some(icon) = row.icon {
-            label = label.child(
-                svg()
-                    .flex_none()
-                    .size(px(ICON_SIZE))
-                    .path(icon)
-                    .text_color(with_alpha(label_color, 0.8)),
-            );
-        }
-        let label = label.child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .overflow_x_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .text_color(label_color)
-                .child(highlighted_label(&row.label, &row.highlights)),
-        );
-
-        let mut element = select_item_shaped(
-            SharedString::from(format!("command-palette-row-{idx}")),
-            selected,
+        palette_option(
+            idx,
+            row,
+            count,
+            idx == self.command_palette_selected,
             ui,
-            colors.fill,
-            ROW_RADIUS,
+            cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.command_palette_run(idx, window, cx);
+                cx.stop_propagation();
+            }),
         )
-        .h(px(ROW_HEIGHT))
-        .px(px(ROW_TEXT_INSET))
-        .gap(px(ROW_GAP))
-        .text_size(px(LABEL_SIZE))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
-            this.command_palette_run(idx, window, cx);
-            cx.stop_propagation();
-        }))
-        .child(label);
+        .into_any_element()
+    }
 
-        if let Some(value) = &row.value {
-            element = element.child(
-                div()
-                    .relative()
-                    .flex_none()
-                    .max_w(px(200.))
-                    .overflow_x_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .text_color(muted_color)
-                    .child(SharedString::from(value.clone())),
-            );
+    fn command_palette_list_label(&self) -> SharedString {
+        match (
+            self.command_palette_scope,
+            self.command_palette_section,
+            self.command_palette_lua_category.as_deref(),
+        ) {
+            (Some(scope), _, _) => scope.title().into(),
+            (None, Some(section), _) => section.title().into(),
+            (None, None, Some(category)) => SharedString::from(category.to_string()),
+            (None, None, None) => PALETTE_LIST_LABEL.into(),
         }
-
-        if let Some(shortcut) = &row.shortcut {
-            element = element.child(
-                div()
-                    .relative()
-                    .flex_none()
-                    .text_size(px(SHORTCUT_SIZE))
-                    .text_color(muted_color)
-                    .child(SharedString::from(shortcut.clone())),
-            );
-        }
-
-        match row.trailing {
-            Trailing::Chevron => {
-                element = element.child(
-                    svg()
-                        .relative()
-                        .flex_none()
-                        .size(px(12.))
-                        .path("icons/chevron-right.svg")
-                        .text_color(muted_color),
-                );
-            }
-            Trailing::Check => {
-                element = element.child(
-                    svg()
-                        .relative()
-                        .flex_none()
-                        .size(px(13.))
-                        .path("icons/check.svg")
-                        .text_color(label_color),
-                );
-            }
-            Trailing::None => {}
-        }
-
-        element.into_any_element()
     }
 
     pub(crate) fn render_command_palette(
@@ -882,39 +812,41 @@ impl PaneFlowApp {
         let rows = Rc::new(self.command_palette_rows(cx));
 
         let list = if rows.is_empty() {
-            div()
-                .h(px(ROW_HEIGHT))
-                .px(px(ROW_TEXT_INSET))
-                .flex()
-                .items_center()
-                .text_size(px(LABEL_SIZE))
-                .text_color(ui.muted)
-                .child("No matching command")
-                .into_any_element()
+            quick_pick::empty_notice("command-palette-empty", PALETTE_EMPTY, ui).into_any_element()
         } else {
             let items = rows.clone();
-            uniform_list(
-                "command-palette-list",
-                rows.len(),
-                cx.processor(move |this, range: Range<usize>, _, cx| {
-                    range
-                        .filter_map(|idx| {
-                            let row = items.get(idx)?;
-                            Some(div().w_full().flex().flex_col().pb(px(ROW_SPACING)).child(
-                                with_rounded_shape(|| this.render_palette_row(idx, row, ui, cx)),
-                            ))
-                        })
-                        .collect::<Vec<_>>()
-                }),
-            )
-            .w_full()
-            .h(list_height(rows.len()))
-            .track_scroll(&self.command_palette_scroll)
-            .into_any_element()
+            let count = rows.len();
+            quick_pick::list_box("command-palette-options", self.command_palette_list_label())
+                .child(
+                    uniform_list(
+                        "command-palette-list",
+                        count,
+                        cx.processor(move |this, range: Range<usize>, _, cx| {
+                            range
+                                .filter_map(|idx| {
+                                    let row = items.get(idx)?;
+                                    Some(
+                                        div().w_full().flex().flex_col().pb(px(ROW_SPACING)).child(
+                                            with_rounded_shape(|| {
+                                                this.render_palette_row(idx, row, count, ui, cx)
+                                            }),
+                                        ),
+                                    )
+                                })
+                                .collect::<Vec<_>>()
+                        }),
+                    )
+                    .w_full()
+                    .h(list_height(count))
+                    .track_scroll(&self.command_palette_scroll),
+                )
+                .into_any_element()
         };
 
         let panel = div()
             .id("command-palette")
+            .role(Role::Group)
+            .aria_label(PALETTE_LABEL)
             .occlude()
             .capture_key_down(cx.listener(Self::handle_command_palette_capture_key_down))
             .on_key_down(cx.listener(Self::handle_command_palette_key_down))
@@ -955,6 +887,128 @@ fn list_height(rows: usize) -> Pixels {
     px(rows as f32 * (ROW_HEIGHT + ROW_SPACING)).min(MENU_MAX_HEIGHT)
 }
 
+impl PaletteRow {
+    fn checked(&self) -> Option<bool> {
+        let checkable = match self.source {
+            Source::Value(_) => true,
+            Source::Command(idx) => COMMANDS
+                .get(idx)
+                .is_some_and(|command| matches!(command.kind, Kind::Toggle { .. })),
+            Source::Section(_) | Source::LuaCategory(_) | Source::LuaAction(_) => false,
+        };
+        checkable.then_some(self.trailing == Trailing::Check)
+    }
+
+    fn pick_option(&self, idx: usize, count: usize, selected: bool) -> quick_pick::PickOption {
+        quick_pick::PickOption::new(self.label.clone(), idx, count)
+            .selected(selected)
+            .description(self.value.clone())
+            .shortcut(self.shortcut.clone())
+            .checked(self.checked())
+    }
+}
+
+fn palette_option(
+    idx: usize,
+    row: &PaletteRow,
+    count: usize,
+    selected: bool,
+    ui: crate::theme::UiColors,
+    on_press: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> Stateful<Div> {
+    let colors = quick_pick::row_colors(selected, ui);
+    let label_color = colors.label;
+    let muted_color = colors.muted;
+
+    let mut label = div()
+        .relative()
+        .flex_1()
+        .min_w_0()
+        .flex()
+        .items_center()
+        .gap(px(ICON_GAP));
+    if let Some(icon) = row.icon {
+        label = label.child(
+            svg()
+                .flex_none()
+                .size(px(ICON_SIZE))
+                .path(icon)
+                .text_color(with_alpha(label_color, 0.8)),
+        );
+    }
+    let label = label.child(
+        div()
+            .flex_1()
+            .min_w_0()
+            .overflow_x_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis()
+            .text_color(label_color)
+            .child(highlighted_label(&row.label, &row.highlights)),
+    );
+
+    let element = select_item_shaped(
+        SharedString::from(format!("command-palette-row-{idx}")),
+        selected,
+        ui,
+        colors.fill,
+        ROW_RADIUS,
+    )
+    .h(px(ROW_HEIGHT))
+    .px(px(ROW_TEXT_INSET))
+    .gap(px(ROW_GAP))
+    .text_size(px(LABEL_SIZE))
+    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+    .on_activate(on_press)
+    .child(label);
+    let mut element = quick_pick::expose_option(element, row.pick_option(idx, count, selected));
+
+    if let Some(value) = &row.value {
+        element = element.child(
+            div()
+                .relative()
+                .flex_none()
+                .max_w(px(200.))
+                .overflow_x_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .text_color(muted_color)
+                .child(SharedString::from(value.clone())),
+        );
+    }
+
+    if let Some(shortcut) = &row.shortcut {
+        element = element.child(
+            div()
+                .relative()
+                .flex_none()
+                .text_size(px(SHORTCUT_SIZE))
+                .text_color(muted_color)
+                .child(SharedString::from(shortcut.clone())),
+        );
+    }
+
+    match row.trailing {
+        Trailing::Chevron => element.child(
+            svg()
+                .relative()
+                .flex_none()
+                .size(px(12.))
+                .path("icons/chevron-right.svg")
+                .text_color(muted_color),
+        ),
+        Trailing::Check => element.child(
+            svg()
+                .relative()
+                .flex_none()
+                .size(px(13.))
+                .path("icons/check.svg")
+                .text_color(label_color),
+        ),
+        Trailing::None => element,
+    }
+}
+
 #[cfg(test)]
 impl PaneFlowApp {
     pub(crate) fn command_palette_entries(&self, cx: &App) -> Vec<(String, Option<String>)> {
@@ -986,5 +1040,192 @@ impl PaneFlowApp {
 
     pub(crate) fn command_palette_is_open(&self) -> bool {
         self.command_palette_open
+    }
+
+    pub(crate) fn command_palette_exposed_options(&self, cx: &App) -> Vec<gpui::accesskit::Node> {
+        let rows = self.command_palette_rows(cx);
+        let count = rows.len();
+        rows.iter()
+            .enumerate()
+            .map(|(idx, row)| {
+                exposed(&palette_option(
+                    idx,
+                    row,
+                    count,
+                    idx == self.command_palette_selected,
+                    crate::theme::ui_colors(),
+                    |_, _, _| {},
+                ))
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+fn exposed<E: gpui::Element>(element: &E) -> gpui::accesskit::Node {
+    let role = element
+        .a11y_role()
+        .expect("the element exposes an accessibility role");
+    let mut node = gpui::accesskit::Node::new(role);
+    element.write_a11y_info(&mut node);
+    node
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        COMMANDS, Kind, PALETTE_EMPTY, PALETTE_LABEL, PaletteRow, Source, Trailing, exposed,
+        palette_option,
+    };
+    use crate::ui_primitives::quick_pick;
+    use gpui::accesskit::{Action, Role, Toggled};
+
+    fn row(source: Source, label: &str, trailing: Trailing) -> PaletteRow {
+        PaletteRow {
+            source,
+            icon: None,
+            label: label.to_string(),
+            highlights: Vec::new(),
+            value: None,
+            shortcut: None,
+            trailing,
+        }
+    }
+
+    fn toggle_command() -> usize {
+        COMMANDS
+            .iter()
+            .position(|command| matches!(command.kind, Kind::Toggle { .. }))
+            .expect("the catalog holds a toggle")
+    }
+
+    fn scope_command() -> usize {
+        COMMANDS
+            .iter()
+            .position(|command| matches!(command.kind, Kind::Scope(_)))
+            .expect("the catalog holds a scope")
+    }
+
+    fn action_command() -> usize {
+        COMMANDS
+            .iter()
+            .position(|command| matches!(command.kind, Kind::Action(_)))
+            .expect("the catalog holds an action")
+    }
+
+    fn options(rows: &[PaletteRow], selected: usize) -> Vec<gpui::accesskit::Node> {
+        rows.iter()
+            .enumerate()
+            .map(|(idx, row)| {
+                exposed(&palette_option(
+                    idx,
+                    row,
+                    rows.len(),
+                    idx == selected,
+                    crate::theme::ui_colors(),
+                    |_, _, _| {},
+                ))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_palette_row_is_an_option_named_numbered_and_pressable() {
+        let mut shortcut = row(
+            Source::Command(action_command()),
+            "Split right",
+            Trailing::None,
+        );
+        shortcut.shortcut = Some("⌘D".to_string());
+        let mut scope = row(Source::Command(scope_command()), "Theme", Trailing::Chevron);
+        scope.value = Some("Paneflow Dark".to_string());
+        let rows = vec![
+            shortcut,
+            scope,
+            row(
+                Source::Command(toggle_command()),
+                "Word wrap",
+                Trailing::Check,
+            ),
+            row(
+                Source::Command(toggle_command()),
+                "Line numbers",
+                Trailing::None,
+            ),
+            row(Source::Value(0), "Light", Trailing::None),
+            row(Source::Value(1), "Dark", Trailing::Check),
+            row(Source::LuaAction(0), "Deploy", Trailing::None),
+        ];
+        let nodes = options(&rows, 1);
+        for (idx, (row, node)) in rows.iter().zip(&nodes).enumerate() {
+            let label = row.label.as_str();
+            assert_eq!(node.role(), Role::ListBoxOption, "{label}");
+            assert_eq!(node.label(), Some(label));
+            assert_eq!(node.is_selected(), Some(idx == 1), "{label}");
+            assert_eq!(node.position_in_set(), Some(idx + 1), "{label}");
+            assert_eq!(node.size_of_set(), Some(rows.len()), "{label}");
+            assert!(node.supports_action(Action::Click), "{label}");
+        }
+        assert_eq!(nodes[0].keyboard_shortcut(), Some("⌘D"));
+        assert_eq!(nodes[1].description(), Some("Paneflow Dark"));
+        let checked: Vec<Option<Toggled>> = nodes.iter().map(|node| node.toggled()).collect();
+        assert_eq!(
+            checked,
+            [
+                None,
+                None,
+                Some(Toggled::True),
+                Some(Toggled::False),
+                Some(Toggled::False),
+                Some(Toggled::True),
+                None,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_filtered_palette_numbers_its_options_among_the_rows_it_keeps() {
+        let kept = vec![
+            row(
+                Source::Command(action_command()),
+                "Close pane",
+                Trailing::None,
+            ),
+            row(Source::LuaAction(2), "Close all", Trailing::None),
+        ];
+        let nodes = options(&kept, 0);
+        let exposed: Vec<_> = nodes
+            .iter()
+            .map(|node| {
+                (
+                    node.label(),
+                    node.position_in_set(),
+                    node.size_of_set(),
+                    node.is_selected(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            exposed,
+            [
+                (Some("Close pane"), Some(1), Some(2), Some(true)),
+                (Some("Close all"), Some(2), Some(2), Some(false)),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_palette_lists_its_options_in_a_named_list_box_and_says_when_nothing_matches() {
+        let list = exposed(&quick_pick::list_box("command-palette-options", "Commands"));
+        assert_eq!(list.role(), Role::ListBox);
+        assert_eq!(list.label(), Some("Commands"));
+        let empty = exposed(&quick_pick::empty_notice(
+            "command-palette-empty",
+            PALETTE_EMPTY,
+            crate::theme::ui_colors(),
+        ));
+        assert_eq!(empty.role(), Role::Label);
+        assert_eq!(empty.label(), Some(PALETTE_EMPTY));
+        assert!(!PALETTE_LABEL.is_empty());
     }
 }

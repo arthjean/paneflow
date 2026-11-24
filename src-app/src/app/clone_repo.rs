@@ -31,6 +31,7 @@ const URL_PLACEHOLDER: &str = "Provide repository URL or pick a repository sourc
 const GITHUB_PLACEHOLDER: &str = "Repository name (type to search)";
 const GITHUB_SOURCE_LABEL: &str = "Clone from GitHub";
 const GITHUB_SOURCE_GROUP: &str = "remote sources";
+const CLONE_LIST_LABEL: &str = "Repositories";
 const GITHUB_CLI_HINT: &str =
     "Install the GitHub CLI and run gh auth login to list your repositories";
 const CLONE_PHASES: [(&str, f32, f32); 6] = [
@@ -657,6 +658,7 @@ impl PaneFlowApp {
         idx: usize,
         row: &CloneRow,
         selected: bool,
+        count: usize,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -668,59 +670,63 @@ impl PaneFlowApp {
         let colors = quick_pick::row_colors(selected, ui);
         let label_color = colors.label;
         let muted_color = colors.muted;
-        select_item_shaped(
+        let option = quick_pick::PickOption::new(label.clone(), idx, count)
+            .selected(selected)
+            .description(trailing);
+        let element = select_item_shaped(
             SharedString::from(format!("clone-repo-row-{idx}")),
             selected,
             ui,
             colors.fill,
             ROW_RADIUS,
-        )
-        .h(px(ROW_HEIGHT))
-        .px(px(ROW_TEXT_INSET))
-        .gap(px(ROW_GAP))
-        .text_size(px(LABEL_SIZE))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
-            this.clone_repo_activate(idx, window, cx);
-            cx.stop_propagation();
-        }))
-        .child(
-            div()
-                .relative()
-                .flex_1()
-                .min_w_0()
-                .flex()
-                .items_center()
-                .gap(px(ICON_GAP))
-                .child(
-                    svg()
-                        .flex_none()
-                        .size(px(ICON_SIZE))
-                        .path(GITHUB_ICON)
-                        .text_color(with_alpha(label_color, 0.8)),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .overflow_x_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis()
-                        .text_color(label_color)
-                        .child(label),
-                ),
-        )
-        .when_some(trailing, |row, group| {
-            row.child(
+        );
+        quick_pick::expose_option(element, option)
+            .h(px(ROW_HEIGHT))
+            .px(px(ROW_TEXT_INSET))
+            .gap(px(ROW_GAP))
+            .text_size(px(LABEL_SIZE))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.clone_repo_activate(idx, window, cx);
+                cx.stop_propagation();
+            }))
+            .child(
                 div()
                     .relative()
-                    .flex_none()
-                    .text_size(px(TRAILING_SIZE))
-                    .text_color(muted_color)
-                    .child(group),
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .items_center()
+                    .gap(px(ICON_GAP))
+                    .child(
+                        svg()
+                            .flex_none()
+                            .size(px(ICON_SIZE))
+                            .path(GITHUB_ICON)
+                            .text_color(with_alpha(label_color, 0.8)),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_x_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
+                            .text_color(label_color)
+                            .child(label),
+                    ),
             )
-        })
-        .into_any_element()
+            .when_some(trailing, |row, group| {
+                row.child(
+                    div()
+                        .relative()
+                        .flex_none()
+                        .text_size(px(TRAILING_SIZE))
+                        .text_color(muted_color)
+                        .child(group),
+                )
+            })
+            .into_any_element()
     }
 
     fn render_clone_field(
@@ -779,6 +785,8 @@ impl PaneFlowApp {
 
         let mut list = div()
             .id("clone-repo-list")
+            .role(gpui::Role::ListBox)
+            .aria_label(CLONE_LIST_LABEL)
             .flex()
             .flex_col()
             .gap(px(ROW_SPACING))
@@ -787,6 +795,9 @@ impl PaneFlowApp {
 
         let status_row = |text: String, color: gpui::Hsla| {
             div()
+                .id("clone-repo-status")
+                .role(gpui::Role::Label)
+                .aria_label(text.clone())
                 .min_h(px(ROW_HEIGHT))
                 .px(px(ROW_TEXT_INSET))
                 .py(px(6.))
@@ -807,8 +818,9 @@ impl PaneFlowApp {
         } else if rows.is_empty() {
             list = list.child(status_row("No matching repository".to_string(), ui.muted));
         } else {
+            let count = rows.len();
             for (idx, row) in rows.iter().enumerate() {
-                list = list.child(self.render_clone_row(idx, row, idx == selected, ui, cx));
+                list = list.child(self.render_clone_row(idx, row, idx == selected, count, ui, cx));
             }
         }
 

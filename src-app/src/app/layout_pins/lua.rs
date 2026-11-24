@@ -122,6 +122,20 @@ fn pin_init_lua_actions_join_the_palette_and_run_from_it(cx: &mut TestAppContext
     let built_in = entries(&app, cx);
     open_palette(&app, cx, "split");
     let built_in_split = entries(&app, cx);
+    let options = cx.update(|_, cx| app.read(cx).command_palette_exposed_options(cx));
+    assert_eq!(options.len(), built_in_split.len());
+    assert!(!options.is_empty());
+    for (idx, (node, (label, _))) in options.iter().zip(&built_in_split).enumerate() {
+        assert_eq!(node.role(), gpui::accesskit::Role::ListBoxOption, "{label}");
+        assert_eq!(node.label(), Some(label.as_str()));
+        assert_eq!(node.position_in_set(), Some(idx + 1), "{label}");
+        assert_eq!(node.size_of_set(), Some(built_in_split.len()), "{label}");
+        assert_eq!(node.is_selected(), Some(idx == 0), "{label}");
+        assert!(
+            node.supports_action(gpui::accesskit::Action::Click),
+            "{label}"
+        );
+    }
     close_palette(&app, cx);
 
     let worker = paneflow_serve::open(&home).expect("a worker in the isolated home");

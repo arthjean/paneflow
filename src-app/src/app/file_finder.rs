@@ -31,6 +31,7 @@ const FINDER_TOP_MARGIN: f32 = 96.;
 const FINDER_CHROME: f32 = 64.;
 const FINDER_BOTTOM_GAP: f32 = 16.;
 const NO_MATCHES: &str = "No matching files.";
+const FINDER_LIST_LABEL: &str = "Files";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct OpenRecord {
@@ -381,10 +382,11 @@ impl PaneFlowApp {
         &self,
         index: usize,
         hit: &FinderHit,
-        selected: bool,
+        option: quick_pick::PickOption,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let selected = option.selected;
         let colors = quick_pick::row_colors(selected, ui);
         let name = hit
             .path
@@ -402,43 +404,44 @@ impl PaneFlowApp {
                 .text_color(colors.muted)
                 .into_any_element()
         };
-        select_item_shaped(
+        let row = select_item_shaped(
             SharedString::from(format!("file-finder-row-{index}")),
             selected,
             ui,
             colors.fill,
             ROW_RADIUS,
-        )
-        .h(px(ROW_HEIGHT))
-        .px(px(ROW_TEXT_INSET))
-        .gap(px(ROW_GAP))
-        .text_size(px(LABEL_SIZE))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
-            this.activate_file_finder_hit(index, window, cx);
-            cx.stop_propagation();
-        }))
-        .child(
-            div()
-                .relative()
-                .flex_1()
-                .min_w_0()
-                .flex()
-                .items_center()
-                .gap(px(ICON_GAP))
-                .child(glyph)
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .overflow_x_hidden()
-                        .whitespace_nowrap()
-                        .text_ellipsis_start()
-                        .text_color(colors.label)
-                        .child(highlighted_label(&hit.label, &hit.highlights)),
-                ),
-        )
-        .into_any_element()
+        );
+        quick_pick::expose_option(row, option)
+            .h(px(ROW_HEIGHT))
+            .px(px(ROW_TEXT_INSET))
+            .gap(px(ROW_GAP))
+            .text_size(px(LABEL_SIZE))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.activate_file_finder_hit(index, window, cx);
+                cx.stop_propagation();
+            }))
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .items_center()
+                    .gap(px(ICON_GAP))
+                    .child(glyph)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_x_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis_start()
+                            .text_color(colors.label)
+                            .child(highlighted_label(&hit.label, &hit.highlights)),
+                    ),
+            )
+            .into_any_element()
     }
 
     pub(crate) fn render_file_finder(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
@@ -492,49 +495,53 @@ impl PaneFlowApp {
             .flex_col()
             .when(!hits.is_empty(), |list| {
                 let rows = hits.clone();
+                let count = rows.len();
                 list.child(
-                    uniform_list(
-                        "file-finder-list",
-                        rows.len(),
-                        cx.processor(move |this, range: Range<usize>, _, cx| {
-                            range
-                                .filter_map(|index| {
-                                    let hit = rows.get(index)?;
-                                    Some(
-                                        div().w_full().flex().flex_col().pb(px(ROW_SPACING)).child(
-                                            with_rounded_shape(|| {
-                                                this.render_file_finder_row(
-                                                    index,
-                                                    hit,
-                                                    index == selected,
-                                                    ui,
-                                                    cx,
-                                                )
-                                            }),
-                                        ),
-                                    )
-                                })
-                                .collect::<Vec<_>>()
-                        }),
-                    )
-                    .w_full()
-                    .h(px(finder_list_height(
-                        hits.len(),
-                        f32::from(window.viewport_size().height),
-                    )))
-                    .track_scroll(&state.scroll),
+                    quick_pick::list_box("file-finder-options", FINDER_LIST_LABEL).child(
+                        uniform_list(
+                            "file-finder-list",
+                            rows.len(),
+                            cx.processor(move |this, range: Range<usize>, _, cx| {
+                                range
+                                    .filter_map(|index| {
+                                        let hit = rows.get(index)?;
+                                        Some(
+                                            div()
+                                                .w_full()
+                                                .flex()
+                                                .flex_col()
+                                                .pb(px(ROW_SPACING))
+                                                .child(with_rounded_shape(|| {
+                                                    this.render_file_finder_row(
+                                                        index,
+                                                        hit,
+                                                        quick_pick::PickOption::new(
+                                                            hit.label.clone(),
+                                                            index,
+                                                            count,
+                                                        )
+                                                        .selected(index == selected),
+                                                        ui,
+                                                        cx,
+                                                    )
+                                                })),
+                                        )
+                                    })
+                                    .collect::<Vec<_>>()
+                            }),
+                        )
+                        .w_full()
+                        .h(px(finder_list_height(
+                            hits.len(),
+                            f32::from(window.viewport_size().height),
+                        )))
+                        .track_scroll(&state.scroll),
+                    ),
                 )
             })
-            .children(status.map(|status| {
-                div()
-                    .h(px(ROW_HEIGHT))
-                    .px(px(ROW_TEXT_INSET))
-                    .flex()
-                    .items_center()
-                    .text_size(px(LABEL_SIZE))
-                    .text_color(ui.muted)
-                    .child(status)
-            }))
+            .children(
+                status.map(|status| quick_pick::empty_notice("file-finder-status", status, ui)),
+            )
             .into_any_element();
 
         let panel = div()
