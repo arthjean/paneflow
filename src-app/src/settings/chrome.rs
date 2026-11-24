@@ -658,6 +658,9 @@ impl PaneFlowApp {
             self.seed_shortcut_search(cx);
             self.rebuild_shortcut_rows(cx);
         }
+        if section == SettingsSection::Worktrees {
+            self.refresh_worktree_listings(cx);
+        }
         if section == SettingsSection::McpServers {
             self.refresh_mcp_status(cx);
         }

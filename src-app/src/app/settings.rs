@@ -54,6 +54,9 @@ impl PaneFlowApp {
         if section == SettingsSection::Usage {
             self.open_usage_page(cx);
         }
+        if section == SettingsSection::Worktrees {
+            self.refresh_worktree_listings(cx);
+        }
         self.settings_focus.focus(window, cx);
         cx.notify();
     }

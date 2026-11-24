@@ -209,6 +209,22 @@ impl PaneFlowApp {
         .detach();
     }
 
+    pub(crate) fn refresh_worktree_listings(&mut self, cx: &mut Context<Self>) {
+        let mut seen = std::collections::HashSet::new();
+        let targets: Vec<usize> = self
+            .workspaces
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, ws)| {
+                let root = ws.repo_root.clone()?;
+                seen.insert(root).then_some(idx)
+            })
+            .collect();
+        for ws_idx in targets {
+            self.spawn_worktree_listing(ws_idx, cx);
+        }
+    }
+
     pub(crate) fn workspace_branches(&self, ws_idx: usize) -> &[String] {
         self.workspaces
             .get(ws_idx)

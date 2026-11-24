@@ -7,7 +7,7 @@ use super::Rig;
 use crate::PaneFlowApp;
 use crate::workspace::worktree::{ManagedWorktree, TeardownPolicy};
 
-pub(super) const PINS: usize = 3;
+pub(super) const PINS: usize = 4;
 
 const PATIENCE: Duration = Duration::from_secs(20);
 
@@ -138,6 +138,38 @@ fn pin_a_worktree_kept_when_its_workspace_closes_stays_listed_and_removable(
     });
     wait_until(&mut rig, "the listed worktree is removed by hand", |rig| {
         !kept.exists() && listed(rig).is_empty()
+    });
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_opening_the_worktrees_settings_lists_the_snapshots_already_on_disk(cx: &mut TestAppContext) {
+    let mut rig = Rig::mount(cx);
+    let repo = Repo::new();
+    let dirty = repo.checkout("feat/dirty");
+    std::fs::write(dirty.join("wip.txt"), "unsaved work\n").expect("a dirty file");
+    paneflow_git::worktree::snapshot_and_remove(&repo.root, &dirty)
+        .expect("the worktree is removed")
+        .expect("its changes are snapshotted");
+    let alpha = rig.workspace("alpha");
+    let root = repo.root.clone();
+    rig.act(move |app, _, _| {
+        app.workspaces[alpha].cwd = root.display().to_string();
+        app.workspaces[alpha].repo_root = Some(root);
+    });
+    assert!(
+        rig.cx
+            .update(|_, cx| rig.app.read(cx).worktree_snapshots().is_empty()),
+        "nothing listed the repository yet"
+    );
+
+    rig.act(|app, window, cx| {
+        app.open_settings_at(crate::SettingsSection::Worktrees, window, cx);
+    });
+    wait_until(&mut rig, "the snapshot is listed", |rig| {
+        let app = rig.app.clone();
+        rig.cx
+            .update(|_, cx| app.read(cx).worktree_snapshots().len() == 1)
     });
 }
 
