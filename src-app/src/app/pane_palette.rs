@@ -149,6 +149,7 @@ pub(crate) struct PanePaletteState {
     pub(crate) branch_picker_open: bool,
     pub(crate) new_branch: Option<NewBranchDraft>,
     pub(crate) pending_launch: Option<usize>,
+    pub(crate) rebound: bool,
 }
 
 impl PaneFlowApp {
@@ -220,6 +221,7 @@ impl PaneFlowApp {
             branch_picker_open: false,
             new_branch: None,
             pending_launch: None,
+            rebound: false,
         });
         let tab_idx = self.workspaces[ws_idx].active_tab_idx();
         self.focus_workspace_tab(ws_idx, tab_idx, window, cx);
@@ -259,6 +261,7 @@ impl PaneFlowApp {
             branch_picker_open: false,
             new_branch: None,
             pending_launch: None,
+            rebound: false,
         });
         self.pending_palette_focus = true;
         cx.notify();
@@ -300,6 +303,9 @@ impl PaneFlowApp {
         let ws_id = target.read(cx).workspace_id;
         self.commit_rename(cx);
         self.dismiss_transient_surfaces();
+        if let Some(ws_idx) = self.workspaces.iter().position(|ws| ws.id == ws_id) {
+            self.spawn_worktree_listing(ws_idx, cx);
+        }
         self.pane_palette = Some(PanePaletteState {
             ws_id,
             placement: PalettePlacement::Split {
@@ -313,6 +319,7 @@ impl PaneFlowApp {
             branch_picker_open: false,
             new_branch: None,
             pending_launch: None,
+            rebound: false,
         });
         self.pending_palette_focus = true;
         cx.notify();
@@ -437,9 +444,23 @@ impl PaneFlowApp {
                 self.tmux_teams.issue(),
             );
         }
+        let rebound_cwd = self
+            .pane_palette
+            .as_ref()
+            .filter(|palette| palette.rebound)
+            .and_then(|palette| self.pane_palette_tab(palette))
+            .and_then(|(ws_idx, tab_idx)| {
+                let ws = self.workspaces.get(ws_idx)?;
+                ws.tabs()
+                    .get(tab_idx)?
+                    .worktree
+                    .clone()
+                    .or_else(|| (!ws.cwd.is_empty()).then(|| std::path::PathBuf::from(&ws.cwd)))
+            });
         let launch = SurfaceLaunch {
             command: preset.command(&self.cached_config),
             env,
+            cwd: rebound_cwd,
         };
         let profile = preset.profile();
         let title = preset.label.clone();
@@ -635,15 +656,16 @@ impl PaneFlowApp {
         launch_preset: Option<usize>,
         cx: &mut Context<Self>,
     ) {
+        if !self.pane_palette_owns_tab(tab_id) {
+            return;
+        }
         let Some(palette) = self.pane_palette.as_mut() else {
             return;
         };
-        if !matches!(palette.placement, PalettePlacement::Tab { tab_id: id } if id == tab_id) {
-            return;
-        }
         palette.new_branch = None;
         palette.error = None;
         palette.pending_launch = launch_preset;
+        palette.rebound = true;
         cx.notify();
     }
 
@@ -653,10 +675,7 @@ impl PaneFlowApp {
         message: String,
         cx: &mut Context<Self>,
     ) {
-        let owns_tab = self.pane_palette.as_ref().is_some_and(|palette| {
-            matches!(palette.placement, PalettePlacement::Tab { tab_id: id } if id == tab_id)
-        });
-        if owns_tab {
+        if self.pane_palette_owns_tab(tab_id) {
             self.pane_palette_set_error(message, cx);
         } else {
             self.show_toast(message, cx);
@@ -807,25 +826,34 @@ impl PaneFlowApp {
     }
 
     fn pane_palette_pending_checkout(&self) -> Option<String> {
-        let palette = self.pane_palette.as_ref()?;
-        let ws_idx = self.pane_palette_ws_idx()?;
-        let ws = &self.workspaces[ws_idx];
-        let tab_id = match &palette.placement {
-            PalettePlacement::Tab { tab_id } => *tab_id,
-            PalettePlacement::Split { target, .. } => ws.tab_for_pane(&target.upgrade()?)?.id,
-        };
+        let tab_id = self.pane_palette_tab_id(self.pane_palette.as_ref()?)?;
         self.branch_checkout_pending.get(&tab_id).cloned()
     }
 
+    fn pane_palette_tab_id(&self, palette: &PanePaletteState) -> Option<u64> {
+        match &palette.placement {
+            PalettePlacement::Tab { tab_id } => Some(*tab_id),
+            PalettePlacement::Split { target, .. } => {
+                let ws = &self.workspaces[self.pane_palette_ws_idx()?];
+                Some(ws.tab_for_pane(&target.upgrade()?)?.id)
+            }
+        }
+    }
+
+    fn pane_palette_owns_tab(&self, tab_id: u64) -> bool {
+        self.pane_palette
+            .as_ref()
+            .and_then(|palette| self.pane_palette_tab_id(palette))
+            == Some(tab_id)
+    }
+
     fn pane_palette_tab(&self, palette: &PanePaletteState) -> Option<(usize, usize)> {
-        let PalettePlacement::Tab { tab_id } = &palette.placement else {
-            return None;
-        };
+        let tab_id = self.pane_palette_tab_id(palette)?;
         let ws_idx = self.pane_palette_ws_idx()?;
         let tab_idx = self.workspaces[ws_idx]
             .tabs()
             .iter()
-            .position(|tab| tab.id == *tab_id)?;
+            .position(|tab| tab.id == tab_id)?;
         Some((ws_idx, tab_idx))
     }
 
@@ -1232,6 +1260,7 @@ impl PaneFlowApp {
                 }
                 if let Some(palette) = this.pane_palette.as_mut() {
                     palette.branch_picker_open = false;
+                    palette.rebound = true;
                 }
                 cx.notify();
             }))

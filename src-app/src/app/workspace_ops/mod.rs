@@ -33,6 +33,7 @@ pub(crate) enum WorkspaceFocusTarget {
 pub(crate) struct SurfaceLaunch {
     pub(crate) command: Option<String>,
     pub(crate) env: Option<std::collections::HashMap<String, String>>,
+    pub(crate) cwd: Option<std::path::PathBuf>,
 }
 
 impl PaneFlowApp {

@@ -396,6 +396,7 @@ impl PaneFlowApp {
             SurfaceLaunch {
                 command: Some(command),
                 env: launch_env,
+                cwd: None,
             },
             window,
             cx,

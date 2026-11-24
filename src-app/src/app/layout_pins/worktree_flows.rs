@@ -8,7 +8,7 @@ use super::Rig;
 use crate::PaneFlowApp;
 use crate::workspace::worktree::{ManagedWorktree, TeardownPolicy};
 
-pub(super) const PINS: usize = 2;
+pub(super) const PINS: usize = 3;
 
 const OUTCOME_WAIT: Duration = Duration::from_secs(60);
 const PUMP_INTERVAL: Duration = Duration::from_millis(5);
@@ -35,6 +35,53 @@ fn managed(repo: &Path, branch: &str, age: Duration) -> ManagedWorktree {
         branch: branch.to_string(),
         teardown: TeardownPolicy::Auto,
     }
+}
+
+fn project(rig: &mut Rig<'_>, repo: &Path) -> usize {
+    let ws = rig.workspace("alpha");
+    let repo = repo.to_path_buf();
+    rig.act(move |app, _, _| {
+        let workspace = &mut app.workspaces[ws];
+        workspace.cwd = repo.display().to_string();
+        workspace.repo_root = Some(repo.clone());
+        workspace.worktree_root = repo;
+    });
+    ws
+}
+
+fn launch_from_palette(rig: &mut Rig<'_>, branch: &str) {
+    let branch = branch.to_string();
+    rig.act(move |app, window, cx| {
+        app.pane_palette_open_new_branch(window, cx);
+        let draft = app
+            .pane_palette
+            .as_ref()
+            .and_then(|palette| palette.new_branch.as_ref())
+            .map(|draft| draft.name.clone())
+            .expect("the New branch form is open");
+        draft.update(cx, |input, cx| input.set_value(branch, cx));
+        app.pane_palette_launch(0, window, cx);
+    });
+    wait_for(rig, "the branch checkout", |app| {
+        app.branch_checkout_pending.is_empty()
+            && app
+                .pane_palette
+                .as_ref()
+                .is_none_or(|palette| palette.pending_launch.is_some() || palette.error.is_some())
+    });
+    let error = rig.act(|app, _, _| app.pane_palette.as_ref().and_then(|p| p.error.clone()));
+    assert_eq!(error, None);
+    rig.act(|app, window, cx| {
+        if let Some(preset) = app.take_pane_palette_pending_launch() {
+            app.pane_palette_launch(preset, window, cx);
+        }
+    });
+}
+
+fn current_branch(worktree: &Path) -> String {
+    fixture::run(worktree, &["branch", "--show-current"])
+        .trim()
+        .to_string()
 }
 
 fn wait_for(rig: &mut Rig<'_>, what: &str, done: impl Fn(&PaneFlowApp) -> bool) {
@@ -118,4 +165,35 @@ fn pin_a_worktree_kept_when_the_last_workspace_closes_stays_listed_and_removable
         app.managed_worktrees_snapshot().is_empty() && !path.exists()
     });
     wait_for(&mut rig, "the ledger to forget it", |_| !ledger.exists());
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_a_split_palette_new_branch_binds_the_tab_and_opens_the_pane_in_its_worktree(
+    cx: &mut TestAppContext,
+) {
+    let root = tempfile::tempdir().expect("a repository root");
+    let repo = committed_repo(root.path());
+    let mut rig = Rig::mount(cx);
+    let ws = project(&mut rig, &repo);
+    let anchor = rig.pane("a");
+    rig.act(|app, _, cx| {
+        app.open_split_palette(anchor, crate::layout::SplitDirection::Vertical, cx)
+    });
+
+    launch_from_palette(&mut rig, "feat/split");
+
+    let worktree = rig
+        .act(|app, _, _| app.workspaces[ws].tabs()[0].worktree.clone())
+        .expect("the split's tab is bound to the new worktree");
+    assert_eq!(current_branch(&worktree), "feat/split");
+    assert_eq!(rig.tabs(ws).len(), 1, "the split stays in its tab");
+    assert_eq!(rig.shape(ws, 0), "V(0.500 a, 0.500 b)");
+    let opened = rig.terminal("b");
+    assert!(
+        rig.cx
+            .update(|_, cx| opened.read(cx).launched_under(&worktree)),
+        "the new pane starts in {}",
+        worktree.display()
+    );
 }

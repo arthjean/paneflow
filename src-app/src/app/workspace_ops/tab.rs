@@ -57,10 +57,12 @@ impl PaneFlowApp {
         let ws_id = ws.id;
         let fills_active_tab =
             ws.active_tab().root.is_none() && ws.active_tab().saved_layout.is_none();
-        let cwd = fills_active_tab
-            .then(|| ws.active_tab().worktree.clone())
-            .flatten()
-            .or_else(|| (!ws.cwd.is_empty()).then(|| std::path::PathBuf::from(&ws.cwd)));
+        let cwd = launch.cwd.clone().or_else(|| {
+            fills_active_tab
+                .then(|| ws.active_tab().worktree.clone())
+                .flatten()
+                .or_else(|| (!ws.cwd.is_empty()).then(|| std::path::PathBuf::from(&ws.cwd)))
+        });
         let title = crate::sidebar_title::clean_sidebar_title(&title).unwrap_or_default();
         let terminal = cx.new(|cx| {
             TerminalView::with_cwd_env_and_profile(ws_id, cwd, None, launch.env, profile, cx)

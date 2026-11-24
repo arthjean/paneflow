@@ -70,10 +70,12 @@ impl PaneFlowApp {
         let Some(target_id) = self.layout.pane_id(target) else {
             return Err("That pane no longer exists".to_string());
         };
-        let source_cwd = target
-            .read(cx)
-            .active_terminal_opt()
-            .and_then(|tv| tv.read(cx).terminal.cwd_now());
+        let source_cwd = launch.cwd.or_else(|| {
+            target
+                .read(cx)
+                .active_terminal_opt()
+                .and_then(|tv| tv.read(cx).terminal.cwd_now())
+        });
         let spawn = self.new_terminal_cwd(source_cwd);
         let env = launch.env;
         let pane = self.layout.reserve_pane(
