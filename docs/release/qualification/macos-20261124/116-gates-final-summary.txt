@@ -1,0 +1,7 @@
+HEAD ac8fe50692505619fd3a4d9921914193a4b689de
+=== exit=0 (3s): cargo fmt --check
+=== exit=0 (23s): cargo clippy --workspace --all-targets --locked -- -D warnings
+     Summary [ 520.075s] 6011 tests run: 6011 passed (2 slow), 131 skipped
+=== exit=0 (651s): cargo nextest run --workspace --locked --profile ci
+=== exit=0 (1s): bash scripts/check-test-wallclock.sh
+=== exit=0 (0s): bash scripts/check-helper-sizes.sh target/embed-build/aarch64-apple-darwin/release-min
