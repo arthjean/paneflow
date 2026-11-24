@@ -49,10 +49,10 @@
     {
       "id": "EP-006",
       "title": "Windows tests and validation",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 3,
-      "stories_done": 0
+      "stories_done": 3
     },
     {
       "id": "EP-007",
@@ -410,15 +410,14 @@
       "id": "US-027",
       "title": "Run a Windows pane with a restricted token",
       "epic": "EP-006",
-      "status": "BLOCKED",
+      "status": "DONE",
       "priority": "P2",
       "blocked_by": [
         "US-022"
       ],
       "started_at": "2026-11-23T15:23:24+01:00",
-      "completed_at": null,
-      "reviewed_at": "2026-11-23T16:10:41+01:00",
-      "blocked_reason": "restricted-token wrap written and reviewed by inspection only; needs a Windows run (US-033); restricting SIDs are the per-pane SID and a shared sandbox SID granted on cwd, %TEMP% and session data, not the SIDs the cwd grants"
+      "completed_at": "2026-11-24T11:45:57+01:00",
+      "reviewed_at": "2026-11-24T11:45:57+01:00"
     },
     {
       "id": "US-028",
@@ -452,16 +451,16 @@
       "id": "US-030",
       "title": "Validate layer 1 on Windows hardware",
       "epic": "EP-006",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-007",
         "US-013",
         "US-014"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-24T10:31:09+01:00",
+      "completed_at": "2026-11-24T11:45:57+01:00",
+      "reviewed_at": "2026-11-24T11:45:57+01:00"
     },
     {
       "id": "US-031",
@@ -493,14 +492,14 @@
       "id": "US-033",
       "title": "Validate the Windows sandbox on hardware",
       "epic": "EP-006",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "blocked_by": [
         "US-027"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-24T10:31:09+01:00",
+      "completed_at": "2026-11-24T11:45:57+01:00",
+      "reviewed_at": "2026-11-24T11:45:57+01:00"
     }
   ]
 }
