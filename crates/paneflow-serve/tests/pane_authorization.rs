@@ -108,6 +108,7 @@ fn pane_client() {
         _ => panic!("unknown pane client mode {mode}"),
     }
     println!("pane-client done");
+    let _ = std::io::stdin().read_line(&mut String::new());
 }
 
 struct Instance {
@@ -276,10 +277,10 @@ fn a_pane_whose_op_spawns_a_command_is_refused_and_the_layout_is_unchanged() {
     assert_eq!(after["view"], before["view"]);
 }
 
-const SPAWNING_ACTION: &str = "paneflow.action{ name = 'spawn', title = 'Spawn', run = function()\n\
+const SPAWNING_ACTION: &str = "paneflow.action{ name = 'spawn', title = 'Spawn', agents = true, run = function()\n\
        local opened, message = paneflow.workspace.up{ panes = { { command = 'echo spawned' } } }\n\
        return { opened = opened ~= nil, message = message } end }\n\
-     paneflow.action{ name = 'classify', title = 'Classify', run = function()\n\
+     paneflow.action{ name = 'classify', title = 'Classify', agents = true, run = function()\n\
        local answer, message = paneflow.call('peer.classify', { pid = 1, started_at = 1 })\n\
        return { answered = answer ~= nil, message = message } end }";
 

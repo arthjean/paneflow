@@ -12,6 +12,14 @@ mod common;
 const REPLY_WAIT: Duration = Duration::from_secs(120);
 const LOCAL_FILE: &str = "local.settings";
 
+static WORKTREES_ROOT_IS_PROCESS_WIDE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn one_worker_plans_worktrees_at_a_time() -> std::sync::MutexGuard<'static, ()> {
+    WORKTREES_ROOT_IS_PROCESS_WIDE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 fn call(home: &Path, method: &str, params: Value) -> Result<Value, String> {
     HostControl::connect(
         &paneflow_home::serve_endpoint_path(home),
@@ -65,6 +73,7 @@ fn branches(repo: &Path) -> String {
 
 #[test]
 fn workspace_up_creates_the_worktree_starts_the_pane_in_it_and_records_it() {
+    let _serial = one_worker_plans_worktrees_at_a_time();
     let home = tempfile::tempdir().unwrap();
     let repo = repo_with_a_local_file(home.path());
     let worker = common::open_starting_terminals(home.path());
@@ -139,6 +148,7 @@ fn workspace_up_creates_the_worktree_starts_the_pane_in_it_and_records_it() {
 
 #[test]
 fn a_failing_worktree_rolls_back_the_ones_created_before_it_and_changes_no_layout() {
+    let _serial = one_worker_plans_worktrees_at_a_time();
     let home = tempfile::tempdir().unwrap();
     let repo = repo_with_a_local_file(home.path());
     let worker = common::open_starting_terminals(home.path());
@@ -170,6 +180,7 @@ fn a_failing_worktree_rolls_back_the_ones_created_before_it_and_changes_no_layou
 
 #[test]
 fn a_worktree_setup_needs_orchestration_and_nothing_is_created_without_it() {
+    let _serial = one_worker_plans_worktrees_at_a_time();
     if std::env::var_os("PANEFLOW_IPC_ORCHESTRATION").is_some()
         || std::env::var_os("PANEFLOW_IPC_SCRIPTING").is_some()
     {
@@ -206,6 +217,7 @@ fn a_worktree_setup_needs_orchestration_and_nothing_is_created_without_it() {
 
 #[test]
 fn a_split_with_a_worktree_opens_a_tab_for_it_beside_the_anchor() {
+    let _serial = one_worker_plans_worktrees_at_a_time();
     let home = tempfile::tempdir().unwrap();
     let repo = repo_with_a_local_file(home.path());
     let worker = common::open_starting_terminals(home.path());
@@ -250,6 +262,7 @@ fn worktree_paths(repo: &Path) -> Vec<PathBuf> {
 
 #[test]
 fn a_host_refusal_after_the_layout_took_the_worktree_keeps_the_worktree_it_points_at() {
+    let _serial = one_worker_plans_worktrees_at_a_time();
     let home = tempfile::tempdir().unwrap();
     let repo = repo_with_a_local_file(home.path());
     let worker = common::open_refusing_terminals(home.path());
