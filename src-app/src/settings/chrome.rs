@@ -1,6 +1,7 @@
 use gpui::{
-    AnyElement, ClickEvent, Context, FontWeight, InteractiveElement, IntoElement, KeyDownEvent,
-    MouseButton, ParentElement, SharedString, Styled, Window, div, prelude::*, px, svg,
+    AnyElement, App, ClickEvent, Context, Div, FontWeight, Hsla, InteractiveElement, IntoElement,
+    KeyDownEvent, MouseButton, ParentElement, Role, SharedString, Stateful, Styled, Window, div,
+    prelude::*, px, svg,
 };
 
 use crate::keybindings::ShortcutEntry;
@@ -251,6 +252,148 @@ pub(crate) fn section_title(section: SettingsSection) -> &'static str {
     }
 }
 
+const SETTINGS_NAV_LIST_LABEL: &str = "Settings pages";
+const SETTINGS_NAV_EMPTY: &str = "No matching settings";
+
+struct NavTab {
+    item: &'static NavItem,
+    selected: bool,
+    position: usize,
+    count: usize,
+}
+
+struct NavTabGroup {
+    label: &'static str,
+    tabs: Vec<NavTab>,
+}
+
+fn visible_nav_tabs(
+    query: &str,
+    shortcuts: &[ShortcutEntry],
+    active: SettingsSection,
+) -> Vec<NavTabGroup> {
+    let matching: Vec<(&'static NavGroup, Vec<&'static NavItem>)> = NAV_GROUPS
+        .iter()
+        .map(|group| {
+            let items = group
+                .items
+                .iter()
+                .filter(|item| nav_item_matches(item, query, shortcuts))
+                .collect::<Vec<_>>();
+            (group, items)
+        })
+        .filter(|(_, items)| !items.is_empty())
+        .collect();
+    let count = matching.iter().map(|(_, items)| items.len()).sum();
+    let mut position = 0;
+    matching
+        .into_iter()
+        .map(|(group, items)| NavTabGroup {
+            label: group.label,
+            tabs: items
+                .into_iter()
+                .map(|item| {
+                    position += 1;
+                    NavTab {
+                        item,
+                        selected: item.section == active,
+                        position,
+                        count,
+                    }
+                })
+                .collect(),
+        })
+        .collect()
+}
+
+fn settings_nav_tab_list() -> Stateful<Div> {
+    div()
+        .id("settings-nav-list")
+        .role(Role::TabList)
+        .aria_label(SETTINGS_NAV_LIST_LABEL)
+        .flex_1()
+        .min_h_0()
+        .min_w_0()
+        .overflow_x_hidden()
+        .overflow_y_scroll()
+        .flex()
+        .flex_col()
+        .gap(px(2.))
+        .pt(px(4.))
+        .pb(px(8.))
+}
+
+fn settings_nav_tab(
+    tab: &NavTab,
+    query: &str,
+    ui: crate::theme::UiColors,
+    row_background: Hsla,
+    on_press: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> Stateful<Div> {
+    let label = tab.item.label;
+    let row = squircle_skin(
+        div()
+            .id(SharedString::from(format!("settings-nav-{label}")))
+            .mx(px(SETTINGS_NAV_ROW_MARGIN_X))
+            .px(px(SETTINGS_NAV_ROW_PADDING_X))
+            .py(px(6.))
+            .min_h(px(32.))
+            .flex_none()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(SETTINGS_NAV_ROW_GAP)),
+        SharedString::from(format!("settings-nav-{label}-group")),
+        crate::app::constants::rail_row_radius(),
+        tab.selected.then_some(row_background),
+        (!tab.selected).then_some(row_background),
+    )
+    .role(Role::Tab)
+    .aria_label(label)
+    .aria_selected(tab.selected)
+    .aria_position_in_set(tab.position)
+    .aria_size_of_set(tab.count)
+    .child(settings_nav_icon(tab.item.icon, ui))
+    .child(
+        div()
+            .flex_1()
+            .min_w_0()
+            .text_size(px(14.))
+            .line_height(px(20.))
+            .text_color(ui.text)
+            .truncate()
+            .child(crate::ui_primitives::highlight_matches(
+                label.to_string(),
+                query,
+            )),
+    );
+    if tab.selected {
+        row
+    } else {
+        row.on_activate(on_press)
+    }
+}
+
+fn settings_nav_empty(ui: crate::theme::UiColors) -> Stateful<Div> {
+    squircle_skin(
+        div()
+            .id("settings-nav-empty")
+            .mx(px(8.))
+            .my(px(8.))
+            .px(px(8.))
+            .py(px(10.)),
+        "settings-nav-empty-group",
+        crate::app::constants::rail_row_radius(),
+        Some(ui.subtle),
+        None,
+    )
+    .role(Role::Label)
+    .aria_label(SETTINGS_NAV_EMPTY)
+    .text_size(px(12.))
+    .text_color(ui.muted)
+    .child(SETTINGS_NAV_EMPTY)
+}
+
 impl PaneFlowApp {
     pub(crate) fn render_settings_nav(
         &self,
@@ -265,30 +408,10 @@ impl PaneFlowApp {
 
         let search = self.render_settings_search(ui, window, cx);
 
-        let mut list = div()
-            .id("settings-nav-list")
-            .flex_1()
-            .min_h_0()
-            .min_w_0()
-            .overflow_x_hidden()
-            .overflow_y_scroll()
-            .flex()
-            .flex_col()
-            .gap(px(2.))
-            .pt(px(4.))
-            .pb(px(8.));
+        let mut list = settings_nav_tab_list();
 
-        let mut any_match = false;
-        for group in NAV_GROUPS {
-            let items: Vec<&NavItem> = group
-                .items
-                .iter()
-                .filter(|it| nav_item_matches(it, &query, &self.effective_shortcuts))
-                .collect();
-            if items.is_empty() {
-                continue;
-            }
-            any_match = true;
+        let groups = visible_nav_tabs(&query, &self.effective_shortcuts, active);
+        for group in &groups {
             list = list.child(
                 div()
                     .mt(px(8.))
@@ -297,70 +420,22 @@ impl PaneFlowApp {
                     .py(px(2.))
                     .child(crate::ui_primitives::section_eyebrow(group.label, ui)),
             );
-            for it in items {
-                let section = it.section;
-                let is_active = section == active;
-                let row = squircle_skin(
-                    div()
-                        .id(SharedString::from(format!("settings-nav-{}", it.label)))
-                        .mx(px(SETTINGS_NAV_ROW_MARGIN_X))
-                        .px(px(SETTINGS_NAV_ROW_PADDING_X))
-                        .py(px(6.))
-                        .min_h(px(32.))
-                        .flex_none()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(SETTINGS_NAV_ROW_GAP)),
-                    SharedString::from(format!("settings-nav-{}-group", it.label)),
-                    crate::app::constants::rail_row_radius(),
-                    is_active.then_some(row_background),
-                    (!is_active).then_some(row_background),
-                )
-                .child(settings_nav_icon(it.icon, ui))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .text_size(px(14.))
-                        .line_height(px(20.))
-                        .text_color(ui.text)
-                        .truncate()
-                        .child(crate::ui_primitives::highlight_matches(
-                            it.label.to_string(),
-                            &query,
-                        )),
-                );
-                let row = if is_active {
-                    row.into_any_element()
-                } else {
-                    row.on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            for tab in &group.tabs {
+                let section = tab.item.section;
+                list = list.child(settings_nav_tab(
+                    tab,
+                    &query,
+                    ui,
+                    row_background,
+                    cx.listener(move |this, _: &ClickEvent, window, cx| {
                         this.select_settings_section(section, window, cx);
-                    }))
-                    .into_any_element()
-                };
-                list = list.child(row);
+                    }),
+                ));
             }
         }
 
-        if !any_match {
-            list = list.child(
-                squircle_skin(
-                    div()
-                        .id("settings-nav-empty")
-                        .mx(px(8.))
-                        .my(px(8.))
-                        .px(px(8.))
-                        .py(px(10.)),
-                    "settings-nav-empty-group",
-                    crate::app::constants::rail_row_radius(),
-                    Some(ui.subtle),
-                    None,
-                )
-                .text_size(px(12.))
-                .text_color(ui.muted)
-                .child("No matching settings"),
-            );
+        if groups.is_empty() {
+            list = list.child(settings_nav_empty(ui));
         }
 
         div()
@@ -688,11 +763,158 @@ impl PaneFlowApp {
 #[cfg(test)]
 mod tests {
     use super::{
-        NAV_GROUPS, SETTINGS_NAV_ICON_SIZE, first_matching_section, nav_section_matches,
-        shortcuts_named_by,
+        NAV_GROUPS, NavTab, NavTabGroup, SETTINGS_NAV_EMPTY, SETTINGS_NAV_ICON_SIZE,
+        SETTINGS_NAV_LIST_LABEL, first_matching_section, nav_section_matches, settings_nav_empty,
+        settings_nav_tab, settings_nav_tab_list, shortcuts_named_by, visible_nav_tabs,
     };
     use crate::SettingsSection;
     use crate::keybindings::{ShortcutEntry, ShortcutGroup};
+    use gpui::{
+        ClickEvent, InteractiveElement, IntoElement, Modifiers, ParentElement, Role, Styled,
+        accesskit::{Action, Node},
+        div, px, size,
+    };
+
+    fn exposed<E: gpui::Element>(element: &E) -> (Role, Node) {
+        let role = element
+            .a11y_role()
+            .expect("the element exposes an accessibility role");
+        let mut node = Node::new(role);
+        element.write_a11y_info(&mut node);
+        (role, node)
+    }
+
+    fn tabs_of(groups: &[NavTabGroup]) -> Vec<&NavTab> {
+        groups.iter().flat_map(|group| &group.tabs).collect()
+    }
+
+    fn exposed_tab(tab: &NavTab) -> (Role, Node) {
+        exposed(&settings_nav_tab(
+            tab,
+            "",
+            crate::theme::ui_colors(),
+            crate::app::constants::sidebar_tab_hover_background(),
+            |_, _, _| {},
+        ))
+    }
+
+    #[test]
+    fn the_settings_nav_is_a_tab_list_named_for_the_settings_pages() {
+        let (role, node) = exposed(&settings_nav_tab_list());
+        assert_eq!(role, Role::TabList);
+        assert_eq!(node.label(), Some(SETTINGS_NAV_LIST_LABEL));
+    }
+
+    #[test]
+    fn every_settings_nav_item_is_a_tab_named_after_its_page_and_selected_when_open() {
+        let open = SettingsSection::Usage;
+        let groups = visible_nav_tabs("", &[], open);
+        let tabs = tabs_of(&groups);
+        let every_item = NAV_GROUPS.iter().map(|group| group.items.len()).sum();
+        assert_eq!(tabs.len(), every_item);
+        for (index, tab) in tabs.iter().enumerate() {
+            let (role, node) = exposed_tab(tab);
+            let label = tab.item.label;
+            let selected = tab.item.section == open;
+            assert_eq!(role, Role::Tab, "{label}");
+            assert_eq!(node.label(), Some(label));
+            assert_eq!(node.is_selected(), Some(selected), "{label}");
+            assert_eq!(node.position_in_set(), Some(index + 1), "{label}");
+            assert_eq!(node.size_of_set(), Some(every_item), "{label}");
+            assert_eq!(
+                node.supports_action(Action::Click),
+                !selected,
+                "{label}: a press opens any page but the one already open"
+            );
+        }
+    }
+
+    #[test]
+    fn a_settings_search_keeps_only_the_matching_tabs_and_numbers_them_among_themselves() {
+        for query in ["usage", "work", "theme", "keyboard"] {
+            let groups = visible_nav_tabs(query, &[], SettingsSection::General);
+            let tabs = tabs_of(&groups);
+            assert!(!tabs.is_empty(), "{query}");
+            assert!(groups.iter().all(|group| !group.tabs.is_empty()), "{query}");
+            for (index, tab) in tabs.iter().enumerate() {
+                let (_, node) = exposed_tab(tab);
+                assert_eq!(node.position_in_set(), Some(index + 1), "{query}");
+                assert_eq!(node.size_of_set(), Some(tabs.len()), "{query}");
+                assert_eq!(
+                    node.is_selected(),
+                    Some(tab.item.section == SettingsSection::General),
+                    "{query}"
+                );
+            }
+        }
+        let usage = visible_nav_tabs("usage", &[], SettingsSection::Usage);
+        assert!(
+            tabs_of(&usage)
+                .iter()
+                .any(|tab| tab.item.section == SettingsSection::Usage && tab.selected)
+        );
+    }
+
+    #[test]
+    fn a_search_that_matches_no_page_says_so_to_assistive_technology() {
+        assert!(visible_nav_tabs("qqqzzz", &[], SettingsSection::General).is_empty());
+        let (role, node) = exposed(&settings_nav_empty(crate::theme::ui_colors()));
+        assert_eq!(role, Role::Label);
+        assert_eq!(node.label(), Some(SETTINGS_NAV_EMPTY));
+    }
+
+    struct NavHarness {
+        open: SettingsSection,
+    }
+
+    impl gpui::Render for NavHarness {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            let ui = crate::theme::ui_colors();
+            let background = crate::app::constants::sidebar_tab_hover_background();
+            let mut list = settings_nav_tab_list();
+            for group in visible_nav_tabs("", &[], self.open) {
+                for tab in &group.tabs {
+                    let section = tab.item.section;
+                    let label = tab.item.label;
+                    list = list.child(div().debug_selector(move || format!("nav-{label}")).child(
+                        settings_nav_tab(
+                            tab,
+                            "",
+                            ui,
+                            background,
+                            cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.open = section;
+                                cx.notify();
+                            }),
+                        ),
+                    ));
+                }
+            }
+            div().size_full().flex().flex_col().child(list)
+        }
+    }
+
+    #[gpui::test]
+    fn pressing_a_settings_nav_tab_opens_its_page(cx: &mut gpui::TestAppContext) {
+        let (view, cx) = cx.add_window_view(|_, _| NavHarness {
+            open: SettingsSection::General,
+        });
+        cx.simulate_resize(size(px(320.), px(900.)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let usage = cx
+            .debug_bounds("nav-Usage")
+            .expect("the Usage tab is painted");
+        cx.simulate_click(usage.center(), Modifiers::default());
+        cx.run_until_parked();
+        assert_eq!(
+            view.read_with(cx, |harness, _| harness.open),
+            SettingsSection::Usage
+        );
+    }
 
     fn shortcut(description: &str, key: &str) -> ShortcutEntry {
         ShortcutEntry {
