@@ -3,7 +3,7 @@
     "file": "tasks/prd-ipc-caller-identity.md",
     "title": "Caller identity, per-pane grants and sandboxed agent panes for Paneflow's local IPC",
     "created_at": "2026-11-21",
-    "status": "IN_PROGRESS"
+    "status": "DONE"
   },
   "epics": [
     {
@@ -57,10 +57,10 @@
     {
       "id": "EP-007",
       "title": "macOS tests and validation",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 3,
-      "stories_done": 0
+      "stories_done": 3
     }
   ],
   "stories": [
@@ -396,15 +396,14 @@
       "id": "US-026",
       "title": "Run a macOS pane under a Seatbelt profile",
       "epic": "EP-007",
-      "status": "BLOCKED",
+      "status": "DONE",
       "priority": "P2",
       "blocked_by": [
         "US-022"
       ],
       "started_at": "2026-11-23T15:23:24+01:00",
-      "completed_at": null,
-      "reviewed_at": "2026-11-23T16:10:41+01:00",
-      "blocked_reason": "Seatbelt wrap written and reviewed by inspection only; needs a macOS run (US-032)"
+      "completed_at": "2026-11-24T15:47:00+01:00",
+      "reviewed_at": "2026-11-24T15:47:00+01:00"
     },
     {
       "id": "US-027",
@@ -436,16 +435,19 @@
       "id": "US-029",
       "title": "Validate layer 1 on macOS hardware",
       "epic": "EP-007",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-007",
         "US-013",
         "US-014"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-24T14:30:45+01:00",
+      "completed_at": "2026-11-24T15:47:00+01:00",
+      "reviewed_at": "2026-11-24T15:47:00+01:00",
+      "deferred": [
+        "Intel Mac check, run by Arthur after the merge to main (PRD v1.8)"
+      ]
     },
     {
       "id": "US-030",
@@ -479,14 +481,14 @@
       "id": "US-032",
       "title": "Validate the macOS sandbox on hardware",
       "epic": "EP-007",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P2",
       "blocked_by": [
         "US-026"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-24T14:40:00+01:00",
+      "completed_at": "2026-11-24T15:47:00+01:00",
+      "reviewed_at": "2026-11-24T15:47:00+01:00"
     },
     {
       "id": "US-033",

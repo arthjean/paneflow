@@ -142,6 +142,14 @@ token belongs to your user. Windows refuses a pipe client that tries to
 change the process ID the host reads, but a pipe handle opened by one
 process and handed to another still names the process that opened it.
 Measured on Windows 11 (build 26300).
+
+On macOS, the host reads the caller's audit token (`LOCAL_PEERTOKEN`),
+which names the process and its start time, and walks its parents with
+`proc_pidinfo`, or `sysctl` for a process `proc_pidinfo` refuses, and
+its session with `getsid`. A process that calls `setsid` and
+double-forks reads `external`, as on Linux. Measured on macOS 27.2.1
+on Apple Silicon; Intel Macs have not been measured.
+
 An `init.lua` action started from a key or the command palette acts as
 the window, and one started by `paneflow actions run` acts as its
 caller.
@@ -345,11 +353,21 @@ and `paneflow up` work.
   `build.target-dir` included.
 - **macOS** does not offer the sandbox yet: a profile that asks for it
   logs `Sandbox 'paneflow' is not available on macos` and does not
-  start. The Seatbelt profile exists in the host but has not been
-  proven on a Mac.
+  start. Measured on macOS 26.6.2 and 27.2.1 (Apple Silicon), the host's Seatbelt
+  profile keeps the pane off the shared window, background-process and
+  host sockets and the other panes' endpoints, which it cannot move or
+  remove either, lets it reach its own,
+  refuses signals and process inspection (`kill -0`, `proc_pidpath`)
+  toward every process outside the pane, and keeps Paneflow's home
+  read-only but for the pane's own data; `git status` and `cargo build`
+  run in the working directory, and `ps` does not run at all, since
+  Seatbelt refuses a setuid program. It is not offered because Seatbelt
+  does not nest: no process in the pane can apply a sandbox of its own
+  (`sandbox-exec: sandbox_apply: Operation not permitted`), so Claude
+  Code's and Codex's sandboxed commands fail there.
 
 A sandboxed profile never runs unsandboxed: when `bwrap` cannot
-start, the pane shows its
+start, or `sandbox-exec` refuses the profile, the pane shows its
 launch failure with the error, and a restored pane starts sandboxed or
 not at all. A profile with an unknown `sandbox` value, or set on a
 platform without a Paneflow sandbox, logs an error naming the key and
