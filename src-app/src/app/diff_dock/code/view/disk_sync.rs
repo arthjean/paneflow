@@ -722,6 +722,55 @@ mod tests {
     }
 
     #[gpui::test]
+    fn in_a_narrow_dock_the_conflict_banner_keeps_its_buttons_inside_the_view(
+        cx: &mut TestAppContext,
+    ) {
+        use super::super::render::{CONFLICT_BUTTONS, CONFLICT_TEXT};
+        use gpui::{Modifiers, px, size};
+
+        let (dir, view, cx) = file_view(cx, "one\n", false);
+        let path = dir.path().join("main.rs");
+        view.update_in(cx, |view, window, cx| {
+            view.selection = CodeSelection::at(4);
+            view.replace_text_in_range(None, "mine\n", window, cx);
+        });
+        std::fs::write(&path, "the agent's version\n").expect("agent write");
+        let stamp = FileStamp::read(&path);
+        view.update(cx, |view, cx| {
+            view.disk_changed(stamp, Some("the agent's version\n".to_string()), cx);
+            assert!(view.has_conflict());
+        });
+        let width = px(280.);
+        cx.simulate_resize(size(width, px(500.)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let text = cx
+            .debug_bounds(CONFLICT_TEXT)
+            .expect("the banner text is painted");
+        let buttons = cx
+            .debug_bounds(CONFLICT_BUTTONS)
+            .expect("the banner buttons are painted");
+        assert!(
+            buttons.right() <= width,
+            "the buttons end at {:?}, past the {width:?} view",
+            buttons.right()
+        );
+        assert!(text.right() <= buttons.left());
+        assert!(
+            text.size.height > buttons.size.height,
+            "the message wraps onto several lines"
+        );
+
+        let keep = cx
+            .debug_bounds("code-conflict-keep")
+            .expect("Keep mine is painted");
+        cx.simulate_click(keep.center(), Modifiers::default());
+        cx.run_until_parked();
+        view.update(cx, |view, _cx| {
+            assert!(!view.has_conflict(), "Keep mine resolves the conflict");
+        });
+    }
+
+    #[gpui::test]
     fn a_save_during_a_reload_waits_and_never_writes_over_the_new_disk_text(
         cx: &mut TestAppContext,
     ) {

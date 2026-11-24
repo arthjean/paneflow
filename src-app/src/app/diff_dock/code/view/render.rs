@@ -87,22 +87,39 @@ impl CodeView {
                 row()
                     .bg(ui.vc_conflict.opacity(0.16))
                     .text_color(ui.text)
-                    .child(div().flex_1().child(
-                        "This file changed on disk while you were editing it. Nothing has been \
-                         overwritten.",
-                    ))
-                    .child(conflict_button(
-                        "code-conflict-keep",
-                        "Keep mine",
-                        ui,
-                        cx.listener(|this, _: &MouseDownEvent, _w, cx| this.resolve_keep_mine(cx)),
-                    ))
-                    .child(conflict_button(
-                        "code-conflict-reload",
-                        "Reload from disk",
-                        ui,
-                        cx.listener(|this, _: &MouseDownEvent, _w, cx| this.resolve_reload(cx)),
-                    ))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .debug_selector(|| CONFLICT_TEXT.into())
+                            .child(
+                                "This file changed on disk while you were editing it. Nothing \
+                                 has been overwritten.",
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_none()
+                            .gap_2()
+                            .debug_selector(|| CONFLICT_BUTTONS.into())
+                            .child(conflict_button(
+                                "code-conflict-keep",
+                                "Keep mine",
+                                ui,
+                                cx.listener(|this, _: &MouseDownEvent, _w, cx| {
+                                    this.resolve_keep_mine(cx)
+                                }),
+                            ))
+                            .child(conflict_button(
+                                "code-conflict-reload",
+                                "Reload from disk",
+                                ui,
+                                cx.listener(|this, _: &MouseDownEvent, _w, cx| {
+                                    this.resolve_reload(cx)
+                                }),
+                            )),
+                    )
                     .into_any_element(),
             ),
             DiskState::Deleted => out.push(
@@ -410,6 +427,8 @@ fn read_only_text(reason: ReadOnlyReason) -> String {
     )
 }
 
+pub(super) const CONFLICT_TEXT: &str = "code-conflict-text";
+pub(super) const CONFLICT_BUTTONS: &str = "code-conflict-buttons";
 pub(super) const CONSENT_TEXT: &str = "code-language-server-consent-text";
 pub(super) const CONSENT_BUTTONS: &str = "code-language-server-consent-buttons";
 
