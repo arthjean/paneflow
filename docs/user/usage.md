@@ -35,8 +35,10 @@ Click the capsule, or press Enter or Space on it, to open the bubble. Each
 account shows its session and weekly windows with a meter, the reset time in
 the meter's tooltip, and a pace line for the week: either the time you
 reach the weekly limit at your current pace, or the share of the week you
-will have used when it resets. **Open usage settings** at the bottom opens
-the Usage page.
+will have used when it resets. Once the week is used up, the line reads
+`Weekly limit reached. It resets` followed by the reset time, with the
+warning glyph in red. **Open usage settings** at the bottom opens the Usage
+page.
 
 The capsule refreshes on its own. About every minute Paneflow checks the age
 of each reading, and asks again for any account whose reading is more than

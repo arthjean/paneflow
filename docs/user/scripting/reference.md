@@ -30,7 +30,7 @@ launching the app.
 | `focus <target>` | `surface.focus` | No | Focus a pane and its workspace |
 | `send <target> <text>` | `surface.send_text` | Gated | Stage or submit text |
 | `key <target> <keystroke>` | `surface.send_keystroke` | Gated | Send one non-submitting keystroke |
-| `wait --match <sel>` | `surface.read`, `events.subscribe` | No | Block until pattern, idle, or both |
+| `wait --match <sel>` | `surface.read`, `events.subscribe` | No | Block until a pattern or idle, whichever comes first |
 | `watch [--surface <sel>] [--type <event>]` | `events.subscribe` | No | Stream lifecycle and surface events |
 | `up <file>` | Workspace spec engine | Prefill only | Create a declarative workspace |
 | `flow run <file>` | Flow engine | Gated for submitting steps | Run a local multi-agent DAG |
@@ -68,14 +68,20 @@ Reading is allowed by default. Writes are split by capability:
 
 | Operation | Gate |
 | --- | --- |
-| `send` without `--submit` | `PANEFLOW_IPC_SCRIPTING=1` or `ai_unrestricted` |
-| `send --submit` | `PANEFLOW_IPC_SCRIPTING=1` or `ai_unrestricted` |
-| `key` | `PANEFLOW_IPC_SCRIPTING=1` |
-| `send --scope all`, `key --scope all`, `flow run --scope all` from inside a pane | `PANEFLOW_IPC_ORCHESTRATION=1` |
-| Host `session.input` from a control client | `PANEFLOW_IPC_SCRIPTING=1` |
-| Host `session.create` from a control client with a command, prompt, or env | `PANEFLOW_IPC_ORCHESTRATION=1` |
-| Host `session.create` from a control client, otherwise | `PANEFLOW_IPC_SCRIPTING=1` |
+| `send` without `--submit` | `ipc.scripting` or `ai_unrestricted` |
+| `send --submit` | `ipc.scripting` or `ai_unrestricted` |
+| `key` | `ipc.scripting` or `ai_unrestricted` |
+| `send --scope all`, `key --scope all`, `flow run --scope all` from inside a pane | `ipc.orchestration` |
+| Host `session.input` from a control client | `ipc.scripting` |
+| Host `session.create` from a control client with a command, prompt, or env | `ipc.orchestration` |
+| Host `session.create` from a control client, otherwise | `ipc.scripting` |
 | Flow step with `submit = true` | Scripting capability reported by `system.capabilities` |
+
+These keys live in `paneflow.json`: `ipc.scripting` implies
+`ipc.orchestration`, and `ai_unrestricted` opens both. The deprecated
+`PANEFLOW_IPC_SCRIPTING=1` and `PANEFLOW_IPC_ORCHESTRATION=1` still
+apply as the [scripting guide](/docs/scripting) describes, and a refused
+request still answers with its former message, which names them.
 
 `send` does not append a carriage return unless `--submit` is present.
 `key` rejects submitting keystrokes such as `enter`, `ctrl-m`, and
@@ -85,7 +91,9 @@ Relevant config keys:
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `ai_unrestricted` | `false` | Allows trusted AI automation to submit text without the env gate |
+| `ipc.scripting` | `false` | Opens text and keystroke writes; implies `ipc.orchestration` |
+| `ipc.orchestration` | `false` | Lets a request launch a command, a prompt, or env, and lets `--scope all` reach every workspace |
+| `ai_unrestricted` | `false` | Opens both gates for every caller |
 | `ai_injection_fence` | `true` | Wraps `surface.read` text in an untrusted terminal envelope |
 | `submit_paste_delay_ms` | `70` | Base delay between bracketed paste and the submit carriage return |
 | `terminal.env` | none | Environment variables injected into new terminals |
@@ -118,7 +126,7 @@ flag `--raw` passes `fenced: false`.
 | --- | --- |
 | `pid` | Agent process id, when known |
 | `tool` | Agent family such as `claude`, `codex`, `opencode`, or `gemini` |
-| `state` | `thinking`, `waiting_for_input`, `finished`, `errored`, `stalled`, `idle`, or `unknown_running` |
+| `state` | `thinking`, `waiting_for_input`, `finished`, `errored`, `idle`, or `unknown_running` |
 | `hooked` | Whether the current launch reports through lifecycle hooks Paneflow installs; a hook from a previous launch never counts |
 | `state_seq` | Per-session counter that increases on every state transition, on `status` |
 | `reason` | Detection reason, including `no_hook` |
@@ -202,8 +210,9 @@ that were created remain in Paneflow.
 | Linux endpoint | `$XDG_RUNTIME_DIR/paneflow/paneflow.sock`; when `XDG_RUNTIME_DIR` is unset or not a writable directory, `$TMPDIR`, else `~/.cache/run` |
 | macOS endpoint | `$TMPDIR/paneflow/paneflow.sock`, else `~/Library/Caches/run`; `XDG_RUNTIME_DIR` is ignored |
 | Windows endpoint | `\\.\pipe\paneflow` |
+| Isolated home endpoint | When `PANEFLOW_HOME` names a directory other than the default home, the window of that home listens on its own endpoint: `paneflow-ipc-<fingerprint>.sock` in `$XDG_RUNTIME_DIR` (Linux only), else `$TMPDIR`, else `/tmp`, and `\\.\pipe\paneflow-ipc-<fingerprint>` on Windows. `<fingerprint>` is 16 hexadecimal digits derived from the home path. A `PANEFLOW_SOCKET_PATH` that names another endpoint is ignored unless `PANEFLOW_ALLOW_SOCKET_OVERRIDE=1` |
 | Framing | Newline-delimited JSON-RPC 2.0 |
-| Request model | One request per connection, except `events.subscribe` |
+| Request model | On Linux and macOS, one connection carries several requests, answered in order with one reply per request that has an `id`; the connection closes after 30 s without a request. On Windows, each pipe connection answers one request. `events.subscribe` turns its connection into the event stream, which takes no further request |
 | Local trust | Same user only; no network listener, no token, no TLS |
 | Backpressure | Connection cap and bounded event queues return structured errors or `dropped` frames |
 
@@ -285,11 +294,18 @@ socket.
 | `read_pane` | `target`, `lines?`, `offset?` | Scrollback text |
 | `search_pane` | `target`, `pattern`, `max_matches?` | Matching lines |
 | `write_pane` | `target`, `text`, `submit?` | `approval_pending` until a human allows the pair, then the delivery result; with `submit`, also `started` and `state` |
+| `ask_human` | `question`, `options?`, `multiple?`, `prompt_id?` | Waits up to 20 s for the user's answer in Paneflow's prompt: `{status: "answered", answer}`, or `{status: "pending", prompt_id}` to call again with; `cancelled`, `timeout`, `no_window`, `busy`, `rate_limited`, and `failed` end the question |
+| `list_actions` | - | The `init.lua` actions marked `agents = true`, each with `name`, `title`, `description`, and the JSON Schema of its `args` |
+| `run_action` | `name`, `args?`, `run_id?` | Waits up to 20 s for the action: `{status: "done", result}`, or `{status: "running", run_id}` to call again with; `rate_limited` past a burst of 3 runs or questions, then 1 per second |
 
-`write_pane` is the only tool that writes, and only after a human allows
-that pair of agent sessions in Paneflow; the [automation guide](/docs/scripting)
-describes its controls. No tool sends keystrokes, focuses, or splits panes.
-Returned terminal output is fenced as untrusted data.
+`write_pane` writes into another agent's pane, and only after a human
+allows that pair of agent sessions in Paneflow; the
+[automation guide](/docs/scripting) describes its controls. `ask_human`
+shows a question and writes into no pane. `run_action` runs only an
+action marked `agents = true`, with the calling agent's pane as its
+caller, so the write gates still decide what it may do; it is annotated
+`destructiveHint: true`. No tool sends keystrokes. Returned terminal
+output is fenced as untrusted data.
 
 ## Lifecycle hooks
 

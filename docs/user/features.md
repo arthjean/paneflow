@@ -31,6 +31,12 @@ Use the four [layout presets](/docs/layouts) to arrange panes. Consult
 [shortcuts and actions](/docs/keybindings) for keyboard navigation and
 custom bindings.
 
+Drag the right edge of the Workspaces sidebar to set its width between 240
+and 480 px. The default width, 432 px, is a notch in the drag: the edge holds
+on it, and a double-click on the edge returns to it. Paneflow remembers the
+width across restarts, and a narrow window caps it so the panes keep their
+room.
+
 Group workspaces into **spaces**, for example one for work and one for
 personal projects. Once you create a space, the top of the sidebar shows
 the active space's circle and name in place of `Workspaces`. The circle
@@ -75,7 +81,7 @@ shows exactly that. Lifecycle hooks for Claude Code and Codex let Paneflow
 resume their conversations and name their tabs. Install these once per
 machine with `paneflow integrations install claude-code` or
 `paneflow integrations install codex`. Codex asks you to trust the hooks
-through `/hooks`. You can also use **Install hooks** in the
+through `/hooks`. You can also turn on the **Paneflow hooks** toggle of an agent in the
 [agent settings](/docs/settings). The same command registers the Paneflow
 MCP bridge and, for Claude Code, the conductor skill. An entry that another
 Paneflow home owns (a debug build next to a release, or a second
@@ -86,6 +92,8 @@ An agent that does not report through OSC 7501 is still detected from its
 process, but shows no turn status: Paneflow never guesses it from the screen.
 Use `paneflow sessions` to read session status even when the window is closed.
 The [automation guide](/docs/scripting) explains hooks and events.
+The [OSC 7501 engineering post](/blog/agent-status-osc-7501) follows a status
+from the agent to the sidebar.
 
 The **Agents** section at the bottom of the sidebar lists the agent sessions
 of the active space, grouped by status, most urgent first: **Need you**
@@ -135,6 +143,20 @@ animation, and a tab's pull request takes their place. While the Agents
 section is folded or hidden, tree rows show their status again, so you never
 lose it. The Agents section,
 `Cmd/Ctrl+Shift+J`, the pane header, and notifications are unaffected.
+
+To list your tabs by what their agents are doing rather than by project,
+choose **Customize sidebar > Group by > Status**, run **Group the sidebar by
+status** from the command palette, or set
+[`sidebar_group_by`](/docs/configuration/schema) to `status`. The tabs of
+every workspace of the active space then sit under the headings of the
+Agents section, **Need you**, **Error**, **Done**, **Working**, and **Idle**,
+with the number of tabs in each. A tab takes the status of its most urgent
+agent, **Idle** when it runs none, and names its workspace after its title.
+Grouped by status, the sidebar hides the Agents section, which would list the
+same agents twice, and shows a **New tab** button after **New workspace**: it
+asks which workspace the tab opens in, or opens it at once when the space has
+a single workspace. Drag reordering and the workspace menu stay with the
+default **Folder** grouping.
 
 On Linux and macOS, the **Claude Code (team)** launcher entry starts Claude
 Code with agent teams enabled and opens each teammate in its own Paneflow
@@ -204,6 +226,17 @@ Closing a pane, tab, or workspace takes one click and stops its sessions:
 their processes end and the session host forgets them. A tab or workspace
 whose diff dock holds unsaved files asks first.
 
+To close several workspaces or tabs at once, `Cmd/Ctrl`+click rows in the
+Workspaces sidebar to add them to a selection without opening them, or
+`Shift`+click to select everything from the last one to the row you click;
+`Shift+Up` and `Shift+Down` do the same from the keyboard. `Delete` or
+`Backspace` closes the selected rows together. Right-click a selected row
+for a menu with **Close** followed by what is selected, such as
+**Close 2 tabs**, and **Clear selection**. A single selected row closes
+at once; with two or more, a dialog first lists what will close and how many
+sessions will stop. A selected workspace closes with all its tabs. `Escape`
+or a plain click clears the selection.
+
 When a shell or command ends, its pane stays open with the final output in
 read-only mode. Choose **Restart** to open a new shell. To resume an agent
 conversation, use that agent's own session commands; restarting the shell
@@ -216,23 +249,111 @@ available; otherwise, it opens a new shell.
 ## Review and edit changes
 
 Open **Changes** in the dock beside the active tab to compare the checkout
-with `HEAD`. It includes staged and unstaged changes and untracked files.
+with `HEAD`: use the toggle at the right of the title bar, `Cmd/Ctrl+Alt+B`,
+or **Toggle the Changes dock** in the command palette. The dock opens on a
+list of its surfaces, which you can pick with `C`, `T`, or `F` or with the
+arrow keys. Changes includes staged and unstaged changes and untracked files.
 Read split or unified diffs, highlight changes within lines, and revert
 individual blocks in modified files. You can also trim or ignore whitespace.
+One toolbar row above the files holds the branch, the total diffstat,
+refresh, collapse all, the Unified and Split switch, the whitespace toggle,
+and a tree of the changed files. Each file header shows whether the file was
+added, modified, deleted, or renamed, with its full path and its counts, and
+stays pinned while its file scrolls.
 
-Open **Files** to browse the file tree and edit code in the integrated
-editor. Save changes, undo, or redo. Git markers beside the lines open a
-popup to read, copy, or revert the previous text. If a file changes on disk
-while you edit it, Paneflow lets you resolve the save conflict.
+Open **Files** to browse the project tree at the full width of the dock.
+Opening a file replaces the tab with the file and moves the tree to its
+right, where its left edge or the arrow keys resize it between 160 and
+560 px. Dot files such as `.env` and `.github/` show like any other entry,
+and git-ignored entries such as `node_modules/` and `target/` show dimmed
+and still open. The toolbar holds **Refresh files**, **Search files** (a
+fuzzy, case-insensitive search that respects `.gitignore`), and
+**Expand all** / **Collapse all**. The tree reveals the file of the active
+tab. Right-click an entry for **Open with Default App**, **Reveal in Finder**
+(**Reveal in File Explorer** on Windows, **Reveal in File Manager** on
+Linux), and **Open With** one of the editors Paneflow detects.
 
-See examples in the [diff viewer guide](/blog/diff-viewer) and the
-[file tree and editor guide](/blog/files-sidebar).
+Press `Cmd/Ctrl+P` outside a terminal or a text field to open any project
+file. The file finder lists the files you opened recently, most used first,
+and a query searches the whole project with fuzzy matching, respecting
+`.gitignore`. It opens the file you pick in the dock.
+
+File tabs have no fixed limit. Right-click a tab for **Copy Path**,
+**Copy Relative Path**, **Close**, **Close Others**, **Close to the Right**,
+**Close All**, and **Reopen Closed Tab**, which brings back one of the last
+20 closed files at its scroll position. A middle click closes a file tab, and
+closing several tabs at once keeps the Changes and Terminal tabs and every
+modified file. The dock's tabs come back after a restart. The breadcrumb
+above a file lists each folder: click one to reveal it in the tree, or its
+chevron to browse what it holds.
+
+Edit code in the integrated editor: save changes, undo, or redo. Git markers
+beside the lines open a popup to read, copy, or revert the previous text. If
+a file changes on disk while you edit it, Paneflow lets you resolve the save
+conflict. `Cmd+F` on macOS, `Ctrl+F` on Linux and Windows, opens a find bar
+over the file with **Match Case**, **Regular Expression**, and an `N of M`
+count; Enter and Shift+Enter step through the matches. Its chevron opens
+**Replace** and **Replace All**, which is a single undo step and expands `$1`
+in regex mode; read-only files have no replace. Type `:120` and press Enter
+to jump to line 120. **Word Wrap**, at the top of the Editor Controls menu,
+folds long lines in that tab, and `"editor": { "word_wrap": true }` turns it
+on for new tabs.
+
+The dock picks a viewer by file type:
+
+| File | Viewer |
+| --- | --- |
+| PNG, JPEG, GIF, WebP, BMP, ICO, TIFF, SVG | Zoom from 5 % to 800 %, **Fit**, **Actual size**, and pan by wheel or drag, for images up to 50 MB and 16,384 px per side. |
+| CSV and TSV, up to 10 MB | A read-only table with a fixed header and line numbers. **Show source** opens it as editable text, and the choice is remembered in `editor.csv_table`. |
+| Markdown | **Show rendered markdown** and **Show markdown source**, remembered in `editor.markdown_rendered` (source by default). The rendered view follows unsaved edits. |
+| Zip, jar, tar, tar.gz, tgz | A listing with folders, sizes, and dates. Nothing is extracted. |
+| Text from 10 MB to 256 MB | A read-only viewer with line numbers, selection, and copy. |
+
+A binary file, a special file, or a refused preview shows **No preview for
+this file** with its size and the reason, **Open with Default App**, the
+reveal action, and **Open With**.
+
+## Send files and code to an agent
+
+Right-click a file in the Files tree or a file tab and choose
+**Send to Agent** to type its path in the terminal of an agent of the
+workspace and focus it, without pressing Enter: `@path` for Claude Code,
+Codex, and Gemini, the bare path for the other agents, relative to the
+workspace root. With several agents, the entry opens a list in the Agents
+order; with none, it is disabled and reads **No agent in this workspace**.
+Dragging a file from the tree onto an agent's terminal does the same, and
+onto a shell inserts the quoted path.
+
+To comment on code for an agent, rest the pointer on the gutter of a file
+tab and click the **+** to comment a line, or drag it to comment a range. You
+can also right-click a selection and choose **Comment Selection**
+(`Cmd/Ctrl+Shift+M`, which comments the caret's line when nothing is
+selected). Write the comment in the block that opens under the lines, then
+**Send to Agent** (`Cmd/Ctrl+Enter`) pastes the file path with its line
+range, your comment, and the quoted lines into the agent's terminal, without
+submitting.
+
+`Cmd/Ctrl`+click a path in terminal output, such as `src/main.rs:42:7`, to
+open the file in the dock at that line and column. A relative path that does
+not exist under the terminal's folder is looked up from the workspace root,
+then as the end of a project file path: `terminal/view.rs:7` opens
+`src-app/src/terminal/view.rs`. When several files match, the click opens the
+file finder filled with the path. Hold `Shift` with the click, or set
+[`terminal.open_links_in`](/docs/configuration/schema) to `external_editor`,
+to open the file in your external editor instead. Markdown files keep their
+viewer, and a file that no longer exists shows **File not found**.
 
 ## Keep project context at hand
 
 The branch display and file tree follow the active checkout. Copy absolute
 or relative file paths for prompts and commands. Use `Cmd/Ctrl+Shift+I` in
 a terminal to find a file by name and insert its path, quoted for the shell.
+
+The workspace menu and the command palette open a workspace in Zed, Cursor,
+VS Code, or WebStorm. WebStorm replaces Windsurf in 0.20.0: Paneflow finds its
+launcher on `PATH`, in the JetBrains Toolbox scripts folder, and in standard
+and versioned installs, newest first, and opens a file link at its line and
+column. An `external_editor` set to `windsurf` falls back to `auto`.
 
 Paste an image to save it under `~/.paneflow/cache/clipboard-images/` and
 insert its path. Claude Code and Codex can attach that path as an image.
@@ -260,9 +381,12 @@ Codex, Gemini CLI, or OpenCode. Its `list_panes`, `read_pane`, and
 copying terminal history between conversations.
 
 Output is returned as untrusted data for the reading agent to analyze.
-Its one write tool, `write_pane`, sends a message to another agent's pane
-only after you allow that pair of agent sessions in Paneflow. The bridge
-cannot send keystrokes or control panes in any other way. See
+`write_pane` sends a message to another agent's pane only after you
+allow that pair of agent sessions in Paneflow. `ask_human` asks you a
+question in Paneflow's own prompt, and `run_action` runs one of the
+`init.lua` actions you marked `agents = true`, as the agent's own pane
+and under the same write gates. The bridge cannot send keystrokes or
+control panes in any other way. See
 [MCP setup and behavior](/docs/scripting).
 
 ## Coordinate panes with the CLI
@@ -290,6 +414,15 @@ Use [Settings](/docs/settings) to choose the shell, theme, terminal display,
 shortcuts, notifications, workspace templates, and agent access controls.
 Many changes apply while the app is running; a new default shell applies
 to new terminals.
+
+**Settings > Appearance > Interface style** chooses the shape of the window.
+**Classic**, the default since 0.20.0, lays the window out edge to edge, with
+the tabs of the top panes and of the Changes dock in the title bar.
+**Rounded** keeps the floating pane cards of earlier releases. The setting
+that picks Themed, Mica, or Blended is now named **Background style** and
+keeps its values. The same page sets the **App icon**, from twenty-one
+icons, and the **Workspace icon**, the glyph in front of each workspace in
+the sidebar. See [appearance settings](/docs/settings).
 
 For file-based configuration and advanced options, use the
 [`paneflow.json` reference](/docs/configuration). For installation, graphics,

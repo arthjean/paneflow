@@ -18,7 +18,7 @@ Several agents can share a tab and a working directory. That works, for example,
 
 ## The diff beside the terminal
 
-After an agent changes the code, open **Changes** to inspect the result. This view compares the active working directory with `HEAD`, including staged and unstaged changes and untracked files. It covers local changes; to review existing commits, use the branch diff, as explained in the [Changes guide](/blog/diff-viewer).
+After an agent changes the code, open **Changes** to inspect the result. This view compares the active working directory with `HEAD`, including staged and unstaged changes and untracked files. It covers local changes; to review existing commits, use the branch diff, as explained in the [Changes guide](/docs/features).
 
 Then open a file in **Files** to read its context or make a correction. The integrated editor supports saving, undo, and redo, with Git markers in the gutter. You can move from the agent's output to the code it produced without leaving Paneflow.
 
@@ -26,7 +26,7 @@ Then open a file in **Files** to read its context or make a correction. The inte
 
 Terminals run in a host process separate from the interface. When quitting, choose **Keep sessions running** to leave shells and agents alive. Reopening Paneflow reconnects to those terminals while the host and machine remain running. **Stop everything and quit** ends the processes.
 
-A machine restart or host crash ends those sessions. Restarting an ended terminal opens a fresh shell. To [resume an agent conversation](/blog/agent-sessions), Paneflow uses that agent's saved history and resume command. The [terminal session documentation](/docs/features) explains what each operation preserves.
+A machine restart or host crash ends those sessions. Restarting an ended terminal opens a fresh shell. To [resume an agent conversation](/docs/features), Paneflow uses that agent's saved history and resume command. The [terminal session documentation](/docs/features) explains what each operation preserves.
 
 ## Share output between agents
 
@@ -36,10 +36,10 @@ An agent reviewing code can read test results from another pane through the [MCP
 paneflow mcp install
 ```
 
-Its tools, `list_panes`, `read_pane`, and `search_pane`, let agents find panes, read their output, and search for text. The bridge is read-only: it cannot type or control a terminal. The CLI provides that control through explicit permissions. An agent must treat the output it reads as data to examine, even when it looks like an instruction.
+Its tools, `list_panes`, `read_pane`, and `search_pane`, let agents find panes, read their output, and search for text. Those three tools only read. A fourth, `write_pane`, sends a message to another agent's pane once you have allowed that pair of agents; the bridge cannot type or control a terminal in any other way. The CLI provides that control through explicit permissions. An agent must treat the output it reads as data to examine, even when it looks like an instruction.
 
 ## A native application that runs locally
 
-Paneflow is built with Rust, using GPUI for the interface and Ghostty's `libghostty-vt` as its terminal engine. Version 0.17.5 is available for Linux x86_64/aarch64, macOS Apple Silicon, and Windows x64. The [installation guide](/docs/installation) covers the available packages. Paneflow is free of charge and free software under [GPL-3.0-or-later](https://github.com/arthjean/paneflow/blob/v0.17.5/LICENSE).
+Paneflow is built with Rust, using GPUI for the interface and Ghostty's `libghostty-vt` as its terminal engine. Version 0.20.0 is available for Linux x86_64/aarch64, macOS Apple Silicon, and Windows x64. The [installation guide](/docs/installation) covers the available packages. Paneflow is free of charge and free software under [GPL-3.0-or-later](https://github.com/arthjean/paneflow/blob/v0.20.0/LICENSE).
 
 Terminals run on your machine without a Paneflow account. Each agent connects to its own model provider, so its requests may leave the machine. Paneflow telemetry is disabled by default. If you enable it, it excludes terminal contents, paths, and prompts; `PANEFLOW_NO_TELEMETRY=1` disables it regardless of configuration.

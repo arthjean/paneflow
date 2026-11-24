@@ -23,14 +23,14 @@ remain available in [`paneflow.json`](/docs/configuration/schema).
 | Page | What it controls | Writes to | Applies |
 | --- | --- | --- | --- |
 | General | Default external editor and default shell for new terminal panes. | `external_editor`, `default_shell` | New launches. Running terminals keep their current process. |
-| Appearance | Light, Dark, System, the theme preset, **Comfortable density**, **Interface style**, **Workspace icon**, **Background style** on Windows, macOS, and Linux, **App icon**, plus dedicated Windows, macOS, and Linux sidebar-material controls. | `theme`, `comfortable_density`, `interface_style`, `workspace_icon`, `app_icon`, `windows_chrome_material`, `windows_terminal_material`, `macos_chrome_material`, `linux_chrome_material`, `linux_terminal_material` | Theme, density, style, and material changes hot-reload. |
+| Appearance | Light, Dark, System, the theme preset, **Comfortable density**, **Interface style**, **Workspace icon**, **Background style** on Windows, macOS, and Linux, **App icon**. | `theme`, `comfortable_density`, `interface_style`, `workspace_icon`, `background_style`, `app_icon` | Theme, density, style, icon, and background changes hot-reload. |
 | Keyboard Shortcuts | Action bindings and reset to defaults. | `shortcuts` | Reloaded after the config save. |
 | Notifications | Native OS notifications for waiting agents and for notifications sent by terminal programs. | `agent_panel.notify_when_agent_waiting` | Hot-reloads. |
-| Terminal | Cursor shape and color, font family, font size, font weight, line height, cell width, integrated glyphs, color emoji, minimum contrast, and Windows and Linux terminal material. | `terminal.cursor_shape`, `terminal.cursor_color`, `font_family`, `font_size`, `font_weight`, `line_height`, `cell_width`, `terminal.integrated_glyphs`, `terminal.color_emoji`, `terminal.minimum_contrast`, `windows_terminal_material`, `linux_terminal_material` | Display controls hot-reload. Cursor shape applies to the next new terminal. |
+| Terminal | Cursor shape and color, font family, font size, font weight, line height, cell width, integrated glyphs, color emoji, and minimum contrast. | `terminal.cursor_shape`, `terminal.cursor_color`, `font_family`, `font_size`, `font_weight`, `line_height`, `cell_width`, `terminal.integrated_glyphs`, `terminal.color_emoji`, `terminal.minimum_contrast` | Display controls hot-reload. Cursor shape applies to the next new terminal. |
 | Workspaces | Reusable workspace templates with panes, agents, shell commands, cwd, env, and prompt prefill. | `commands[].workspace` | Templates run through the same workspace launch path as `paneflow up`. |
 | Spaces | The spaces that group workspaces: `Default` first, then each space with its name, image, color, environment variables, the state of the Claude Code and Codex hooks and MCP in the config directories it sets, and a delete action that moves its workspaces to `Default` after a confirmation. Up to 9 spaces. | `spaces`; images go to `avatars/` in the Paneflow home | Names, images, and colors hot-reload. An environment applies to terminals opened after the change. |
 | Worktrees | Root directory for the worktrees Paneflow creates, automatic removal with a keep limit, the list of managed worktrees with a remove action, and the snapshots taken before a removal with restore and delete actions. | `worktrees.dir`, `worktrees.auto_remove`, `worktrees.keep_limit` | Hot-reloads. The root applies to worktrees created from then on. |
-| Agents | Which agents the launcher shows, with their installed version and hook state, an **Install hooks** button for Claude Code and Codex, custom agent profiles, Claude Code full access, AI free access, and the injection fence. | `*_button_visible`, `agent_profiles`, `claude_code_bypass_permissions`, `ai_unrestricted`, `ai_injection_fence`; **Install hooks** writes the agent's own hook config | Launcher and access changes hot-reload. |
+| Agents | Which agents the launcher shows, with their installed version and hook state, a **Paneflow hooks** toggle for Claude Code and Codex, custom agent profiles, Claude Code full access, AI free access, and the injection fence. | `*_button_visible`, `agent_profiles`, `claude_code_bypass_permissions`, `ai_unrestricted`, `ai_injection_fence`; the **Paneflow hooks** toggle writes the agent's own hook config | Launcher and access changes hot-reload. |
 | Plugins | Installs or repairs the bundled `paneflow-mcp` bridge for Claude Code, Codex, Gemini, and opencode. | Agent config files, not `paneflow.json` | Re-run after a Paneflow update or when an agent config changes. |
 
 ## Interface style
@@ -42,36 +42,57 @@ stored in `interface_style`.
 
 | Style | What it draws |
 | --- | --- |
-| Classic (default) | An edge-to-edge window: the sidebar, the panes, and the Changes dock run to the window edges with thin lines between them, and the tabs of the top panes and of the dock sit in the title bar beside the window controls. Circular corners on a tight scale: 12 px dialogs and toasts, 8 px rows, buttons, and pane tabs, and 14 px menus with 28 px rows. **Comfortable density** has no effect. The command palette and the Clone repository dialog keep the Rounded look. |
-| Rounded | Pane cards floating under a full-width title bar, with continuous corners (squircles) and generous radii: 24 px pane cards and capsule pane tabs. Menus, select popups, and settings cards draw circular corners: 14 px menus with 30 px rows and 12 px cards. |
+| Classic (default) | An edge-to-edge window: the sidebar, the panes, and the Changes dock run to the window edges with thin lines between them, the tabs of the top panes and of the dock sit in the title bar beside the window controls, and the empty part of that row drags the window. Circular corners on a tight scale: 12 px dialogs and toasts, and 8 px rows, buttons, and pane tabs. **Comfortable density** has no effect. |
+| Rounded | The look of Paneflow 0.19 and earlier: pane cards with continuous corners (squircles) and generous radii, floating under a full-width title bar. **Comfortable density** applies to this style only. |
 
-The change applies at once to every open window.
+In both styles, every menu and select popup is an 8 px panel with 28 px
+rows, 14 px labels, and 12 px shortcuts. The command palette and the Clone
+repository dialog look the same in both styles. The change applies at once to every open window. Paneflow opens in
+Classic from 0.20.0 on; to keep the floating pane cards, pick **Rounded**
+or set `"interface_style": "rounded"`.
 
 ## Background style
 
 On Windows, macOS, and Linux, Settings > Appearance offers **Background
 style** under the interface style, and the command palette carries the
-same choice under `Background style`. It sets every window material of
-the platform at once. Up to 0.19 this setting was named Interface style.
+same choice under `Background style`. It is stored in `background_style`.
+Up to 0.19 this setting was named Interface style.
 
-| Style | Windows | macOS | Linux |
-| --- | --- | --- | --- |
-| Themed (default) | `windows_chrome_material` and `windows_terminal_material` set to `false`: solid theme colors. | `macos_chrome_material` set to `false`: an opaque sidebar. | `linux_chrome_material` and `linux_terminal_material` set to `false`: an opaque window. |
-| Blended | Both set to `true`: Mica shows through the sidebar and the terminal. | `macos_chrome_material` set to `true`: the native Sidebar material shows behind the sidebar. | Both set to `true`: the desktop shows through a veil behind the sidebar and a denser one behind the terminal. |
+| Style | What it draws |
+| --- | --- |
+| Themed (default) | The app in solid theme colors. |
+| Blended | Paneflow asks the system to blur what lies behind the window and paints one theme veil over it. A window keeps the Themed colors in macOS fullscreen, while macOS's Reduce transparency is on, and on a Windows build without a system backdrop. |
 
-On Linux, Paneflow requests no blur itself: the compositor supplies it,
-for example the Blur my Shell extension on GNOME. Without one, the
-wallpaper shows through the veil unblurred.
+On Linux, Blended asks a Wayland compositor that offers
+`ext-background-effect` or KDE's blur to blur what lies behind the window.
+On X11, or under a compositor that offers neither, Paneflow logs one
+warning and paints a thicker veil over the unblurred desktop.
 
-There is no `background_style` key: Paneflow reads the style back from
-those switches. When they disagree, for example after turning one of
-them on by hand, the row reads **Custom**.
+A config saved by an older release has no `background_style` key, so
+Paneflow reads the style from the legacy keys (`window_backdrop` and the
+per-platform material keys): a material key of the running platform
+set to `true` gives Blended, unless `window_backdrop` is `opaque` or
+`off`. Picking a style in Settings or the command palette saves
+`background_style` and removes those keys.
+
+## Workspace icon
+
+Settings > Appearance offers **Workspace icon**, and the command palette
+carries the same choice under `Workspace icon`. It chooses the glyph in
+front of each workspace in the sidebar and is stored in `workspace_icon`.
+**Default** keeps Paneflow's outlined folder. **Standard** drops the folder
+for a disclosure chevron, right when the workspace is folded and down when
+it is open. **Metal** is a filled glass folder, **Windows** a yellow
+gradient folder, **Windows 95** the 16-color pixel folder, and **Pixel** an
+outlined pixel folder. Every style has a closed and an open glyph, and the
+two pixel styles are sharpest at a display scale of 100 % or 200 %.
 
 ## App icon
 
 Settings > Appearance offers **App icon** at the bottom of the theme
 card. It chooses the icon Paneflow shows for its running windows and is
-stored in `app_icon`.
+stored in `app_icon`. The row shows the current icon and its name; click
+it to unfold a gallery of every icon, and pick one to apply it at once.
 
 | Icon | What it draws |
 | --- | --- |
@@ -82,7 +103,7 @@ stored in `app_icon`.
 | White solid | The same solid panes in dark ink on a white tile. |
 
 Sixteen illustrated icons follow. Each one shows the same mark in another
-material; hover a tile in Settings to read its name.
+material.
 
 | Icon | `app_icon` | What it draws |
 | --- | --- | --- |
@@ -119,14 +140,14 @@ at the next sign-in, or once Windows Explorer restarts. Choosing Glass
 restores the shortcut's own icon.
 
 The Start menu shortcut of a machine-wide install is not yours to
-modify. For Black and White, Paneflow copies it to the same place in
-your own Start menu folder, which Windows prefers, and gives that copy
-the icon; choosing Glass deletes the copy. If you uninstall Paneflow
-while Black or White is selected, the copy stays behind: delete it
-from `%APPDATA%\Microsoft\Windows\Start Menu\Programs`.
+modify. For any icon other than Glass, Paneflow copies it to the same
+place in your own Start menu folder, which Windows prefers, and gives that
+copy the icon; choosing Glass deletes the copy. If you uninstall Paneflow
+while another icon is selected, the copy stays behind: delete it from
+`%APPDATA%\Microsoft\Windows\Start Menu\Programs`.
 
-On macOS and Linux the installed launcher and the Dock tile
-of a Paneflow that is not running keep the Glass icon.
+On macOS and Linux the installed launcher and the Dock tile of a Paneflow
+that is not running keep the Glass icon.
 
 ## Terminal contrast
 

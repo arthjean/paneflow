@@ -19,7 +19,7 @@ This page is the compact reference for [Conductor](/docs/conductor). It names th
 | `watch [--surface <sel>] [--type <event>]` | `events.subscribe` | Stream lifecycle events and surface changes |
 | `read <target>` | `surface.read` | Read pane scrollback |
 | `send <target> <text>` | `surface.send_text` | Stage or submit text to a pane |
-| `wait --match <sel>` | `surface.read`, event stream when idle mode is used | Block until idle state, a regex, or both |
+| `wait --match <sel>` | `surface.read`, event stream when idle mode is used | Block until idle state or a regex, whichever comes first |
 | `up <file>` | workspace orchestration | Create a declarative agent workspace |
 | `flow run <file>` | flow orchestration | Run a multi-agent pipeline |
 | `ls`, `search`, `focus`, `key` | scripting methods | Use lower-level pane automation when conductor state is not enough |
@@ -45,7 +45,7 @@ A selector that matches nothing or several panes exits with code `3`, except com
 | --- | --- |
 | `pid` | Agent process id, or `null` for scan-only detection |
 | `tool` | Agent family such as `claude`, `codex`, `opencode`, or `gemini` |
-| `state` | `thinking`, `waiting_for_input`, `finished`, `errored`, `stalled`, `idle`, or `unknown_running` |
+| `state` | `thinking`, `waiting_for_input`, `finished`, `errored`, `idle`, or `unknown_running` |
 | `hooked` | `true` when Paneflow receives lifecycle hook events |
 | `reason` | Detection reason, including `no_hook` for unhooked processes |
 | `surface_id` | Pane id when resolved |
@@ -117,7 +117,7 @@ When a client receives `dropped`, it should resync with `paneflow ps --json` or 
 | --- | --- | --- |
 | Idle | `paneflow wait --match reviewer --idle --timeout 600` | Continue after the agent stops producing work |
 | Pattern | `paneflow wait --match backend --pattern '^DONE:' --timeout 300` | Continue after a sentinel line |
-| Idle plus pattern | `paneflow wait --match reviewer --idle --pattern '^REPORT_DONE' --timeout 600` | Require both a stable pane and a marker |
+| Idle plus pattern | `paneflow wait --match reviewer --idle --pattern '^REPORT_DONE' --timeout 600` | Return on whichever comes first: the pane goes idle or the marker appears; `idle` and `matched` in the reply say which |
 | Any or all | `paneflow wait --match 'cmdline:claude' --pattern 'tests passed' --all` | Coordinate multiple panes in pattern mode |
 
 Timeouts exit with code `4`.
@@ -128,7 +128,6 @@ Timeouts exit with code `4`.
 | --- | --- | --- |
 | `ai_unrestricted` | `false` | Allows trusted AI automation to submit when enabled |
 | `ai_injection_fence` | `true` | Wraps peer terminal output as untrusted text |
-| `agent_stall_threshold_secs` | app default | Marks silent in-progress turns as stalled |
 
 ## Exit codes
 

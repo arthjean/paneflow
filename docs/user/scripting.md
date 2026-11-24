@@ -1,6 +1,6 @@
-# CLI automation and read-only MCP in Paneflow
+# CLI automation and the MCP bridge in Paneflow
 
-> Drive a running Paneflow from a shell or AI agent with the CLI, local JSON-RPC, event streams, declarative workspaces, flow files, the read-only MCP bridge, and lifecycle hooks.
+> Drive a running Paneflow from a shell or AI agent with the CLI, local JSON-RPC, event streams, declarative workspaces, flow files, the MCP bridge that reads panes and relays approved messages between agents, and lifecycle hooks.
 
 Canonical: https://paneflow.dev/docs/scripting
 
@@ -35,7 +35,7 @@ text unless you deliberately pass `--raw`.
 | --- | --- | --- |
 | `paneflow <verb>` | Human scripts and in-pane agents | Some verbs |
 | JSON-RPC socket | Custom clients in any language | Some methods |
-| `paneflow mcp install` | Let MCP-capable agents read panes and message each other | Only after a human allows the pair |
+| `paneflow mcp install` | Let MCP-capable agents read panes, message each other, ask you questions, and run the actions you marked for them | `write_pane` after a human allows the pair; an action as the agent's pane, under the write gates |
 | `paneflow up <file>` | Create a named workspace from TOML | Prefill only |
 | `paneflow flow run <file>` | Run a local multi-agent DAG | Only when a step submits |
 | `paneflow hooks setup` | Report agent lifecycle events to Paneflow | No |
@@ -412,6 +412,18 @@ With `--submit`, the JSON reply reports what happened:
 A reply with `started: false` exits with code 1, as an unconfirmed
 start always did.
 
+Those four fields appear only when Paneflow waits for the turn to
+start: for a pane it takes for an agent (`agent_target: true`), or
+after a bracketed paste (`submit_mode: "deferred_paste_cr"`). A pane
+that is not an agent and has not turned bracketed paste on, such as a
+program reading lines from its standard input, receives the text and
+the carriage return in one write (`submit_mode: "inline_cr"`). Its
+reply stops at the delivery fields, `sent`, `length`, `submitted`,
+`paste`, `submit_mode`, `agent_target`, `agent_tool`, and
+`terminal_bracketed_paste`, with no `delivered`, `started`, `reason`,
+or `state`, and the command exits `0`: nothing confirms that the
+program read the line.
+
 `wait --idle` follows the turn of an agent that declares its state
 through OSC 7501: it returns when the agent's reduced
 state becomes `idle`, `attention`, or `blocked`, and at once when the
@@ -521,10 +533,13 @@ creating partial work.
 
 ## How does MCP fit in?
 
-`paneflow-mcp` exposes `list_panes`, `read_pane`, and `search_pane`,
-which only read, and `write_pane`, which lets one agent send a message
-to another agent's pane under human control. It cannot send keystrokes
-or control a pane in any other way.
+`paneflow-mcp` exposes `list_panes`, `read_pane`, `search_pane`, and
+`list_actions`, which only read; `write_pane`, which lets one agent send
+a message to another agent's pane under human control; `ask_human`,
+which asks you a question in Paneflow's own prompt; and `run_action`,
+which runs one of the `init.lua` actions you marked `agents = true`. No
+tool sends keystrokes, and an action runs with the calling agent's pane
+as its caller, so the write gates above still decide what it may do.
 
 - The first write from one agent session to another raises a request in
   the target pane: "*source* wants to write
@@ -552,12 +567,28 @@ or control a pane in any other way.
 - Only the Paneflow window grants an approval. No CLI verb, MCP tool,
   or control client of the socket can.
 
-Each tool carries MCP annotations: the read tools declare
-`readOnlyHint: true`, and `write_pane` declares `readOnlyHint: false`,
-`destructiveHint: true`, `idempotentHint: false`, and
-`openWorldHint: false`. Annotations only help a client choose its
-confirmation prompt; they are not a security boundary. The host
-enforces every control listed above.
+Each tool carries MCP annotations: the read tools, `list_actions`
+included, declare `readOnlyHint: true`; `write_pane` and `run_action`
+declare `readOnlyHint: false`, `destructiveHint: true`,
+`idempotentHint: false`, and `openWorldHint: false`; and `ask_human`
+declares `readOnlyHint: false` and `destructiveHint: false`. Annotations
+only help a client choose its confirmation prompt; they are not a
+security boundary. The host enforces every control listed above.
+
+`ask_human` shows the question in the pane you are in, with the asking
+agent and its pane named under it. It takes `options` for a choice
+(`multiple` allows several) or none for a free-text answer, waits up to
+20 seconds, and answers `{status: "answered", answer}` or
+`{status: "pending", prompt_id}`: call it again with only that
+`prompt_id` to keep waiting for the same question. `cancelled`,
+`timeout`, `no_window`, `busy`, `rate_limited`, and `failed` end the
+question. `list_actions` returns each action's `name`, `title`,
+`description`, and the JSON Schema of its arguments. `run_action`
+refuses an action not marked for agents, waits up to 20 seconds, and
+answers `{status: "done", result}` or `{status: "running", run_id}`:
+call it again with only that `run_id`. Questions and runs share one
+limit per agent, a burst of three and then one per second, past which
+the tool answers `rate_limited`.
 
 ```bash
 paneflow mcp install
@@ -584,7 +615,7 @@ paneflow hooks status
 ```
 
 Claude Code and Codex are the two runtimes with an installer. Install each
-once per machine, from the CLI or with **Install hooks** in
+once per machine, from the CLI or with the **Paneflow hooks** toggle in
 **Settings > Agents**; installing also registers the `paneflow` MCP server,
 and Codex asks you once to trust the new hooks with `/hooks`. The hooks exit immediately
 outside a Paneflow pane. `paneflow hooks setup` installs every detected

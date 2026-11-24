@@ -66,29 +66,18 @@ Paneflow creates the branch and its worktree from the base you picked, binds
 the tab to that worktree, and opens the pane there. The tab shows the branch
 name, and the agent starts inside the worktree directory.
 
-<figure className="my-8 w-full">
-  <img
-    src="/images/worktrees-new-branch.webp"
-    alt="Paneflow's New pane palette with the New branch form: a branch name field, a from select, the Worktree toggle, and the list of agents to open with."
-    width={2099}
-    height={1366}
-    className="h-auto w-full rounded-3xl! border border-surface-border dark:hidden"
-  />
-  <img
-    src="/images/worktrees-new-branch-dark.webp"
-    alt="Paneflow's New pane palette with the New branch form: a branch name field, a from select, the Worktree toggle, and the list of agents to open with."
-    width={2099}
-    height={1366}
-    className="hidden h-auto w-full rounded-3xl! border border-surface-border dark:block"
-  />
-</figure>
+![Paneflow's New pane palette with the New branch form: a branch name field, a from select, the Worktree toggle, and the list of agents to open with.](https://paneflow.dev/images/worktrees-new-branch.webp)
 
 The same flow exists in two other places:
 
 - The tab's context menu offers **New branch…** for a tab that already
   exists.
-- `paneflow up` and flows take `worktree` and `from` fields; see
-  [Scripting](/docs/scripting).
+- `paneflow up`, flows, and the JSON-RPC API (`workspace.up`,
+  `surface.split`) take `worktree` and `from` fields; see
+  [Scripting](/docs/scripting). Unlike the app, they reuse only a
+  worktree Paneflow created for that branch: a branch checked out in the
+  project checkout, or in a worktree Paneflow did not create, is refused
+  with `branch '<name>' already checked out at <path>`.
 
 ### Reuse a branch that already exists
 
@@ -150,22 +139,7 @@ Change the root in **Settings > Worktrees**, or set `worktrees.dir` in
 worktrees created under an earlier root keep working where they are and
 stay listed.
 
-<figure className="my-8 w-full">
-  <img
-    src="/images/worktrees-settings.webp"
-    alt="Paneflow's Settings > Worktrees page: the worktree root, the automatic removal toggle, the keep limit, the list of managed worktrees, and the snapshots section."
-    width={2099}
-    height={1366}
-    className="h-auto w-full rounded-3xl! border border-surface-border dark:hidden"
-  />
-  <img
-    src="/images/worktrees-settings-dark.webp"
-    alt="Paneflow's Settings > Worktrees page: the worktree root, the automatic removal toggle, the keep limit, the list of managed worktrees, and the snapshots section."
-    width={2099}
-    height={1366}
-    className="hidden h-auto w-full rounded-3xl! border border-surface-border dark:block"
-  />
-</figure>
+![Paneflow's Settings > Worktrees page: the worktree root, the automatic removal toggle, the keep limit, the list of managed worktrees, and the snapshots section.](https://paneflow.dev/images/worktrees-settings.webp)
 
 ### Copy ignored local files into new worktrees
 
@@ -260,7 +234,7 @@ never removes a worktree it did not create.
 
 ## Two tasks, then one integration
 
-For Paneflow 0.17.4, start from a committed base in a disposable Git project.
+For Paneflow 0.20.0, start from a committed base in a disposable Git project.
 Use the existing **New branch...** procedure above with **Worktree** enabled:
 
 1. Create `feat/api-validation` from the chosen base for one task and
@@ -294,8 +268,7 @@ project checkout is also refused while an agent is working there. If Git
 rejects a switch because files would be overwritten, preserve them and
 resolve the cause instead of forcing cleanup.
 
-See [Changes](/blog/diff-viewer) for the review scope and [Files](/blog/files-sidebar)
-for save conflicts.
+See [Changes and Files](/docs/features) for the review scope and save conflicts.
 
 ## See also
 

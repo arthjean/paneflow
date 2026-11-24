@@ -27,6 +27,11 @@ helper binaries). Configuration found at the previous locations
 (`~/.config/paneflow`, `~/Library/Application Support/paneflow`,
 `%APPDATA%\paneflow`) is copied into `~/.paneflow` on first launch.
 
+A home other than the default runs as its own instance, with its own
+session host, worker, and IPC endpoint (`paneflow-ipc-<fingerprint>.sock`;
+see the [scripting reference](/docs/scripting/reference)), so the CLI of
+one home reaches only that home's panes.
+
 If the file does not exist on first launch, Paneflow boots with all
 defaults. Create the file at the path above to start customizing.
 

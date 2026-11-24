@@ -19,6 +19,7 @@ keyboard. Find the default shortcuts below, then use the names in the
 - Split a pane: `Cmd/Ctrl+Shift+D` or `Cmd/Ctrl+Shift+E`.
 - Focus a neighboring pane: `Alt+Arrow`.
 - Select a workspace: `Cmd/Ctrl+1-9`.
+- Open a project file: `Cmd/Ctrl+P`.
 - Reach the next waiting agent: `Cmd/Ctrl+Shift+J`.
 - Move between shell prompts: `Cmd/Ctrl+Shift+Up/Down`.
 
@@ -84,6 +85,7 @@ pane. Search actions apply while the corresponding search is active.
 | App views | `toggle_files_sidebar` | `Cmd/Ctrl+Alt+F` |
 | App views | `toggle_diff_dock` | `Cmd/Ctrl+Alt+B` |
 | App views | `toggle_diff_dock_maximize` | `Cmd/Ctrl+Alt+M` |
+| App views | `open_file_finder` | `Cmd/Ctrl+P` |
 | App views | `open_command_palette` | `Cmd/Ctrl+Shift+P` |
 | App views | `open_settings` | `Cmd/Ctrl+,` |
 | Dock (outside terminals, text fields, and the code editor) | `diff_new_file_tab` | `Cmd/Ctrl+G` |
@@ -145,6 +147,21 @@ space first, whether the Agents section is shown, collapsed, or hidden, and
 wraps around at the end. After `focus_workspaces_sidebar`, the arrow keys,
 `Home`, and `End` move through the workspace tree and on into the Agents
 section, and `Enter` opens the selected agent's pane.
+
+`open_file_finder` applies outside terminal panes and text fields. It
+lists the files you opened recently and searches the whole project, then
+opens the file you pick in the dock. `toggle_diff_dock` opens and closes
+the Changes dock, like the toggle at the right of the title bar.
+
+`open_workspace_in_webstorm` replaced `open_workspace_in_windsurf` on
+`Ctrl+Alt+W` in 0.20.0. A custom binding to `open_workspace_in_windsurf`
+no longer resolves: rebind it to `open_workspace_in_webstorm`.
+
+In a file tab, the code editor has keys of its own that are not actions
+in the table: `Cmd+F` on macOS and `Ctrl+F` on Linux and Windows open the
+find bar, `Cmd/Ctrl+Shift+M` comments the selection or the caret's line,
+and `Cmd/Ctrl+Enter` sends that comment to an agent. See
+[features](/docs/features).
 
 `next_space` and `previous_space` go through `Default` and then the spaces
 in their `paneflow.json` order, and wrap around at the end. They do nothing

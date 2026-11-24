@@ -1,6 +1,6 @@
 # Agent status in Paneflow: from screen rules to OSC 7501
 
-> Since 0.17.7, the sidebar takes each agent's turn state from the OSC 7501 status the agent writes itself. The path from Claude Code to the sidebar, the six approaches I deleted first, and what an agent that declares nothing shows.
+> Since 0.17.7, Paneflow reads each agent's turn state from the OSC 7501 status the agent writes itself. The path to the sidebar, and six approaches I deleted.
 
 Canonical: https://paneflow.dev/blog/agent-status-osc-7501
 
@@ -18,7 +18,7 @@ The usual assumption is that a tool running agents has to watch them from the ou
 
 This is what ships in Paneflow 0.19.0. It covers the agents that emit OSC 7501: Claude Code from v2.1.295, and Codex, which merged support in [openai/codex#52725](https://github.com/openai/codex/pull/52725) and [#54114](https://github.com/openai/codex/pull/54114) in October. An agent that declares nothing gets no turn state, on purpose.
 
-The post follows one Claude Code turn from the agent to the sidebar, then the general shape, the six approaches that came before, what it costs, and the strongest objection.
+The post follows one Claude Code turn from the agent to the sidebar, then the general shape, the six approaches that came before, what it costs, and the strongest objection. The states and badges as you see them in the app are documented in [the features guide](/docs/features).
 
 ## What OSC 7501 is
 
