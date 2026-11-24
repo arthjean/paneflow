@@ -120,6 +120,14 @@ pane; the window and the background process ask it with `peer.classify`.
 When the host is down, they read the session manifests in the home
 instead, so a pane process that survived the host still reads `pane`.
 
+A caller outside every pane holds `window` or `worker` only when
+Paneflow vouches for its executable: the binary of this installation or a
+byte-identical copy of it, the process that started the session host or
+the background process, or that server's own binary. Any other process
+that names itself the window or the background process, in its hello or
+with `layout.attach`, is answered `external`, and the claim is logged
+once.
+
 On Linux, Paneflow identifies the caller with `SO_PEERPIDFD` on kernel
 6.5 and later, and with `SO_PEERCRED` plus a start-time check on older
 kernels such as Ubuntu 22.04's 5.15 or Debian 12; both give the same
