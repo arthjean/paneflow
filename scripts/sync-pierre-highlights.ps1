@@ -52,8 +52,27 @@ function Write-Lf([string]$Path, [string]$Text) {
 }
 
 function Invoke-Tar([string[]]$Arguments) {
-    & tar @Arguments
+    $tar = if ($IsWindows) { Join-Path $env:SystemRoot 'System32/tar.exe' } else { 'tar' }
+    & $tar @Arguments
     if ($LASTEXITCODE -ne 0) { throw "tar $($Arguments -join ' ') failed" }
+}
+
+function Copy-Lf([string]$Source, [string]$Destination) {
+    Write-Lf $Destination ([IO.File]::ReadAllText($Source).Replace("`r`n", "`n"))
+}
+
+$windowsDllNotFound = -1073741515
+$windowsOpensslDll = 'libcrypto-3-x64.dll'
+
+function Find-GitOpensslDll {
+    if (-not (Get-Command git -CommandType Application -ErrorAction SilentlyContinue)) { return $null }
+    $gitExec = (& git --exec-path 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $gitExec) { return $null }
+    foreach ($directory in $gitExec, (Join-Path $gitExec '../../bin')) {
+        $candidate = Join-Path $directory $windowsOpensslDll
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return [IO.Path]::GetFullPath($candidate) }
+    }
+    return $null
 }
 
 $name = Get-Pin '' 'name'
@@ -116,8 +135,16 @@ try {
         Invoke-Tar @('-xzf', $archivePath, '-C', (Join-Path $work 'wabt'))
         $wabtRoot = Join-Path $work "wabt/wabt-$wabtVersion"
         $wasm2c = Join-Path $wabtRoot 'bin/wasm2c'
-        if ($IsWindows) { $wasm2c += '.exe' }
+        if ($IsWindows) {
+            $wasm2c += '.exe'
+            $openssl = Find-GitOpensslDll
+            if ($openssl) { Copy-Item -LiteralPath $openssl -Destination (Join-Path $wabtRoot 'bin') }
+        }
         $found = (& $wasm2c --version | Out-String).Trim()
+        if ($IsWindows -and $LASTEXITCODE -eq $windowsDllNotFound) {
+            [Console]::Error.WriteLine("WABT $wabtVersion wasm2c.exe needs $windowsOpensslDll (OpenSSL 3), which its Windows archive does not ship and Git for Windows did not provide: set WASM2C to a wasm2c.exe $wabtVersion with that DLL beside it")
+            exit 1
+        }
         if ($found -ne $wabtVersion) { throw "The WABT archive holds wasm2c $found, expected $wabtVersion" }
     }
 
@@ -159,7 +186,7 @@ try {
         'share/wabt/wasm2c/wasm-rt-mem-impl-helper.inc' = 'wasm-rt-mem-impl-helper.inc'
     }
     foreach ($entry in $runtime.GetEnumerator()) {
-        Copy-Item -LiteralPath (Join-Path $wabtRoot $entry.Key) -Destination (Join-Path $out "c/wasm2c/$($entry.Value)")
+        Copy-Lf (Join-Path $wabtRoot $entry.Key) (Join-Path $out "c/wasm2c/$($entry.Value)")
     }
     Copy-Item -LiteralPath $wabtLicense -Destination (Join-Path $out 'c/wasm2c/LICENSE')
     Copy-Item -LiteralPath $simdePath -Destination (Join-Path $out 'c/simde/wasm/simd128.h')
