@@ -1,8 +1,12 @@
+use std::time::{Duration, Instant};
+
 use paneflow_ipc_client::IpcTransport;
 use serde::Deserialize;
 use serde_json::json;
 
 use super::CliError;
+
+const DRAW_POLL: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Deserialize)]
 pub struct Surface {
@@ -71,6 +75,76 @@ pub fn resolve_all(client: &impl IpcTransport, target: &str) -> Result<Vec<u64>,
         )));
     }
     Ok(ids)
+}
+
+pub fn resolve_target_once_drawn(
+    client: &impl IpcTransport,
+    target: &str,
+    deadline: Instant,
+) -> Result<Option<u64>, CliError> {
+    let selector = parse_selector(target)?;
+    match surfaces_once_drawn(client, &selector, deadline)? {
+        Some(surfaces) => resolve(selector, &surfaces).map(Some),
+        None => Ok(None),
+    }
+}
+
+pub fn resolve_all_once_drawn(
+    client: &impl IpcTransport,
+    target: &str,
+    deadline: Instant,
+) -> Result<Option<Vec<u64>>, CliError> {
+    let selector = parse_selector(target)?;
+    let Some(surfaces) = surfaces_once_drawn(client, &selector, deadline)? else {
+        return Ok(None);
+    };
+    let ids: Vec<u64> = matches_for(&selector, &surfaces)
+        .iter()
+        .map(|s| s.surface_id)
+        .collect();
+    if ids.is_empty() {
+        return Err(CliError::target(format!(
+            "no pane matches target '{target}'"
+        )));
+    }
+    Ok(Some(ids))
+}
+
+fn surfaces_once_drawn(
+    client: &impl IpcTransport,
+    selector: &Selector<'_>,
+    deadline: Instant,
+) -> Result<Option<Vec<Surface>>, CliError> {
+    loop {
+        let surfaces = fetch_surfaces(client)?;
+        if !matches_for(selector, &surfaces).is_empty() || !layout_holds(client, selector) {
+            return Ok(Some(surfaces));
+        }
+        if Instant::now() >= deadline {
+            return Ok(None);
+        }
+        std::thread::sleep(DRAW_POLL);
+    }
+}
+
+fn layout_holds(client: &impl IpcTransport, selector: &Selector<'_>) -> bool {
+    let Ok(view) = client.call("layout.view", json!({})) else {
+        return false;
+    };
+    let Ok(snapshot) = serde_json::from_value::<paneflow_layout::Snapshot>(view["view"].clone())
+    else {
+        return false;
+    };
+    let rows: Vec<Surface> = super::headless::layout_surfaces(&snapshot)
+        .into_iter()
+        .map(|surface| Surface {
+            surface_id: surface.surface_id,
+            name: surface.name,
+            cwd: None,
+            cmd: None,
+        })
+        .collect();
+    !matches_for(selector, &rows).is_empty()
 }
 
 fn resolve(selector: Selector<'_>, surfaces: &[Surface]) -> Result<u64, CliError> {

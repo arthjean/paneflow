@@ -7,7 +7,7 @@ use paneflow_ipc_client::{IpcTransport, StreamEvent};
 use regex::Regex;
 use serde_json::{Value, json};
 
-use super::selector::{resolve_all, resolve_target};
+use super::selector::{resolve_all_once_drawn, resolve_target_once_drawn};
 use super::send_cmd::status_of;
 use super::surface_read::{
     READ_WINDOW_LINES, ReadSnapshot, SurfaceRead, read_baseline, read_surface, text_after_baseline,
@@ -45,13 +45,17 @@ pub fn wait(
     let re = Regex::new(pattern)
         .map_err(|e| CliError::runtime(format!("invalid regex '{pattern}': {e}")))?;
 
-    let ids: Vec<u64> = match mode {
-        MatchMode::Single => vec![resolve_target(client, target)?],
-        MatchMode::Any | MatchMode::All => resolve_all(client, target)?,
-    };
-
     let timeout = Duration::from_secs(timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS));
     let deadline = Instant::now() + timeout;
+    let resolved = match mode {
+        MatchMode::Single => {
+            resolve_target_once_drawn(client, target, deadline)?.map(|id| vec![id])
+        }
+        MatchMode::Any | MatchMode::All => resolve_all_once_drawn(client, target, deadline)?,
+    };
+    let Some(ids) = resolved else {
+        return Ok(never_drawn(target, timeout));
+    };
     let mut baselines: HashMap<u64, Option<ReadSnapshot>> = HashMap::with_capacity(ids.len());
     for &id in &ids {
         let baseline = read_baseline(client, id, READ_WINDOW_LINES).map_err(CliError::runtime)?;
@@ -132,6 +136,14 @@ pub fn wait(
         }
         sleep(Duration::from_millis(POLL_INTERVAL_MS));
     }
+}
+
+fn never_drawn(target: &str, timeout: Duration) -> i32 {
+    eprintln!(
+        "paneflow: timeout after {}s: pane '{target}' was created but never appeared in the window",
+        timeout.as_secs()
+    );
+    EXIT_TIMEOUT
 }
 
 fn is_done(mode: MatchMode, matched: usize, total: usize) -> bool {
@@ -304,7 +316,6 @@ pub fn wait_idle(
     timeout_secs: Option<u64>,
     pattern: Option<&str>,
 ) -> Result<i32, CliError> {
-    let id = resolve_target(client, target)?;
     let re: Option<Regex> = match pattern {
         Some(p) => Some(
             Regex::new(p).map_err(|e| CliError::runtime(format!("invalid regex '{p}': {e}")))?,
@@ -316,6 +327,9 @@ pub fn wait_idle(
     let slice = Duration::from_millis(window_ms.clamp(1, IDLE_SLICE_CAP_MS));
     let timeout = Duration::from_secs(timeout_secs.unwrap_or(DEFAULT_TIMEOUT_SECS));
     let deadline = Instant::now() + timeout;
+    let Some(id) = resolve_target_once_drawn(client, target, deadline)? else {
+        return Ok(never_drawn(target, timeout));
+    };
 
     if let Some(status) = status_of(client, id).filter(follows_turns) {
         return wait_turn_end(client, id, status, deadline, re.as_ref());
@@ -923,5 +937,126 @@ mod tests {
         );
         assert_eq!(classify_event_line("not json at all"), IdleSignal::Quiet);
         assert_eq!(classify_event_line(r#"{"no":"type"}"#), IdleSignal::Quiet);
+    }
+
+    struct NotDrawnYet {
+        layout: Value,
+        surface_id: u64,
+        undrawn_lists: std::cell::Cell<u32>,
+        lists: std::cell::Cell<u32>,
+        reads: std::cell::Cell<u64>,
+        text: &'static str,
+    }
+    impl NotDrawnYet {
+        fn new(undrawn_lists: u32, text: &'static str) -> Self {
+            let mut model = paneflow_layout::Model::new();
+            let pane = model.reserve_pane(
+                vec![paneflow_config::schema::SurfaceDefinition {
+                    custom_name: Some("reviewer".to_string()),
+                    ..paneflow_config::schema::SurfaceDefinition::default()
+                }],
+                0,
+            );
+            let surface_id = pane.surfaces[0].id.get();
+            let workspace = paneflow_layout::WorkspaceId(model.reserve());
+            let tab = paneflow_layout::TabId(model.reserve());
+            model
+                .apply(
+                    paneflow_layout::Op::CreateWorkspace {
+                        workspace: paneflow_layout::NewWorkspace {
+                            id: workspace,
+                            title: "up".to_string(),
+                            cwd: "/tmp".to_string(),
+                            space: None,
+                            durable_id: None,
+                            custom_buttons: Vec::new(),
+                            managed_worktrees: Vec::new(),
+                            tabs: vec![paneflow_layout::NewTab {
+                                id: tab,
+                                title: String::new(),
+                                title_source: paneflow_config::schema::TabTitleSource::Preset,
+                                worktree: None,
+                                root: Some(paneflow_layout::NewNode::Pane(pane)),
+                            }],
+                            active_tab: 0,
+                        },
+                        select: true,
+                    },
+                    0,
+                )
+                .expect("the workspace opens");
+            Self {
+                layout: json!({ "view": model.snapshot() }),
+                surface_id,
+                undrawn_lists: std::cell::Cell::new(undrawn_lists),
+                lists: std::cell::Cell::new(0),
+                reads: std::cell::Cell::new(0),
+                text,
+            }
+        }
+    }
+    impl IpcTransport for NotDrawnYet {
+        fn call(&self, method: &str, _params: Value) -> Result<Value, String> {
+            match method {
+                "surface.list" => {
+                    self.lists.set(self.lists.get() + 1);
+                    let left = self.undrawn_lists.get();
+                    if left > 0 {
+                        self.undrawn_lists.set(left - 1);
+                        return Ok(json!({ "surfaces": [] }));
+                    }
+                    Ok(json!({ "surfaces": [{
+                        "surface_id": self.surface_id, "name": "reviewer", "cmd": "sh", "cwd": "/tmp"
+                    }] }))
+                }
+                "layout.view" => Ok(self.layout.clone()),
+                "surface.read" => {
+                    let read = self.reads.get() + 1;
+                    self.reads.set(read);
+                    let text = if read == 1 { "" } else { self.text };
+                    Ok(json!({ "text": text, "output_generation": read }))
+                }
+                "surface.status" => Ok(json!({
+                    "state": "waiting_for_input",
+                    "state_seq": 1,
+                    "activity_source": "declared",
+                    "agent_runtime": "com.anthropic.claude-code",
+                })),
+                other => Err(format!("unexpected method {other}")),
+            }
+        }
+    }
+
+    #[test]
+    fn a_wait_on_a_pane_the_window_has_not_drawn_yet_waits_for_it() {
+        let fake = NotDrawnYet::new(2, "");
+        let target = fake.surface_id.to_string();
+        let code = wait_idle(&fake, None, &target, None, Some(30), None)
+            .expect("a pane the layout holds is waited for");
+        assert_eq!(code, EXIT_OK);
+        assert_eq!(fake.lists.get(), 3, "the target resolved once it was drawn");
+
+        let fake = NotDrawnYet::new(2, "DONE\n");
+        let code = wait(&fake, "reviewer", "DONE", Some(30), MatchMode::Single)
+            .expect("a named pane the layout holds is waited for");
+        assert_eq!(code, EXIT_OK);
+    }
+
+    #[test]
+    fn a_pane_that_is_never_drawn_times_out_and_an_unknown_target_fails_at_once() {
+        let fake = NotDrawnYet::new(u32::MAX, "");
+        let target = fake.surface_id.to_string();
+        let code = wait(&fake, &target, "DONE", Some(1), MatchMode::Single)
+            .expect("a timeout is an exit code");
+        assert_eq!(code, EXIT_TIMEOUT);
+
+        let fake = NotDrawnYet::new(u32::MAX, "");
+        let err = wait(&fake, "nobody", "DONE", Some(30), MatchMode::Single).unwrap_err();
+        assert!(err.message.contains("no pane matches"), "{}", err.message);
+        assert_eq!(
+            fake.lists.get(),
+            1,
+            "a target nothing holds is not waited for"
+        );
     }
 }
