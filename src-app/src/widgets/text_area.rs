@@ -337,6 +337,21 @@ impl TextArea {
         cx.emit(TextAreaEvent::Changed);
     }
 
+    fn apply_accessibility_edit(
+        &mut self,
+        action: gpui::accesskit::Action,
+        text: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let range = match action {
+            gpui::accesskit::Action::SetValue => 0..self.content.len(),
+            gpui::accesskit::Action::ReplaceSelectedText => self.selection(),
+            _ => return,
+        };
+        let text = text.replace("\r\n", "\n").replace('\r', "\n");
+        self.replace(range, &text, cx);
+    }
+
     fn delete_to(&mut self, offset: usize, cx: &mut Context<Self>) {
         let range = if self.selection().is_empty() {
             offset.min(self.cursor)..offset.max(self.cursor)
@@ -884,6 +899,17 @@ impl Render for TextArea {
             .aria_label(self.accessible_name.clone())
             .aria_value(SharedString::from(self.content.clone()))
             .aria_placeholder(self.placeholder.clone())
+            .on_a11y_action(
+                gpui::accesskit::Action::SetValue,
+                accessibility_edit(cx.weak_entity(), gpui::accesskit::Action::SetValue),
+            )
+            .on_a11y_action(
+                gpui::accesskit::Action::ReplaceSelectedText,
+                accessibility_edit(
+                    cx.weak_entity(),
+                    gpui::accesskit::Action::ReplaceSelectedText,
+                ),
+            )
             .w_full()
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
@@ -1016,6 +1042,19 @@ impl Render for TextArea {
     }
 }
 
+fn accessibility_edit(
+    area: gpui::WeakEntity<TextArea>,
+    action: gpui::accesskit::Action,
+) -> impl FnMut(Option<&gpui::accesskit::ActionData>, &mut Window, &mut App) + 'static {
+    move |data, _window, cx| {
+        if let Some(gpui::accesskit::ActionData::Value(text)) = data {
+            let _ = area.update(cx, |area, cx| {
+                area.apply_accessibility_edit(action, text, cx)
+            });
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use gpui::{TestAppContext, VisualTestContext};
@@ -1085,6 +1124,63 @@ mod tests {
             area.read_with(cx, |area, _| area.value().to_owned()),
             "on\ntwo"
         );
+    }
+
+    #[gpui::test]
+    fn an_accessibility_client_sets_the_value_and_replaces_the_selection(cx: &mut TestAppContext) {
+        use gpui::accesskit::{Action, ActionData};
+        let (area, cx) = focused_area(cx);
+        let advertised = cx.update(|window, cx| {
+            area.update(cx, |area, cx| {
+                let element = area.render(window, cx).into_element();
+                let mut node =
+                    gpui::accesskit::Node::new(gpui::accesskit::Role::MultilineTextInput);
+                element.write_a11y_info(&mut node);
+                (
+                    node.supports_action(Action::SetValue),
+                    node.supports_action(Action::ReplaceSelectedText),
+                )
+            })
+        });
+        assert_eq!(advertised, (true, true));
+        let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let sink = seen.clone();
+        let _subscription = cx.update(|_, cx| {
+            cx.subscribe(&area, move |_, event: &TextAreaEvent, _| {
+                sink.borrow_mut().push(*event);
+            })
+        });
+        let weak = area.downgrade();
+        cx.update(|window, cx| {
+            accessibility_edit(weak.clone(), Action::SetValue)(
+                Some(&ActionData::Value("one\r\ntwo".into())),
+                window,
+                cx,
+            )
+        });
+        assert_eq!(
+            area.read_with(cx, |area, _| area.value().to_owned()),
+            "one\ntwo"
+        );
+        assert_eq!(area.read_with(cx, |area, _| area.cursor), 7);
+        assert_eq!(*seen.borrow(), [TextAreaEvent::Changed]);
+        area.update(cx, |area, _| {
+            area.anchor = 0;
+            area.cursor = 3;
+        });
+        cx.update(|window, cx| {
+            accessibility_edit(weak.clone(), Action::ReplaceSelectedText)(
+                Some(&ActionData::Value("first".into())),
+                window,
+                cx,
+            )
+        });
+        assert_eq!(
+            area.read_with(cx, |area, _| area.value().to_owned()),
+            "first\ntwo"
+        );
+        assert_eq!(area.read_with(cx, |area, _| area.cursor), 5);
+        assert_eq!(seen.borrow().len(), 2);
     }
 
     #[gpui::test]

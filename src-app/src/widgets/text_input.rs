@@ -217,6 +217,32 @@ impl TextInput {
         self.select_to(self.content.len(), cx);
     }
 
+    fn apply_accessibility_edit(
+        &mut self,
+        action: gpui::accesskit::Action,
+        text: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let range = match action {
+            gpui::accesskit::Action::SetValue => 0..self.content.len(),
+            gpui::accesskit::Action::ReplaceSelectedText => self.selected_range.clone(),
+            _ => return,
+        };
+        let text = single_line(text);
+        self.push_undo();
+        self.last_edit = None;
+        self.content =
+            (self.content[..range.start].to_owned() + &text + &self.content[range.end..]).into();
+        let caret = range.start + text.len();
+        self.selected_range = caret..caret;
+        self.selection_reversed = false;
+        self.marked_range = None;
+        self.is_selecting = false;
+        self.drag_anchor = None;
+        self.reset_blink();
+        cx.notify();
+    }
+
     fn left(&mut self, _: &Left, _: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
             self.move_to(self.previous_boundary(self.cursor_offset()), cx);
@@ -484,8 +510,7 @@ impl TextInput {
 
     pub fn paste_clipboard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-            let sanitized = text.replace("\r\n", " ").replace(['\r', '\n'], " ");
-            self.replace_text_in_range(None, &sanitized, window, cx);
+            self.replace_text_in_range(None, &single_line(&text), window, cx);
         }
     }
 
@@ -1031,6 +1056,17 @@ impl Render for TextInput {
             .aria_label(self.accessible_name())
             .aria_value(self.content.clone())
             .aria_placeholder(self.placeholder.clone())
+            .on_a11y_action(
+                gpui::accesskit::Action::SetValue,
+                accessibility_edit(cx.weak_entity(), gpui::accesskit::Action::SetValue),
+            )
+            .on_a11y_action(
+                gpui::accesskit::Action::ReplaceSelectedText,
+                accessibility_edit(
+                    cx.weak_entity(),
+                    gpui::accesskit::Action::ReplaceSelectedText,
+                ),
+            )
             .w_full()
             .key_context("TextInput")
             .track_focus(&self.focus_handle(cx))
@@ -1081,6 +1117,23 @@ pub(crate) fn accessible_field_name(
         .or(Some(placeholder).filter(|name| !name.trim().is_empty()))
         .cloned()
         .unwrap_or_else(|| SharedString::from("Text field"))
+}
+
+fn single_line(text: &str) -> String {
+    text.replace("\r\n", " ").replace(['\r', '\n'], " ")
+}
+
+fn accessibility_edit(
+    input: gpui::WeakEntity<TextInput>,
+    action: gpui::accesskit::Action,
+) -> impl FnMut(Option<&gpui::accesskit::ActionData>, &mut Window, &mut App) + 'static {
+    move |data, _window, cx| {
+        if let Some(gpui::accesskit::ActionData::Value(text)) = data {
+            let _ = input.update(cx, |input, cx| {
+                input.apply_accessibility_edit(action, text, cx)
+            });
+        }
+    }
 }
 
 impl Focusable for TextInput {
@@ -1151,6 +1204,70 @@ mod tests {
         });
         assert_eq!(name.as_deref(), Some("Search settings"));
         assert_eq!(value.as_deref(), Some("world"));
+    }
+
+    #[gpui::test]
+    fn an_accessibility_client_sets_the_value_and_replaces_the_selection_like_typing(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use gpui::accesskit::{Action, ActionData};
+        let (input, cx) = painted_input("old", "Search settings", cx);
+        let advertised = cx.update(|window, cx| {
+            input.update(cx, |input, cx| {
+                let element = input.render(window, cx).into_element();
+                let mut node = gpui::accesskit::Node::new(gpui::accesskit::Role::TextInput);
+                element.write_a11y_info(&mut node);
+                (
+                    node.supports_action(Action::SetValue),
+                    node.supports_action(Action::ReplaceSelectedText),
+                )
+            })
+        });
+        assert_eq!(advertised, (true, true));
+
+        let changes = std::rc::Rc::new(std::cell::Cell::new(0usize));
+        let seen = changes.clone();
+        let _observer = cx.update(|_, cx| cx.observe(&input, move |_, _| seen.set(seen.get() + 1)));
+        let weak = input.downgrade();
+        cx.update(|window, cx| {
+            accessibility_edit(weak.clone(), Action::SetValue)(
+                Some(&ActionData::Value("hello\nworld".into())),
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        assert_eq!(input.read_with(cx, |input, _| input.value()), "hello world");
+        assert_eq!(
+            input.read_with(cx, |input, _| input.selected_range.clone()),
+            11..11
+        );
+        assert!(changes.get() >= 1, "observers must see the new value");
+
+        input.update(cx, |input, _| input.selected_range = 0..5);
+        let before = changes.get();
+        cx.update(|window, cx| {
+            accessibility_edit(weak.clone(), Action::ReplaceSelectedText)(
+                Some(&ActionData::Value("howdy".into())),
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        assert_eq!(input.read_with(cx, |input, _| input.value()), "howdy world");
+        assert_eq!(
+            input.read_with(cx, |input, _| input.selected_range.clone()),
+            5..5
+        );
+        assert!(changes.get() > before);
+
+        cx.update(|window, cx| {
+            accessibility_edit(weak.clone(), Action::SetValue)(None, window, cx)
+        });
+        assert_eq!(input.read_with(cx, |input, _| input.value()), "howdy world");
+
+        input.update_in(cx, |input, window, cx| input.undo(&Undo, window, cx));
+        assert_eq!(input.read_with(cx, |input, _| input.value()), "hello world");
     }
 
     #[test]
