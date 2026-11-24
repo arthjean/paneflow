@@ -11,7 +11,8 @@ use crate::workspace::worktree::{self, ManagedWorktree, Snapshot};
 
 const WORKTREES_INTRO: &str =
     "Where Paneflow creates worktrees, when it removes them, and the changes it saves first.";
-const MANAGED_HINT: &str = "Removing one asks first, and its branch is never deleted.";
+const MANAGED_HINT: &str =
+    "Removing one asks first while a tab or a terminal uses it. Its branch is never deleted.";
 const SNAPSHOTS_HINT: &str = "Uncommitted changes saved when a worktree was removed.";
 const BRANCH_ICON: &str = "icons/settings/git-branch.svg";
 const SNAPSHOT_ICON: &str = "icons/settings/layers-01.svg";
