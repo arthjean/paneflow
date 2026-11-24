@@ -18,7 +18,7 @@ use crate::PaneFlowApp;
 use crate::agent_launcher::{AgentProfile, TerminalAgent};
 use crate::agent_updates::{self, AgentUpdateState, UpdateMethod, UpdatePhase};
 use crate::app::usage::model::AgentAccountRow;
-use crate::settings::components::{deferred_select_menu, select_menu, select_option};
+use crate::settings::components::{deferred_select_menu, select_action, select_menu};
 use crate::settings::search::{self, Block, SearchCard};
 use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::{TooltipDelayExt, text_tooltip};
@@ -495,7 +495,7 @@ impl PaneFlowApp {
         let mut anchor = div().relative().flex_none().child(trigger);
         if let Some(state) = menu_state {
             let menu_row = |id: String, icon: &'static str, label: &'static str, color| {
-                select_option(SharedString::from(id), false, ui)
+                select_action(SharedString::from(id), label, ui)
                     .child(
                         svg()
                             .size(px(MENU_GLYPH))

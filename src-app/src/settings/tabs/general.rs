@@ -305,8 +305,8 @@ impl PaneFlowApp {
             let any_logo = options.iter().any(|option| option.1.is_some());
             for (i, (label, icon, value, selected)) in options.into_iter().enumerate() {
                 let value_for_click = value;
-                let mut item =
-                    select_option((config_key, i), selected, ui).cursor(CursorStyle::Arrow);
+                let mut item = select_option((config_key, i), label.clone(), selected, ui)
+                    .cursor(CursorStyle::Arrow);
                 match option_lead(icon, any_logo) {
                     OptionLead::Logo(icon) => {
                         item =

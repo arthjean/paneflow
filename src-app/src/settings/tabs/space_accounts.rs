@@ -13,8 +13,8 @@ use crate::PaneFlowApp;
 use crate::agent_launcher::TerminalAgent;
 use crate::app::usage::model::AgentAccountRow;
 use crate::settings::components::{
-    ModalKey, deferred_select_menu, modal_key, select_chevron, select_menu, select_option,
-    select_trigger, with_alpha,
+    ModalKey, deferred_select_menu, modal_key, select_action, select_chevron, select_menu,
+    select_option, select_trigger, with_alpha,
 };
 use crate::settings::kit::{self, Ink, Size, Text, Tone};
 use crate::settings::tabs::agents::input_box;
@@ -25,6 +25,7 @@ const SELECT_WIDTH: f32 = 200.;
 const CODE_ROW_PADDING_BOTTOM: f32 = 12.;
 const ACCOUNTS_HINT: &str = "The account each agent signs in with in this space.";
 const ADD_ICON: &str = "icons/settings/add-01.svg";
+const ADD_ACCOUNT_LABEL: &str = "Add account…";
 
 pub(crate) const ACCOUNT_AGENTS: [(UsageAgent, TerminalAgent); 3] = [
     (UsageAgent::ClaudeCode, TerminalAgent::ClaudeCode),
@@ -611,7 +612,7 @@ impl PaneFlowApp {
             return trigger.into_any_element();
         }
         let option_row = |id: String, selected: bool, label: String, note: Option<String>| {
-            select_option(SharedString::from(id), selected, ui)
+            select_option(SharedString::from(id), label.clone(), selected, ui)
                 .cursor(CursorStyle::Arrow)
                 .child(
                     div()
@@ -702,9 +703,9 @@ impl PaneFlowApp {
         }
         let id = space_id;
         menu = menu.option(
-            select_option(
+            select_action(
                 SharedString::from(format!("space-account-add-{space_key}-{tag}")),
-                false,
+                ADD_ACCOUNT_LABEL,
                 ui,
             )
             .cursor(CursorStyle::Arrow)
@@ -721,7 +722,7 @@ impl PaneFlowApp {
                     .min_w_0()
                     .truncate()
                     .text_color(ui.text)
-                    .child("Add account…"),
+                    .child(ADD_ACCOUNT_LABEL),
             ),
             cx.listener(move |this, _: &(), window, cx| {
                 this.space_account_menu = None;

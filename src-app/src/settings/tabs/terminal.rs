@@ -468,6 +468,7 @@ impl PaneFlowApp {
                 menu = menu.option(
                     select_option(
                         ("terminal-font-default", 0usize),
+                        default_label.clone(),
                         current_font == default_font,
                         ui,
                     )
@@ -492,7 +493,7 @@ impl PaneFlowApp {
                 let name_owned = (*name).to_string();
                 let is_current = *name == current_font;
                 menu = menu.option(
-                    select_option(("terminal-font", i), is_current, ui)
+                    select_option(("terminal-font", i), name.to_string(), is_current, ui)
                         .cursor(CursorStyle::Arrow)
                         .child(
                             div()
@@ -764,7 +765,7 @@ impl PaneFlowApp {
                         }
                     }));
             for (i, (label, value, selected)) in options.into_iter().enumerate() {
-                let item = select_option((config_key, i), selected, ui)
+                let item = select_option((config_key, i), label.clone(), selected, ui)
                     .cursor(CursorStyle::Arrow)
                     .child(
                         div()

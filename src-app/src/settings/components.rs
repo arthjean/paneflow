@@ -936,6 +936,7 @@ fn styled_select_menu(id: ElementId, ui: crate::theme::UiColors) -> SelectMenu {
         highlight: with_alpha(ui.text, action_menu::HIGHLIGHT_ALPHA),
         shell: div()
             .id(id)
+            .role(gpui::accesskit::Role::Menu)
             .relative()
             .flex()
             .flex_col()
@@ -962,10 +963,28 @@ fn styled_select_menu(id: ElementId, ui: crate::theme::UiColors) -> SelectMenu {
 
 pub fn select_option(
     id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
     selected: bool,
     ui: crate::theme::UiColors,
 ) -> Stateful<Div> {
     with_surface_shape(|| styled_select_option(id.into(), selected, ui))
+        .role(gpui::accesskit::Role::MenuItemRadio)
+        .aria_label(label)
+        .aria_toggled(if selected {
+            gpui::accesskit::Toggled::True
+        } else {
+            gpui::accesskit::Toggled::False
+        })
+}
+
+pub fn select_action(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    ui: crate::theme::UiColors,
+) -> Stateful<Div> {
+    with_surface_shape(|| styled_select_option(id.into(), false, ui))
+        .role(gpui::accesskit::Role::MenuItem)
+        .aria_label(label)
 }
 
 fn styled_select_option(
@@ -1145,6 +1164,10 @@ impl RenderOnce for SelectMenu {
             let state = state.read(cx);
             (state.focus.clone(), state.highlighted, state.scroll.clone())
         };
+        let count = entries
+            .iter()
+            .filter(|entry| matches!(entry, SelectEntry::Option(..)))
+            .count();
         let mut handlers: Vec<SelectHandler> = Vec::new();
         let mut option_children: Vec<usize> = Vec::new();
         let mut children: Vec<AnyElement> = Vec::with_capacity(entries.len());
@@ -1158,14 +1181,15 @@ impl RenderOnce for SelectMenu {
                     option_children.push(children.len());
                     handlers.push(handler);
                     children.push(
-                        row.when(highlighted == Some(index), |row| {
-                            row.bg(highlight).rounded(action_menu::ROW_RADIUS)
-                        })
-                        .on_activate(move |_, window, cx| {
-                            restore_select_focus(&click_state, window, cx);
-                            click_handler(&(), window, cx);
-                        })
-                        .into_any_element(),
+                        placed_option(row, index, count)
+                            .when(highlighted == Some(index), |row| {
+                                row.bg(highlight).rounded(action_menu::ROW_RADIUS)
+                            })
+                            .on_activate(move |_, window, cx| {
+                                restore_select_focus(&click_state, window, cx);
+                                click_handler(&(), window, cx);
+                            })
+                            .into_any_element(),
                     );
                 }
             }
@@ -1217,6 +1241,10 @@ impl RenderOnce for SelectMenu {
             .child(list.track_scroll(&scroll).children(children))
             .into_any_element()
     }
+}
+
+pub(crate) fn placed_option(row: Stateful<Div>, index: usize, count: usize) -> Stateful<Div> {
+    row.aria_position_in_set(index + 1).aria_size_of_set(count)
 }
 
 pub fn select_item(
@@ -1463,6 +1491,50 @@ mod tests {
     }
 
     #[test]
+    fn an_open_select_menu_is_a_menu_of_named_radio_items_numbered_in_order() {
+        use gpui::accesskit::{Node, Role, Toggled};
+        fn exposed<E: gpui::Element>(element: &E) -> Node {
+            let role = element.a11y_role().expect("a role");
+            let mut node = Node::new(role);
+            element.write_a11y_info(&mut node);
+            node
+        }
+        let ui = crate::theme::ui_colors();
+        let menu = styled_select_menu("theme-preset-list".into(), ui);
+        assert_eq!(exposed(&menu.shell).role(), Role::Menu);
+        let options = ["Paneflow Dark", "One Dark", "Solarized"];
+        for (index, label) in options.iter().enumerate() {
+            let current = index == 1;
+            let node = exposed(&placed_option(
+                select_option(("theme-preset", index), *label, current, ui),
+                index,
+                options.len(),
+            ));
+            assert_eq!(node.role(), Role::MenuItemRadio, "{label}");
+            assert_eq!(node.label(), Some(*label));
+            assert_eq!(
+                node.toggled(),
+                Some(if current {
+                    Toggled::True
+                } else {
+                    Toggled::False
+                }),
+                "{label}"
+            );
+            assert_eq!(node.position_in_set(), Some(index + 1), "{label}");
+            assert_eq!(node.size_of_set(), Some(options.len()), "{label}");
+        }
+        let action = exposed(&placed_option(
+            select_action("agent-profile-edit-0", "Edit launch preset", ui),
+            0,
+            2,
+        ));
+        assert_eq!(action.role(), Role::MenuItem);
+        assert_eq!(action.label(), Some("Edit launch preset"));
+        assert_eq!(action.toggled(), None);
+    }
+
+    #[test]
     fn menu_rows_carry_the_label_and_divider_metrics_of_every_shape() {
         use crate::ui_primitives::interface_style::{Shape, scoped};
 
@@ -1513,8 +1585,13 @@ mod tests {
             for index in 0..3usize {
                 let picks = self.picks.clone();
                 menu = menu.option(
-                    select_option(("harness-option", index), index == 0, ui)
-                        .child(format!("Option {index}")),
+                    select_option(
+                        ("harness-option", index),
+                        format!("Option {index}"),
+                        index == 0,
+                        ui,
+                    )
+                    .child(format!("Option {index}")),
                     move |_, _, _| picks.borrow_mut().push(index),
                 );
             }

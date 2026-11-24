@@ -645,16 +645,21 @@ impl PaneFlowApp {
                 .enumerate()
             {
                 menu = menu.option(
-                    select_option(("workspace-pane-agent", i), current == Some(agent), ui)
-                        .child(agent_logo(agent, AGENT_OPTION_LOGO, ui))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .text_color(ui.text)
-                                .child(agent.display_name()),
-                        ),
+                    select_option(
+                        ("workspace-pane-agent", i),
+                        agent.display_name(),
+                        current == Some(agent),
+                        ui,
+                    )
+                    .child(agent_logo(agent, AGENT_OPTION_LOGO, ui))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(ui.text)
+                            .child(agent.display_name()),
+                    ),
                     cx.listener(move |this, _: &(), _w, cx| {
                         this.workspace_template_dropdown = None;
                         this.set_workspace_template_pane_agent(agent, cx);

@@ -288,6 +288,7 @@ impl PaneFlowApp {
                 menu = menu.option(
                     select_option(
                         SharedString::from(format!("agent-update-method-{tag}-{}", method.id())),
+                        option_label(method),
                         method == selected,
                         ui,
                     )
@@ -755,6 +756,7 @@ impl PaneFlowApp {
             for agent in TerminalAgent::for_this_platform() {
                 let item = select_option(
                     SharedString::from(format!("agent-profile-agent-item-{}", agent.tag())),
+                    agent.display_name(),
                     agent == current,
                     ui,
                 )

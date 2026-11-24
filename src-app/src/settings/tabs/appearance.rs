@@ -353,7 +353,7 @@ impl PaneFlowApp {
             for (idx, preset) in crate::theme::PRESETS.iter().enumerate() {
                 let is_current = preset.name == current_name;
                 menu = menu.option(
-                    select_option(("theme-preset", idx), is_current, ui)
+                    select_option(("theme-preset", idx), preset.name, is_current, ui)
                         .cursor(CursorStyle::Arrow)
                         .child(theme_swatch(preset.variant(is_light)))
                         .child(
@@ -429,16 +429,21 @@ impl PaneFlowApp {
             ));
             for (idx, &style) in InterfaceStyle::ALL.iter().enumerate() {
                 menu = menu.option(
-                    select_option(("interface-style", idx), current == style, ui)
-                        .cursor(CursorStyle::Arrow)
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .text_color(ui.text)
-                                .child(style.label()),
-                        ),
+                    select_option(
+                        ("interface-style", idx),
+                        style.label(),
+                        current == style,
+                        ui,
+                    )
+                    .cursor(CursorStyle::Arrow)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(ui.text)
+                            .child(style.label()),
+                    ),
                     cx.listener(move |this, _: &(), _window, cx| {
                         this.general_dropdown = None;
                         this.apply_interface_style(style, cx);
@@ -525,7 +530,7 @@ impl PaneFlowApp {
             ));
             for (idx, &icon) in WorkspaceIcon::ALL.iter().enumerate() {
                 menu = menu.option(
-                    select_option(("workspace-icon", idx), current == icon, ui)
+                    select_option(("workspace-icon", idx), icon.label(), current == icon, ui)
                         .cursor(CursorStyle::Arrow)
                         .child(preview(icon))
                         .child(
@@ -735,7 +740,7 @@ impl PaneFlowApp {
             for (idx, &style) in BackgroundStyle::ALL.iter().enumerate() {
                 let is_current = current == style;
                 menu = menu.option(
-                    select_option(("background-style", idx), is_current, ui)
+                    select_option(("background-style", idx), style.label(), is_current, ui)
                         .cursor(CursorStyle::Arrow)
                         .child(
                             div()
