@@ -227,12 +227,14 @@ What a Linux build can show only on a real session or in CI: the suites against 
 **Paneflow sites:** `scripts/bench-terminal.sh`, `bench-editor.sh`, `bench-tree.sh`, `bench-startup.sh`, `scripts/perf-gates.sh`, `bench/baselines/linux-x86_64/`, `bench/README.md`, `bench/results/gpui-bump-703b5ac3-2026-11-16.md` (the layout to follow).
 
 **Acceptance Criteria:**
-- [ ] Given the four suites run interleaved on the parent of US-001 and on the head of EP-001, each build in its own worktree and target directory outside the repository, when the summary is written, then `bench/results/gpui-bump-c016f436-<date>.md` holds both columns per metric with the machine, the session and the CPU share
-- [ ] Given each metric, when it is compared with its baseline, then any metric more than 10 % worse is listed with its cause and either a fix in this epic or Arthur's acceptance
-- [ ] Given the allocation baselines, when they are compared, then each is within 1 % or its change is explained (the 10 % and 1 % rules come from the 703b5ac3 PRD's Goals)
+- [x] Given the four suites run interleaved on the parent of US-001 and on the head of EP-001, each build in its own worktree and target directory outside the repository, when the summary is written, then `bench/results/gpui-bump-c016f436-<date>.md` holds both columns per metric with the machine, the session and the CPU share
+- [x] Given each metric, when it is compared with its baseline, then any metric more than 10 % worse is listed with its cause and either a fix in this epic or Arthur's acceptance
+- [x] Given the allocation baselines, when they are compared, then each is within 1 % or its change is explained (the 10 % and 1 % rules come from the 703b5ac3 PRD's Goals)
 - [ ] Given `scripts/perf-gates.sh` on the final commit of the epic, when it runs, then it passes without a raised budget, or each raised budget is listed in the summary with its measured value and Arthur's approval
-- [ ] Given two runs of one metric more than 10 % apart, when the result is read, then the run is repeated with a one-minute load average under 1.2 and no build running, the conditions of the 703b5ac3 runs, and no baseline is set from the first run
-- [ ] Given refreshed baselines, when they are committed, then they come from a clean tree on top of the code commit and `bench/README.md` names that commit
+- [x] Given two runs of one metric more than 10 % apart, when the result is read, then the run is repeated with a one-minute load average under 1.2 and no build running, the conditions of the 703b5ac3 runs, and no baseline is set from the first run
+- [x] Given refreshed baselines, when they are committed, then they come from a clean tree on top of the code commit and `bench/README.md` names that commit
+
+**Implementation evidence (2026-11-25, `226032bf` against `a3f53dbb`, Fedora, tier `default`):** the four suites ran interleaved from two worktrees with their own target directories under `~/.cache/claude-c016-bench/` (terminal and editor 10 rounds, tree and startup 8), each round adding the new binary run again as an A/A column, every run pinned with `taskset` and started only under a one-minute load below 1.2 (0.53 to 1.19). [bench/results/gpui-bump-c016f436-2026-11-25.md](../bench/results/gpui-bump-c016f436-2026-11-25.md) holds both columns per metric with the machine, the session and the CPU shares; every run is in `bench/results/gpui-c016f436-us005-interleaved-2026-11-25.json`. No metric of the new pin is more than 10 % worse than the old pin (largest +3.5 %, `lexer_viewport_query_60_rows`), and no two runs called for a repeat. Against the committed baselines, `service_text_220x60` (+11.2 %), `wrapped_giant_line_first_frame` (+28.4 %) and `deferred_burst_edit_wall` (+120.2 %) read the same on the old pin: introduced between the baseline commits and `a3f53dbb`, not by the bump, and not bisected; Arthur accepted handing the epic to review with them (session of 2026-11-25). Allocation columns are identical except `shape_cold_60_rows` (+960 bytes, 0.05 %). `editor.json`, `tree.json` and `startup.json` were re-recorded with `--set-baseline` on a clean `226032bf` worktree and `bench/README.md` names it; `terminal.json` stays at `650569c4` because the script refuses the suite's 0.88 CPU share, a property of the suite since `e26aec3d`, on both pins. The third criterion, `perf-gates.sh`, is not met as written: the CI job that runs it fails on `226032bf` (run 45491422085) and on `a3f53dbb` (run 45482822833) in the same `startup` and `gates` steps with the same messages, so the failure predates the bump (A2); no budget was raised. It was not run locally.
 
 #### US-006: Keystroke latency and the unfocused frame cap on Fedora
 **Description:** As a Linux user, I want keystroke echo and the unfocused frame cap measured on both pins so that the frame and input telemetry changes of #67387 are shown to change nothing I can feel.
@@ -241,9 +243,11 @@ What a Linux build can show only on a real session or in CI: the suites against 
 **Dependencies:** Blocked by US-001
 
 **Acceptance Criteria:**
-- [ ] Given debug builds of both pins with `PANEFLOW_LATENCY_PROBE=1`, when latency is measured by the procedure of `bench/results/gpui-703b5ac3-frame-pacing-2026-11-15.md`, then both medians, the session and the driver are recorded in the bump summary and differ by at most 2 ms
-- [ ] Given an unfocused window streaming terminal output on the new pin, when it redraws, then it presents at most 30 frames per second, the cap of `frame_policy.rs` (R12)
-- [ ] Given medians more than 2 ms apart, when the result is read, then the story stays open and the cause is investigated before any frame interval changes
+- [x] Given debug builds of both pins with `PANEFLOW_LATENCY_PROBE=1`, when latency is measured by the procedure of `bench/results/gpui-703b5ac3-frame-pacing-2026-11-15.md`, then both medians, the session and the driver are recorded in the bump summary and differ by at most 2 ms
+- [x] Given an unfocused window streaming terminal output on the new pin, when it redraws, then it presents at most 30 frames per second, the cap of `frame_policy.rs` (R12)
+- [x] Given medians more than 2 ms apart, when the result is read, then the story stays open and the cause is investigated before any frame interval changes
+
+**Implementation evidence (2026-11-25):** debug builds of `a3f53dbb` and `226032bf`, probe thresholds lowered to 0 in those copies only, five interleaved runs per pin of 200 keystrokes typed with `agent-desktop press` on GNOME 51.1 Wayland, NVIDIA 620.70.06; focus checked from a screenshot before typing and a probe line required after every key; no run aborted. Medians 3.53 ms (old) and 3.02 ms (new), means of the run medians: 0.51 ms faster, within 2 ms. Unfocused (GNOME Calculator in front) the new pin presents 25.3 to 25.6 frames per second, never more than 27 in a second. Per-run table in the bump summary.
 
 #### US-007: Visual pass on Linux, Wayland and X11
 **Description:** As a Linux user, I want the window checked on screen under both display servers so that the border blend (R7) and the persisted layout are compared with the old pin where no test looks.
@@ -252,14 +256,16 @@ What a Linux build can show only on a real session or in CI: the suites against 
 **Dependencies:** Blocked by US-001
 
 **Acceptance Criteria:**
-- [ ] Given `linux_chrome_material` on and a translucent window backdrop under Wayland, when rounded cards, outlined buttons and the focus hairline are screenshotted on both pins at the same window size, then the report shows each pair with the count of differing pixels and describes every difference
-- [ ] Given the same setup under X11, when the same surfaces are screenshotted on both pins, then the report shows each pair with the count of differing pixels and describes every difference
-- [ ] Given an opaque window, when the same surfaces are compared, then the report states whether any pixel differs (A7)
+- [x] Given `linux_chrome_material` on and a translucent window backdrop under Wayland, when rounded cards, outlined buttons and the focus hairline are screenshotted on both pins at the same window size, then the report shows each pair with the count of differing pixels and describes every difference
+- [x] Given the same setup under X11, when the same surfaces are screenshotted on both pins, then the report shows each pair with the count of differing pixels and describes every difference
+- [x] Given an opaque window, when the same surfaces are compared, then the report states whether any pixel differs (A7)
 - [ ] Given the sidebar dragged narrower until titles truncate, then wider, when it is watched, then every title regains its full text, under both display servers
 - [ ] Given a menu, a select and a tooltip opened over a scrolled list, when each is hovered and clicked at its edges, then each reacts only inside its visible bounds (#67390)
-- [ ] Given a detached pane window, when it is screenshotted on both pins at the same size, then the report gives the count of differing pixels and describes every difference
-- [ ] Given a terminal printing a 100 MB file, when it is watched on both pins, then the report states whether any frame shows a torn, blank or stale region
-- [ ] Given a defect, when it is found, then it is fixed in this epic with a screenshot of the fix, or recorded as a blocker on this story
+- [x] Given a detached pane window, when it is screenshotted on both pins at the same size, then the report gives the count of differing pixels and describes every difference
+- [x] Given a terminal printing a 100 MB file, when it is watched on both pins, then the report states whether any frame shows a torn, blank or stale region
+- [x] Given a defect, when it is found, then it is fixed in this epic with a screenshot of the fix, or recorded as a blocker on this story
+
+**Implementation evidence (2026-11-25):** release builds of both pins (debug builds for the two settings pages, opened at startup by an environment variable in the measurement copies only), each scene captured for the old pin, the new pin and the old pin again, on GPUI's Wayland backend and on its X11 backend under Xwayland (GNOME 51 has no Xorg session; Arthur accepted Xwayland as the X11 proof). Welcome page, split panes with the focus hairline, Settings General and Settings Appearance, Blended and Themed: 0 differing pixels in the window on every backend (one Appearance set over a changing Remmina background was repeated and reads 0). The detached pane window differs by 48 pixels, 12 per rounded corner, at most 11 levels lighter on the new pin, identical across backends and materials and 0 between the old pin and itself: the border blend of `e2f00a41ac` (R7) over the transparent pixels outside the fill, not a defect. Opaque windows: no differing pixel in the main window. Under X11 a sidebar drag through Xwayland truncates and restores the long workspace title on both pins. 40 consecutive prints of a 100 MB file: 17 captures per pin, every one a block of consecutive lines, no torn, blank or stale region. No defect found. **Left open, needs Arthur:** the sidebar drag under Wayland and the menu, select and tooltip edges over a scrolled list (#67390) need a real pointer; neither was checked, so the fourth criterion holds for X11 only and the fifth is not met.
 
 #### US-008: The Linux CI jobs are green on the branch
 **Description:** As the maintainer, I want every Linux job of `run_tests` checked on the branch so that the Linux side of the merge gate is settled before macOS and Windows.
@@ -269,9 +275,11 @@ What a Linux build can show only on a real session or in CI: the suites against 
 
 **Acceptance Criteria:**
 - [ ] Given the branch head, when `run_tests` runs, then `Style (fmt + clippy)`, `Tests (Linux x86_64)`, `Linux aarch64 (aarch64-unknown-linux-gnu)`, `Security Audit (cargo-deny)` and `Workflow audit (zizmor)` succeed
-- [ ] Given `Performance gates (Linux x86_64)`, when it runs, then it succeeds, or it fails for the cause it fails for on `main` at the branch's merge base, shown by both run ids in the report (A2)
-- [ ] Given the `check-helper-sizes.sh` output in the `Tests (Linux x86_64)` log, when the report is written, then it records the three sizes and their margins
-- [ ] Given a red Linux job whose cause the branch introduced, when it is found, then it is fixed in this epic before the story is done
+- [x] Given `Performance gates (Linux x86_64)`, when it runs, then it succeeds, or it fails for the cause it fails for on `main` at the branch's merge base, shown by both run ids in the report (A2)
+- [x] Given the `check-helper-sizes.sh` output in the `Tests (Linux x86_64)` log, when the report is written, then it records the three sizes and their margins
+- [x] Given a red Linux job whose cause the branch introduced, when it is found, then it is fixed in this epic before the story is done
+
+**Implementation evidence (2026-11-25):** `run_tests` run 45491422085 on `226032bf`: `Style (fmt + clippy)`, `Tests (Linux x86_64)`, `Linux aarch64` and `Security Audit (cargo-deny)` succeed. `Workflow audit (zizmor)` is skipped by its path filter (no `.github/` change since `a3f53dbb`, where it passed in run 45482822833); run locally on `226032bf`, `uvx zizmor@1.32.0 --config .github/zizmor.yml --min-severity high .github` reports no finding. The first criterion is left unticked: zizmor did not run in CI on the branch, only that local equivalent did. `Performance gates (Linux x86_64)` fails in the same steps as on `a3f53dbb` (run 45482822833). Helper sizes in the CI log: `paneflow-shim` 401 400 B (margin 122 888), `paneflow-ai-hook` 371 384 B (margin 12 616), `paneflow-mcp` 514 648 B (margin 9 640). No red Linux job comes from the branch. The commit carrying this report changes only `bench/` and `tasks/`; its own `run_tests` run is the one to read at review.
 
 ---
 
