@@ -21,10 +21,65 @@ pub fn host_os() -> OperatingSystem {
 }
 
 pub fn parse_keystroke(source: &str) -> Result<Keystroke, String> {
-    match Keystroke::parse_with_os(source, host_os()) {
-        Ok(keystroke) if !keystroke.key.is_empty() => Ok(keystroke),
+    parse_keystroke_on(source, host_os())
+}
+
+fn parse_keystroke_on(source: &str, os: OperatingSystem) -> Result<Keystroke, String> {
+    match Keystroke::parse_with_os(source, os) {
+        Ok(keystroke) if !keystroke.key.is_empty() => Ok(as_delivered_on(keystroke, os)),
         _ => Err(format!("invalid keystroke: {source}")),
     }
+}
+
+const SHIFTED_SYMBOLS: [(&str, &str); 21] = [
+    ("`", "~"),
+    ("1", "!"),
+    ("2", "@"),
+    ("3", "#"),
+    ("4", "$"),
+    ("5", "%"),
+    ("6", "^"),
+    ("7", "&"),
+    ("8", "*"),
+    ("9", "("),
+    ("0", ")"),
+    ("-", "_"),
+    ("=", "+"),
+    ("[", "{"),
+    ("]", "}"),
+    ("\\", "|"),
+    (";", ":"),
+    ("'", "\""),
+    (",", "<"),
+    (".", ">"),
+    ("/", "?"),
+];
+
+fn as_delivered_on(mut keystroke: Keystroke, os: OperatingSystem) -> Keystroke {
+    if os != OperatingSystem::Mac || !keystroke.modifiers.shift {
+        return keystroke;
+    }
+    if let Some((_, shifted)) = SHIFTED_SYMBOLS
+        .iter()
+        .find(|(unshifted, _)| *unshifted == keystroke.key)
+    {
+        keystroke.modifiers.shift = false;
+        keystroke.key = (*shifted).to_string();
+        keystroke.key_char = None;
+    }
+    keystroke
+}
+
+fn chords_as_delivered(normalized: &str) -> Option<String> {
+    normalized
+        .split_whitespace()
+        .map(|chord| {
+            parse_keystroke(chord)
+                .ok()
+                .map(|keystroke| keystroke.unparse(host_os()))
+        })
+        .collect::<Option<Vec<_>>>()
+        .map(|chords| chords.join(" "))
 }
 
 pub(super) fn canonical_keystroke(keystrokes: &str) -> Option<Keystroke> {
@@ -44,14 +99,10 @@ pub(super) fn make_binding(
     context: Option<&str>,
     cx: &App,
 ) -> Option<KeyBinding> {
-    let normalized = normalize_keystroke(keystrokes);
-    if normalized
-        .split_whitespace()
-        .any(|chord| parse_keystroke(chord).is_err())
-    {
+    let Some(delivered) = chords_as_delivered(&normalize_keystroke(keystrokes)) else {
         log::warn!("shortcuts: invalid keystroke '{keystrokes}'");
         return None;
-    }
+    };
     let predicate = match context {
         Some(ctx) => match KeyBindingContextPredicate::parse(ctx) {
             Ok(p) => Some(p.into()),
@@ -62,7 +113,7 @@ pub(super) fn make_binding(
         },
         None => None,
     };
-    match KeyBinding::load(&normalized, action, predicate, false, None, cx) {
+    match KeyBinding::load(&delivered, action, predicate, false, None, cx) {
         Ok(binding) => Some(binding),
         Err(e) => {
             log::warn!("shortcuts: invalid keystroke '{keystrokes}': {e}");
@@ -267,6 +318,34 @@ mod tests {
     fn normalize_keystroke_converts_plus_to_dash() {
         assert_eq!(normalize_keystroke("ctrl+shift+d"), "ctrl-shift-d");
         assert_eq!(normalize_keystroke("alt+left"), "alt-left");
+    }
+
+    #[test]
+    fn on_macos_a_shifted_symbol_binds_the_character_shift_produces() {
+        let equalize =
+            parse_keystroke_on("secondary-shift-=", OperatingSystem::Mac).expect("parses");
+        assert_eq!(equalize.key, "+");
+        assert!(equalize.modifiers.platform);
+        assert!(!equalize.modifiers.shift);
+        assert_eq!(
+            parse_keystroke_on("cmd-+", OperatingSystem::Mac).expect("parses"),
+            equalize
+        );
+        let slash = parse_keystroke_on("ctrl-shift-/", OperatingSystem::Mac).expect("parses");
+        assert_eq!((slash.key.as_str(), slash.modifiers.shift), ("?", false));
+    }
+
+    #[test]
+    fn a_shifted_letter_or_another_platform_keeps_shift() {
+        let letter = parse_keystroke_on("cmd-shift-d", OperatingSystem::Mac).expect("parses");
+        assert_eq!((letter.key.as_str(), letter.modifiers.shift), ("d", true));
+        for os in [OperatingSystem::Linux, OperatingSystem::Windows] {
+            let equalize = parse_keystroke_on("secondary-shift-=", os).expect("parses");
+            assert_eq!(
+                (equalize.key.as_str(), equalize.modifiers.shift),
+                ("=", true)
+            );
+        }
     }
 
     #[test]
