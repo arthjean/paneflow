@@ -4,8 +4,8 @@ use std::rc::Rc;
 use gpui::{
     App, BorderStyle, Bounds, ContentMask, Corners, Element, ElementId, Font, FontFeatures,
     FontStyle, FontWeight, GlobalElementId, Hsla, InspectorElementId, LayoutId, Length, Path,
-    PathBuilder, Pixels, Point, ShapedLine, SharedString, Style, TextAlign, TextRun,
-    TransformationMatrix, Window, fill, point, px, quad, relative, size,
+    PathBuilder, Pixels, Point, ShapedLine, SharedString, Style, TextRun, TransformationMatrix,
+    Window, fill, point, px, quad, relative, size,
 };
 
 use super::align::CellKind;
@@ -18,7 +18,7 @@ use super::rows::{
     DisplayRow, FILE_HEADER_HEIGHT, FileSpan, HalfCell, HeaderParts, ROW_HEIGHT, RowKind,
     RowPalette, SplitRow,
 };
-use crate::tab_stops::TabExpandedLine;
+use crate::tab_stops::{PaintedLine, TabExpandedLine};
 
 const UI_FONT_FAMILY: &str = "Geist";
 const CODE_FONT_SIZE: f32 = 13.0;
@@ -160,7 +160,7 @@ struct RoundedQuad {
 
 struct Glyphs {
     origin: Point<Pixels>,
-    line: ShapedLine,
+    line: PaintedLine,
     clip: Option<Bounds<Pixels>>,
 }
 
@@ -377,7 +377,7 @@ impl DiffElement {
         let y = bounds.origin.y + (bounds.size.height - self.line_height) / 2.0;
         chip_glyphs.push(Glyphs {
             origin: point(x, y),
-            line: label,
+            line: label.into(),
             clip: None,
         });
     }
@@ -486,12 +486,12 @@ impl DiffElement {
         let stats_left = added_x.min(added_right - column_w);
         glyphs.push(Glyphs {
             origin: point(added_x, ty),
-            line: added_line,
+            line: added_line.into(),
             clip: Some(bounds),
         });
         glyphs.push(Glyphs {
             origin: point(removed_right - removed_line.width(), ty),
-            line: removed_line,
+            line: removed_line.into(),
             clip: Some(bounds),
         });
 
@@ -511,7 +511,7 @@ impl DiffElement {
             if renamed_x + title.width() <= title_right {
                 glyphs.push(Glyphs {
                     origin: point(title_x, ty),
-                    line: previous,
+                    line: previous.into(),
                     clip: Some(bounds),
                 });
                 icons.push(MaskIcon {
@@ -527,7 +527,7 @@ impl DiffElement {
         if title.width() <= name_w {
             glyphs.push(Glyphs {
                 origin: point(name_x, ty),
-                line: title,
+                line: title.into(),
                 clip: Some(bounds),
             });
             return;
@@ -537,7 +537,7 @@ impl DiffElement {
         let clip_x = name_x + ellipsis_w;
         glyphs.push(Glyphs {
             origin: point(name_x, ty),
-            line: ellipsis,
+            line: ellipsis.into(),
             clip: Some(Bounds::new(
                 point(name_x, origin.y),
                 size(ellipsis_w, row_h),
@@ -545,7 +545,7 @@ impl DiffElement {
         });
         glyphs.push(Glyphs {
             origin: point(title_right - title.width(), ty),
-            line: title,
+            line: title.into(),
             clip: Some(Bounds::new(
                 point(clip_x, origin.y),
                 size((title_right - clip_x).max(px(0.)), row_h),
@@ -814,7 +814,9 @@ impl DiffElement {
                     content_left + px(SEPARATOR_LABEL_PAD_X),
                     top + (row_h - self.line_height) / 2.0,
                 ),
-                line: self.shape_ui(window, label.clone(), SEPARATOR_FONT_SIZE, p.separator_fg),
+                line: self
+                    .shape_ui(window, label.clone(), SEPARATOR_FONT_SIZE, p.separator_fg)
+                    .into(),
                 clip: Some(content),
             });
         }
@@ -838,7 +840,7 @@ impl DiffElement {
                 row_bounds.origin.x + px(NOTE_PAD_X),
                 row_bounds.origin.y + (row_bounds.size.height - self.line_height) / 2.0,
             ),
-            line: shape_plain(window, &self.font, self.font_size, text.clone(), p.muted),
+            line: shape_plain(window, &self.font, self.font_size, text.clone(), p.muted).into(),
             clip: Some(row_bounds),
         });
     }
@@ -948,7 +950,7 @@ impl DiffElement {
         }
         glyphs.push(Glyphs {
             origin: point(code_x, origin.y),
-            line: line.into_shaped(),
+            line: line.into_painted(),
             clip: Some(Bounds::new(point(content_x, origin.y), size(content_w, lh))),
         });
     }
@@ -1185,7 +1187,7 @@ impl DiffElement {
         let right = origin.x + self.gutter_w - self.ch * GUTTER_PAD_R_CH;
         glyphs.push(Glyphs {
             origin: point((right - line.width()).max(origin.x), origin.y),
-            line,
+            line: line.into(),
             clip: None,
         });
     }
@@ -1501,14 +1503,10 @@ impl Element for DiffElement {
             for g in layout.glyphs {
                 if let Some(clip) = g.clip {
                     window.with_content_mask(Some(ContentMask { bounds: clip }), |window| {
-                        let _ = g
-                            .line
-                            .paint(g.origin, lh, TextAlign::Left, None, window, cx);
+                        let _ = g.line.paint(g.origin, lh, window, cx);
                     });
                 } else {
-                    let _ = g
-                        .line
-                        .paint(g.origin, lh, TextAlign::Left, None, window, cx);
+                    let _ = g.line.paint(g.origin, lh, window, cx);
                 }
             }
             for q in &layout.chips {
@@ -1522,9 +1520,7 @@ impl Element for DiffElement {
                 ));
             }
             for g in layout.chip_glyphs {
-                let _ = g
-                    .line
-                    .paint(g.origin, lh, TextAlign::Left, None, window, cx);
+                let _ = g.line.paint(g.origin, lh, window, cx);
             }
             for q in &layout.sticky_quads {
                 window.paint_quad(fill(q.bounds, q.color));
@@ -1533,14 +1529,10 @@ impl Element for DiffElement {
             for g in layout.sticky_glyphs {
                 if let Some(clip) = g.clip {
                     window.with_content_mask(Some(ContentMask { bounds: clip }), |window| {
-                        let _ = g
-                            .line
-                            .paint(g.origin, lh, TextAlign::Left, None, window, cx);
+                        let _ = g.line.paint(g.origin, lh, window, cx);
                     });
                 } else {
-                    let _ = g
-                        .line
-                        .paint(g.origin, lh, TextAlign::Left, None, window, cx);
+                    let _ = g.line.paint(g.origin, lh, window, cx);
                 }
             }
             if !layout.scrollbars.is_empty() {

@@ -9,8 +9,8 @@ use gpui::{
     App, BorderStyle, Bounds, ContentMask, Corners, CursorStyle, Element, ElementId,
     ElementInputHandler, Entity, Focusable, Font, FontFeatures, FontStyle, FontWeight,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, LayoutId, Pixels, Point,
-    ShapedLine, SharedString, Style, TextAlign, TextRun, UnderlineStyle, Window, WindowTextSystem,
-    fill, point, px, quad, relative, size,
+    SharedString, Style, TextRun, UnderlineStyle, Window, WindowTextSystem, fill, point, px, quad,
+    relative, size,
 };
 use paneflow_textdiff::BlockKind;
 use ropey::RopeSlice;
@@ -30,7 +30,7 @@ use super::rows::{RowMap, RowSlot, RowSpan, px_to_rows, rows_in, rows_to_px};
 use super::view::{BandReach, COMMENT_GUTTER_SEAM, CodeView};
 use super::wrap;
 use crate::diff::{RowPalette, fill_text_runs, shape_plain};
-use crate::tab_stops::TabExpandedLine;
+use crate::tab_stops::{PaintedLine, TabExpandedLine};
 use crate::widgets::ime_caret::follow_ime_caret;
 use crate::widgets::scrollbar::ScrollableHandle;
 
@@ -536,7 +536,7 @@ struct RoundedQuad {
 
 struct CodeGlyph {
     origin: Point<Pixels>,
-    line: ShapedLine,
+    line: PaintedLine,
     clip: Option<Bounds<Pixels>>,
 }
 
@@ -1237,7 +1237,7 @@ impl Element for CodeElement {
                 let num_x = (left + gutter_px - px(NUM_GAP) - num_line.width()).max(left);
                 glyphs.push(CodeGlyph {
                     origin: point(num_x, y),
-                    line: num_line.shaped().clone(),
+                    line: num_line.painted().clone(),
                     clip: None,
                 });
             }
@@ -1400,7 +1400,7 @@ impl Element for CodeElement {
             if let Some(line) = line {
                 glyphs.push(CodeGlyph {
                     origin,
-                    line: line.shaped().clone(),
+                    line: line.painted().clone(),
                     clip: Some(text_clip),
                 });
                 hits.lines.push(Some(line));
@@ -1498,14 +1498,10 @@ impl Element for CodeElement {
                 for g in layout.glyphs {
                     if let Some(clip) = g.clip {
                         window.with_content_mask(Some(ContentMask { bounds: clip }), |window| {
-                            let _ = g
-                                .line
-                                .paint(g.origin, lh, TextAlign::Left, None, window, cx);
+                            let _ = g.line.paint(g.origin, lh, window, cx);
                         });
                     } else {
-                        let _ = g
-                            .line
-                            .paint(g.origin, lh, TextAlign::Left, None, window, cx);
+                        let _ = g.line.paint(g.origin, lh, window, cx);
                     }
                 }
             },

@@ -1,16 +1,13 @@
 use std::ops::Range;
 
-use gpui::{
-    App, Bounds, ContentMask, FontWeight, Hsla, Pixels, Point, ShapedLine, TextAlign, Window, fill,
-    point, px,
-};
+use gpui::{App, Bounds, ContentMask, FontWeight, Hsla, Pixels, Point, Window, fill, point, px};
 
 use super::element::{CodeScroll, code_font};
 use super::highlight::LineRuns;
 use super::navigation::{MINIMAP_FONT_SIZE, MINIMAP_LINE_HEIGHT, Track, minimap_top};
 use super::view::CodeView;
 use crate::diff::text_runs;
-use crate::tab_stops::TabExpandedLine;
+use crate::tab_stops::{PaintedLine, TabExpandedLine};
 
 pub(crate) fn visible_rows(line_count: usize, scroll: &CodeScroll) -> Range<usize> {
     let first = minimap_top(line_count, scroll).floor() as usize;
@@ -28,7 +25,7 @@ pub(crate) fn row_syntax(view: &CodeView, row: usize, out: &mut LineRuns) {
 pub(crate) struct MinimapPaint {
     bounds: Bounds<Pixels>,
     background: Hsla,
-    lines: Vec<(Point<Pixels>, ShapedLine)>,
+    lines: Vec<(Point<Pixels>, PaintedLine)>,
 }
 
 impl MinimapPaint {
@@ -64,7 +61,7 @@ impl MinimapPaint {
                 &runs,
                 window.text_system(),
             )
-            .into_shaped();
+            .into_painted();
             lines.push((
                 point(
                     track.bounds.origin.x,
@@ -89,14 +86,7 @@ impl MinimapPaint {
             |window| {
                 window.paint_quad(fill(self.bounds, self.background.opacity(0.7)));
                 for (origin, line) in self.lines {
-                    let _ = line.paint(
-                        origin,
-                        px(MINIMAP_LINE_HEIGHT),
-                        TextAlign::Left,
-                        None,
-                        window,
-                        cx,
-                    );
+                    let _ = line.paint(origin, px(MINIMAP_LINE_HEIGHT), window, cx);
                 }
             },
         );

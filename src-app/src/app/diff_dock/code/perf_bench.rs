@@ -39,6 +39,7 @@ use super::highlight::{
 use super::lexical::LexicalLayer;
 use super::rows::{RowMap, RowSlot};
 use super::wrap;
+use crate::tab_stops::TabExpandedLine;
 
 const VIEWPORT_ROWS: usize = 60;
 
@@ -47,6 +48,7 @@ const RESOLVE_RUNS_CAPTURES: usize = 3_750;
 const RELOADS: usize = 200;
 const RELOAD_HUNKS: usize = 10;
 const SHAPE_ROW_CHARS: usize = 100;
+const LONG_LINE_BYTES: usize = 10_001;
 
 const FILL_WINDOWS_CAP: usize = 120;
 
@@ -912,6 +914,35 @@ fn skip_shape(metrics: &mut Vec<Metric>, reason: &'static str) {
     metrics.push(Metric::unavailable("shape_cold_60_rows", "ns", reason));
     metrics.push(Metric::unavailable("shape_warm_60_rows", "ns", reason));
     metrics.push(Metric::unavailable("prepaint_60_rows_warm", "ns", reason));
+    println!("PANEFLOW_BENCH_SKIP recolor_long_line: {reason}");
+    metrics.push(Metric::unavailable("recolor_long_line", "ns", reason));
+}
+
+fn long_line_runs(text: &str, font: &Font, split_tokens: bool) -> Vec<TextRun> {
+    let mut runs = Vec::new();
+    for (index, word) in text.split_inclusive(' ').enumerate() {
+        let color = hsla((index % 7) as f32 / 7.0, 0.7, 0.6, 1.0);
+        let pieces = if split_tokens && word.len() > 1 {
+            vec![1, word.len() - 1]
+        } else {
+            vec![word.len()]
+        };
+        for (piece, len) in pieces.into_iter().enumerate() {
+            runs.push(TextRun {
+                len,
+                font: font.clone(),
+                color: if piece == 0 {
+                    color
+                } else {
+                    hsla(0.0, 0.0, 0.9, 1.0)
+                },
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            });
+        }
+    }
+    runs
 }
 
 fn shape_scenarios(metrics: &mut Vec<Metric>) {
@@ -974,6 +1005,31 @@ fn shape_scenarios(metrics: &mut Vec<Metric>) {
                     &mut runs,
                     &mut shapes,
                 ))
+            });
+        },
+    ));
+    let mut long_line = String::from("const ");
+    while long_line.len() < LONG_LINE_BYTES {
+        long_line.push_str("value = call(arg) + other; ");
+    }
+    long_line.truncate(LONG_LINE_BYTES);
+    let long_line = SharedString::from(long_line);
+    let lexical = long_line_runs(&long_line, &font, false);
+    let syntax = long_line_runs(&long_line, &font, true);
+    let mut layer = 0usize;
+    metrics.push(measure_segments(
+        "recolor_long_line",
+        "one 10,001-byte line of about 3,000 colored tokens shaped again after its colors and token boundaries change, the cost a layer swap pays per visible row of a minified file",
+        1,
+        20,
+        |timer| {
+            layer += 1;
+            let runs = if layer.is_multiple_of(2) { &lexical } else { &syntax };
+            timer.time(|| {
+                std::hint::black_box(
+                    TabExpandedLine::shape(&long_line, px(CODE_FONT_SIZE), runs, &text_system)
+                        .width(),
+                )
             });
         },
     ));
