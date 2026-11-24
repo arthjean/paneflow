@@ -132,6 +132,16 @@ confused agent, not a hostile one, and the sandbox below closes that
 gap. Under `hidepid=2` the same holds for a new session started below a
 pane process Paneflow cannot see, such as a `sudo` that opens its own
 terminal.
+
+On Windows, the host puts each pane's shell in a Job Object made for
+that pane, which nothing in it can leave, so every process the shell
+starts reads `pane`; the console host ConPTY starts for the pane
+(`OpenConsole.exe`) stays outside it and never calls Paneflow. The host
+reads the caller with `GetNamedPipeClientProcessId` and checks that its
+token belongs to your user. Windows refuses a pipe client that tries to
+change the process ID the host reads, but a pipe handle opened by one
+process and handed to another still names the process that opened it.
+Measured on Windows 11 (build 26300).
 An `init.lua` action started from a key or the command palette acts as
 the window, and one started by `paneflow actions run` acts as its
 caller.
@@ -318,11 +328,25 @@ and `paneflow up` work.
   or an AppArmor profile grants them to `/usr/bin/bwrap`. Ubuntu 22.04
   and 24.04 have Landlock below ABI 6, so abstract sockets are not
   refused there.
-- **macOS and Windows** do not offer the sandbox yet: a profile that
-  asks for it there logs `Sandbox 'paneflow' is not available on
-  macos` (or `windows`) and does not start. The Seatbelt profile and
-  the write-restricted token exist in the host but have not been
-  proven on real machines.
+- **Windows** does not offer the sandbox yet: a profile that asks for
+  it logs `Sandbox 'paneflow' is not available on windows` and does not
+  start. Measured on Windows 11 (build 26300), the host's
+  write-restricted token keeps the pane off the shared window,
+  background-process and host pipes and lets it reach its own, and the
+  pane writes only its working directory (and that of any other
+  sandboxed pane), its own `TEMP` and `NUL`;
+  `git status`, `cargo build` with its target directory in the working
+  directory, and `node -v` run there. It is not offered because a
+  program built on libuv cannot start a child with piped output under
+  that token: Node and Bun fail with `EPERM: operation not permitted,
+  uv_spawn`, so Claude Code's Bash tool, hooks and MCP servers cannot
+  start. Codex cannot start its own Windows sandbox inside it, and a
+  write outside those directories fails, a shared `CARGO_TARGET_DIR` or
+  `build.target-dir` included.
+- **macOS** does not offer the sandbox yet: a profile that asks for it
+  logs `Sandbox 'paneflow' is not available on macos` and does not
+  start. The Seatbelt profile exists in the host but has not been
+  proven on a Mac.
 
 A sandboxed profile never runs unsandboxed: when `bwrap` cannot
 start, the pane shows its

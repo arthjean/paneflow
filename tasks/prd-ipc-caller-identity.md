@@ -11,6 +11,7 @@
 | 1.3 | 2026-11-23 | Arthur Jean | The stories that need a Windows machine (US-027, US-030, US-033) move to a final epic EP-006, and those that need a Mac (US-026, US-029, US-032) to a final epic EP-007. EP-004 keeps the endpoints, the Linux sandbox and US-028; EP-005 keeps the Linux kernel matrix (US-031). Story ids, criteria and dependencies are unchanged. 7 epics, 33 stories. |
 | 1.4 | 2026-11-23 | Arthur Jean | EP-004 closed. The Linux sandbox report is measured on five distributions in KVM virtual machines (`scripts/sandbox-matrix.sh`): Ubuntu 24.04 is unsupported as installed. The runtime directory of a sandboxed pane is an allowlist (Wayland, PipeWire, PulseAudio, GnuPG, the SSH agent), replacing v1.2's list of refused entries. The config offers `sandbox: "paneflow"` on Linux only until EP-006 and EP-007 validate Windows and macOS, so US-028 no longer waits for them; US-032 and US-033 each gain the criterion that turns their platform on. The CLI now reaches the worker through the pane endpoint from a sandboxed pane (`paneflow split` failed there). |
 | 1.5 | 2026-11-23 | Arthur Jean | EP-005: the Linux kernel matrix report (US-031) is measured in KVM virtual machines (`scripts/sandbox-matrix.sh --suite identity`) on Ubuntu 22.04 (5.15, `SO_PEERCRED`) and 24.04 (6.8, `SO_PEERPIDFD`). It found that with `/proc` mounted `hidepid=2` every caller was `unverified`, because the parent chain reached a process the host cannot see (`sshd-session`, `init`); an ancestor that exists but is hidden now ends the chain, as `init` does. A8 and A12 are validated. |
+| 1.6 | 2026-11-24 | Arthur Jean | EP-006, measured on Windows 11 Pro (build 26300): the Windows layer-1 report (US-030) and the Windows sandbox report (US-033). A2 and A3 are validated. The restricted token's restricting SIDs are the per-pane SID, which the pane's own data grants, a shared sandbox SID that the working directory grants, the logon SID (the desktop refuses a process without it, `0xC0000142`) and Everyone (the `NUL` device grants nothing else); the pane gets its own `TEMP` instead of a grant on the user's, whose access list every launch rewrote in more than 9 s; pane pipes grant the user's SID instead of `OWNER RIGHTS`, which a restricted token never matches. Windows stays unsupported for the sandboxed profile: a named pipe made inside the sandbox without an access list cannot be opened for writing there, so Node and Bun (Claude Code's Bash tool and MCP servers) cannot start a piped child. |
 
 ## Problem Statement
 
@@ -118,8 +119,8 @@ The conductor documentation tells users to set `PANEFLOW_IPC_SCRIPTING=1` for `s
 | # | Assumption | Risk | Validated by |
 |---|------------|------|--------------|
 | A1 | Every pane's root process is a session leader on Linux and macOS (portable-pty `setsid`). | Low (code read, `portable-pty-0.9.0/src/unix.rs:257`) | US-004 tests |
-| A2 | A Job Object assigned right after ConPTY spawns the child contains the pane's tree, the console host aside. | High (R6) | US-030 |
-| A3 | `GetNamedPipeClientProcessId` cannot be set by an unprivileged client. | High (R5) | US-030; US-003 also compares the impersonated token's user |
+| A2 | A Job Object assigned right after ConPTY spawns the child contains the pane's tree, the console host aside. | Validated by US-030: the shell and its child are in the pane's job, ConPTY's `OpenConsole.exe` is not | US-030 |
+| A3 | `GetNamedPipeClientProcessId` cannot be set by an unprivileged client. | Validated by US-030: both pipe controls that would set it are refused from user mode; a handle passed to another process still names the process that opened it | US-030; US-003 also compares the impersonated token's user |
 | A4 | bubblewrap can create user namespaces on Ubuntu 24.04, where AppArmor restricts unprivileged user namespaces by default. | Disproved by US-023: it cannot as installed; it can with `kernel.apparmor_restrict_unprivileged_userns=0` | US-023 |
 | A5 | A Seatbelt `network-outbound` rule matches Paneflow's socket paths on every supported macOS release. | High (R9) | US-032 |
 | A6 | Claude Code and Codex still run their own sandbox inside a Paneflow sandbox. | Medium | US-023, US-032 |
@@ -569,11 +570,11 @@ Everything that needs a Windows machine is run there in one pass: the restricted
 **Dependencies:** Blocked by US-022
 
 **Acceptance Criteria:**
-- [ ] Given a profile with `sandbox: "paneflow"` on Windows, when its pane launches, then the shell runs with a write-restricted token whose restricting SIDs are a per-pane SID and the SIDs the pane's working directory grants
-- [ ] Given that token, when a process in the pane opens the shared window, worker or host pipe for writing, then the open fails with access denied
-- [ ] Given the pane's endpoints, whose DACL grants the per-pane SID, when a process in the pane connects, then it succeeds
-- [ ] Given the pane's working directory, when a process in the pane writes a file there, then the write succeeds
-- [ ] Given token creation failing, when the pane launches, then it does not start and shows the launch-failure state with the OS error
+- [x] Given a profile with `sandbox: "paneflow"` on Windows, when its pane launches, then the shell runs with a write-restricted token whose restricting SIDs are a per-pane SID and the SIDs the pane's working directory grants
+- [x] Given that token, when a process in the pane opens the shared window, worker or host pipe for writing, then the open fails with access denied
+- [x] Given the pane's endpoints, whose DACL grants the per-pane SID, when a process in the pane connects, then it succeeds
+- [x] Given the pane's working directory, when a process in the pane writes a file there, then the write succeeds
+- [x] Given token creation failing, when the pane launches, then it does not start and shows the launch-failure state with the OS error
 
 #### US-030: Validate layer 1 on Windows hardware
 **Description:** As the maintainer, I want the Windows identity paths run on Arthur's Windows 11 machine, so that the Job Object and pipe assumptions are facts.
@@ -582,11 +583,11 @@ Everything that needs a Windows machine is run there in one pass: the restricted
 **Dependencies:** Blocked by US-007, US-013, US-014
 
 **Acceptance Criteria:**
-- [ ] Given a pane under ConPTY, when its shell, a child of the shell and the console host are checked with `IsProcessInJob`, then the report states which are in the pane's job (assumption A2)
-- [ ] Given a test client that tries to present another process's PID on a named pipe, when the server reads the peer, then the report states whether the PID could be forged (assumption A3)
-- [ ] Given that test, when the PID was forged, then the report states whether the token-user check refused it
-- [ ] Given `system.whoami` sent to the host from a pane and from Windows Terminal outside Paneflow, when it runs, then the answers are `pane` and `external`
-- [ ] Given `system.whoami` sent to the worker from the same two places, when it runs, then the answers are `pane` and `external`
+- [x] Given a pane under ConPTY, when its shell, a child of the shell and the console host are checked with `IsProcessInJob`, then the report states which are in the pane's job (assumption A2)
+- [x] Given a test client that tries to present another process's PID on a named pipe, when the server reads the peer, then the report states whether the PID could be forged (assumption A3)
+- [x] Given that test, when the PID was forged, then the report states whether the token-user check refused it
+- [x] Given `system.whoami` sent to the host from a pane and from Windows Terminal outside Paneflow, when it runs, then the answers are `pane` and `external`
+- [x] Given `system.whoami` sent to the worker from the same two places, when it runs, then the answers are `pane` and `external`
 
 #### US-033: Validate the Windows sandbox on hardware
 **Description:** As the maintainer, I want the restricted-token pane checked on Windows 11, so that it ships only where it holds.
@@ -595,10 +596,10 @@ Everything that needs a Windows machine is run there in one pass: the restricted
 **Dependencies:** Blocked by US-027
 
 **Acceptance Criteria:**
-- [ ] Given a sandboxed pane, when it opens the shared worker pipe, then the report states whether access was denied
-- [ ] Given that pane, when `git status`, `cargo build` and `node -v` run in its working directory, then the report states whether each succeeded
-- [ ] Given a check that fails, when the report is written, then it lists Windows as unsupported for the sandboxed profile until it is fixed
-- [ ] Given the report lists the platform as supported, when the story closes, then `SANDBOX_SUPPORTED_PLATFORMS` in `crates/paneflow-config/src/schema/agent_sandbox.rs` gains `windows` and `docs/user/scripting.md` says so; until then a profile with `sandbox: "paneflow"` is refused there
+- [x] Given a sandboxed pane, when it opens the shared worker pipe, then the report states whether access was denied
+- [x] Given that pane, when `git status`, `cargo build` and `node -v` run in its working directory, then the report states whether each succeeded
+- [x] Given a check that fails, when the report is written, then it lists Windows as unsupported for the sandboxed profile until it is fixed
+- [x] Given the report lists the platform as supported, when the story closes, then `SANDBOX_SUPPORTED_PLATFORMS` in `crates/paneflow-config/src/schema/agent_sandbox.rs` gains `windows` and `docs/user/scripting.md` says so; until then a profile with `sandbox: "paneflow"` is refused there
 
 ---
 
@@ -691,6 +692,61 @@ A log line reads, on 5.15: `paneflow host: process 2438 (SO_PEERCRED) classified
 **Defect found and fixed: `hidepid=2` refused every caller.** With `/proc` mounted `hidepid=2`, the first run refused every `session.create` with `Paneflow could not identify the calling process: cannot read the parent 2021 of process 2022: No such file or directory`, on both kernels. The parent chain of any caller reaches a process the host cannot see: `sshd-session`, which runs as the user but is not dumpable, over SSH, and `init` everywhere. Membership answered `unverified` for any unreadable parent (`crates/paneflow-peer/src/membership.rs`). It now ends the chain when the parent still exists but its `/proc` entry is hidden (`kill(pid, 0)` succeeds or fails with `EPERM`, and its `stat` cannot be read), as `init` ends it, and stays `unverified` when the parent is gone. The walk has already tested every visible process for a pane leader or a pane's session id before it reaches a hidden one, so a pane process still reads `pane`. The residual is a new session started below a pane process hidden from the host, such as a `sudo` that opens its own terminal: it reads `external` under `hidepid=2`, which is the same layer-1 limit as `setsid` and a double fork, and is documented in `docs/user/scripting.md`.
 
 **Layer-1 limit:** a pane process that calls `setsid` and double-forks reads `external` on both kernels, with and without `hidepid=2`. EP-004's sandbox is what closes it.
+
+## Windows layer 1 report (US-030)
+
+Measured on 2026-11-24 on Windows 11 Pro, build 26300 (10.0.26300.9818), x64, with the debug build of this branch. The job and pipe cases are integration tests of `paneflow-host` (`crates/paneflow-host/tests/windows_layer_one.rs`), which also run on the Windows CI leg; the `system.whoami` case ran the real binaries in an isolated home (`~/.paneflow-dev-ep006`): `paneflow-host serve` with `RUST_LOG=debug`, the worker through `paneflow serve start`, a pane created with `paneflow-host session create --shell cmd.exe`, and a window of Windows Terminal opened with `wt.exe -w new`, whose `cmd.exe` cleared every `PANEFLOW_*` variable but `PANEFLOW_HOME`.
+
+| Check | Result |
+|---|---|
+| `IsProcessInJob` against the pane's named job (`Local\paneflow-pane-<session>`), ConPTY from the bundled `conpty.dll` | The shell (`cmd.exe`) and its child (`PING.EXE`) are in the job; the console host (`OpenConsole.exe`, started by `conpty.dll` from the host process before the shell joins the job) is not (A2) |
+| `FSCTL_PIPE_SET_CLIENT_PROCESS` from the client, naming another live process | Refused, `STATUS_NOT_SUPPORTED` (`0xC00000BB`); `GetNamedPipeClientProcessId` still returns the client's own PID |
+| `FSCTL_PIPE_SET_CONNECTION_ATTRIBUTE` `ClientProcessId` from the client | Refused, `STATUS_ACCESS_DENIED` (`0xC0000022`); the same attribute read with `FSCTL_PIPE_GET_CONNECTION_ATTRIBUTE` returns the real PID, which confirms the control codes |
+| A client handle inherited by a child process that writes on it | The server reads the PID of the process that opened the pipe, not the writer's, and the token-user check accepts it, because it refuses only another user (A3) |
+| `paneflow api call system.whoami --on host` from the pane / from Windows Terminal | `pane` with its session / `external` |
+| `paneflow api call system.whoami --on worker` from the pane / from Windows Terminal | `pane` with its session / `external` |
+
+A host log line reads `paneflow host: process 27364 (GetNamedPipeClientProcessId) classified pane through the host's pane leaders in 114 us`.
+
+**No PID forgery from user mode.** A pipe client cannot change the PID the server reads. The token-user check does not catch a forgery inside one user, and needs not: the only way to present another process's PID is to use a pipe handle that process opened, which takes its cooperation or code running inside it, the same-user limit that `setsid` and a double fork mark on Unix. A pane process cannot hand itself an external opener's handle without first running code outside its pane.
+
+## Windows sandbox report (US-033)
+
+Measured on 2026-11-24 on the same machine, by the integration test `a_sandboxed_windows_pane_writes_only_where_it_is_granted_and_reaches_only_its_own_endpoints` (`crates/paneflow-host/tests/sandboxed_pane_windows.rs`): a real `SessionHost` launches a sandboxed pane through ConPTY, the sandbox helper (`paneflow-host sandbox-exec`) waits for the pane's job and starts the shell with the restricted token, and the shell is the test binary itself, which records what it can reach. With `PANEFLOW_SANDBOX_TOOLS_REPORT=<file>` it also runs the tools below and writes the report.
+
+**The token (US-027).** `CreateRestrictedToken` with `WRITE_RESTRICTED | DISABLE_MAX_PRIVILEGE`, created by the host before the pane starts so that a failure is the pane's launch failure. Its restricting SIDs, read back with `TokenRestrictedSids` from inside the pane:
+
+| SID | Why |
+|---|---|
+| The per-pane SID (`S-1-9-1347-1-...`, from the session id) | The pane's own endpoints and its data directory (its `TEMP` included) grant it; the token's default access list grants it, so the pane's own processes and objects stay writable to it |
+| The shared sandbox SID (`S-1-9-1347-0`) | The working directory grants it, inheritably, since several panes can share one; a directory that already grants it is not rewritten |
+| The logon SID (`S-1-5-5-...`) | The window station and desktop grant it; without it every program that loads `user32.dll` dies at start with `STATUS_DLL_INIT_FAILED` (`0xC0000142`) |
+| Everyone (`S-1-1-0`) | The `NUL` device grants nothing else; without it `> NUL` is refused |
+
+The criterion asked for "the SIDs the pane's working directory grants". Those are the user's own SID and groups, and with the user's SID among the restricting SIDs every process of the user, the Paneflow host included, would be writable from the pane (`PROCESS_VM_WRITE`), so the working directory is made to grant the shared sandbox SID instead. None of the four is granted by Paneflow's shared pipes (`OWNER RIGHTS` only, plus `SYSTEM` and Administrators for the window), and an `OWNER RIGHTS` entry never matches a restricted token. The pane's own pipes therefore grant the user's SID by name next to the per-pane SID.
+
+| Check | Result |
+|---|---|
+| Open the shared host and worker pipes from the pane, for writing / for reading | Access denied (`ERROR_ACCESS_DENIED`) / access denied too |
+| Open a pipe with the window's access list (`SYSTEM`, Administrators, `OWNER RIGHTS`) for writing | Access denied (added by the review) |
+| Connect to the pane's host endpoint and call `system.whoami` | `pane` with its session |
+| Write in the working directory, in `TEMP` (the pane's own, under its data directory), to `NUL` | Succeed |
+| Read / write a file of the user outside those directories, write in `%USERPROFILE%` | Read succeeds / write denied, denied |
+| Write in the data directory and the `TEMP` of another sandboxed pane | Access denied (after the review fix below) |
+| Start `cmd.exe` with Rust's `Command` and read its output | Runs |
+| `git init`, then `git status` in the working directory | Succeed |
+| `cargo new`, then `cargo build --offline` with its target directory in the working directory | Succeed |
+| `cargo build` with a target directory outside it (`CARGO_TARGET_DIR`, or `build.target-dir` in `~/.cargo/config.toml`) | Fails: `failed to open: ...\.cargo-build-lock`, access denied |
+| `node -v` | Succeeds, `v24.16.0` |
+| A named pipe made inside the pane with no access list, then opened for writing inside the pane | Access denied: the pipe file system gives such a pipe `SYSTEM`, Administrators and owner full control and Everyone read, and no restricting SID matches the owner |
+| Node's `child_process.spawnSync` with piped output (`cmd.exe`, `bash.exe`, `git.exe`) | `EPERM` for each; with `stdio: 'inherit'` or `'ignore'` it runs |
+| Claude Code 2.1.330 `claude -p` with no tool | Ran (`OK`); its plugin's `SessionEnd` hook failed with `EPERM: operation not permitted, uv_spawn` |
+| Claude Code asked to run `echo` with its Bash tool | Failed: `EPERM: operation not permitted, uv_spawn 'C:\Program Files\Git\bin\bash.exe'`; its MCP servers failed to start the same way |
+| `codex sandbox -- cmd /c echo` (Codex 0.165.0, its own Windows sandbox) | Failed: `windows sandbox failed: CreateRestrictedToken failed: 87` |
+
+**Supported: no.** Every check this story names passes (the shared worker pipe is refused; `git status`, `cargo build` and `node -v` succeed in the working directory), but libuv, which Node and Bun use to start a child, creates its stdio pipes as named pipes with no access list, and no process under this token can open one for writing. Claude Code is a Bun program, so its Bash tool, its hooks and its MCP servers cannot start, which defeats the purpose of sandboxing an agent. Windows is listed unsupported for the sandboxed profile: `SANDBOX_SUPPORTED_PLATFORMS` stays `["linux"]` and a profile with `sandbox: "paneflow"` is refused on Windows. Lifting it needs a decision outside this epic, since the limit comes from the restricted token itself (TD-07): a dedicated sandbox user, as Codex's elevated mode does, gives every pipe an owner the sandbox matches; adding the user's SID to the restricting SIDs would fix pipes but expose every process of the user.
+
+Two defects found and fixed on the way: a launch granted the shared sandbox SID on the user's whole `TEMP` (45 000 entries here), which rewrote that tree's access lists on every launch and took more than the 9 s launch budget (`LaunchPending`); and the pane endpoints granted `OWNER RIGHTS`, so even the pane's own endpoint refused it. The review of EP-006 found a third: the pane's data directory granted the shared sandbox SID, so any other sandboxed pane could write a file into it and into its `TEMP` (measured: both writes succeeded); it now grants the per-pane SID, and the same test refuses both writes. Because the working directory grants the shared SID, a sandboxed pane can still write the working directory of another sandboxed pane, which the sandbox does not confine (Non-Goals).
 
 ## Edge Cases & Error States
 
