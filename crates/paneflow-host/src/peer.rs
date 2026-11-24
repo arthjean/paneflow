@@ -3,7 +3,9 @@ use std::time::{Duration, Instant};
 
 use paneflow_api::Principal;
 use paneflow_api::methods::host::PeerClass;
-use paneflow_peer::{Membership, PaneLeader, PeerRead};
+use paneflow_peer::{Membership, PaneLeader, PeerIdentity, PeerRead};
+
+use crate::genuine::GenuineCallers;
 use serde_json::json;
 
 use crate::manifest::{list_manifest_paths, read_manifest};
@@ -126,15 +128,31 @@ fn not_in_pane_or(membership: Membership, otherwise: Principal) -> Principal {
     }
 }
 
-pub fn host_principal(membership: Membership, hello: &ClientHello) -> Principal {
-    let declared = if hello.client.starts_with(WORKER_CLIENT_PREFIX) {
+pub fn claimed_principal(hello: &ClientHello) -> Principal {
+    if hello.client.starts_with(WORKER_CLIENT_PREFIX) {
         Principal::Worker
     } else if hello.attaches() || hello.client.starts_with(WINDOW_CLIENT_PREFIX) {
         Principal::Window
     } else {
         Principal::External
-    };
-    not_in_pane_or(membership, declared)
+    }
+}
+
+pub fn host_principal(
+    membership: Membership,
+    hello: &ClientHello,
+    genuine: &GenuineCallers,
+    caller: Option<&PeerIdentity>,
+) -> Principal {
+    if membership != Membership::NotInPane {
+        return not_in_pane_or(membership, Principal::External);
+    }
+    let claimed = claimed_principal(hello);
+    if claimed == Principal::External || genuine.vouches_for("host", claimed.kind(), caller) {
+        claimed
+    } else {
+        Principal::External
+    }
 }
 
 pub fn leaders_from_manifests(home: &Path) -> Result<Vec<PaneLeader>, String> {
@@ -615,47 +633,109 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
-    fn a_hello_names_a_peer_outside_every_pane_and_never_overrides_a_pane() {
+    fn a_hello_names_a_genuine_peer_outside_every_pane_and_never_overrides_a_pane() {
+        let read = identified_self();
+        let me = read.identity();
+        let genuine = GenuineCallers::of_this_installation();
         let pane = Membership::Pane {
             session: "s".into(),
             workspace: None,
         };
         let engine = ClientHello::local("paneflow-desktop");
         assert_eq!(
-            host_principal(pane.clone(), &engine),
+            host_principal(pane.clone(), &engine, &genuine, me),
             Principal::Pane {
                 session: "s".into(),
                 workspace: None
             }
         );
         assert_eq!(
-            host_principal(Membership::NotInPane, &engine),
+            host_principal(Membership::NotInPane, &engine, &genuine, me),
             Principal::Window
         );
         assert_eq!(
             host_principal(
                 Membership::NotInPane,
-                &ClientHello::local("paneflow-serve-launch")
+                &ClientHello::local("paneflow-serve-launch"),
+                &genuine,
+                me
             ),
             Principal::Worker
         );
         assert_eq!(
-            host_principal(Membership::NotInPane, &ClientHello::control("cli")),
+            host_principal(
+                Membership::NotInPane,
+                &ClientHello::control("cli"),
+                &genuine,
+                me
+            ),
             Principal::External
         );
         assert_eq!(
             host_principal(
                 Membership::NotInPane,
-                &ClientHello::control("paneflow-desktop-bootstrap")
+                &ClientHello::control("paneflow-desktop-bootstrap"),
+                &genuine,
+                me
             ),
             Principal::Window
         );
         assert_eq!(
-            host_principal(pane, &ClientHello::control("paneflow-desktop")),
+            host_principal(
+                pane,
+                &ClientHello::control("paneflow-desktop"),
+                &genuine,
+                me
+            ),
             Principal::Pane {
                 session: "s".into(),
                 workspace: None
+            }
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_peer_whose_executable_is_not_paneflow_claims_the_window_or_the_worker_in_vain() {
+        let read = identified_self();
+        let me = read.identity();
+        let dir = tempfile::tempdir().unwrap();
+        let elsewhere = dir.path().join("paneflow");
+        std::fs::write(&elsewhere, b"another installation").unwrap();
+        let foreign = GenuineCallers::of([elsewhere], None);
+        let claims = [
+            ClientHello::local("paneflow-desktop"),
+            ClientHello::local("any-client-with-an-engine"),
+            ClientHello::control("paneflow-desktop-bootstrap"),
+            ClientHello::control("paneflow-serve-launch"),
+        ];
+        for hello in &claims {
+            assert_eq!(
+                host_principal(Membership::NotInPane, hello, &foreign, me),
+                Principal::External,
+                "{}",
+                hello.client
+            );
+            assert_eq!(
+                host_principal(Membership::NotInPane, hello, &foreign, None),
+                Principal::External,
+                "{} without a resolved executable",
+                hello.client
+            );
+        }
+        assert_eq!(
+            host_principal(
+                Membership::Unverified {
+                    reason: "no peer".into()
+                },
+                &ClientHello::local("paneflow-desktop"),
+                &GenuineCallers::of_this_installation(),
+                me
+            ),
+            Principal::Unverified {
+                reason: "no peer".into()
             }
         );
     }

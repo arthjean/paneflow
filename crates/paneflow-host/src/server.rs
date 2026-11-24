@@ -581,7 +581,7 @@ fn handle_connection(
         if method == "session.create" {
             host.confine_spawn(&principal, &mut params);
         }
-        let typed_input = attaches && !principal.is_pane();
+        let typed_input = attaches && matches!(principal, Principal::Window | Principal::Worker);
         let flow = match method {
             METHOD_WHOAMI => match wire.write_json(&result_envelope(&id, principal.whoami_value()))
             {
@@ -957,7 +957,8 @@ fn classify_connection(host: &SessionHost, wire: &Wire, hello: &ClientHello) -> 
             reason: reason.clone(),
         },
     };
-    let principal = crate::peer::host_principal(membership, hello);
+    let principal =
+        crate::peer::host_principal(membership, hello, host.genuine_callers(), read.identity());
     crate::peer::log_classification(
         "host",
         &read,

@@ -16,6 +16,7 @@ pub mod cold_text;
 pub mod control;
 pub mod endpoint;
 pub mod env;
+pub mod genuine;
 pub mod helpers;
 pub mod host;
 pub mod maintenance;

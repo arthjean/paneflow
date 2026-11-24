@@ -24,7 +24,7 @@ pub use lineage::{Ancestor, LeaderStamp, Lineage, LineageReader, LiveLineage};
 pub use membership::{Membership, PaneLeader, classify};
 #[cfg(unix)]
 pub use start_time::process_session;
-pub use start_time::process_start_time;
+pub use start_time::{parent_process, process_start_time};
 #[cfg(windows)]
 pub use windows::{PaneJob, pane_job_name};
 

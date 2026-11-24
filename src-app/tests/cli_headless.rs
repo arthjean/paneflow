@@ -191,6 +191,8 @@ fn a_layout_verb_starts_the_worker_when_none_runs() {
     .unwrap();
     let core_endpoint = paneflow_home::host_endpoint_path(home.path());
     let core = paneflow_host::SessionHost::open(home.path(), &core_endpoint).expect("a host");
+    core.vouch_for_executable(Path::new(env!("CARGO_BIN_EXE_paneflow")))
+        .expect("the built paneflow is the worker this host trusts");
     let core_server = paneflow_host::ServerHandle::spawn(Arc::clone(&core), core_endpoint)
         .expect("the host serves its endpoint");
     let worker_endpoint = paneflow_home::serve_endpoint_path(home.path());

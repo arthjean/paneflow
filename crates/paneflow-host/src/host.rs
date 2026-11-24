@@ -250,6 +250,7 @@ pub struct SessionHost {
     policy: crate::policy::PolicySource,
     pane_grants: crate::pane_grants::GrantMirror,
     pane_endpoints: crate::pane_endpoint::PaneEndpoints,
+    genuine_callers: crate::genuine::GenuineCallers,
     sandbox_helper: Mutex<Option<PathBuf>>,
     submit_paste_delay: std::time::Duration,
     xt_checksum: Mutex<crate::runtime::XtChecksum>,
@@ -383,6 +384,7 @@ impl SessionHost {
             policy: crate::policy::PolicySource::for_home(home),
             pane_grants: crate::pane_grants::GrantMirror::for_home(home),
             pane_endpoints: crate::pane_endpoint::PaneEndpoints::default(),
+            genuine_callers: crate::genuine::GenuineCallers::of_this_installation(),
             sandbox_helper: Mutex::new(None),
             submit_paste_delay,
             xt_checksum: Mutex::new(crate::runtime::XtChecksum::default()),
@@ -610,6 +612,14 @@ impl SessionHost {
 
     pub fn policy(&self) -> paneflow_api::Policy {
         self.policy.current()
+    }
+
+    pub fn genuine_callers(&self) -> &crate::genuine::GenuineCallers {
+        &self.genuine_callers
+    }
+
+    pub fn vouch_for_executable(&self, executable: &Path) -> std::io::Result<()> {
+        self.genuine_callers.vouch_for_executable(executable)
     }
 
     pub fn pane_grants(&self) -> &crate::pane_grants::GrantMirror {

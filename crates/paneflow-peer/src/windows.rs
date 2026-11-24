@@ -258,6 +258,17 @@ fn parents() -> io::Result<HashMap<u32, u32>> {
     Ok(parents)
 }
 
+pub(crate) fn parent_process() -> Option<(u32, u64)> {
+    let me = std::process::id();
+    let started = crate::process_start_time(me)?;
+    let parent = *parents().ok()?.get(&me)?;
+    if parent == 0 || parent == me {
+        return None;
+    }
+    let parent_started = crate::process_start_time(parent)?;
+    (parent_started <= started).then_some((parent, parent_started))
+}
+
 fn leader_at(leaders: &[PaneLeader], pid: u32, started_at: u64) -> Option<&PaneLeader> {
     leaders
         .iter()

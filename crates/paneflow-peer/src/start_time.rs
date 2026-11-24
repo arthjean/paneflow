@@ -44,6 +44,24 @@ pub fn process_session(pid: u32) -> Option<u32> {
     u32::try_from(session).ok().filter(|session| *session > 0)
 }
 
+#[cfg(unix)]
+pub fn parent_process() -> Option<(u32, u64)> {
+    let parent = u32::try_from(unsafe { libc::getppid() })
+        .ok()
+        .filter(|pid| *pid > 0)?;
+    Some((parent, process_start_time(parent)?))
+}
+
+#[cfg(windows)]
+pub fn parent_process() -> Option<(u32, u64)> {
+    crate::windows::parent_process()
+}
+
+#[cfg(not(any(unix, windows)))]
+pub fn parent_process() -> Option<(u32, u64)> {
+    None
+}
+
 #[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
 mod tests {
     use super::*;
@@ -54,6 +72,14 @@ mod tests {
         let first = process_start_time(pid).expect("our own start time");
         assert_eq!(process_start_time(pid), Some(first));
         assert!(process_session(pid).is_some());
+    }
+
+    #[test]
+    fn the_parent_of_this_process_is_read_with_a_start_time_no_later_than_ours() {
+        let (parent, parent_started) = parent_process().expect("a test process has a parent");
+        assert_eq!(parent, u32::try_from(unsafe { libc::getppid() }).unwrap());
+        let ours = process_start_time(std::process::id()).unwrap();
+        assert!(parent_started <= ours, "{parent_started} > {ours}");
     }
 
     #[cfg(target_os = "linux")]

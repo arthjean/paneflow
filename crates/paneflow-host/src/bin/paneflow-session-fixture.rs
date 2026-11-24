@@ -2,7 +2,7 @@ use std::io::{Read, Write};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::Duration;
 
-const USAGE: &str = "paneflow-session-fixture <idle|declare|echo|flood <bytes>|stream <bytes-per-second> <seconds>|history <lines>|delayed-exit <ms> <code>|blocked-stdin|descendants <count> <parent-ms>|descendants-orphan <count> <parent-ms>|split-sequences|whoami <host|worker|window> <endpoint> [engine|control|worker]|call <host|worker|window> <endpoint> <engine|control|worker> <method> <params>|setsid-whoami <args>|orphan-whoami <args>|escape-whoami <args>|outlive-host <socket>>";
+const USAGE: &str = "paneflow-session-fixture <idle|declare|echo|flood <bytes>|stream <bytes-per-second> <seconds>|history <lines>|delayed-exit <ms> <code>|blocked-stdin|descendants <count> <parent-ms>|descendants-orphan <count> <parent-ms>|split-sequences|whoami <host|worker|window> <endpoint> [engine|desktop|control|worker]|call <host|worker|window> <endpoint> <engine|desktop|control|worker> <method> <params>|setsid-whoami <args>|orphan-whoami <args>|escape-whoami <args>|outlive-host <socket>>";
 
 const FLOOD_CHUNK: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\r\n";
 
@@ -257,6 +257,7 @@ fn host_hello(kind: Option<&str>) -> paneflow_host::protocol::ClientHello {
     use paneflow_host::protocol::ClientHello;
     match kind {
         Some("engine") => ClientHello::local("fixture-whoami"),
+        Some("desktop") => ClientHello::control("paneflow-desktop"),
         Some("worker") => ClientHello::control("paneflow-serve-fixture"),
         _ => ClientHello::control("fixture-whoami"),
     }
