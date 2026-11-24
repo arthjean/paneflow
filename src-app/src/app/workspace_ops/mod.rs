@@ -228,33 +228,35 @@ impl PaneFlowApp {
     pub(crate) fn spawn_worktree_teardown(
         &self,
         worktrees: Vec<crate::workspace::worktree::ManagedWorktree>,
+        checkouts: Vec<std::path::PathBuf>,
         cx: &mut Context<Self>,
     ) {
         if worktrees.is_empty() || !self.cached_config.worktrees.auto_remove_enabled() {
             return;
         }
         cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
-            let kept = smol::unblock(move || {
-                let worktrees = match crate::terminal::host_link::live_sessions() {
+            let outcome = smol::unblock(move || {
+                let seen = match crate::terminal::host_link::live_sessions() {
                     crate::terminal::host_link::LiveSessionProbe::Sessions(sessions) => {
-                        let cwds: Vec<std::path::PathBuf> =
-                            sessions.into_iter().map(|session| session.cwd).collect();
-                        crate::workspace::worktree::without_live_sessions(worktrees, &cwds)
+                        crate::workspace::worktree::SessionsSeen::Listed(
+                            sessions.into_iter().map(|session| session.cwd).collect(),
+                        )
                     }
-                    crate::terminal::host_link::LiveSessionProbe::NoHost => worktrees,
+                    crate::terminal::host_link::LiveSessionProbe::NoHost => {
+                        crate::workspace::worktree::SessionsSeen::NoHost
+                    }
                     crate::terminal::host_link::LiveSessionProbe::Unknown(error) => {
-                        log::warn!("worktree teardown skipped: live session probe failed: {error}");
-                        return Vec::new();
+                        crate::workspace::worktree::SessionsSeen::Failed(error)
                     }
                 };
-                crate::workspace::worktree::teardown_all(worktrees)
+                crate::workspace::worktree::close_teardown(worktrees, true, seen, checkouts)
             })
             .await;
-            if kept.is_empty() {
+            if outcome.messages.is_empty() {
                 return;
             }
             let _ = this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                for message in kept {
+                for message in outcome.messages {
                     app.show_toast(message, cx);
                 }
             });
@@ -578,7 +580,8 @@ impl PaneFlowApp {
         }
         let worktrees = std::mem::take(&mut self.workspaces[idx].managed_worktrees);
         self.prune_worktree_states();
-        self.spawn_worktree_teardown(worktrees, cx);
+        let checkouts = self.checkouts_in_use_outside(self.workspaces[idx].id);
+        self.spawn_worktree_teardown(worktrees, checkouts, cx);
         let removed_id = self.workspaces[idx].id;
         if !self.close_workspace_through_model(idx, window.is_some(), cx) {
             return;

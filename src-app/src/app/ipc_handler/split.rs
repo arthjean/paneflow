@@ -479,7 +479,8 @@ impl PaneFlowApp {
             return error.into_value();
         }
         if let Some(mw) = launch.managed_worktree {
-            self.workspaces[ws_idx].managed_worktrees.push(mw);
+            let fresh = self.not_yet_managed(vec![mw]);
+            self.workspaces[ws_idx].managed_worktrees.extend(fresh);
         }
         if let Some(cmd) = launch.command {
             Self::schedule_launch_command(&new_terminal, cmd, launch.prompt, usize::MAX, cx);

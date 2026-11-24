@@ -583,7 +583,7 @@ impl PaneFlowApp {
             .or_else(|| planned.iter().find_map(|p| p.cwd.clone()))
             .unwrap_or_else(crate::launch_cwd::implicit_launch_cwd);
         let mut ws = Workspace::restored_with_id(ws_id, &name, ws_cwd, tabs, active_tab);
-        ws.managed_worktrees = managed_worktrees;
+        ws.managed_worktrees = self.not_yet_managed(managed_worktrees);
         Self::spawn_initial_git_stats(ws_id, ws.cwd.clone(), cx);
         let idx = self.add_workspace_in(ws, space, cx);
         self.activate_workspace_without_window(idx, cx);

@@ -1178,47 +1178,120 @@ pub fn copy_include_files(src_root: &Path, dst_root: &Path) -> IncludeCopy {
     outcome
 }
 
-pub fn without_live_sessions(
-    worktrees: Vec<ManagedWorktree>,
-    live_cwds: &[PathBuf],
-) -> Vec<ManagedWorktree> {
-    worktrees
-        .into_iter()
-        .filter(|wt| {
-            let busy = live_cwds.iter().any(|cwd| cwd.starts_with(&wt.path));
-            if busy {
-                log::info!(
-                    "worktree kept ({}): a live terminal session still runs inside it",
-                    wt.path.display()
-                );
-            }
-            !busy
-        })
-        .collect()
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorktreeUsers {
+    pub checkouts: Vec<PathBuf>,
+    pub sessions: Vec<PathBuf>,
 }
 
-pub fn teardown_all(worktrees: Vec<ManagedWorktree>) -> Vec<String> {
-    let mut kept = Vec::new();
+impl WorktreeUsers {
+    fn holder(&self, worktree: &Path) -> Option<&'static str> {
+        let resolved = std::fs::canonicalize(worktree).ok();
+        let inside = |dir: &PathBuf| {
+            dir.starts_with(worktree) || resolved.as_ref().is_some_and(|real| dir.starts_with(real))
+        };
+        if self.checkouts.iter().any(inside) {
+            return Some("a tab or a workspace that is still open uses it");
+        }
+        if self.sessions.iter().any(inside) {
+            return Some("a live terminal session still runs inside it");
+        }
+        None
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionsSeen {
+    Listed(Vec<PathBuf>),
+    NoHost,
+    Failed(String),
+}
+
+pub fn split_unused(
+    worktrees: Vec<ManagedWorktree>,
+    users: &WorktreeUsers,
+) -> (Vec<ManagedWorktree>, Vec<ManagedWorktree>) {
+    worktrees
+        .into_iter()
+        .partition(|wt| match users.holder(&wt.path) {
+            Some(reason) => {
+                log::info!("worktree kept ({}): {reason}", wt.path.display());
+                false
+            }
+            None => true,
+        })
+}
+
+#[derive(Debug, Default, PartialEq)]
+pub struct Teardown {
+    pub removed: Vec<PathBuf>,
+    pub kept: Vec<ManagedWorktree>,
+    pub messages: Vec<String>,
+}
+
+pub fn teardown_all(worktrees: Vec<ManagedWorktree>) -> Teardown {
+    let mut outcome = Teardown::default();
     for wt in worktrees {
         if wt.teardown == TeardownPolicy::Keep {
+            outcome.kept.push(wt);
             continue;
         }
         if !wt.path.exists() {
             let _ = prune(&wt.repo_root);
+            outcome.removed.push(wt.path);
             continue;
         }
         match snapshot_and_remove(&wt.repo_root, &wt.path) {
-            Ok(snapshot) => log::info!(
-                "worktree removed: {}{}",
-                wt.path.display(),
-                snapshot
-                    .map(|s| format!(" (snapshot {})", s.reference))
-                    .unwrap_or_default()
-            ),
-            Err(e) => kept.push(kept_worktree_message(&wt.path, &e)),
+            Ok(snapshot) => {
+                log::info!(
+                    "worktree removed: {}{}",
+                    wt.path.display(),
+                    snapshot
+                        .map(|s| format!(" (snapshot {})", s.reference))
+                        .unwrap_or_default()
+                );
+                outcome.removed.push(wt.path);
+            }
+            Err(e) => {
+                outcome.messages.push(kept_worktree_message(&wt.path, &e));
+                outcome.kept.push(wt);
+            }
         }
     }
-    kept
+    outcome
+}
+
+pub fn close_teardown(
+    worktrees: Vec<ManagedWorktree>,
+    auto_remove: bool,
+    seen: SessionsSeen,
+    checkouts: Vec<PathBuf>,
+) -> Teardown {
+    if !auto_remove {
+        return Teardown {
+            kept: worktrees,
+            ..Teardown::default()
+        };
+    }
+    let sessions = match seen {
+        SessionsSeen::Listed(cwds) => cwds,
+        SessionsSeen::NoHost => Vec::new(),
+        SessionsSeen::Failed(error) => {
+            log::warn!("worktree teardown skipped: live session probe failed: {error}");
+            return Teardown {
+                kept: worktrees,
+                ..Teardown::default()
+            };
+        }
+    };
+    let users = WorktreeUsers {
+        checkouts,
+        sessions,
+    };
+    let (unused, in_use) = split_unused(worktrees, &users);
+    let mut outcome = teardown_all(unused);
+    outcome.kept.extend(in_use);
+    outcome
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -1435,17 +1508,68 @@ mod tests {
         let root = std::env::temp_dir().join("paneflow-live-wt");
         let busy = root.join("busy");
         let idle = root.join("idle");
-        let live = vec![busy.join("src").join("deep"), root.join("elsewhere")];
-        let kept = without_live_sessions(
+        let users = WorktreeUsers {
+            checkouts: Vec::new(),
+            sessions: vec![busy.join("src").join("deep"), root.join("elsewhere")],
+        };
+        let (unused, in_use) = split_unused(
             vec![
                 managed(busy.to_str().unwrap()),
                 managed(idle.to_str().unwrap()),
             ],
-            &live,
+            &users,
         );
-        assert_eq!(kept.len(), 1);
-        assert_eq!(kept[0].path, idle);
-        assert!(without_live_sessions(vec![managed(busy.to_str().unwrap())], &[]).len() == 1);
+        assert_eq!(unused, [managed(idle.to_str().unwrap())]);
+        assert_eq!(in_use, [managed(busy.to_str().unwrap())]);
+        let (unused, _) = split_unused(
+            vec![managed(busy.to_str().unwrap())],
+            &WorktreeUsers::default(),
+        );
+        assert_eq!(unused.len(), 1);
+    }
+
+    #[test]
+    fn a_worktree_a_tab_or_workspace_still_opens_is_never_removed_when_another_workspace_closes() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _root = test_support::scoped_root(tmp.path().join("worktrees"));
+        let repo_root = tmp.path().join("repo");
+        init_test_repo(&repo_root);
+        let shared = create_branch_checkout(&repo_root, "feat/shared", None)
+            .expect("create")
+            .path;
+        let inner = create_branch_checkout(&repo_root, "feat/inner", None)
+            .expect("create")
+            .path;
+        let alone = create_branch_checkout(&repo_root, "feat/alone", None)
+            .expect("create")
+            .path;
+        let record = |path: &Path, branch: &str| ManagedWorktree {
+            path: path.to_path_buf(),
+            repo_root: repo_root.clone(),
+            branch: branch.to_string(),
+            teardown: TeardownPolicy::Auto,
+        };
+
+        let outcome = close_teardown(
+            vec![
+                record(&shared, "feat/shared"),
+                record(&inner, "feat/inner"),
+                record(&alone, "feat/alone"),
+            ],
+            true,
+            SessionsSeen::NoHost,
+            vec![shared.clone(), inner.join("src"), repo_root.clone()],
+        );
+
+        assert_eq!(outcome.removed, std::slice::from_ref(&alone));
+        assert_eq!(
+            outcome.kept,
+            [record(&shared, "feat/shared"), record(&inner, "feat/inner")]
+        );
+        assert!(outcome.messages.is_empty(), "{:?}", outcome.messages);
+        assert!(shared.join("README.md").is_file());
+        assert!(inner.join("README.md").is_file());
+        assert!(!alone.exists());
     }
 
     #[test]
@@ -2475,7 +2599,8 @@ mod tests {
             teardown: TeardownPolicy::Auto,
         }]);
 
-        assert!(kept.is_empty(), "{kept:?}");
+        assert!(kept.messages.is_empty(), "{kept:?}");
+        assert_eq!(kept.removed, std::slice::from_ref(&path));
         assert!(!path.exists());
         let snapshots = list_snapshots(&repo_root).expect("list");
         assert_eq!(snapshots.len(), 1, "the teardown wrote a snapshot");
@@ -2613,8 +2738,10 @@ mod tests {
         }]);
 
         assert!(path.exists(), "a failed status never removes the checkout");
-        assert_eq!(kept.len(), 1);
-        assert!(kept[0].starts_with(&format!("{} was kept", path.display())));
+        assert_eq!(kept.messages.len(), 1);
+        assert!(kept.messages[0].starts_with(&format!("{} was kept", path.display())));
+        assert_eq!(kept.kept.len(), 1, "the kept worktree is handed back");
+        assert!(kept.removed.is_empty());
     }
 
     #[test]

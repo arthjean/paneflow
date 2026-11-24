@@ -613,6 +613,7 @@ impl PaneFlowApp {
     pub(crate) fn managed_worktrees_snapshot(
         &self,
     ) -> Vec<(u64, crate::workspace::worktree::ManagedWorktree)> {
+        let mut seen = std::collections::HashSet::new();
         self.workspaces
             .iter()
             .flat_map(|ws| {
@@ -620,6 +621,40 @@ impl PaneFlowApp {
                     .iter()
                     .map(move |wt| (ws.id, wt.clone()))
             })
+            .filter(|(_, wt)| seen.insert(wt.path.clone()))
+            .collect()
+    }
+
+    pub(crate) fn not_yet_managed(
+        &self,
+        worktrees: Vec<crate::workspace::worktree::ManagedWorktree>,
+    ) -> Vec<crate::workspace::worktree::ManagedWorktree> {
+        let mut kept: Vec<crate::workspace::worktree::ManagedWorktree> = Vec::new();
+        for wt in worktrees {
+            let listed = self
+                .workspaces
+                .iter()
+                .flat_map(|ws| ws.managed_worktrees.iter())
+                .chain(kept.iter())
+                .any(|known| known.path == wt.path);
+            if !listed {
+                kept.push(wt);
+            }
+        }
+        kept
+    }
+
+    pub(crate) fn checkouts_in_use_outside(&self, closing: u64) -> Vec<std::path::PathBuf> {
+        self.workspaces
+            .iter()
+            .filter(|ws| ws.id != closing)
+            .flat_map(|ws| {
+                ws.tabs()
+                    .iter()
+                    .filter_map(|tab| tab.worktree.clone())
+                    .chain([ws.worktree_root.clone(), std::path::PathBuf::from(&ws.cwd)])
+            })
+            .filter(|path| !path.as_os_str().is_empty())
             .collect()
     }
 
