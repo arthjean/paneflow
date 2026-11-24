@@ -807,17 +807,21 @@ fn read_request_line(stream: &mut Stream, line: &mut String) -> std::io::Result<
     }
 }
 
-fn write_overloaded_error(writer: &mut Stream, message: &str) {
+fn write_overloaded_error(writer: &mut Stream, message: &str, id: &Value) {
     let envelope = json!({
         "jsonrpc": "2.0",
         "error": {"code": -32000, "message": message},
-        "id": Value::Null,
+        "id": id,
     });
     let _ = write_envelope(writer, &envelope);
 }
 
 fn reject_overloaded(mut stream: Stream) {
-    write_overloaded_error(&mut stream, "server busy: too many concurrent connections");
+    write_overloaded_error(
+        &mut stream,
+        "server busy: too many concurrent connections",
+        &Value::Null,
+    );
 }
 
 fn blocking_connection(stream: Stream) -> std::io::Result<Stream> {
@@ -1046,6 +1050,7 @@ fn handle_connection(
                                 write_overloaded_error(
                                     &mut writer,
                                     "server busy: too many event subscriptions",
+                                    &response_id,
                                 );
                                 return;
                             };
@@ -2390,6 +2395,66 @@ mod counters_tests {
             )),
             "{reply}"
         );
+        drop(client);
+        server.join().expect("the connection thread ends");
+        let _ = host.request_shutdown(true);
+        host_server.stop().expect("the host stops");
+    }
+
+    #[test]
+    fn a_subscription_refused_at_the_cap_answers_with_the_request_id() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        #[cfg(unix)]
+        let path = dir.path().join("busy.sock");
+        #[cfg(windows)]
+        let path = std::path::PathBuf::from(format!(
+            r"\\.\pipe\paneflow-busy-test-{}-{}",
+            std::process::id(),
+            dir.path()
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("x")
+        ));
+        let listener = bind_socket(&path).expect("the test socket binds");
+        let host_endpoint = paneflow_home::host_endpoint_path(dir.path());
+        let host = paneflow_host::SessionHost::open(dir.path(), &host_endpoint).expect("a host");
+        let host_server =
+            paneflow_host::ServerHandle::spawn(Arc::clone(&host), host_endpoint.clone())
+                .expect("the host serves");
+        let classifier = paneflow_host::peer::PeerClassifier::new(
+            Some(host_endpoint),
+            Some(dir.path().to_path_buf()),
+            WINDOW_CLASSIFY_CLIENT,
+        );
+        let (request_tx, _never_drained) = smol::channel::bounded(1);
+        let server = std::thread::spawn(move || {
+            let stream = listener.accept().expect("the client connects");
+            handle_connection(
+                stream,
+                request_tx,
+                crate::ipc_events::EventBus::new(),
+                Arc::new(AtomicUsize::new(MAX_SUBSCRIPTION_CONNECTIONS)),
+                &classifier,
+                (&window_policy(), &crate::ipc_grants::detached_grants()),
+                None,
+            );
+        });
+        let name = path
+            .to_fs_name::<GenericFilePath>()
+            .expect("the socket name");
+        let mut client = Stream::connect(name).expect("the client connects");
+        client
+            .write_all(
+                b"{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"events.subscribe\",\"params\":{\"types\":[\"ai.stop\"]}}\n",
+            )
+            .expect("the request is written");
+        let mut line = String::new();
+        BufReader::new(&mut client)
+            .read_line(&mut line)
+            .expect("the reply arrives");
+        let reply: Value = serde_json::from_str(&line).expect("a JSON reply");
+        assert_eq!(reply["error"]["code"], -32000, "{reply}");
+        assert_eq!(reply["id"], 7, "{reply}");
         drop(client);
         server.join().expect("the connection thread ends");
         let _ = host.request_shutdown(true);
