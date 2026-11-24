@@ -73,10 +73,10 @@
     {
       "id": "EP-009",
       "title": "Windows validation on the Windows 11 dual boot",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 4,
-      "stories_done": 3
+      "stories_done": 4
     },
     {
       "id": "EP-010",
@@ -541,7 +541,7 @@
       "id": "US-039",
       "title": "Windows proof of the generators and the native lexer build",
       "epic": "EP-009",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-005",
@@ -549,7 +549,7 @@
         "US-001"
       ],
       "started_at": "2026-11-24",
-      "completed_at": null,
+      "completed_at": "2026-11-24",
       "reviewed_at": "2026-11-24"
     },
     {
