@@ -394,6 +394,25 @@ fn settings_nav_empty(ui: crate::theme::UiColors) -> Stateful<Div> {
     .child(SETTINGS_NAV_EMPTY)
 }
 
+fn settings_page_heading(section: SettingsSection) -> Stateful<Div> {
+    let title = section_title(section);
+    div()
+        .id("settings-page-title")
+        .role(Role::Heading)
+        .aria_level(1)
+        .aria_label(title)
+        .text_size(px(26.))
+        .font_weight(FontWeight::SEMIBOLD)
+        .child(title)
+}
+
+fn settings_page_panel(section: SettingsSection) -> Stateful<Div> {
+    div()
+        .id("settings-panel")
+        .role(Role::TabPanel)
+        .aria_label(section_title(section))
+}
+
 impl PaneFlowApp {
     pub(crate) fn render_settings_nav(
         &self,
@@ -535,10 +554,8 @@ impl PaneFlowApp {
         });
 
         let title_text = div()
-            .text_size(px(26.))
-            .font_weight(FontWeight::SEMIBOLD)
             .text_color(ui.text)
-            .child(section_title(section));
+            .child(settings_page_heading(section));
         let title = if section == SettingsSection::Usage {
             self.render_usage_heading(title_text, window, cx)
         } else if section == SettingsSection::Agents {
@@ -573,8 +590,7 @@ impl PaneFlowApp {
             .when_some(ipc_banner, |d, b| d.child(b))
             .into_any_element();
 
-        let shell = div()
-            .id("settings-panel")
+        let shell = settings_page_panel(section)
             .track_focus(&self.settings_focus)
             .on_key_down(cx.listener(Self::handle_settings_key_down))
             .relative()
@@ -765,7 +781,8 @@ mod tests {
     use super::{
         NAV_GROUPS, NavTab, NavTabGroup, SETTINGS_NAV_EMPTY, SETTINGS_NAV_ICON_SIZE,
         SETTINGS_NAV_LIST_LABEL, first_matching_section, nav_section_matches, settings_nav_empty,
-        settings_nav_tab, settings_nav_tab_list, shortcuts_named_by, visible_nav_tabs,
+        settings_nav_tab, settings_nav_tab_list, settings_page_heading, settings_page_panel,
+        shortcuts_named_by, visible_nav_tabs,
     };
     use crate::SettingsSection;
     use crate::keybindings::{ShortcutEntry, ShortcutGroup};
@@ -853,6 +870,24 @@ mod tests {
                 .iter()
                 .any(|tab| tab.item.section == SettingsSection::Usage && tab.selected)
         );
+    }
+
+    #[test]
+    fn every_settings_page_has_a_level_one_heading_and_a_tab_panel_named_after_it() {
+        for item in NAV_GROUPS.iter().flat_map(|group| group.items) {
+            let label = item.label;
+            let (role, node) = exposed(&settings_page_heading(item.section));
+            assert_eq!(role, Role::Heading, "{label}");
+            assert_eq!(node.label(), Some(label));
+            assert_eq!(node.level(), Some(1), "{label}");
+            let (role, node) = exposed(&settings_page_panel(item.section));
+            assert_eq!(role, Role::TabPanel, "{label}");
+            assert_eq!(
+                node.label(),
+                Some(label),
+                "the panel is named after the tab that opens it"
+            );
+        }
     }
 
     #[test]
