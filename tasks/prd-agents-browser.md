@@ -6,6 +6,7 @@
 | Version | Date | Author | Summary |
 |---------|------|--------|---------|
 | 1.0 | 2026-09-05 | Arthur Jean | PRD initial : qualification CEF/GPU, navigateur natif dans le dock, distribution sur quatre cibles, interactions agent en livraison distincte. |
+| 1.1 | 2026-11-24 | Arthur Jean | Retiré. Arthur abandonne ce PRD pour repartir de zéro sur Linux avec une approche plus rigoureuse. Aucune story n'a été livrée sur `main` ; les stories macOS US-003, US-009 et US-025 ne sont donc pas qualifiées. |
 
 ## Problem Statement
 
