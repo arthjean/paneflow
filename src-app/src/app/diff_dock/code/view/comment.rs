@@ -1,29 +1,114 @@
 use gpui::prelude::FluentBuilder;
 
 use super::*;
-use crate::app::agent_send::{RangeComment, SEND_TO_AGENT, range_label};
+use crate::app::agent_send::{RangeComment, range_label};
 use crate::app::diff_dock::code::edit::TrackerWindow;
 use crate::app::diff_dock::code::rows::RowSpan;
 use crate::ui_primitives::TooltipDelayExt;
 use crate::ui_primitives::action_menu::{ActionMenu, MenuHandlers, MenuItem};
 use crate::widgets::text_area::{TextArea, TextAreaEvent};
 
-pub(crate) const COMMENT_BLOCK_ROWS: u32 = 8;
-const COMMENT_FIELD_ROWS: usize = 4;
+pub(crate) const COMMENT_FIELD_MIN_ROWS: usize = 3;
+pub(crate) const COMMENT_FIELD_MAX_ROWS: usize = 12;
 pub(crate) const GUTTER_HOVER_DELAY: Duration = Duration::from_millis(200);
 pub(crate) const COMMENT_BUTTON_TOOLTIP: &str = "Comment on this line (drag for a range)";
 pub(crate) const COMMENT_SELECTION: &str = "Comment Selection";
 pub(crate) const CANCEL_COMMENT: &str = "Cancel";
 pub(crate) const COMMENT_KEY_CONTEXT: &str = "CodeComment";
-const COMMENT_PLACEHOLDER: &str = "Tell the agent what to change";
+const COMMENT_PLACEHOLDER: &str = "Add a comment…";
+pub(crate) const SUBMIT_COMMENT: &str = "Comment";
+const SEND_HINT: &str = "/Ctrl Enter to send";
+const COMMAND_KEY_ICON: &str = "icons/command-key.svg";
+const COMMAND_KEY_SIZE: f32 = 9.0;
 const REPLACE_PROMPT: &str = "Replace the comment you are writing?";
 const COMMENT_BUTTON_SIZE: f32 = 16.0;
 const COMMENT_BUTTON_LEFT: f32 = 9.0;
-const BLOCK_INSET_R: f32 = 28.0;
+pub(crate) const GUTTER_SEAM: f32 = 2.0;
+const BLOCK_PAD_X: f32 = 12.0;
+const BLOCK_PAD_Y: f32 = 14.0;
+const FIELD_PAD_X: f32 = 9.0;
+const FIELD_PAD_TOP: f32 = 3.0;
+const FIELD_PAD_BOTTOM: f32 = 9.0;
+const FIELD_BORDER: f32 = 1.0;
+const FIELD_RADIUS: f32 = 8.0;
+const FIELD_TEXT: f32 = 14.0;
+const FOCUS_RING: f32 = 3.0;
+const FOCUS_RING_ALPHA: f32 = 0.24;
+const FOOTER_GAP: f32 = 6.0;
+const FOOTER_H: f32 = 24.0;
+const FOOTER_BUTTON_GAP: f32 = 4.0;
+const BUTTON_PAD_X: f32 = 8.0;
+const BUTTON_RADIUS: f32 = 6.0;
+const HINT_ALPHA: f32 = 0.7;
+const COMMENT_CHROME_PX: f32 =
+    2.0 * (BLOCK_PAD_Y + FIELD_BORDER) + FIELD_PAD_TOP + FIELD_PAD_BOTTOM + FOOTER_GAP + FOOTER_H;
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct CommentPalette {
+    pub(crate) line: Hsla,
+    pub(crate) line_gutter: Hsla,
+    pub(crate) line_number: Hsla,
+    block: Hsla,
+    block_gutter: Hsla,
+    field: Hsla,
+    field_border: Hsla,
+    primary: Hsla,
+    on_primary: Hsla,
+    placeholder: Hsla,
+    hint: Hsla,
+    ghost_hover: Hsla,
+}
+
+fn hex(rgb: u32) -> Hsla {
+    gpui::rgb(rgb).into()
+}
+
+pub(crate) fn comment_palette() -> CommentPalette {
+    if crate::theme::active_theme().background.l > 0.5 {
+        let primary = hex(0x1b4ed8);
+        let muted = hex(0x71717a);
+        CommentPalette {
+            line: primary.opacity(0.10),
+            line_gutter: primary.opacity(0.18),
+            line_number: primary,
+            block: primary.opacity(0.06),
+            block_gutter: primary.opacity(0.18),
+            field: gpui::white(),
+            field_border: gpui::black().opacity(0.12),
+            primary,
+            on_primary: gpui::white(),
+            placeholder: muted,
+            hint: muted.opacity(HINT_ALPHA),
+            ghost_hover: gpui::black().opacity(0.05),
+        }
+    } else {
+        let muted = hex(0xa3a3a3);
+        CommentPalette {
+            line: hex(0x253345),
+            line_gutter: hex(0x294665),
+            line_number: hex(0x67a3e6),
+            block: hex(0x2f3e51),
+            block_gutter: hex(0x2e4a6a),
+            field: hex(0x364557),
+            field_border: gpui::white().opacity(0.11),
+            primary: hex(0x376bf0),
+            on_primary: gpui::white(),
+            placeholder: muted,
+            hint: muted.opacity(HINT_ALPHA),
+            ghost_hover: gpui::white().opacity(0.08),
+        }
+    }
+}
+
+pub(crate) fn comment_block_rows(field_rows: usize) -> u32 {
+    let field_rows = field_rows.clamp(COMMENT_FIELD_MIN_ROWS, COMMENT_FIELD_MAX_ROWS);
+    field_rows as u32 + (COMMENT_CHROME_PX / CODE_ROW_HEIGHT).ceil() as u32
+}
 
 pub(super) struct CommentDraft {
     pub(super) lines: Range<usize>,
     pub(super) field: gpui::Entity<TextArea>,
+    field_rows: usize,
     _events: gpui::Subscription,
 }
 
@@ -120,14 +205,37 @@ impl CodeView {
             .is_some_and(|draft| draft.field.read(cx).focus_handle(cx).is_focused(window))
     }
 
-    pub(super) fn comment_bands(&self, ui: crate::theme::UiColors) -> Vec<LineBand> {
-        let color = ui.accent.opacity(0.14);
+    fn commented_lines(&self) -> impl Iterator<Item = Range<usize>> {
         self.comment_drag
             .map(CommentDrag::lines)
             .into_iter()
             .chain(self.comment_lines())
-            .map(|lines| LineBand { lines, color })
+    }
+
+    pub(super) fn comment_bands(&self) -> Vec<LineBand> {
+        let palette = comment_palette();
+        self.commented_lines()
+            .flat_map(|lines| {
+                [
+                    LineBand {
+                        lines: lines.clone(),
+                        color: palette.line,
+                        reach: BandReach::Text,
+                    },
+                    LineBand {
+                        lines,
+                        color: palette.line_gutter,
+                        reach: BandReach::Gutter,
+                    },
+                ]
+            })
             .collect()
+    }
+
+    pub(crate) fn commented_number_color(&self, line: usize) -> Option<Hsla> {
+        self.commented_lines()
+            .any(|lines| lines.contains(&line))
+            .then(|| comment_palette().line_number)
     }
 
     pub(super) fn sync_comment_block(&mut self) {
@@ -143,8 +251,22 @@ impl CodeView {
             .set_block(self.comment.as_ref().map(|draft| RowSpan {
                 line: draft.lines.end - 1,
                 wrap: 0,
-                below: COMMENT_BLOCK_ROWS,
+                below: comment_block_rows(draft.field_rows),
             }));
+    }
+
+    fn refresh_comment_rows(&mut self, cx: &mut Context<Self>) {
+        let Some(draft) = self.comment.as_mut() else {
+            return;
+        };
+        let rows = draft.field.read(cx).visible_rows(cx);
+        if draft.field_rows != rows {
+            draft.field_rows = rows;
+            self.sync_comment_block();
+            self.sync_row_map(cx);
+            self.reveal_comment_block();
+        }
+        cx.notify();
     }
 
     pub(super) fn shift_comment(&mut self, changes: &[TrackerWindow]) {
@@ -203,19 +325,21 @@ impl CodeView {
     }
 
     fn start_comment(&mut self, lines: Range<usize>, window: &mut Window, cx: &mut Context<Self>) {
+        let name = format!("Comment on {}", range_label(lines.start + 1, lines.end));
         let field = cx.new(|cx| {
             TextArea::new(
                 COMMENT_PLACEHOLDER,
-                "Comment for the agent",
-                COMMENT_FIELD_ROWS,
+                name,
+                COMMENT_FIELD_MIN_ROWS..COMMENT_FIELD_MAX_ROWS,
                 cx,
             )
+            .with_placeholder_color(comment_palette().placeholder)
         });
         let events = cx.subscribe_in(
             &field,
             window,
             |view: &mut Self, _, event: &TextAreaEvent, window, cx| match event {
-                TextAreaEvent::Changed => cx.notify(),
+                TextAreaEvent::Changed | TextAreaEvent::Resized => view.refresh_comment_rows(cx),
                 TextAreaEvent::Submit => view.request_send_comment(window, cx),
                 TextAreaEvent::Cancel => view.cancel_comment(window, cx),
             },
@@ -227,6 +351,7 @@ impl CodeView {
         self.comment = Some(CommentDraft {
             lines,
             field,
+            field_rows: COMMENT_FIELD_MIN_ROWS,
             _events: events,
         });
         self.sync_comment_block();
@@ -298,8 +423,11 @@ impl CodeView {
 
     fn comment_anchor(&self) -> Point<Pixels> {
         let bounds = self.scroll.bounds();
-        let top = self.comment_block_top().unwrap_or(0.0)
-            + rows_to_px(f64::from(COMMENT_BLOCK_ROWS)) as f32;
+        let rows = self
+            .comment
+            .as_ref()
+            .map_or(0, |draft| comment_block_rows(draft.field_rows));
+        let top = self.comment_block_top().unwrap_or(0.0) + rows_to_px(f64::from(rows)) as f32;
         point(
             bounds.origin.x + px(self.geometry.get().gutter_w + 12.0),
             bounds.origin.y + px(top.clamp(0.0, f32::from(bounds.size.height))),
@@ -570,76 +698,171 @@ impl CodeView {
     pub(super) fn render_comment_block(
         &self,
         ui: crate::theme::UiColors,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let draft = self.comment.as_ref()?;
         let top = self.comment_block_top()?;
-        let height = rows_to_px(f64::from(COMMENT_BLOCK_ROWS)) as f32;
+        let height = rows_to_px(f64::from(comment_block_rows(draft.field_rows))) as f32;
         let viewport_h = self.scroll.viewport_height();
         if top + height <= 0.0 || top >= viewport_h {
             return None;
         }
-        let blank = draft.field.read(cx).is_blank();
-        let label = range_label(draft.lines.start + 1, draft.lines.end);
+        let palette = comment_palette();
+        let field = draft.field.read(cx);
+        let blank = field.is_blank();
+        let field_focus = field.focus_handle(cx);
+        let focused = field_focus.is_focused(window);
+        let geometry = self.geometry.get();
         let send = div()
             .id("code-comment-send")
             .debug_selector(|| "code-comment-send".into())
             .role(gpui::accesskit::Role::Button)
-            .aria_label(SEND_TO_AGENT)
+            .aria_label(SUBMIT_COMMENT)
             .flex_none()
-            .h(px(24.))
-            .px(px(10.))
+            .h(px(FOOTER_H))
+            .px(px(BUTTON_PAD_X))
             .flex()
             .items_center()
-            .rounded(px(6.))
+            .rounded(px(BUTTON_RADIUS))
             .text_size(crate::ui_primitives::BODY)
-            .bg(ui.accent)
-            .text_color(ui.base)
+            .font_weight(FontWeight::MEDIUM)
             .when(blank, |button| {
+                let faded = crate::ui_primitives::action_menu::DISABLED_OPACITY;
                 button
-                    .opacity(crate::ui_primitives::action_menu::DISABLED_OPACITY)
+                    .bg(palette.primary.opacity(faded))
+                    .text_color(palette.block.blend(palette.on_primary.opacity(faded)))
                     .cursor(CursorStyle::Arrow)
             })
             .when(!blank, |button| {
                 button
+                    .bg(palette.primary)
+                    .text_color(palette.on_primary)
                     .cursor(CursorStyle::PointingHand)
                     .hover(|style| style.opacity(0.9))
                     .on_click(cx.listener(|view, _: &ClickEvent, window, cx| {
                         view.request_send_comment(window, cx);
                     }))
             })
-            .child(SEND_TO_AGENT);
+            .child(SUBMIT_COMMENT);
         let cancel = div()
             .id("code-comment-cancel")
             .debug_selector(|| "code-comment-cancel".into())
             .role(gpui::accesskit::Role::Button)
             .aria_label(CANCEL_COMMENT)
             .flex_none()
-            .h(px(24.))
-            .px(px(10.))
+            .h(px(FOOTER_H))
+            .px(px(BUTTON_PAD_X))
             .flex()
             .items_center()
-            .rounded(px(6.))
-            .border_1()
-            .border_color(ui.border)
+            .rounded(px(BUTTON_RADIUS))
             .text_size(crate::ui_primitives::BODY)
-            .text_color(ui.text)
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(palette.placeholder)
             .cursor(CursorStyle::PointingHand)
-            .hover(|style| style.bg(ui.subtle))
+            .hover(|style| style.bg(palette.ghost_hover).text_color(ui.text))
             .on_click(cx.listener(|view, _: &ClickEvent, window, cx| {
                 view.cancel_comment(window, cx);
             }))
             .child(CANCEL_COMMENT);
+        let field_box = div()
+            .id("code-comment-field")
+            .debug_selector(|| "code-comment-field".into())
+            .relative()
+            .flex_none()
+            .w_full()
+            .pl(px(FIELD_PAD_X))
+            .pr(px(FIELD_PAD_X))
+            .pt(px(FIELD_PAD_TOP))
+            .pb(px(FIELD_PAD_BOTTOM))
+            .rounded(px(FIELD_RADIUS))
+            .border_1()
+            .border_color(if focused {
+                palette.primary
+            } else {
+                palette.field_border
+            })
+            .bg(palette.field)
+            .cursor(CursorStyle::IBeam)
+            .text_size(px(FIELD_TEXT))
+            .line_height(px(CODE_ROW_HEIGHT))
+            .text_color(ui.text)
+            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                window.focus(&field_focus, cx);
+                cx.stop_propagation();
+            })
+            .child(draft.field.clone())
+            .when(focused, |field_box| {
+                field_box.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .rounded(px(FIELD_RADIUS - FIELD_BORDER))
+                        .border_color(palette.primary.opacity(FOCUS_RING_ALPHA))
+                        .map(|mut ring| {
+                            ring.style().border_widths = gpui::EdgesRefinement {
+                                top: Some(px(FOCUS_RING).into()),
+                                right: Some(px(FOCUS_RING).into()),
+                                bottom: Some(px(FOCUS_RING).into()),
+                                left: Some(px(FOCUS_RING).into()),
+                            };
+                            ring
+                        }),
+                )
+            });
+        let footer = div()
+            .flex_none()
+            .h(px(FOOTER_H))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(FOOTER_BUTTON_GAP))
+            .child(
+                div()
+                    .debug_selector(|| "code-comment-hint".into())
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_size(crate::ui_primitives::LABEL_XS)
+                    .text_color(palette.hint)
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .child(
+                        gpui::svg()
+                            .flex_none()
+                            .size(px(COMMAND_KEY_SIZE))
+                            .path(COMMAND_KEY_ICON)
+                            .text_color(palette.hint),
+                    )
+                    .child(SEND_HINT),
+            )
+            .child(cancel)
+            .child(send);
+        let annotation = div()
+            .debug_selector(|| "code-comment-block".into())
+            .flex_none()
+            .w(px(geometry.code_area_w()))
+            .h_full()
+            .px(px(BLOCK_PAD_X))
+            .py(px(BLOCK_PAD_Y))
+            .flex()
+            .flex_col()
+            .gap(px(FOOTER_GAP))
+            .bg(palette.block)
+            .child(field_box)
+            .child(footer);
         Some(
             div()
-                .id("code-comment-block")
-                .debug_selector(|| "code-comment-block".into())
+                .id("code-comment-row")
                 .absolute()
                 .top(px(top))
-                .left(px(self.geometry.get().gutter_w))
-                .right(px(BLOCK_INSET_R))
+                .left_0()
                 .h(px(height))
-                .py(px(6.))
+                .flex()
+                .flex_row()
+                .font_family(crate::ui_primitives::action_menu::FONT_FAMILY)
                 .occlude()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
@@ -648,47 +871,14 @@ impl CodeView {
                 }))
                 .child(
                     div()
-                        .size_full()
-                        .flex()
-                        .flex_col()
-                        .gap(px(6.))
-                        .px(px(10.))
-                        .py(px(8.))
-                        .rounded(px(8.))
-                        .border_1()
-                        .border_color(ui.border)
-                        .bg(ui.overlay)
-                        .font_family(crate::ui_primitives::action_menu::FONT_FAMILY)
-                        .child(
-                            div()
-                                .flex_none()
-                                .text_size(crate::ui_primitives::LABEL_SM)
-                                .line_height(px(14.))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(ui.muted)
-                                .child(label),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_h_0()
-                                .overflow_hidden()
-                                .text_size(crate::ui_primitives::BODY)
-                                .line_height(px(CODE_ROW_HEIGHT))
-                                .text_color(ui.text)
-                                .child(draft.field.clone()),
-                        )
-                        .child(
-                            div()
-                                .flex_none()
-                                .flex()
-                                .flex_row()
-                                .justify_end()
-                                .gap(px(8.))
-                                .child(cancel)
-                                .child(send),
-                        ),
+                        .debug_selector(|| "code-comment-gutter".into())
+                        .flex_none()
+                        .w(px((geometry.gutter_w - GUTTER_SEAM).max(0.0)))
+                        .h_full()
+                        .bg(palette.block_gutter),
                 )
+                .child(div().flex_none().w(px(GUTTER_SEAM.min(geometry.gutter_w))))
+                .child(annotation)
                 .into_any_element(),
         )
     }
@@ -761,20 +951,114 @@ mod tests {
         let before = view.read_with(cx, |view, _| view.scroll.map().total_rows());
         view.update_in(cx, |view, window, cx| view.open_comment(3..6, window, cx));
         cx.run_until_parked();
+        let rows = comment_block_rows(COMMENT_FIELD_MIN_ROWS);
         view.read_with(cx, |view, _| {
             let map = view.scroll.map();
             assert_eq!(view.comment_lines(), Some(3..6));
-            assert_eq!(map.total_rows(), before + COMMENT_BLOCK_ROWS as usize);
+            assert_eq!(map.total_rows(), before + rows as usize);
             assert_eq!(map.line_top(5), 5);
-            assert_eq!(map.line_top(6), 6 + COMMENT_BLOCK_ROWS as usize);
+            assert_eq!(map.line_top(6), 6 + rows as usize);
         });
         assert!(cx.update(|window, cx| view.read(cx).comment_focused(window, cx)));
-        assert!(cx.debug_bounds("code-comment-block").is_some());
         let block = cx.debug_bounds("code-comment-block").expect("block");
         assert_eq!(
             f32::from(block.size.height),
-            rows_to_px(f64::from(COMMENT_BLOCK_ROWS)) as f32
+            rows_to_px(f64::from(rows)) as f32
         );
+        let field = cx.debug_bounds("code-comment-field").expect("field");
+        let hint = cx.debug_bounds("code-comment-hint").expect("hint");
+        let send = cx.debug_bounds("code-comment-send").expect("send");
+        assert_eq!(
+            f32::from(field.size.height),
+            2.0 * FIELD_BORDER
+                + FIELD_PAD_TOP
+                + FIELD_PAD_BOTTOM
+                + CODE_ROW_HEIGHT * COMMENT_FIELD_MIN_ROWS as f32
+        );
+        assert_eq!(f32::from(field.top() - block.top()), BLOCK_PAD_Y);
+        assert_eq!(f32::from(block.bottom() - send.bottom()), BLOCK_PAD_Y);
+        assert!(
+            hint.left() < send.left(),
+            "the hint sits on the leading edge"
+        );
+        let geometry = view.read_with(cx, |view, _| view.geometry.get());
+        assert_eq!(f32::from(block.size.width), geometry.code_area_w());
+    }
+
+    #[test]
+    fn the_block_chrome_is_a_whole_number_of_code_rows() {
+        assert_eq!(COMMENT_CHROME_PX % CODE_ROW_HEIGHT, 0.0);
+        assert_eq!(
+            comment_block_rows(0),
+            comment_block_rows(COMMENT_FIELD_MIN_ROWS)
+        );
+        assert_eq!(
+            comment_block_rows(COMMENT_FIELD_MAX_ROWS + 5),
+            comment_block_rows(COMMENT_FIELD_MAX_ROWS)
+        );
+    }
+
+    #[gpui::test]
+    fn the_block_grows_with_the_text_up_to_its_cap(cx: &mut TestAppContext) {
+        let (view, cx) = commenting(cx, 200);
+        view.update_in(cx, |view, window, cx| view.open_comment(3..4, window, cx));
+        cx.run_until_parked();
+        let height = |cx: &mut VisualTestContext| {
+            f32::from(
+                cx.debug_bounds("code-comment-block")
+                    .expect("block")
+                    .size
+                    .height,
+            )
+        };
+        let rest = height(cx);
+        type_comment(&view, cx, "one\ntwo\nthree\nfour\nfive");
+        assert_eq!(height(cx) - rest, CODE_ROW_HEIGHT * 2.0);
+        view.read_with(cx, |view, _| {
+            assert_eq!(
+                view.row_top(4) - view.row_top(3),
+                CODE_ROW_HEIGHT * (1 + comment_block_rows(5)) as f32
+            );
+        });
+        type_comment(&view, cx, &"line\n".repeat(40));
+        assert_eq!(
+            height(cx),
+            rows_to_px(f64::from(comment_block_rows(COMMENT_FIELD_MAX_ROWS))) as f32
+        );
+        type_comment(&view, cx, "");
+        assert_eq!(height(cx), rest);
+    }
+
+    #[gpui::test]
+    fn the_commented_lines_wash_the_text_the_gutter_and_the_block_gutter(cx: &mut TestAppContext) {
+        let (view, cx) = commenting(cx, 30);
+        view.update_in(cx, |view, window, cx| view.open_comment(4..6, window, cx));
+        cx.run_until_parked();
+        let palette = comment_palette();
+        let bands = view.read_with(cx, |view, _| view.comment_bands());
+        let reaches: Vec<_> = bands
+            .iter()
+            .map(|band| (band.lines.clone(), band.reach, band.color))
+            .collect();
+        assert_eq!(
+            reaches,
+            [
+                (4..6, BandReach::Text, palette.line),
+                (4..6, BandReach::Gutter, palette.line_gutter)
+            ]
+        );
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.commented_number_color(3), None);
+            assert_eq!(view.commented_number_color(4), Some(palette.line_number));
+            assert_eq!(view.commented_number_color(5), Some(palette.line_number));
+            assert_eq!(view.commented_number_color(6), None);
+        });
+        let gutter = cx.debug_bounds("code-comment-gutter").expect("gutter");
+        let block = cx.debug_bounds("code-comment-block").expect("block");
+        let gutter_w = view.read_with(cx, |view, _| view.geometry.get().gutter_w);
+        assert_eq!(f32::from(gutter.size.width), gutter_w - GUTTER_SEAM);
+        assert_eq!(f32::from(block.left() - gutter.right()), GUTTER_SEAM);
+        assert_eq!(gutter.size.height, block.size.height);
     }
 
     #[gpui::test]
@@ -793,7 +1077,7 @@ mod tests {
         view.read_with(cx, |view, _| {
             assert_eq!(
                 view.row_top(4) - view.row_top(3),
-                CODE_ROW_HEIGHT * (1 + COMMENT_BLOCK_ROWS) as f32
+                CODE_ROW_HEIGHT * (1 + comment_block_rows(COMMENT_FIELD_MIN_ROWS)) as f32
             );
         });
     }

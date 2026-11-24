@@ -48,7 +48,8 @@ fn a_requested_line_is_centred_highlighted_and_holds_the_caret(cx: &mut TestAppC
             view.line_bands(doc),
             vec![LineBand {
                 lines: 119..120,
-                color: reveal_color()
+                color: reveal_color(),
+                reach: BandReach::Lines,
             }]
         );
         assert!(

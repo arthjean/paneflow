@@ -1384,25 +1384,47 @@ Resting the pointer on the editor gutter for 200 ms shows a 16 px `accent`
 square with a 10 px plus, radius 4, at the left of the hovered line's number,
 with the tooltip "Comment on this line (drag for a range)"; it then follows the
 pointer from line to line and leaves with it. A click comments that line and a
-drag down or up the gutter comments the range, washed in `accent` at 0.14
-while dragging and while the comment is open. A right click on the text opens
+drag down or up the gutter comments the range in the comment palette below.
+A right click on the text opens
 a menu of 5.6: `Comment Selection`, disabled without a selection, then `Copy`,
 `Paste` and `Select All`. From the keyboard, `secondary-shift-m` comments the
 selected lines, or the caret's line without a selection.
 
-The comment is a block of 8 rows (144 px) under the last line of its range,
-from the gutter edge to 28 px before the right edge; the lines below move down
-by its height and scrolling stays continuous. Inside 6 px of vertical margin
-it is an `overlay` panel, radius 8, 1 px `border`, padded 10 by 8, in the
-interface font: the range label (`L12` or `L12-L15`) in `LABEL_SM` medium
-`muted`, a four-row field in `BODY` with the placeholder "Tell the agent what
-to change", then right-aligned 24 px buttons 8 apart, `Cancel` (1 px `border`,
-`subtle` on hover) and `Send to Agent` (`accent` fill, `base` text, 0.64
-opacity while the field is blank). The field takes focus, Enter adds a line,
-`secondary-enter` sends, Escape and `Cancel` close the block and return focus
-to the text. One comment exists per tab: opening another replaces an empty one
+The comment reproduces T3 Code's diff comment annotation, measured from its
+dark capture, so it uses its own palette rather than the theme accent. Dark
+themes: commented lines `#253345` with their gutter `#294665` and their numbers
+in `#67a3e6`; the block `#2f3e51` with its gutter `#2e4a6a`; the field
+`#364557`; T3 Code's primary blue `#376bf0`; `#a3a3a3` for the placeholder and
+`Cancel`, and the hint at 0.7 of it. Light themes: primary `#1b4ed8`, lines at
+0.10 of it, gutters at 0.18, the block at 0.06, a white field with a `black` at
+0.12 border, `#71717a` for the muted text. In both, the gutter tint stops 2 px
+short of the gutter edge, so a seam of code background separates it from the
+text and the block.
+
+The block sits under the last line of its range and spans the gutter and the
+code area up to the scrollbar or minimap; the lines below move down by its
+height and scrolling stays continuous. Its content is padded 12 by 14 (T3 Code
+pads 12 by 12; the 2 extra pixels keep the block a whole number of 18 px code
+rows, the field's rows plus 4) and holds a field and a footer 6 px apart, in
+the interface font. The field is a 1 px box, radius 8, padded 9 on the sides,
+3 on top and 9 below, whose text is 14 px on 18 px rows with the placeholder
+"Add a comment…"; at rest its border is `white` at 0.11. It
+soft-wraps and grows with its text from 3 to 12 rows (68 px at 3, as in T3
+Code), then scrolls. While it has focus its border turns primary and a 3 px
+inset ring of primary at 0.24 lines it. The 24 px footer carries the send
+shortcut hint "⌘/Ctrl Enter to send", worded as T3 Code words it on every
+platform, its ⌘ drawn with `icons/command-key.svg` at 9 px because the interface
+font has no such glyph, in `LABEL_XS`
+on the leading edge, then 24 px buttons 4 apart on the trailing edge, radius 6,
+`BODY` medium, padded 8: `Cancel`, with `white` at 0.08 and `text` on hover,
+and `Comment`, primary with a white label. While the field is blank the
+send button is drawn as T3 Code's group opacity of 0.64 renders it: primary at
+0.64 under a label of white at 0.64 over the block. The field takes focus and
+is named after the range ("Comment on L12-L15"), a click anywhere in its box
+focuses it, Enter adds a line, `secondary-enter` sends, Escape and `Cancel`
+close the block and return focus to the text. One comment exists per tab: opening another replaces an empty one
 and asks before discarding typed text. The block follows its lines through
-edits and closes when all of them are deleted. `Send to Agent` picks the agent
+edits and closes when all of them are deleted. `Comment` picks the agent
 as the tree entry does, with the last agent chosen for the workspace first in
 the list, and pastes into its terminal, in one bracketed paste that is never
 submitted: the relative path with `:12` or `:12-15`, a blank line, the comment,

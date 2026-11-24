@@ -1,5 +1,6 @@
 mod change_markers;
 mod comment;
+pub(crate) use comment::GUTTER_SEAM as COMMENT_GUTTER_SEAM;
 mod disk_sync;
 mod editing;
 mod find;
@@ -107,10 +108,18 @@ enum DiskState {
 
 type PopupLine = (SharedString, Vec<(Range<usize>, Hsla)>);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum BandReach {
+    Lines,
+    Text,
+    Gutter,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct LineBand {
     pub(crate) lines: Range<usize>,
     pub(crate) color: Hsla,
+    pub(crate) reach: BandReach,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -510,9 +519,10 @@ impl CodeView {
             .map(|lines| LineBand {
                 lines,
                 color: reveal_color(),
+                reach: BandReach::Lines,
             })
             .into_iter()
-            .chain(self.comment_bands(crate::theme::ui_colors()))
+            .chain(self.comment_bands())
             .filter(|band| band.lines.start < doc.line_count())
             .collect()
     }

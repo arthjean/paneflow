@@ -27,7 +27,7 @@ use super::navigation::{
     scrollbar_track,
 };
 use super::rows::{RowMap, RowSlot, RowSpan, px_to_rows, rows_in, rows_to_px};
-use super::view::CodeView;
+use super::view::{BandReach, COMMENT_GUTTER_SEAM, CodeView};
 use super::wrap;
 use crate::diff::{RowPalette, fill_text_runs, shape_plain};
 use crate::tab_stops::TabExpandedLine;
@@ -495,6 +495,12 @@ pub(crate) struct CodeGeometry {
     pub(crate) char_w: f32,
     pub(crate) text_viewport_w: f32,
     pub(crate) max_h_offset: f32,
+}
+
+impl CodeGeometry {
+    pub(crate) fn code_area_w(&self) -> f32 {
+        CODE_PAD_L + self.text_viewport_w + CODE_PAD_R
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -1080,14 +1086,29 @@ impl Element for CodeElement {
         let marked = self.caret.marked.clone();
         for band in view.line_bands(doc) {
             let first = map.line_top(band.lines.start);
-            let last = map.boundary_row(band.lines.end.min(line_count));
+            let end = band.lines.end.min(line_count);
+            let last = match band.reach {
+                BandReach::Text | BandReach::Gutter => {
+                    let line = end.saturating_sub(1).max(band.lines.start);
+                    map.line_top(line) + map.text_rows(line)
+                }
+                BandReach::Lines => map.boundary_row(end),
+            };
+            let (x, width) = match band.reach {
+                BandReach::Lines => (left, bounds.size.width),
+                BandReach::Text => (
+                    left + gutter_px,
+                    (bounds.size.width - gutter_px).max(px(0.)),
+                ),
+                BandReach::Gutter => (left, (gutter_px - px(COMMENT_GUTTER_SEAM)).max(px(0.))),
+            };
             let from = first.max(rows.start);
             let to = last.min(rows.end);
             if from < to {
                 quads.push(Quad {
                     bounds: Bounds::new(
-                        point(left, row_y(from)),
-                        size(bounds.size.width, px(rows_to_px((to - from) as f64) as f32)),
+                        point(x, row_y(from)),
+                        size(width, px(rows_to_px((to - from) as f64) as f32)),
                     ),
                     color: band.color,
                     clip: None,
@@ -1183,11 +1204,13 @@ impl Element for CodeElement {
             };
 
             if segment == 0 {
-                let num_color = if row_line == cursor_row {
-                    self.palette.text
-                } else {
-                    self.palette.muted
-                };
+                let num_color =
+                    view.commented_number_color(row_line)
+                        .unwrap_or(if row_line == cursor_row {
+                            self.palette.text
+                        } else {
+                            self.palette.muted
+                        });
                 let number = row_line + 1;
                 let digits = digit_count(number);
                 self.runs.clear();

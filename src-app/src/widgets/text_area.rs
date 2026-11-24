@@ -3,11 +3,11 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     App, Bounds, ClipboardItem, ContentMask, Context, CursorStyle, Element, ElementId,
-    ElementInputHandler, Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable,
-    GlobalElementId, Hsla, IntoElement, KeyBinding, LayoutId, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, Render, ShapedLine, SharedString,
-    Style, Styled, Task, TextRun, UTF16Selection, UnderlineStyle, Window, actions, div, fill, hsla,
-    point, prelude::*, px, relative, size,
+    ElementInputHandler, Entity, EntityInputHandler, EventEmitter, FocusHandle, Focusable, Font,
+    GlobalElementId, Hsla, IndentAdjustment, IntoElement, KeyBinding, LayoutId, LineFragment,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, Render,
+    ShapedLine, SharedString, Style, Styled, Task, TextRun, UTF16Selection, UnderlineStyle, Window,
+    actions, div, fill, hsla, point, prelude::*, px, relative, size,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -58,6 +58,7 @@ pub fn register_keybindings(cx: &mut App) {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TextAreaEvent {
     Changed,
+    Resized,
     Submit,
     Cancel,
 }
@@ -69,23 +70,33 @@ struct Snapshot {
 }
 
 struct ShapedRow {
-    line: usize,
+    row: usize,
     start: usize,
+    soft: bool,
     shaped: ShapedLine,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct WrapSpec {
+    font: Font,
+    font_size: Pixels,
+    width: Pixels,
 }
 
 pub(crate) struct TextArea {
     focus_handle: FocusHandle,
     content: String,
     placeholder: SharedString,
+    placeholder_color: Option<Hsla>,
     accessible_name: SharedString,
-    rows: usize,
+    min_rows: usize,
+    max_rows: usize,
+    wrap: Option<WrapSpec>,
     cursor: usize,
     anchor: usize,
     marked: Option<Range<usize>>,
     goal_x: Option<Pixels>,
     scroll_top: usize,
-    scroll_left: Pixels,
     shaped: Vec<ShapedRow>,
     last_bounds: Option<Bounds<Pixels>>,
     line_height: Pixels,
@@ -143,6 +154,51 @@ fn next_word(text: &str, offset: usize) -> usize {
         .map_or(text.len(), |(at, word)| at + word.len())
 }
 
+fn wrap_rows(text: &str, spec: Option<&WrapSpec>, cx: &App) -> Vec<Range<usize>> {
+    let starts = line_starts(text);
+    let mut wrapper = spec.map(|spec| {
+        cx.text_system()
+            .line_wrapper(spec.font.clone(), spec.font_size)
+    });
+    let mut rows = Vec::with_capacity(starts.len());
+    for line in 0..starts.len() {
+        let range = line_range(text, &starts, line);
+        let mut start = range.start;
+        if let (Some(wrapper), Some(spec)) = (wrapper.as_mut(), spec)
+            && !range.is_empty()
+        {
+            let fragments = [LineFragment::text(&text[range.clone()])];
+            for boundary in wrapper.wrap_line(&fragments, spec.width, IndentAdjustment::NoIndent) {
+                let at = range.start + boundary.ix;
+                if at > start && at < range.end {
+                    rows.push(start..at);
+                    start = at;
+                }
+            }
+        }
+        rows.push(start..range.end);
+    }
+    rows
+}
+
+fn row_of(rows: &[Range<usize>], offset: usize) -> usize {
+    rows.partition_point(|row| row.start <= offset).max(1) - 1
+}
+
+fn is_soft(rows: &[Range<usize>], row: usize) -> bool {
+    rows.get(row + 1)
+        .is_some_and(|next| next.start == rows[row].end)
+}
+
+fn last_caret_offset(text: &str, rows: &[Range<usize>], row: usize) -> usize {
+    let range = rows[row].clone();
+    if is_soft(rows, row) {
+        previous_boundary(text, range.end).max(range.start)
+    } else {
+        range.end
+    }
+}
+
 fn visible_from(scroll_top: usize, caret_line: usize, rows: usize, line_count: usize) -> usize {
     let rows = rows.max(1);
     let last_top = line_count.saturating_sub(rows);
@@ -164,21 +220,24 @@ impl TextArea {
     pub(crate) fn new(
         placeholder: impl Into<SharedString>,
         accessible_name: impl Into<SharedString>,
-        rows: usize,
+        rows: Range<usize>,
         cx: &mut Context<Self>,
     ) -> Self {
+        let min_rows = rows.start.max(1);
         Self {
             focus_handle: cx.focus_handle(),
             content: String::new(),
             placeholder: placeholder.into(),
+            placeholder_color: None,
             accessible_name: accessible_name.into(),
-            rows: rows.max(1),
+            min_rows,
+            max_rows: rows.end.max(min_rows),
+            wrap: None,
             cursor: 0,
             anchor: 0,
             marked: None,
             goal_x: None,
             scroll_top: 0,
-            scroll_left: px(0.),
             shaped: Vec::new(),
             last_bounds: None,
             line_height: px(18.),
@@ -191,12 +250,27 @@ impl TextArea {
         }
     }
 
+    pub(crate) fn with_placeholder_color(mut self, color: Hsla) -> Self {
+        self.placeholder_color = Some(color);
+        self
+    }
+
     pub(crate) fn value(&self) -> &str {
         &self.content
     }
 
     pub(crate) fn is_blank(&self) -> bool {
         self.content.trim().is_empty()
+    }
+
+    pub(crate) fn visible_rows(&self, cx: &App) -> usize {
+        self.layout_rows(cx)
+            .len()
+            .clamp(self.min_rows, self.max_rows)
+    }
+
+    fn layout_rows(&self, cx: &App) -> Vec<Range<usize>> {
+        wrap_rows(&self.content, self.wrap.as_ref(), cx)
     }
 
     #[cfg(test)]
@@ -275,38 +349,38 @@ impl TextArea {
     }
 
     fn vertical(&mut self, down: bool, extend: bool, cx: &mut Context<Self>) {
-        let starts = line_starts(&self.content);
-        let line = line_of(&starts, self.cursor);
+        let rows = self.layout_rows(cx);
+        let row = row_of(&rows, self.cursor);
         let target = if down {
-            if line + 1 >= starts.len() {
+            if row + 1 >= rows.len() {
                 self.move_to(self.content.len(), extend, cx);
                 return;
             }
-            line + 1
+            row + 1
         } else {
-            if line == 0 {
+            if row == 0 {
                 self.move_to(0, extend, cx);
                 return;
             }
-            line - 1
+            row - 1
         };
-        let goal = self.goal_x.unwrap_or_else(|| self.caret_x(self.cursor));
-        let range = line_range(&self.content, &starts, target);
+        let goal = self
+            .goal_x
+            .unwrap_or_else(|| self.caret_x(&rows, self.cursor));
+        let range = rows[target].clone();
         let local = self
             .shaped
             .iter()
-            .find(|row| row.line == target)
-            .map(|row| row.shaped.closest_index_for_x(goal))
+            .find(|shaped| shaped.row == target)
+            .map(|shaped| shaped.shaped.closest_index_for_x(goal))
             .unwrap_or_else(|| {
-                let column = self.cursor - starts[line];
-                let text = &self.content[range.clone()];
-                let mut at = column.min(text.len());
-                while !text.is_char_boundary(at) {
+                let mut at = range.start + (self.cursor - rows[row].start).min(range.len());
+                while !self.content.is_char_boundary(at) {
                     at -= 1;
                 }
-                at
+                at - range.start
             });
-        self.cursor = range.start + local.min(range.len());
+        self.cursor = (range.start + local).min(last_caret_offset(&self.content, &rows, target));
         if !extend {
             self.anchor = self.cursor;
         }
@@ -314,14 +388,15 @@ impl TextArea {
         self.touched(cx);
     }
 
-    fn caret_x(&self, offset: usize) -> Pixels {
-        let starts = line_starts(&self.content);
-        let line = line_of(&starts, offset);
+    fn caret_x(&self, rows: &[Range<usize>], offset: usize) -> Pixels {
+        let row = row_of(rows, offset);
         self.shaped
             .iter()
-            .find(|row| row.line == line)
-            .map_or(px(0.), |row| {
-                row.shaped.x_for_index(offset.saturating_sub(row.start))
+            .find(|shaped| shaped.row == row)
+            .map_or(px(0.), |shaped| {
+                shaped
+                    .shaped
+                    .x_for_index(offset.saturating_sub(shaped.start))
             })
     }
 
@@ -335,10 +410,18 @@ impl TextArea {
         let row = ((position.y - bounds.top()) / self.line_height).floor();
         let row = (row.max(0.) as usize).min(self.shaped.len() - 1);
         let shaped = &self.shaped[row];
-        shaped.start
+        let index = shaped.start
             + shaped
                 .shaped
-                .closest_index_for_x(position.x - bounds.left() + self.scroll_left)
+                .closest_index_for_x(position.x - bounds.left());
+        if shaped.soft {
+            index.min(previous_boundary(
+                &self.content,
+                shaped.start + shaped.shaped.len(),
+            ))
+        } else {
+            index
+        }
     }
 
     fn on_mouse_down(
@@ -496,15 +579,14 @@ impl EntityInputHandler for TextArea {
         range_utf16: Range<usize>,
         bounds: Bounds<Pixels>,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
         let range = byte_range_from_utf16(&self.content, &range_utf16);
-        let starts = line_starts(&self.content);
-        let line = line_of(&starts, range.start);
-        let row = self.shaped.iter().position(|row| row.line == line)?;
+        let target = row_of(&self.layout_rows(cx), range.start);
+        let row = self.shaped.iter().position(|row| row.row == target)?;
         let shaped = &self.shaped[row];
         let top = bounds.top() + self.line_height * row as f32;
-        let left = bounds.left() - self.scroll_left;
+        let left = bounds.left();
         let end = range.end.min(shaped.start + shaped.shaped.len());
         Some(Bounds::from_corners(
             point(
@@ -540,7 +622,6 @@ struct AreaElement {
 struct AreaPrepaint {
     rows: Vec<ShapedRow>,
     placeholder: Option<ShapedLine>,
-    scroll_left: Pixels,
     cursor: Option<PaintQuad>,
     selection: Vec<PaintQuad>,
 }
@@ -564,7 +645,7 @@ impl Element for AreaElement {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        let rows = self.area.read(cx).rows;
+        let rows = self.area.read(cx).visible_rows(cx);
         let mut style = Style::default();
         style.size.width = relative(1.).into();
         style.size.height = (window.line_height() * rows as f32).into();
@@ -586,10 +667,27 @@ impl Element for AreaElement {
         let line_height = window.line_height();
         let style = window.text_style();
         let font_size = style.font_size.to_pixels(window.rem_size());
+        let spec = WrapSpec {
+            font: style.font(),
+            font_size,
+            width: (bounds.size.width - px(CARET_WIDTH)).max(px(1.)),
+        };
+        self.area.update(cx, |area, cx| {
+            if area.wrap.as_ref() == Some(&spec) {
+                return;
+            }
+            let before = area.visible_rows(cx);
+            area.wrap = Some(spec);
+            if area.visible_rows(cx) != before {
+                cx.emit(TextAreaEvent::Resized);
+                cx.notify();
+            }
+        });
         let area = self.area.read(cx);
-        let starts = line_starts(&area.content);
-        let caret_line = line_of(&starts, area.cursor);
-        let scroll_top = visible_from(area.scroll_top, caret_line, area.rows, starts.len());
+        let layout = area.layout_rows(cx);
+        let visible = area.visible_rows(cx);
+        let caret_row = row_of(&layout, area.cursor);
+        let scroll_top = visible_from(area.scroll_top, caret_row, visible, layout.len());
         let selection = area.selection();
         let marked = area.marked.clone();
         let run = |len: usize, color: Hsla, underline: bool| TextRun {
@@ -606,8 +704,8 @@ impl Element for AreaElement {
         };
 
         let mut rows = Vec::new();
-        for line in scroll_top..(scroll_top + area.rows).min(starts.len()) {
-            let range = line_range(&area.content, &starts, line);
+        for row in scroll_top..(scroll_top + visible).min(layout.len()) {
+            let range = layout[row].clone();
             let text = SharedString::from(area.content[range.clone()].to_owned());
             let mut runs = Vec::new();
             let marked_here = marked
@@ -627,8 +725,9 @@ impl Element for AreaElement {
                 .text_system()
                 .shape_line(text, font_size, &runs, None);
             rows.push(ShapedRow {
-                line,
+                row,
                 start: range.start,
+                soft: is_soft(&layout, row),
                 shaped,
             });
         }
@@ -642,23 +741,13 @@ impl Element for AreaElement {
         });
 
         let caret_width = px(CARET_WIDTH);
-        let caret_row = rows.iter().position(|row| row.line == caret_line);
+        let caret_row = rows.iter().position(|row| row.row == caret_row);
         let caret_x = caret_row.map_or(px(0.), |row| {
             rows[row]
                 .shaped
                 .x_for_index(area.cursor.saturating_sub(rows[row].start))
         });
-        let widest = rows
-            .iter()
-            .map(|row| row.shaped.width)
-            .fold(px(0.), Pixels::max);
-        let max_scroll = (widest + caret_width - bounds.size.width).max(px(0.));
-        let scroll_left = area
-            .scroll_left
-            .min(caret_x)
-            .max(caret_x + caret_width - bounds.size.width)
-            .clamp(px(0.), max_scroll);
-        let origin = bounds.left() - scroll_left;
+        let origin = bounds.left();
 
         let mut quads = Vec::new();
         if !selection.is_empty() {
@@ -670,7 +759,11 @@ impl Element for AreaElement {
                     continue;
                 }
                 let top = bounds.top() + line_height * index as f32;
-                let tail = if selection.end > end { px(6.) } else { px(0.) };
+                let tail = if selection.end > end && !row.soft {
+                    px(6.)
+                } else {
+                    px(0.)
+                };
                 quads.push(fill(
                     Bounds::from_corners(
                         point(origin + row.shaped.x_for_index(from - row.start), top),
@@ -700,13 +793,11 @@ impl Element for AreaElement {
             });
         self.area.update(cx, |area, _| {
             area.scroll_top = scroll_top;
-            area.scroll_left = scroll_left;
             area.line_height = line_height;
         });
         AreaPrepaint {
             rows,
             placeholder,
-            scroll_left,
             cursor,
             selection: quads,
         }
@@ -749,10 +840,7 @@ impl Element for AreaElement {
             for (index, row) in rows.iter().enumerate() {
                 row.shaped
                     .paint(
-                        point(
-                            bounds.left() - prepaint.scroll_left,
-                            bounds.top() + line_height * index as f32,
-                        ),
+                        point(bounds.left(), bounds.top() + line_height * index as f32),
                         line_height,
                         gpui::TextAlign::Left,
                         None,
@@ -923,7 +1011,7 @@ impl Render for TextArea {
                 area: cx.entity(),
                 caret_color: ui.text,
                 selection_color: selection,
-                placeholder_color: ui.muted,
+                placeholder_color: self.placeholder_color.unwrap_or(ui.muted),
             })
     }
 }
@@ -951,7 +1039,7 @@ mod tests {
             crate::widgets::text_input::register_keybindings(cx);
             register_keybindings(cx);
         });
-        let area = cx.new(|cx| TextArea::new("Comment", "Comment", 4, cx));
+        let area = cx.new(|cx| TextArea::new("Comment", "Comment", 4..4, cx));
         let held = area.clone();
         let (_, cx) = cx.add_window_view(move |_, _| Host(held));
         cx.update(|window, cx| area.read(cx).focus_handle.clone().focus(window, cx));
@@ -1021,6 +1109,70 @@ mod tests {
             ]
         );
         assert_eq!(area.read_with(cx, |area, _| area.value().to_owned()), "x");
+    }
+
+    struct NarrowHost(Entity<TextArea>);
+
+    impl Render for NarrowHost {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .w(px(120.))
+                .text_size(px(13.))
+                .line_height(px(18.))
+                .child(self.0.clone())
+        }
+    }
+
+    #[test]
+    fn a_wrap_boundary_belongs_to_the_row_it_starts() {
+        let rows = [0..4, 4..8, 9..9, 10..12];
+        assert_eq!(row_of(&rows, 0), 0);
+        assert_eq!(row_of(&rows, 4), 1);
+        assert_eq!(row_of(&rows, 8), 1);
+        assert_eq!(row_of(&rows, 9), 2);
+        assert_eq!(row_of(&rows, 12), 3);
+        assert!(is_soft(&rows, 0));
+        assert!(!is_soft(&rows, 1));
+        assert!(!is_soft(&rows, 3));
+    }
+
+    #[gpui::test]
+    fn a_long_line_wraps_and_the_area_grows_with_it_up_to_its_cap(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            crate::widgets::text_input::register_keybindings(cx);
+            register_keybindings(cx);
+        });
+        let area = cx.new(|cx| TextArea::new("Comment", "Comment", 1..3, cx));
+        let held = area.clone();
+        let (_, cx) = cx.add_window_view(move |_, _| NarrowHost(held));
+        cx.update(|window, cx| area.read(cx).focus_handle.clone().focus(window, cx));
+        cx.run_until_parked();
+        let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let sink = seen.clone();
+        let _subscription = cx.update(|_, cx| {
+            cx.subscribe(&area, move |_, event: &TextAreaEvent, _| {
+                sink.borrow_mut().push(*event);
+            })
+        });
+        assert_eq!(cx.update(|_, cx| area.read(cx).visible_rows(cx)), 1);
+        cx.simulate_input("short words wrap onto a second row");
+        cx.run_until_parked();
+        let rows = cx.update(|_, cx| area.read(cx).layout_rows(cx));
+        assert!(rows.len() > 1, "{rows:?}");
+        assert!(rows.windows(2).all(|pair| pair[0].end == pair[1].start));
+        assert!(cx.update(|_, cx| area.read(cx).visible_rows(cx)) > 1);
+        cx.simulate_input(&" and keep going".repeat(20));
+        cx.run_until_parked();
+        assert_eq!(cx.update(|_, cx| area.read(cx).visible_rows(cx)), 3);
+        let end = area.read_with(cx, |area, _| area.cursor);
+        cx.simulate_keystrokes("up");
+        let up = area.read_with(cx, |area, _| area.cursor);
+        assert!(up < end && up > 0, "up moves one visual row: {up} of {end}");
+        assert_eq!(
+            area.read_with(cx, |area, _| area.value().matches('\n').count()),
+            0
+        );
+        assert!(seen.borrow().contains(&TextAreaEvent::Changed));
     }
 
     #[gpui::test]
