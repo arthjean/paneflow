@@ -1,22 +1,22 @@
 {
   "prd": {
     "file": "tasks/prd-agents-browser.md",
-    "title": "Navigateur intégré au dock Agents",
-    "created_at": "2026-09-05",
+    "title": "A browser inside Paneflow that an agent can drive",
+    "created_at": "2026-11-24",
     "status": "READY"
   },
   "epics": [
     {
       "id": "EP-001",
-      "title": "Qualifier le moteur, le GPU et les plateformes",
+      "title": "Kill tests on Linux",
       "status": "TODO",
       "priority": "P0",
-      "stories_total": 5,
+      "stories_total": 7,
       "stories_done": 0
     },
     {
       "id": "EP-002",
-      "title": "Construire la frontière navigateur et ses adaptateurs",
+      "title": "The browser host and its private protocol",
       "status": "TODO",
       "priority": "P0",
       "stories_total": 6,
@@ -24,526 +24,828 @@
     },
     {
       "id": "EP-003",
-      "title": "Intégrer le navigateur au dock Agents",
+      "title": "Agent control",
       "status": "TODO",
       "priority": "P0",
-      "stories_total": 6,
+      "stories_total": 9,
       "stories_done": 0
     },
     {
       "id": "EP-004",
-      "title": "Compléter les comportements web et la récupération",
+      "title": "The browser surface",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 8,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-005",
+      "title": "GPU presentation on Linux",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 5,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-006",
+      "title": "Runtime delivery",
       "status": "TODO",
       "priority": "P0",
       "stories_total": 6,
       "stories_done": 0
     },
     {
-      "id": "EP-005",
-      "title": "Distribuer et qualifier les packages",
+      "id": "EP-007",
+      "title": "macOS and Windows code paths",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 6,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-008",
+      "title": "macOS tests and validation",
       "status": "TODO",
       "priority": "P0",
       "stories_total": 5,
       "stories_done": 0
     },
     {
-      "id": "EP-006",
-      "title": "Ajouter les interactions agent sous contrôle du workspace",
+      "id": "EP-009",
+      "title": "Windows tests and validation",
       "status": "TODO",
-      "priority": "P1",
-      "stories_total": 4,
+      "priority": "P0",
+      "stories_total": 5,
       "stories_done": 0
     }
   ],
   "stories": [
     {
       "id": "US-001",
-      "title": "Établir le protocole de mesure et les fixtures",
+      "title": "Pin the engine",
       "epic": "EP-001",
-      "priority": "P0",
-      "size": "M",
-      "blocked_by": [],
       "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-002",
-      "title": "Valider l’hypothèse GPU sur Linux natif",
+      "title": "Kill test 1, shared textures under Wayland and X11",
       "epic": "EP-001",
+      "status": "TODO",
       "priority": "P0",
-      "size": "L",
       "blocked_by": [
         "US-001"
       ],
-      "status": "TODO",
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-003",
-      "title": "Valider l’hypothèse GPU et sandbox sur macOS",
+      "title": "Kill test 2, a frame crosses two processes into a GPUI rectangle",
       "epic": "EP-001",
-      "priority": "P0",
-      "size": "L",
-      "blocked_by": [
-        "US-001"
-      ],
       "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-002"
+      ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-004",
-      "title": "Valider l’hypothèse GPU et bootstrap Windows",
+      "title": "Kill test 3, an agent finds planted defects with no port open",
       "epic": "EP-001",
+      "status": "TODO",
       "priority": "P0",
-      "size": "L",
       "blocked_by": [
         "US-001"
       ],
-      "status": "TODO",
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-005",
-      "title": "Prononcer le GO et figer le contrat de compatibilité",
+      "title": "Measure the CPU path",
       "epic": "EP-001",
-      "priority": "P0",
-      "size": "M",
-      "blocked_by": [
-        "US-002",
-        "US-003",
-        "US-004"
-      ],
       "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-003"
+      ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-006",
-      "title": "Définir les identités et le protocole privé navigateur",
-      "epic": "EP-002",
-      "priority": "P0",
-      "size": "M",
-      "blocked_by": [
-        "US-005"
-      ],
+      "title": "Survey the Chromium sandbox on Linux install formats",
+      "epic": "EP-001",
       "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-001"
+      ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-007",
-      "title": "Superviser le host et le cycle CEF",
-      "epic": "EP-002",
+      "title": "Record the verdict",
+      "epic": "EP-001",
+      "status": "TODO",
       "priority": "P0",
-      "size": "L",
       "blocked_by": [
+        "US-002",
+        "US-003",
+        "US-004",
+        "US-005",
         "US-006"
       ],
-      "status": "TODO",
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-008",
-      "title": "Industrialiser la présentation GPU Linux",
+      "title": "Define the private protocol",
       "epic": "EP-002",
+      "status": "TODO",
       "priority": "P0",
-      "size": "L",
       "blocked_by": [
-        "US-006",
         "US-007"
       ],
-      "status": "TODO",
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-009",
-      "title": "Industrialiser la présentation GPU macOS",
+      "title": "Build the host crate outside the workspace",
       "epic": "EP-002",
-      "priority": "P0",
-      "size": "L",
-      "blocked_by": [
-        "US-006",
-        "US-007"
-      ],
       "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-008"
+      ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-010",
-      "title": "Industrialiser la présentation GPU Windows",
+      "title": "Supervise the host",
       "epic": "EP-002",
-      "priority": "P0",
-      "size": "L",
-      "blocked_by": [
-        "US-006",
-        "US-007"
-      ],
       "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-009"
+      ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-011",
-      "title": "Gérer les profils persistants et leur verrouillage",
+      "title": "Bridge CDP inside the host",
       "epic": "EP-002",
-      "priority": "P0",
-      "size": "M",
-      "blocked_by": [
-        "US-006",
-        "US-007"
-      ],
       "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-010"
+      ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-012",
-      "title": "Ouvrir le dock indépendamment de Git",
-      "epic": "EP-003",
-      "priority": "P0",
-      "size": "M",
-      "blocked_by": [
-        "US-006"
-      ],
+      "title": "Keep one profile per workspace",
+      "epic": "EP-002",
       "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-010"
+      ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-013",
-      "title": "Construire les onglets et la barre de navigation",
-      "epic": "EP-003",
-      "priority": "P0",
-      "size": "L",
-      "blocked_by": [
-        "US-008",
-        "US-009",
-        "US-010",
-        "US-011",
-        "US-012"
-      ],
+      "title": "Enforce origins, schemes and permissions in the host",
+      "epic": "EP-002",
       "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-011"
+      ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-014",
-      "title": "Router les URL et les services vers le bon propriétaire",
+      "title": "Declare the browser methods and the browser right",
       "epic": "EP-003",
-      "priority": "P0",
-      "size": "M",
-      "blocked_by": [
-        "US-012",
-        "US-013"
-      ],
       "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-011"
+      ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-015",
-      "title": "Transmettre input, IME et raccourcis sans fuite de focus",
+      "title": "Open, list, navigate and close tabs with an owner",
       "epic": "EP-003",
-      "priority": "P0",
-      "size": "L",
-      "blocked_by": [
-        "US-013"
-      ],
       "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-014"
+      ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-016",
-      "title": "Rendre la navigation accessible et adaptée au zoom",
+      "title": "Return one grouped snapshot",
       "epic": "EP-003",
+      "status": "TODO",
       "priority": "P0",
-      "size": "L",
       "blocked_by": [
-        "US-013",
         "US-015"
       ],
-      "status": "TODO",
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-017",
-      "title": "Sauvegarder les onglets et restaurer à la demande",
+      "title": "Act on elements by reference and wait for conditions",
       "epic": "EP-003",
-      "priority": "P0",
-      "size": "M",
-      "blocked_by": [
-        "US-011",
-        "US-012",
-        "US-013"
-      ],
       "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-016"
+      ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-018",
-      "title": "Gérer visibilité, limites et mise en veille explicite",
-      "epic": "EP-004",
-      "priority": "P0",
-      "size": "M",
-      "blocked_by": [
-        "US-013",
-        "US-017"
-      ],
+      "title": "Read console, network and a screenshot on demand",
+      "epic": "EP-003",
       "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-016"
+      ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-019",
-      "title": "Récupérer les pannes et borner la fermeture",
-      "epic": "EP-004",
-      "priority": "P0",
-      "size": "M",
-      "blocked_by": [
-        "US-007",
-        "US-008",
-        "US-009",
-        "US-010",
-        "US-018"
-      ],
+      "title": "Evaluate JavaScript behind an approval",
+      "epic": "EP-003",
       "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-017",
+        "US-020"
+      ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-020",
-      "title": "Appliquer la politique d’origines et de permissions",
-      "epic": "EP-004",
-      "priority": "P0",
-      "size": "L",
-      "blocked_by": [
-        "US-011",
-        "US-013",
-        "US-019"
-      ],
+      "title": "Ask the user before an agent acts on a new site",
+      "epic": "EP-003",
       "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-015",
+        "US-013"
+      ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-021",
-      "title": "Prendre en charge les dialogues, fichiers et fenêtres web",
-      "epic": "EP-004",
-      "priority": "P0",
-      "size": "L",
-      "blocked_by": [
-        "US-015",
-        "US-018",
-        "US-020"
-      ],
+      "title": "Expose the tools through MCP and the CLI",
+      "epic": "EP-003",
       "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-016",
+        "US-017",
+        "US-018"
+      ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-022",
-      "title": "Exposer DevTools avec les API publiques CEF",
-      "epic": "EP-004",
-      "priority": "P1",
-      "size": "L",
-      "blocked_by": [
-        "US-013",
-        "US-015",
-        "US-020"
-      ],
+      "title": "Prove the loop with a real agent",
+      "epic": "EP-003",
       "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-019",
+        "US-020",
+        "US-021"
+      ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-023",
-      "title": "Qualifier les parcours web et les frontières de sécurité",
+      "title": "Open the dock without a Git snapshot",
       "epic": "EP-004",
-      "priority": "P0",
-      "size": "M",
-      "blocked_by": [
-        "US-016",
-        "US-017",
-        "US-018",
-        "US-019",
-        "US-020",
-        "US-021",
-        "US-022"
-      ],
       "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-010"
+      ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-024",
-      "title": "Embarquer le runtime dans les packages Linux",
-      "epic": "EP-005",
-      "priority": "P0",
-      "size": "L",
-      "blocked_by": [
-        "US-005",
-        "US-007",
-        "US-008"
-      ],
+      "title": "Add the browser chrome",
+      "epic": "EP-004",
       "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-025"
+      ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-025",
-      "title": "Signer et notariser le bundle macOS complet",
-      "epic": "EP-005",
-      "priority": "P0",
-      "size": "L",
-      "blocked_by": [
-        "US-005",
-        "US-007",
-        "US-009"
-      ],
+      "title": "Present frames through the CPU path",
+      "epic": "EP-004",
       "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-011",
+        "US-023"
+      ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-026",
-      "title": "Installer le bootstrap et le runtime Windows",
-      "epic": "EP-005",
-      "priority": "P0",
-      "size": "L",
-      "blocked_by": [
-        "US-005",
-        "US-007",
-        "US-010"
-      ],
+      "title": "Route input, focus and shortcuts",
+      "epic": "EP-004",
       "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-025"
+      ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-027",
-      "title": "Versionner le runtime et organiser ses mises à jour",
-      "epic": "EP-005",
+      "title": "Handle web popups, dialogs, new windows and files",
+      "epic": "EP-004",
+      "status": "TODO",
       "priority": "P0",
-      "size": "M",
       "blocked_by": [
-        "US-024",
-        "US-025",
         "US-026"
       ],
-      "status": "TODO",
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-028",
-      "title": "Certifier la matrice et préparer la sortie navigateur",
-      "epic": "EP-005",
-      "priority": "P0",
-      "size": "L",
-      "blocked_by": [
-        "US-023",
-        "US-024",
-        "US-025",
-        "US-026",
-        "US-027"
-      ],
+      "title": "Share a tab between the human and the agent",
+      "epic": "EP-004",
       "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-024",
+        "US-026",
+        "US-015"
+      ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-029",
-      "title": "Exposer la découverte et les diagnostics en lecture",
-      "epic": "EP-006",
-      "priority": "P1",
-      "size": "M",
-      "blocked_by": [
-        "US-006",
-        "US-022",
-        "US-028"
-      ],
+      "title": "Open local links in the Paneflow browser",
+      "epic": "EP-004",
       "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-024"
+      ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-030",
-      "title": "Autoriser les commandes d’interaction bornées",
-      "epic": "EP-006",
-      "priority": "P1",
-      "size": "L",
-      "blocked_by": [
-        "US-029"
-      ],
+      "title": "Restore tabs without touching the network",
+      "epic": "EP-004",
       "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-024"
+      ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-031",
-      "title": "Joindre un élément ou une capture au contexte de l’agent",
-      "epic": "EP-006",
-      "priority": "P2",
-      "size": "M",
-      "blocked_by": [
-        "US-029"
-      ],
+      "title": "Add the external-texture seam to the vendored renderer",
+      "epic": "EP-005",
       "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-025"
+      ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
     },
     {
       "id": "US-032",
-      "title": "Certifier l’isolation et la concurrence des outils agent",
-      "epic": "EP-006",
+      "title": "Export frames from the host as owned dmabufs",
+      "epic": "EP-005",
+      "status": "TODO",
       "priority": "P1",
-      "size": "M",
       "blocked_by": [
-        "US-030",
         "US-031"
       ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-033",
+      "title": "Import and present GPU frames in the window",
+      "epic": "EP-005",
       "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-032",
+        "US-034"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-034",
+      "title": "Make the fallback explicit",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-025",
+        "US-021"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-035",
+      "title": "Measure both paths against the terminal",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-033"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-036",
+      "title": "Build and sign the runtime archive for Linux",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-009",
+        "US-040"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-037",
+      "title": "Install the runtime on first use",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-036",
+        "US-024",
+        "US-021"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-038",
+      "title": "Update the runtime independently and roll back",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-037"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-039",
+      "title": "Apply the Linux sandbox verdict",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-037",
+        "US-006",
+        "US-021"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-040",
+      "title": "Audit licenses and write the notices",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-041",
+      "title": "Document the boundary",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-038"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-042",
+      "title": "Lay out, sign and notarise the macOS runtime",
+      "epic": "EP-007",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-036"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-043",
+      "title": "Write the macOS frame transport",
+      "epic": "EP-007",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-025",
+        "US-034"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-044",
+      "title": "Write the Windows host bootstrap and transport",
+      "epic": "EP-007",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-010"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-045",
+      "title": "Vendor `gpui_windows` with the external-texture seam",
+      "epic": "EP-007",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-025"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-046",
+      "title": "Write the Windows frame transport",
+      "epic": "EP-007",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-044",
+        "US-045",
+        "US-034"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-047",
+      "title": "Build the macOS and Windows runtime archives and their trust checks",
+      "epic": "EP-007",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-042",
+        "US-044",
+        "US-046",
+        "US-038"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-048",
+      "title": "Install and start the runtime on macOS",
+      "epic": "EP-008",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-047"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-049",
+      "title": "Drive the browser from an agent on macOS",
+      "epic": "EP-008",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-048"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-050",
+      "title": "Use the surface on macOS",
+      "epic": "EP-008",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-048",
+        "US-043"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-051",
+      "title": "Present through IOSurface on macOS",
+      "epic": "EP-008",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-050",
+        "US-034"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-052",
+      "title": "Update and roll back the runtime on macOS",
+      "epic": "EP-008",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-048"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-053",
+      "title": "Install and start the runtime on Windows",
+      "epic": "EP-009",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-047",
+        "US-052"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-054",
+      "title": "Drive the browser from an agent on Windows",
+      "epic": "EP-009",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-053"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-055",
+      "title": "Use the surface on Windows",
+      "epic": "EP-009",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-053",
+        "US-046"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-056",
+      "title": "Present through a shared D3D11 texture on Windows",
+      "epic": "EP-009",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-055",
+        "US-034"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-057",
+      "title": "Update and roll back the runtime on Windows",
+      "epic": "EP-009",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-053"
+      ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
