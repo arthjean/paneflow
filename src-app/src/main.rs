@@ -375,6 +375,7 @@ struct PaneFlowApp {
     branch_prompt: Option<app::branch_prompt::BranchPromptState>,
     branch_prompt_focus: FocusHandle,
     recent_workspaces: Vec<app::recents::RecentWorkspace>,
+    star_prompt: app::star_prompt::StarPrompt,
     welcome_focus: FocusHandle,
     clone_repo: Option<app::clone_repo::CloneRepoState>,
     clone_job: Option<app::clone_bubble::CloneJob>,

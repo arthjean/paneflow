@@ -1,6 +1,6 @@
 use gpui::{
-    AnyElement, Bounds, Corners, Hsla, IntoElement, ParentElement, Path, PathBuilder, Pixels,
-    Point, Styled, Window, canvas, div, point, px, size,
+    AnyElement, Background, Bounds, Corners, Hsla, IntoElement, ParentElement, Path, PathBuilder,
+    Pixels, Point, Styled, Window, canvas, div, point, px, size,
 };
 
 use super::interface_style::{circular, corner, corners, scoped, shape};
@@ -317,6 +317,32 @@ fn paint_squircle_fill(
     if let Some(path) = squircle_corners_path(bounds, radii) {
         window.paint_path(path, color);
     }
+}
+
+pub(crate) fn squircle_background_fill(radius: Pixels, background: Background) -> AnyElement {
+    let radii = Corners::all(radius);
+    let circular = circular();
+    let shape = shape();
+    div()
+        .absolute()
+        .inset_0()
+        .child(
+            canvas(
+                |_, _, _| {},
+                move |bounds, _, window, _| {
+                    if circular {
+                        window.paint_quad(
+                            gpui::fill(bounds, background)
+                                .corner_radii(scoped(shape, || corners(bounds, radii))),
+                        );
+                    } else if let Some(path) = squircle_corners_path(bounds, radii) {
+                        window.paint_path(path, background);
+                    }
+                },
+            )
+            .size_full(),
+        )
+        .into_any_element()
 }
 
 pub(crate) fn squircle_fill_blend(

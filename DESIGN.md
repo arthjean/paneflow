@@ -321,6 +321,7 @@ to the surfaces named:
 | `#fbbf24`, light `#92400e` | Sidebar bell when an agent needs input | Amber request signal, identical in every preset of a variant; the light value keeps the 10 px word at 4.5:1 |
 | `#83c3ff`, light `#0369a1` | Sidebar dot when an agent finished | Light blue completion signal, identical in every preset of a variant; the light value keeps the 10 px word at 4.5:1 |
 | `#1a6ff6` | Title bar update pill when a release is known or staged for restart | Solid update blue with a white glyph and label, no border, identical in every preset; white text holds 4.52:1 at rest, and hover darkens the lightness by 0.05 like `solid_button` (5.3:1) instead of lightening |
+| `#1a6ff6` at 0.30 to 0.07, light 0.16 to 0.04 | Sidebar star banner wash, a left-to-right gradient interpolated in Oklab; glyph `#8fb8ff`, light `#1a6ff6` (`star_banner_wash`, `star_banner_glyph_color`) | The update blue, so the one invitation in the app reads as a positive action and never as a status; the wash fades toward the dismiss button |
 | `hsl(40 85% 55%)` | Callout warning, plan usage `Warn` level | Severity hue independent of preset |
 | `#D97757` | Claude Code logo in the usage capsule, bubble, and tiles; base of the Claude Code activity ramp | Brand mark color, identical in every preset |
 
@@ -1042,7 +1043,13 @@ banner when the last manual check could not reach the feed (margin 6, height
 14 px `vc_deleted` alert glyph, `Update check failed` at 12 px Medium, a 24 px
 `Retry` button at 12 px Medium on `text` at 0.08 to 0.12, and a
 `dismiss_button`, both squircle 7 so they sit concentric in the banner; the
-banner itself is not clickable), then a 36 px footer with a flexible
+banner itself is not clickable), the star banner in place of both when neither
+shows, from the first launch until it is used or dismissed (the geometry of the
+manual-check banner filled with the star wash of 4.3, a 14 px `star` glyph in
+the star blue and `Star Paneflow on GitHub` at 12 px Medium on `text`, a
+tooltip naming the repository, and a `dismiss_button` at squircle 7, the only
+part with a hover state; a click opens the repository, and either action
+retires it for good through `~/.paneflow/star-prompt.json`), then a 36 px footer with a flexible
 fully rounded capsule filter on the left and a 36 px icon-only Settings button on the right. The
 filter shows an outlined circle with three descending horizontal lines at rest
 and on hover. Only while the input is focused, it shows a solid circle with

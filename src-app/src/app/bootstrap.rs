@@ -494,6 +494,7 @@ impl PaneFlowApp {
             branch_prompt: None,
             branch_prompt_focus: cx.focus_handle(),
             recent_workspaces: crate::app::recents::load(),
+            star_prompt: crate::app::star_prompt::load(),
             welcome_focus: cx.focus_handle(),
             clone_repo: None,
             clone_job: None,

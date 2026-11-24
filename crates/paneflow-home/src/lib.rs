@@ -97,6 +97,10 @@ pub fn window_state_path() -> Option<PathBuf> {
     paneflow_home().map(|home| home.join("window-state.json"))
 }
 
+pub fn star_prompt_path() -> Option<PathBuf> {
+    paneflow_home().map(|home| home.join("star-prompt.json"))
+}
+
 pub fn language_server_trust_path() -> Option<PathBuf> {
     paneflow_home().map(|home| home.join("language-server-trust.json"))
 }

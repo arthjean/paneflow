@@ -242,6 +242,32 @@ pub(crate) fn filter_match_color() -> Hsla {
     .into()
 }
 
+const STAR_BANNER_BLUE: u32 = 0x1a6ff6;
+
+pub(crate) fn star_banner_wash() -> gpui::Background {
+    let (lead, tail) = if crate::theme::active_theme().background.l > 0.5 {
+        (0.16, 0.04)
+    } else {
+        (0.30, 0.07)
+    };
+    let blue: Hsla = gpui::rgb(STAR_BANNER_BLUE).into();
+    gpui::linear_gradient(
+        90.,
+        gpui::linear_color_stop(blue.opacity(lead), 0.),
+        gpui::linear_color_stop(blue.opacity(tail), 1.),
+    )
+    .color_space(gpui::ColorSpace::Oklab)
+}
+
+pub(crate) fn star_banner_glyph_color() -> Hsla {
+    gpui::rgb(if crate::theme::active_theme().background.l > 0.5 {
+        STAR_BANNER_BLUE
+    } else {
+        0x8fb8ff
+    })
+    .into()
+}
+
 pub(crate) fn sidebar_tab_hover_background() -> Hsla {
     sidebar_tab_background(SIDEBAR_TAB_HOVER_OPACITY)
 }
