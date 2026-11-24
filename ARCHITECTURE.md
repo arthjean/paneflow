@@ -1680,7 +1680,12 @@ any other host error skips the teardown
 (`paneflow_git::worktree::close_teardown`). A worktree kept for any reason,
 automatic removal turned off included, is listed again by an open workspace
 (the one whose tab uses it, else one on the same repository, else the active
-one), so Settings still shows it and the keep limit still trims it.
+one), so Settings still shows it and the keep limit still trims it. When no
+workspace is left to list it, the app keeps it in `kept-worktrees.json` in the
+state home, validated against the owner marker on load, so Settings and the
+keep limit still see it after the last workspace closes and after a restart.
+The keep-limit trim spares any worktree a live session runs in, since a kept
+worktree is bound to no tab.
 
 The host endpoint is derived from the state home (`\\.\pipe\paneflow-host-<fp>`
 on Windows, `<runtime dir>/paneflow-host-<fp>.sock` on Unix), so an isolated

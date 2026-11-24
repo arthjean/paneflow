@@ -628,17 +628,28 @@ impl PaneFlowApp {
 
     pub(crate) fn managed_worktrees_snapshot(
         &self,
-    ) -> Vec<(u64, crate::workspace::worktree::ManagedWorktree)> {
+    ) -> Vec<(Option<u64>, crate::workspace::worktree::ManagedWorktree)> {
         let mut seen = std::collections::HashSet::new();
         self.workspaces
             .iter()
             .flat_map(|ws| {
                 ws.managed_worktrees
                     .iter()
-                    .map(move |wt| (ws.id, wt.clone()))
+                    .map(move |wt| (Some(ws.id), wt.clone()))
             })
+            .chain(self.kept_worktrees.iter().map(|wt| (None, wt.clone())))
             .filter(|(_, wt)| seen.insert(wt.path.clone()))
             .collect()
+    }
+
+    pub(crate) fn managed_record(
+        &self,
+        path: &std::path::Path,
+    ) -> Option<crate::workspace::worktree::ManagedWorktree> {
+        self.managed_worktrees_snapshot()
+            .into_iter()
+            .map(|(_, wt)| wt)
+            .find(|wt| wt.path == path)
     }
 
     pub(crate) fn not_yet_managed(
@@ -699,17 +710,16 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) {
         let mut listed_any = false;
+        let mut unlisted = Vec::new();
         for wt in self.not_yet_managed(kept) {
             let Some(heir) = self.worktree_heir(&wt) else {
-                log::warn!(
-                    "worktree kept ({}) but no open workspace can list it",
-                    wt.path.display()
-                );
+                unlisted.push(wt);
                 continue;
             };
             self.workspaces[heir].managed_worktrees.push(wt);
             listed_any = true;
         }
+        self.keep_unlisted_worktrees(unlisted, cx);
         if listed_any {
             self.adopt_layout(cx);
             self.save_session(cx);
@@ -772,10 +782,29 @@ impl PaneFlowApp {
         if candidates.len() <= keep {
             return;
         }
-        let bound = self.bound_worktree_paths();
+        let mut bound = self.bound_worktree_paths();
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 let (removed, kept) = smol::unblock(move || {
+                    let live_cwds: Vec<std::path::PathBuf> =
+                        match crate::terminal::host_link::live_sessions() {
+                            crate::terminal::host_link::LiveSessionProbe::Sessions(sessions) => {
+                                sessions.into_iter().map(|session| session.cwd).collect()
+                            }
+                            crate::terminal::host_link::LiveSessionProbe::NoHost => Vec::new(),
+                            crate::terminal::host_link::LiveSessionProbe::Unknown(error) => {
+                                log::warn!(
+                                    "keep-limit trim deferred: live session probe failed: {error}"
+                                );
+                                return (Vec::new(), Vec::new());
+                            }
+                        };
+                    bound.extend(
+                        candidates
+                            .iter()
+                            .filter(|wt| live_cwds.iter().any(|cwd| cwd.starts_with(&wt.path)))
+                            .map(|wt| wt.path.clone()),
+                    );
                     crate::workspace::worktree::trim_to_limit(candidates, keep, &bound)
                 })
                 .await;
@@ -817,6 +846,7 @@ impl PaneFlowApp {
         for ws_idx in touched {
             self.spawn_worktree_listing(ws_idx, cx);
         }
+        self.forget_kept_paths(removed, cx);
         self.prune_worktree_states();
         self.save_session(cx);
         cx.notify();
@@ -824,19 +854,10 @@ impl PaneFlowApp {
 
     pub(crate) fn remove_managed_worktree(
         &mut self,
-        ws_id: u64,
         path: std::path::PathBuf,
         cx: &mut Context<Self>,
     ) {
-        let Some(ws) = self.workspaces.iter().find(|ws| ws.id == ws_id) else {
-            return;
-        };
-        let Some(repo_root) = ws
-            .managed_worktrees
-            .iter()
-            .find(|wt| wt.path == path)
-            .map(|wt| wt.repo_root.clone())
-        else {
+        let Some(repo_root) = self.managed_record(&path).map(|wt| wt.repo_root) else {
             return;
         };
         if self.workspaces.iter().any(|ws| ws.worktree_root == path) {

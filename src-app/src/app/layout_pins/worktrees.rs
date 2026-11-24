@@ -47,7 +47,7 @@ fn listed(rig: &mut Rig<'_>) -> Vec<(String, PathBuf)> {
         app.managed_worktrees_snapshot()
             .into_iter()
             .filter_map(|(ws_id, wt)| {
-                let ws = app.workspaces.iter().find(|ws| ws.id == ws_id)?;
+                let ws = app.workspaces.iter().find(|ws| Some(ws.id) == ws_id)?;
                 Some((ws.title.clone(), wt.path))
             })
             .collect()
@@ -132,10 +132,7 @@ fn pin_a_worktree_kept_when_its_workspace_closes_stays_listed_and_removable(
     assert!(kept.join("README.md").is_file(), "automatic removal is off");
 
     let path = kept.clone();
-    rig.act(move |app, _, cx| {
-        let ws_id = app.workspaces[0].id;
-        app.remove_managed_worktree(ws_id, path, cx);
-    });
+    rig.act(move |app, _, cx| app.remove_managed_worktree(path, cx));
     wait_until(&mut rig, "the listed worktree is removed by hand", |rig| {
         !kept.exists() && listed(rig).is_empty()
     });

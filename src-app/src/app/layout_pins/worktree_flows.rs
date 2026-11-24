@@ -8,7 +8,7 @@ use super::Rig;
 use crate::PaneFlowApp;
 use crate::workspace::worktree::{ManagedWorktree, TeardownPolicy};
 
-pub(super) const PINS: usize = 1;
+pub(super) const PINS: usize = 2;
 
 const OUTCOME_WAIT: Duration = Duration::from_secs(60);
 const PUMP_INTERVAL: Duration = Duration::from_millis(5);
@@ -85,4 +85,37 @@ fn pin_the_keep_limit_trims_the_oldest_worktrees_while_the_window_is_inactive(
     assert!(!oldest.path.exists(), "{}", oldest.path.display());
     assert!(!older.path.exists(), "{}", older.path.display());
     assert!(newest.path.exists(), "{}", newest.path.display());
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_a_worktree_kept_when_the_last_workspace_closes_stays_listed_and_removable(
+    cx: &mut TestAppContext,
+) {
+    let root = tempfile::tempdir().expect("a repository root");
+    let repo = committed_repo(root.path());
+    let mut kept = managed(&repo, "kept/one", Duration::from_secs(10));
+    kept.teardown = TeardownPolicy::Keep;
+    let mut rig = Rig::mount(cx);
+    let ws = rig.workspace("alpha");
+    rig.act(|app, _, _| app.workspaces[ws].managed_worktrees = vec![kept.clone()]);
+
+    rig.act(|app, window, cx| app.remove_workspace(ws, Some(window), cx));
+
+    let path = kept.path.clone();
+    wait_for(&mut rig, "the kept worktree to be listed", |app| {
+        app.workspaces.is_empty() && app.managed_worktrees_snapshot() == vec![(None, kept.clone())]
+    });
+    assert!(path.exists());
+    let ledger = paneflow_home::kept_worktrees_path().expect("a ledger path");
+    wait_for(&mut rig, "the ledger to name the kept worktree", |_| {
+        crate::app::kept_worktrees::read_ledger(&ledger) == vec![kept.clone()]
+    });
+
+    rig.act(|app, _, cx| app.request_worktree_removal(path.clone(), cx));
+
+    wait_for(&mut rig, "the removal from Settings", |app| {
+        app.managed_worktrees_snapshot().is_empty() && !path.exists()
+    });
+    wait_for(&mut rig, "the ledger to forget it", |_| !ledger.exists());
 }

@@ -94,6 +94,9 @@ pub(super) fn forget_the_previous_pin() {
         );
         std::thread::sleep(Duration::from_millis(2));
     }
+    if let Some(ledger) = paneflow_home::kept_worktrees_path() {
+        let _ = std::fs::remove_file(ledger);
+    }
     let Some(session) = paneflow_config::loader::session_path() else {
         return;
     };

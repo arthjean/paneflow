@@ -663,7 +663,7 @@ fn pin_a_worktree_the_worker_creates_is_listed_by_the_window_and_removed_when_it
         app.managed_worktrees_snapshot()
             .into_iter()
             .filter_map(|(ws_id, wt)| {
-                let ws = app.workspaces.iter().find(|ws| ws.id == ws_id)?;
+                let ws = app.workspaces.iter().find(|ws| Some(ws.id) == ws_id)?;
                 Some((ws.title.clone(), wt.path))
             })
             .collect()

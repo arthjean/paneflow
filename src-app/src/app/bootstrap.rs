@@ -147,6 +147,7 @@ impl PaneFlowApp {
         Self::spawn_git_event_refresh(git_events, cx);
         Self::spawn_wake_dispatch(wake_rx, running_config_watcher, cx);
         Self::spawn_git_poll(cx);
+        Self::spawn_kept_worktrees_load(cx);
         Self::spawn_stale_pid_sweep(cx);
         Self::spawn_port_rescans(cx);
 
@@ -467,6 +468,7 @@ impl PaneFlowApp {
             theme_mode,
             workspace_menu_open: None,
             worktree_states: crate::app::tab_worktree::WorktreeStates::default(),
+            kept_worktrees: Vec::new(),
             branch_checkout_pending: std::collections::HashMap::new(),
             cwd_probes: Default::default(),
             pr_states: crate::app::pull_request::PrStates::default(),

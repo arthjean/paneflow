@@ -323,6 +323,7 @@ struct PaneFlowApp {
     theme_mode: ThemeMode,
     workspace_menu_open: Option<WorkspaceContextMenu>,
     pub(crate) worktree_states: crate::app::tab_worktree::WorktreeStates,
+    pub(crate) kept_worktrees: Vec<crate::workspace::worktree::ManagedWorktree>,
     pub(crate) branch_checkout_pending: std::collections::HashMap<u64, String>,
     pub(crate) cwd_probes: crate::app::event_handlers::CwdProbeSequence,
     pub(crate) pr_states: crate::app::pull_request::PrStates,

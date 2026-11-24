@@ -132,6 +132,10 @@ pub fn path_index_path() -> Option<PathBuf> {
     cache_dir().map(|cache| cache.join("path-index.bin"))
 }
 
+pub fn kept_worktrees_path() -> Option<PathBuf> {
+    paneflow_home().map(|home| home.join("kept-worktrees.json"))
+}
+
 pub fn worktrees_dir() -> Option<PathBuf> {
     paneflow_home().map(|home| home.join("worktrees"))
 }

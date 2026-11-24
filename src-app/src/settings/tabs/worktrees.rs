@@ -199,7 +199,7 @@ impl PaneFlowApp {
                 managed
                     .iter()
                     .enumerate()
-                    .map(|(idx, (ws_id, wt))| self.managed_worktree_row(idx, *ws_id, wt, ink, cx)),
+                    .map(|(idx, (_, wt))| self.managed_worktree_row(idx, wt, ink, cx)),
             )
         };
         Block::new("Managed worktrees")
@@ -216,7 +216,6 @@ impl PaneFlowApp {
     fn managed_worktree_row(
         &self,
         idx: usize,
-        ws_id: u64,
         wt: &ManagedWorktree,
         ink: Ink,
         cx: &mut Context<Self>,
@@ -233,7 +232,7 @@ impl PaneFlowApp {
             ink,
         )
         .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-            this.request_worktree_removal(ws_id, path.clone(), cx);
+            this.request_worktree_removal(path.clone(), cx);
         }));
         kit::row(
             ink,

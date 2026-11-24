@@ -282,27 +282,15 @@ impl PaneFlowApp {
         blockers_for(path, &workspaces, &tabs, sessions)
     }
 
-    pub(crate) fn request_worktree_removal(
-        &mut self,
-        ws_id: u64,
-        path: PathBuf,
-        cx: &mut Context<Self>,
-    ) {
-        let Some((repo_root, branch)) = self
-            .workspaces
-            .iter()
-            .find(|ws| ws.id == ws_id)
-            .and_then(|ws| ws.managed_worktrees.iter().find(|wt| wt.path == path))
-            .map(|wt| (wt.repo_root.clone(), wt.branch.clone()))
-        else {
+    pub(crate) fn request_worktree_removal(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        let Some(record) = self.managed_record(&path) else {
             return;
         };
         self.open_worktree_removal(
             RemovalOrigin::Settings,
-            Some(ws_id),
             path,
-            repo_root,
-            branch,
+            record.repo_root,
+            record.branch,
             cx,
         );
     }
@@ -339,13 +327,12 @@ impl PaneFlowApp {
                     .map(|name| name.to_string_lossy().into_owned())
                     .unwrap_or_else(|| path.display().to_string())
             });
-        self.open_worktree_removal(RemovalOrigin::TabMenu, None, path, repo_root, branch, cx);
+        self.open_worktree_removal(RemovalOrigin::TabMenu, path, repo_root, branch, cx);
     }
 
     fn open_worktree_removal(
         &mut self,
         origin: RemovalOrigin,
-        managed_by: Option<u64>,
         path: PathBuf,
         repo_root: PathBuf,
         branch: String,
@@ -371,10 +358,8 @@ impl PaneFlowApp {
                         if origin == RemovalOrigin::TabMenu {
                             blockers.retain(|b| !matches!(b, WorktreeBlocker::Tab { .. }));
                         }
-                        if !needs_confirmation(origin, &blockers, unlisted_sessions.as_deref())
-                            && let Some(ws_id) = managed_by
-                        {
-                            app.remove_managed_worktree(ws_id, path.clone(), cx);
+                        if !needs_confirmation(origin, &blockers, unlisted_sessions.as_deref()) {
+                            app.remove_managed_worktree(path.clone(), cx);
                             return;
                         }
                         app.dismiss_transient_surfaces();

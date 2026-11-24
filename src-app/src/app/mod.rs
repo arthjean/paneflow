@@ -29,6 +29,7 @@ pub mod fleet_search;
 pub(crate) mod host_agents;
 pub(crate) mod hosted_sessions;
 pub mod ipc_handler;
+pub(crate) mod kept_worktrees;
 pub(crate) mod layout_bridge;
 #[cfg(test)]
 pub(crate) mod layout_pins;
