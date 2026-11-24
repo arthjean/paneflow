@@ -43,6 +43,10 @@ impl MarkRing {
         self.prompt_starts
     }
 
+    pub fn clear(&mut self) {
+        self.marks.clear();
+    }
+
     pub fn retain_at_or_below(&mut self, max_abs_line: i64) {
         self.marks.retain(|mark| mark.abs_line <= max_abs_line);
     }
@@ -96,13 +100,25 @@ impl Default for Osc133Scanner {
 }
 
 impl Osc133Scanner {
+    #[cfg(test)]
     pub fn feed(&mut self, bytes: &[u8], on_mark: &mut impl FnMut(RawMark)) {
+        let mut rest = bytes;
+        while !rest.is_empty() {
+            let (consumed, mark) = self.next_mark(rest);
+            if let Some(mark) = mark {
+                on_mark(mark);
+            }
+            rest = &rest[consumed..];
+        }
+    }
+
+    pub fn next_mark(&mut self, bytes: &[u8]) -> (usize, Option<RawMark>) {
         let mut index = 0;
         while index < bytes.len() {
             match self.state {
                 ScanState::Ground => {
                     let Some(offset) = find_escape(&bytes[index..]) else {
-                        return;
+                        return (bytes.len(), None);
                     };
                     index += offset + 1;
                     self.state = ScanState::Esc;
@@ -135,8 +151,10 @@ impl Osc133Scanner {
                 }
                 ScanState::Payload => match bytes[index] {
                     0x07 => {
-                        self.emit(on_mark);
                         self.state = ScanState::Ground;
+                        if let Some(mark) = self.take_mark() {
+                            return (index + 1, Some(mark));
+                        }
                     }
                     0x1b => self.state = ScanState::PayloadEsc,
                     0x18 | 0x1a => self.state = ScanState::Ground,
@@ -149,16 +167,16 @@ impl Osc133Scanner {
                         }
                     }
                 },
-                ScanState::PayloadEsc => {
-                    self.state = match bytes[index] {
-                        b'\\' => {
-                            self.emit(on_mark);
-                            ScanState::Ground
+                ScanState::PayloadEsc => match bytes[index] {
+                    b'\\' => {
+                        self.state = ScanState::Ground;
+                        if let Some(mark) = self.take_mark() {
+                            return (index + 1, Some(mark));
                         }
-                        0x1b => ScanState::Esc,
-                        _ => ScanState::Ground,
-                    };
-                }
+                    }
+                    0x1b => self.state = ScanState::Esc,
+                    _ => self.state = ScanState::Ground,
+                },
                 ScanState::SkipToTerminator => match bytes[index] {
                     0x07 | 0x18 | 0x1a => self.state = ScanState::Ground,
                     0x1b => self.state = ScanState::SkipEsc,
@@ -175,13 +193,13 @@ impl Osc133Scanner {
             }
             index += 1;
         }
+        (bytes.len(), None)
     }
 
-    fn emit(&mut self, on_mark: &mut impl FnMut(RawMark)) {
-        if let Some(mark) = parse_payload(&self.payload[..self.payload_len]) {
-            on_mark(mark);
-        }
+    fn take_mark(&mut self) -> Option<RawMark> {
+        let mark = parse_payload(&self.payload[..self.payload_len]);
         self.payload_len = 0;
+        mark
     }
 }
 

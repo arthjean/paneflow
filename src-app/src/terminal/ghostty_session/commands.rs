@@ -231,6 +231,7 @@ pub(super) fn handle_terminal_command(
             }
         }
         RuntimeMessage::ClearScrollback => {
+            forget_command_marks(inner);
             if let Err(error) = terminal.clear_history() {
                 log::warn!(
                     target: "paneflow::terminal::ghostty",
@@ -240,6 +241,7 @@ pub(super) fn handle_terminal_command(
             let _ = gate.publish_now(inner, terminal);
         }
         RuntimeMessage::ResetTerminal => {
+            forget_command_marks(inner);
             terminal.reset();
             let _ = gate.publish_now(inner, terminal);
         }

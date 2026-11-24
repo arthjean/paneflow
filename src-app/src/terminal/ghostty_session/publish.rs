@@ -28,40 +28,56 @@ pub(super) fn publish_recent_output_lines(
     *inner.recent_output_lines.write() = Arc::from(service_output_tail.recent_lines());
 }
 
-pub(super) fn scan_chunk_for_marks(
+pub(super) fn feed_recording_marks(
+    inner: &SessionInner,
+    terminal: &mut ghostty::DisplayTerminal,
     scanner: &mut Osc133Scanner,
     bytes: &[u8],
-    raw_marks: &mut Vec<RawMark>,
-) -> bool {
-    let previous_len = raw_marks.len();
-    scanner.feed(bytes, &mut |raw| raw_marks.push(raw));
-    raw_marks.len() != previous_len
+) -> Result<bool, String> {
+    let mut rest = bytes;
+    let mut emitted = false;
+    while !rest.is_empty() {
+        let (consumed, mark) = scanner.next_mark(rest);
+        terminal
+            .feed(&rest[..consumed])
+            .map_err(|error| format!("Ghostty VT feed failed: {error}"))?;
+        if let Some(mark) = mark {
+            record_command_mark(inner, terminal, mark);
+            emitted = true;
+        }
+        rest = &rest[consumed..];
+    }
+    Ok(emitted)
 }
 
-pub(super) fn record_command_marks(inner: &SessionInner, raw_marks: &[RawMark]) {
-    let state = inner.state.read();
-    let history_size = state.content.history_size as i64;
-    let abs_line = history_size.saturating_add(i64::from(state.content.cursor.point.line.0));
-    let screen_lines = state
-        .content
-        .cells
-        .iter()
-        .map(|cell| cell.point.line.0)
-        .max()
-        .map_or(1_i64, |line| i64::from(line.max(0)) + 1);
-    drop(state);
-
+fn record_command_mark(inner: &SessionInner, terminal: &ghostty::DisplayTerminal, raw: RawMark) {
+    let abs_line = match terminal.cursor_row_from_top() {
+        Ok(line) => line,
+        Err(error) => {
+            log::warn!(
+                target: "paneflow::terminal::ghostty",
+                "a shell integration mark was dropped, the cursor row is unreadable: {error}"
+            );
+            return;
+        }
+    };
     let mut marks = inner
         .marks
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    for raw in raw_marks {
-        marks.push(CommandMark {
-            kind: raw.kind,
-            abs_line,
-        });
-    }
-    marks.retain_at_or_below(history_size.saturating_add(screen_lines.saturating_sub(1)));
+    marks.retain_at_or_below(abs_line);
+    marks.push(CommandMark {
+        kind: raw.kind,
+        abs_line,
+    });
+}
+
+pub(super) fn forget_command_marks(inner: &SessionInner) {
+    inner
+        .marks
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clear();
 }
 
 pub(super) fn notify_command_capacity(inner: &SessionInner) {

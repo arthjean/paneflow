@@ -6,7 +6,7 @@ use paneflow_libghostty_sys as sys;
 use crate::callbacks::CallbackState;
 use crate::handles::{OwnedHandle, check};
 use crate::snapshot::SnapshotCache;
-use crate::snapshot_ffi::{TerminalKittyKeyboardFlags, terminal_get};
+use crate::snapshot_ffi::{TerminalCursorY, TerminalKittyKeyboardFlags, terminal_get};
 use crate::{BackendEvent, Modes, RenderHold, Result, Scroll, TerminalMemoryUsage, WindowSize};
 
 const CLEAR_SCREEN_AND_SCROLLBACK: &[u8] = b"\x1b[3J\x1b[2J\x1b[H";
@@ -85,6 +85,13 @@ impl DisplayTerminal {
             self.history_clear_pending = true;
             Ok(())
         }
+    }
+
+    pub fn cursor_row_from_top(&self) -> Result<i64> {
+        let scrollback = i64::try_from(self.scrollback_rows()?)
+            .map_err(|_| crate::GhosttyError::AbiMismatch("scrollback row overflow".into()))?;
+        let cursor_y = terminal_get::<TerminalCursorY>(self.terminal.raw())?;
+        Ok(scrollback.saturating_add(i64::from(cursor_y)))
     }
 
     pub fn reset(&mut self) {

@@ -664,18 +664,15 @@ mod tests {
     fn output_batching_barrier_trips_only_when_a_chunk_completes_a_mark() {
         let mut scanner = Osc133Scanner::default();
         let mut marks = Vec::new();
+        let mut completes = |chunk: &[u8]| {
+            let before = marks.len();
+            scanner.feed(chunk, &mut |mark| marks.push(mark));
+            marks.len() != before
+        };
 
-        assert!(!scan_chunk_for_marks(
-            &mut scanner,
-            b"before\x1b]133;A",
-            &mut marks
-        ));
-        assert!(scan_chunk_for_marks(&mut scanner, b"\x07after", &mut marks));
-        assert!(!scan_chunk_for_marks(
-            &mut scanner,
-            b"plain output",
-            &mut marks
-        ));
+        assert!(!completes(b"before\x1b]133;A"));
+        assert!(completes(b"\x07after"));
+        assert!(!completes(b"plain output"));
         assert_eq!(
             marks,
             vec![RawMark {

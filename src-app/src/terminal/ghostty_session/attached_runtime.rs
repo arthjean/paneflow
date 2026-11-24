@@ -581,6 +581,7 @@ pub(super) fn run_attached_runtime(
                         true
                     }
                     RuntimeMessage::ClearScrollback => {
+                        forget_command_marks(&inner);
                         control.forward(
                             &inner,
                             ControlRequest::ClearHistory,
@@ -589,6 +590,7 @@ pub(super) fn run_attached_runtime(
                         false
                     }
                     RuntimeMessage::ResetTerminal => {
+                        forget_command_marks(&inner);
                         control.forward(&inner, ControlRequest::Reset, HOST_STATE_NOT_RESET);
                         true
                     }
@@ -681,6 +683,7 @@ pub(super) fn run_attached_runtime(
                             super::recompression::HistoryRecompression::new(Instant::now());
                         apply_smooth_scroll_overscan(&inner, &mut terminal);
                         marks_scanner = Osc133Scanner::default();
+                        forget_command_marks(&inner);
                         paste_trace = BracketedPasteTrace::default();
                         if let Err(error) = publish_gate.publish_now(&inner, &mut terminal) {
                             log::warn!(

@@ -1587,6 +1587,76 @@ mod tests {
         );
     }
 
+    fn last_prompt_row(session: &GhosttySession) -> Option<i64> {
+        session
+            .inner
+            .marks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .prompt_before(i64::MAX)
+    }
+
+    #[test]
+    fn a_prompt_mark_lands_on_its_own_row_when_output_follows_it_in_the_batch() {
+        let size = TerminalWindowSize::new(20, 4, 8, 16);
+        let (session, _pending, _events_rx) = GhosttySession::pending(size);
+        let mut terminal = embedder_terminal(false);
+        let mailbox = RuntimeMailbox::new();
+        let mut gate = PublishGate::new();
+        gate.publish_now(&session.inner, &mut terminal)
+            .expect("first frame");
+
+        process_output_batch(
+            &session.inner,
+            &mailbox,
+            &mut terminal,
+            &mut None,
+            &mut crate::terminal::marks::Osc133Scanner::default(),
+            &mut crate::terminal::service_detector::ServiceOutputTail::default(),
+            &mut None,
+            &mut false,
+            &mut gate,
+            b"out-1\r\nout-2\r\n\x1b]133;A\x07$ ls\r\nlisting".to_vec(),
+        )
+        .expect("output batch");
+
+        assert_eq!(last_prompt_row(&session), Some(2));
+    }
+
+    #[test]
+    fn clearing_the_scrollback_forgets_the_prompt_marks() {
+        let size = TerminalWindowSize::new(20, 4, 8, 16);
+        let (session, _pending, _events_rx) = GhosttySession::pending(size);
+        let mut terminal = embedder_terminal(false);
+        let mailbox = RuntimeMailbox::new();
+        let mut gate = PublishGate::new();
+        gate.publish_now(&session.inner, &mut terminal)
+            .expect("first frame");
+        process_output_batch(
+            &session.inner,
+            &mailbox,
+            &mut terminal,
+            &mut None,
+            &mut crate::terminal::marks::Osc133Scanner::default(),
+            &mut crate::terminal::service_detector::ServiceOutputTail::default(),
+            &mut None,
+            &mut false,
+            &mut gate,
+            b"out\r\n\x1b]133;A\x07$ ".to_vec(),
+        )
+        .expect("output batch");
+        assert_eq!(last_prompt_row(&session), Some(1));
+
+        handle_terminal_command(
+            &session.inner,
+            &mut terminal,
+            &mut gate,
+            RuntimeMessage::ClearScrollback,
+        );
+
+        assert_eq!(last_prompt_row(&session), None);
+    }
+
     #[test]
     fn desktop_terminals_capture_render_holds_and_bare_terminals_do_not() {
         let mut terminal = embedder_terminal(false);

@@ -1052,7 +1052,6 @@ pub(super) fn process_output_batch(
     let started = Instant::now();
     let mut processed_bytes = 0usize;
     let mut chunks = Vec::with_capacity(OUTPUT_BUFFER_COUNT);
-    let mut raw_marks = Vec::new();
     let mut next = Some(first);
 
     let result = (|| {
@@ -1062,12 +1061,10 @@ pub(super) fn process_output_batch(
             let Some(bytes) = chunks.last() else {
                 return Err("Ghostty output batch lost its current chunk".into());
             };
-            terminal
-                .feed(bytes)
-                .map_err(|error| format!("Ghostty VT feed failed: {error}"))?;
+            let emitted_mark = feed_recording_marks(inner, terminal, marks_scanner, bytes)?;
             service_output_tail.advance(bytes);
-            let emitted_mark = scan_chunk_for_marks(marks_scanner, bytes, &mut raw_marks);
             if handle_engine_events(inner, terminal, writer)?.program_reset {
+                forget_command_marks(inner);
                 gate.note_program_reset();
             }
             #[cfg(test)]
@@ -1092,7 +1089,6 @@ pub(super) fn process_output_batch(
             last_recent_output_refresh,
             recent_output_pending,
         );
-        record_command_marks(inner, &raw_marks);
         gate.request(inner, terminal)?;
         if service_output_ready {
             queue_service_output_ready(inner);
