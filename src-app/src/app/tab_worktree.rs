@@ -644,10 +644,83 @@ impl PaneFlowApp {
         kept
     }
 
-    pub(crate) fn checkouts_in_use_outside(&self, closing: u64) -> Vec<std::path::PathBuf> {
+    pub(crate) fn workspace_session_ids(
+        &self,
+        ws_idx: usize,
+        cx: &gpui::App,
+    ) -> Vec<paneflow_config::schema::SessionId> {
+        let Some(ws) = self.workspaces.get(ws_idx) else {
+            return Vec::new();
+        };
+        crate::workspace::panes_across(std::slice::from_ref(ws))
+            .iter()
+            .flat_map(|pane| {
+                pane.read(cx)
+                    .terminals()
+                    .map(|view| view.read(cx).terminal.session_id.clone())
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    pub(crate) fn settle_closed_worktrees(
+        &mut self,
+        outcome: crate::workspace::worktree::Teardown,
+        cx: &mut Context<Self>,
+    ) {
+        for message in outcome.messages {
+            self.show_toast(message, cx);
+        }
+        self.keep_worktrees_listed(outcome.kept, cx);
+        if !outcome.removed.is_empty() {
+            self.forget_managed_paths(&outcome.removed, cx);
+        }
+    }
+
+    fn keep_worktrees_listed(
+        &mut self,
+        kept: Vec<crate::workspace::worktree::ManagedWorktree>,
+        cx: &mut Context<Self>,
+    ) {
+        let mut listed_any = false;
+        for wt in self.not_yet_managed(kept) {
+            let Some(heir) = self.worktree_heir(&wt) else {
+                log::warn!(
+                    "worktree kept ({}) but no open workspace can list it",
+                    wt.path.display()
+                );
+                continue;
+            };
+            self.workspaces[heir].managed_worktrees.push(wt);
+            listed_any = true;
+        }
+        if listed_any {
+            self.adopt_layout(cx);
+            self.save_session(cx);
+            cx.notify();
+        }
+    }
+
+    fn worktree_heir(&self, wt: &crate::workspace::worktree::ManagedWorktree) -> Option<usize> {
         self.workspaces
             .iter()
-            .filter(|ws| ws.id != closing)
+            .position(|ws| {
+                ws.tabs()
+                    .iter()
+                    .any(|tab| tab.worktree.as_deref() == Some(wt.path.as_path()))
+            })
+            .or_else(|| {
+                self.workspaces
+                    .iter()
+                    .position(|ws| ws.repo_root.as_deref() == Some(wt.repo_root.as_path()))
+            })
+            .or_else(|| (!self.workspaces.is_empty()).then_some(self.active_idx))
+            .filter(|idx| *idx < self.workspaces.len())
+    }
+
+    pub(crate) fn checkouts_in_use(&self) -> Vec<std::path::PathBuf> {
+        self.workspaces
+            .iter()
             .flat_map(|ws| {
                 ws.tabs()
                     .iter()

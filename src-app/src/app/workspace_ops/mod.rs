@@ -228,37 +228,37 @@ impl PaneFlowApp {
     pub(crate) fn spawn_worktree_teardown(
         &self,
         worktrees: Vec<crate::workspace::worktree::ManagedWorktree>,
-        checkouts: Vec<std::path::PathBuf>,
+        closed_sessions: Vec<paneflow_config::schema::SessionId>,
         cx: &mut Context<Self>,
     ) {
-        if worktrees.is_empty() || !self.cached_config.worktrees.auto_remove_enabled() {
+        use crate::workspace::worktree;
+        if worktrees.is_empty() {
             return;
         }
         cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
-            let outcome = smol::unblock(move || {
-                let seen = match crate::terminal::host_link::live_sessions() {
-                    crate::terminal::host_link::LiveSessionProbe::Sessions(sessions) => {
-                        crate::workspace::worktree::SessionsSeen::Listed(
-                            sessions.into_iter().map(|session| session.cwd).collect(),
-                        )
-                    }
-                    crate::terminal::host_link::LiveSessionProbe::NoHost => {
-                        crate::workspace::worktree::SessionsSeen::NoHost
-                    }
-                    crate::terminal::host_link::LiveSessionProbe::Unknown(error) => {
-                        crate::workspace::worktree::SessionsSeen::Failed(error)
-                    }
-                };
-                crate::workspace::worktree::close_teardown(worktrees, true, seen, checkouts)
+            let seen = smol::unblock(move || {
+                worktree::after_sessions_end(
+                    &closed_sessions,
+                    listed_live_sessions,
+                    || std::thread::sleep(worktree::SESSION_END_PAUSE),
+                    worktree::SESSION_END_POLLS,
+                )
             })
             .await;
-            if outcome.messages.is_empty() {
+            let Ok((auto_remove, checkouts)) = this.update(cx, |app: &mut Self, _| {
+                (
+                    app.cached_config.worktrees.auto_remove_enabled(),
+                    app.checkouts_in_use(),
+                )
+            }) else {
                 return;
-            }
+            };
+            let outcome = smol::unblock(move || {
+                worktree::close_teardown(worktrees, auto_remove, seen, checkouts)
+            })
+            .await;
             let _ = this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                for message in outcome.messages {
-                    app.show_toast(message, cx);
-                }
+                app.settle_closed_worktrees(outcome, cx);
             });
         })
         .detach();
@@ -578,14 +578,14 @@ impl PaneFlowApp {
         if let Some(dir) = self.workspaces[idx].git_dir.clone() {
             self.unwatch_git_dir(&dir);
         }
-        let worktrees = std::mem::take(&mut self.workspaces[idx].managed_worktrees);
-        self.prune_worktree_states();
-        let checkouts = self.checkouts_in_use_outside(self.workspaces[idx].id);
-        self.spawn_worktree_teardown(worktrees, checkouts, cx);
+        let worktrees = self.workspaces[idx].managed_worktrees.clone();
+        let sessions = self.workspace_session_ids(idx, cx);
         let removed_id = self.workspaces[idx].id;
         if !self.close_workspace_through_model(idx, window.is_some(), cx) {
             return;
         }
+        self.prune_worktree_states();
+        self.spawn_worktree_teardown(worktrees, sessions, cx);
         if self
             .renaming_tab
             .is_some_and(|key| key.workspace_id == removed_id)
@@ -808,6 +808,20 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) {
         self.handle_select_ws(8, w, cx);
+    }
+}
+
+fn listed_live_sessions()
+-> crate::workspace::worktree::SessionListing<paneflow_config::schema::SessionId> {
+    match crate::terminal::host_link::live_sessions() {
+        crate::terminal::host_link::LiveSessionProbe::Sessions(sessions) => Ok(Some(
+            sessions
+                .into_iter()
+                .map(|session| (session.session, session.cwd))
+                .collect(),
+        )),
+        crate::terminal::host_link::LiveSessionProbe::NoHost => Ok(None),
+        crate::terminal::host_link::LiveSessionProbe::Unknown(error) => Err(error),
     }
 }
 

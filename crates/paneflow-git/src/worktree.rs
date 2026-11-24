@@ -1207,6 +1207,33 @@ pub enum SessionsSeen {
     Failed(String),
 }
 
+pub type SessionListing<S> = Result<Option<Vec<(S, PathBuf)>>, String>;
+
+pub const SESSION_END_POLLS: usize = 100;
+pub const SESSION_END_PAUSE: Duration = Duration::from_millis(50);
+
+pub fn after_sessions_end<S: PartialEq>(
+    closed: &[S],
+    mut list: impl FnMut() -> SessionListing<S>,
+    mut pause: impl FnMut(),
+    polls: usize,
+) -> SessionsSeen {
+    let mut left = polls.max(1);
+    loop {
+        let rows = match list() {
+            Ok(Some(rows)) => rows,
+            Ok(None) => return SessionsSeen::NoHost,
+            Err(error) => return SessionsSeen::Failed(error),
+        };
+        left -= 1;
+        let ending = rows.iter().any(|(session, _)| closed.contains(session));
+        if !ending || left == 0 {
+            return SessionsSeen::Listed(rows.into_iter().map(|(_, cwd)| cwd).collect());
+        }
+        pause();
+    }
+}
+
 pub fn split_unused(
     worktrees: Vec<ManagedWorktree>,
     users: &WorktreeUsers,
@@ -1526,6 +1553,54 @@ mod tests {
             &WorktreeUsers::default(),
         );
         assert_eq!(unused.len(), 1);
+    }
+
+    #[test]
+    fn the_close_teardown_reads_the_live_sessions_once_the_closed_ones_have_ended() {
+        let worktree = PathBuf::from("/wt/feat-x");
+        let other = PathBuf::from("/elsewhere");
+        let mut listings = vec![
+            Ok(Some(vec![("other", other.clone())])),
+            Ok(Some(vec![
+                ("closed", worktree.join("src")),
+                ("other", other.clone()),
+            ])),
+            Ok(Some(vec![
+                ("closed", worktree.join("src")),
+                ("other", other.clone()),
+            ])),
+        ];
+        let mut pauses = 0;
+        let seen = after_sessions_end(
+            &["closed"],
+            || listings.pop().unwrap_or(Ok(None)),
+            || pauses += 1,
+            SESSION_END_POLLS,
+        );
+        assert_eq!(seen, SessionsSeen::Listed(vec![other.clone()]));
+        assert_eq!(pauses, 2, "it waited for the closed session to end");
+
+        let mut still = 0;
+        let stuck = after_sessions_end(
+            &["closed"],
+            || Ok(Some(vec![("closed", worktree.clone())])),
+            || still += 1,
+            3,
+        );
+        assert_eq!(
+            stuck,
+            SessionsSeen::Listed(vec![worktree.clone()]),
+            "a session that never ends keeps its worktree"
+        );
+        assert_eq!(still, 2);
+        assert_eq!(
+            after_sessions_end(&["closed"], || Ok(None::<Vec<(&str, PathBuf)>>), || {}, 3),
+            SessionsSeen::NoHost
+        );
+        assert_eq!(
+            after_sessions_end::<&str>(&["closed"], || Err("down".to_string()), || {}, 3),
+            SessionsSeen::Failed("down".to_string())
+        );
     }
 
     #[test]

@@ -7,7 +7,7 @@ use super::Rig;
 use crate::PaneFlowApp;
 use crate::workspace::worktree::{ManagedWorktree, TeardownPolicy};
 
-pub(super) const PINS: usize = 2;
+pub(super) const PINS: usize = 3;
 
 const PATIENCE: Duration = Duration::from_secs(20);
 
@@ -105,6 +105,40 @@ fn pin_closing_a_workspace_keeps_the_worktree_a_tab_of_another_workspace_uses(
         shared.join("README.md").is_file(),
         "the worktree the tab of alpha uses is still on disk"
     );
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_a_worktree_kept_when_its_workspace_closes_stays_listed_and_removable(
+    cx: &mut TestAppContext,
+) {
+    let mut rig = Rig::mount(cx);
+    let repo = Repo::new();
+    let kept = repo.checkout("feat/kept");
+    rig.workspace("alpha");
+    let beta = rig.workspace("beta");
+    let managed = vec![repo.managed(&kept, "feat/kept")];
+    let bound = kept.clone();
+    rig.act(move |app, _, cx| {
+        app.cached_config.worktrees.auto_remove = Some(false);
+        app.set_tab_worktree(beta, 0, Some(bound), cx);
+        app.workspaces[beta].managed_worktrees = managed;
+    });
+
+    close(&mut rig, "beta");
+    wait_until(&mut rig, "the kept worktree is listed by alpha", |rig| {
+        listed(rig) == [("alpha".to_string(), kept.clone())]
+    });
+    assert!(kept.join("README.md").is_file(), "automatic removal is off");
+
+    let path = kept.clone();
+    rig.act(move |app, _, cx| {
+        let ws_id = app.workspaces[0].id;
+        app.remove_managed_worktree(ws_id, path, cx);
+    });
+    wait_until(&mut rig, "the listed worktree is removed by hand", |rig| {
+        !kept.exists() && listed(rig).is_empty()
+    });
 }
 
 #[gpui::test]

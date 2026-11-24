@@ -1647,10 +1647,16 @@ nothing holds; a live request the worker cannot serve stays pending for the
 next listing. The desktop sends no sweep while a failed restore is
 unresolved, and the worker refuses the live part while its own
 `session.json` was unreadable, because the preserved file may still reference
-those records. With no worker attached, no sweep runs. Worktree teardown asks the host for the live session
-cwds first: a worktree that still contains a live session, attached or not,
-is kept; an unreachable host proceeds with the current rules; any other host
-error skips the teardown.
+those records. With no worker attached, no sweep runs. Worktree teardown runs after the
+workspace is closed: it polls the host until the closed workspace's sessions
+have ended (100 polls 50 ms apart at most), then keeps every worktree that a
+tab, a workspace root or a live session (attached or not) of an open
+workspace still sits in; an unreachable host proceeds with the current rules;
+any other host error skips the teardown
+(`paneflow_git::worktree::close_teardown`). A worktree kept for any reason,
+automatic removal turned off included, is listed again by an open workspace
+(the one whose tab uses it, else one on the same repository, else the active
+one), so Settings still shows it and the keep limit still trims it.
 
 The host endpoint is derived from the state home (`\\.\pipe\paneflow-host-<fp>`
 on Windows, `<runtime dir>/paneflow-host-<fp>.sock` on Unix), so an isolated
