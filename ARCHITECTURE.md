@@ -729,6 +729,33 @@ caller `Unverified`; with no session recorded at all, no pane exists and the
 caller is outside every pane. A connection is never assumed to be outside
 every pane on an incomplete answer.
 
+Outside every pane the hello names the principal (a `paneflow-serve*` client
+is `Worker`, a hello that declares a terminal engine or a `paneflow-desktop*`
+client is `Window`, and on the worker `layout.attach` with the client
+`window` turns `External` into `Window`), but only for a caller the server
+vouches for (`paneflow_host::genuine::GenuineCallers`, built once when the
+host or the worker opens). It vouches for the process that started that
+server, matched by pid and start time; for a process whose executable,
+canonicalized, is the server's own executable or the `paneflow[.exe]` beside
+it; and for one whose executable is a byte-identical copy of either, such as
+an AppImage mounted again at another path. The executable comes from the peer
+read: `proc_pidpath_audittoken` on macOS, `/proc/<pid>/exe` on Linux and
+`QueryFullProcessImageNameW` on Windows. Any other caller that claims
+`Window` or `Worker` gets `External`, logged once per executable, and is not
+refused, so honest tooling keeps working. The window and `paneflow serve` run
+the `paneflow` beside the host. A test that embeds the host or the worker is
+vouched for as its own executable, one that starts it as its spawner, and one
+that embeds the host for a built `paneflow` names that binary with
+`SessionHost::vouch_for_executable`, an in-process call no client reaches. The
+check authenticates the binary, not the code path: a verb of the genuine CLI
+that sends a window hello (`paneflow host stop`, `paneflow host status`,
+`paneflow-host session`) still acts as the window. Code injected into a
+genuine process by the same user (`LD_PRELOAD`, a debugger) is outside this
+layer, and so is a process that starts the host or the worker before Paneflow
+does, since it could as well serve a counterfeit endpoint. The host treats
+`session.input` as typed (`InputOrigin::Typed`, not journaled) only from a
+vouched `Window` or `Worker` that declared an engine.
+
 Every request then goes through one pure function,
 `paneflow_api::authorize(principal, descriptor, params, policy)`
 (`crates/paneflow-api/src/authorize.rs`), which reads no file, socket or
