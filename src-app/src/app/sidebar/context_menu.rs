@@ -347,7 +347,7 @@ impl PaneFlowApp {
         ActionMenu::new().items(targets).separator().item(new_space)
     }
 
-    fn tab_menu(&self, key: TabKey) -> Option<ActionMenu<TabMenuAction>> {
+    pub(crate) fn tab_menu(&self, key: TabKey) -> Option<ActionMenu<TabMenuAction>> {
         let (ws_idx, tab_idx) = key.resolve(&self.workspaces)?;
         let tab = self
             .workspaces
@@ -389,6 +389,10 @@ impl PaneFlowApp {
                         .radio(selected)
                 }),
         );
+        let in_repository = self
+            .workspaces
+            .get(ws_idx)
+            .is_some_and(|ws| ws.repo_root.is_some());
         let show_checkouts = checkouts.len() > 1;
         let detached = self.tab_detached_checkout(ws_idx, tab_idx);
         let mut menu = ActionMenu::new()
@@ -406,16 +410,15 @@ impl PaneFlowApp {
                 MenuItem::new("Close tab (stops its sessions)", TabMenuAction::Close)
                     .icon(icon::CLOSE),
             );
-        if show_checkouts {
-            menu = menu
-                .separator()
-                .heading("Branch")
-                .item(
-                    MenuItem::new("New branch…", TabMenuAction::NewBranch)
-                        .icon(icon::ADD)
-                        .mnemonic('b'),
-                )
-                .items(checkouts);
+        if in_repository {
+            menu = menu.separator().heading("Branch").item(
+                MenuItem::new("New branch…", TabMenuAction::NewBranch)
+                    .icon(icon::ADD)
+                    .mnemonic('b'),
+            );
+            if show_checkouts {
+                menu = menu.items(checkouts);
+            }
         }
         if let Some(path) = detached {
             menu = menu.separator().item(

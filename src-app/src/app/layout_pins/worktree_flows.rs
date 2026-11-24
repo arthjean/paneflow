@@ -8,7 +8,7 @@ use super::Rig;
 use crate::PaneFlowApp;
 use crate::workspace::worktree::{ManagedWorktree, TeardownPolicy};
 
-pub(super) const PINS: usize = 5;
+pub(super) const PINS: usize = 6;
 
 const OUTCOME_WAIT: Duration = Duration::from_secs(60);
 const PUMP_INTERVAL: Duration = Duration::from_millis(5);
@@ -286,4 +286,36 @@ fn pin_a_new_branch_titles_its_tab_unless_the_user_named_it(cx: &mut TestAppCont
         "the renamed tab is still bound"
     );
     assert_eq!(title(&mut rig, 0), "mine");
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_the_tab_menu_offers_new_branch_in_a_repository_with_a_single_branch(
+    cx: &mut TestAppContext,
+) {
+    let root = tempfile::tempdir().expect("a repository root");
+    let repo = committed_repo(root.path());
+    let mut rig = Rig::mount(cx);
+    let ws = project(&mut rig, &repo);
+    let offers = |rig: &mut Rig<'_>, ws: usize| {
+        rig.act(move |app, _, _| {
+            let key = crate::app::window::TabKey::of(&app.workspaces[ws], 0).expect("a tab");
+            let menu = app.tab_menu(key).expect("the tab menu");
+            (0..menu.entries().len()).any(|index| {
+                matches!(
+                    menu.action_at(index),
+                    Some(crate::app::sidebar::context_menu::TabMenuAction::NewBranch)
+                )
+            })
+        })
+    };
+    assert!(
+        offers(&mut rig, ws),
+        "a tab of a repository with only its default branch offers New branch…"
+    );
+    rig.act(move |app, _, _| app.workspaces[ws].repo_root = None);
+    assert!(
+        !offers(&mut rig, ws),
+        "a tab outside any repository has no Branch section"
+    );
 }
