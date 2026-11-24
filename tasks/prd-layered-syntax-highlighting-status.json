@@ -3,7 +3,7 @@
     "file": "tasks/prd-layered-syntax-highlighting.md",
     "title": "Layered syntax highlighting for the Files dock: Zig, a native lexical layer, and LSP semantic tokens",
     "created_at": "2026-11-22",
-    "status": "IN_PROGRESS"
+    "status": "DONE"
   },
   "epics": [
     {
@@ -81,10 +81,10 @@
     {
       "id": "EP-010",
       "title": "macOS validation on Apple Silicon",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 2,
-      "stories_done": 0
+      "stories_done": 2
     }
   ],
   "stories": [
@@ -601,7 +601,7 @@
       "id": "US-034",
       "title": "Validate layers 1 and 2 on macOS Apple Silicon",
       "epic": "EP-010",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-006",
@@ -609,23 +609,23 @@
         "US-014",
         "US-016"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-24",
+      "completed_at": "2026-11-24",
+      "reviewed_at": "2026-11-24"
     },
     {
       "id": "US-037",
       "title": "Validate language servers on macOS Apple Silicon",
       "epic": "EP-010",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-031",
         "US-032"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-24",
+      "completed_at": "2026-11-24",
+      "reviewed_at": "2026-11-24"
     }
   ]
 }
