@@ -1,0 +1,99 @@
+# 46-grant-ceiling: the grant limits (128 in all, 16 per pane) and the delegation ceiling (grant_exceeds_holder), over raw JSON-RPC
+# docs (scripting.md): 'Paneflow holds at most 128 grants, 16 per pane. Past that, grant.request and grant.delegate answer
+#   {granted: false, reason: grant_limit} and no prompt is shown.' 'the rights and the scope must be within a grant it holds, and the expiry
+#   no later than that grant's (grant_exceeds_holder otherwise)... A pane it did not spawn is refused with not_spawned_by_caller.
+#   Revoking a grant revokes everything delegated from it.'
+# setup: paneflow.json agents.claude.grants lists the 16 distinct (rights, scope) pairs (8 rights sets incl. [], x workspace|instance),
+#   ipc gates closed. Nine panes run a binary named claude (a compiled sleep loop, fakebin/claude) in the foreground, so Paneflow
+#   grants each the profile: panes 5152-5159 (workspace 'grants') and 1026 (workspace 'rpcq'). Each runs proxy.py in the background,
+#   which sends the JSON-RPC calls from inside the pane. A prompt.follow subscriber (external, worker) logs every prompt frame.
+
+== C1. after reconcile (captured at 20:47): 128 grants, 16 for each of eight panes, none for the ninth (1026)
+# grant.list (external): revision 1795548731809 total 128 per holder {16311124: 16, 4c8e1871: 16, 7382ea02: 16, 80469967: 16,
+#   96506a7c: 16, a8475fe2: 16, ca1f3bc0: 16, d135268a: 16}; 1026 = db99a2ef: 0 (has_room_for refused it at the 128 ceiling)
+
+== C2. per-pane ceiling, live now: pane 5152 holds 16 -> grant.request answers grant_limit at once
+# grant.list (external): revision 1795548731850 total 93 per holder {'16311124': 16, '4c8e1871': 15, '7382ea02': 16, '80469967': 1, 'a8475fe2': 12, 'ca1f3bc0': 16, 'd135268a': 16, 'db99a2ef': 1}
+# in pane surface 5152 (principal from its process tree)
+>> [worker] {"jsonrpc": "2.0", "id": 1, "method": "worker.hello", "params": {"client": "qual-rpc-pane", "protocol": 1}}
+>> [worker] {"jsonrpc": "2.0", "id": 2, "method": "system.whoami", "params": {}}
+<< {"jsonrpc":"2.0","id":2,"result":{"principal":"pane","session":"d135268a-fbb7-4106-b77f-634e5f9264fa","workspace":"3bf97262-a67d-4c02-8c15-e087db7e544b"}}
+>> [worker] {"jsonrpc": "2.0", "id": 3, "method": "grant.request", "params": {"rights": ["write"], "scope": "workspace", "duration_secs": 600, "reason": "qualification: ceiling probe"}}
+<< {"jsonrpc":"2.0","id":3,"result":{"granted":false,"reason":"grant_limit"}}
+# answered in 0.14 s
+
+== C3. global ceiling (captured at 20:48, while 128 were held): pane 1026, holding none, got grant_limit as well, in 0.09 s
+>> [worker] {"jsonrpc": "2.0", "id": 3, "method": "grant.request", "params": {"rights": ["write"], "scope": "workspace", "duration_secs": 600, "reason": "qualification: ceiling probe"}}
+<< {"jsonrpc":"2.0","id":3,"result":{"granted":false,"reason":"grant_limit"}}
+# and grant.delegate from 5152 to the pane it split on the worker (session e4c5f278..., surface 6200), at the same ceiling:
+>> [worker] {"jsonrpc": "2.0", "id": 2, "method": "grant.delegate", "params": {"session": "e4c5f278-7672-4cc0-81f8-0777b128f77e", "rights": ["write"], "scope": "workspace", "duration_secs": 300}}
+<< {"jsonrpc":"2.0","id":2,"result":{"granted":false,"reason":"grant_limit"}}
+
+== C4. no prompt was shown for any grant_limit answer: the prompt.follow log (external subscriber on the worker) holds only its header
+20:48:16 {"jsonrpc":"2.0","id":2,"result":{"type":"following","kinds":["input","pick"],"pending":0}}
+
+== C5. delegation ceiling. 1026 now holds one profile grant {write, spawn} workspace, no expiry (profile cut to that pair, 4 grants freed);
+#   it split pane 8252 through the worker (session bd875edf-c873-49d7-9b65-712d8bf2d40c); 8252 split 9280 the same way (session 093c6334-9dc3-49b2-80aa-3687ee77cf28)
+# in pane surface 1026 (principal from its process tree)
+>> [worker] {"jsonrpc": "2.0", "id": 1, "method": "worker.hello", "params": {"client": "qual-rpc-pane", "protocol": 1}}
+>> [worker] {"jsonrpc": "2.0", "id": 2, "method": "grant.list", "params": {}}
+<< {"jsonrpc":"2.0","id":2,"result":{"revision":1795548731850,"grants":[{"id":"g-1795548731814-129","holder":{"session":"db99a2ef-1fa7-4548-9ae7-d468fe60d34a","generation":1,"workspace":"9bafb22b-a238-495f-82e3-d7d07cc5c23e"},"rights":["write","spawn"],"scope":"workspace","origin":{"kind":"profile","profile":"claude"},"granted_at_ms":1795549917016}]}}
+# captured at 20:52, 1026 -> 8252:
+<< layout/workspace       : {"code":-32602,"message":"grant.delegate refused: no grant of the calling pane covers layout in its own workspace with that expiry","data":{"reason":"grant_exceeds_holder"}}
+<< write/instance         : {"code":-32602,"message":"grant.delegate refused: no grant of the calling pane covers write across every workspace with that expiry","data":{"reason":"grant_exceeds_holder"}}
+<< write+spawn/ws, 120 s  : {"granted":true,"id":"g-1795548731815-130","expires_at_ms":1795550054628}
+# captured at 20:52, 8252 (holding g-130 until +120 s) -> 9280:
+<< write/ws, 3600 s       : {"code":-32602,"message":"grant.delegate refused: no grant of the calling pane covers write in its own workspace with that expiry","data":{"reason":"grant_exceeds_holder"}}
+<< write/ws, 30 s         : {"granted":true,"id":"g-1795548731816-131","expires_at_ms":1795549983194}
+# live now: a pane that did not spawn the target (5153 -> 8252) and 8252 revoking its parent's grant:
+# in pane surface 5153 (principal from its process tree)
+>> [worker] {"jsonrpc": "2.0", "id": 1, "method": "worker.hello", "params": {"client": "qual-rpc-pane", "protocol": 1}}
+>> [worker] {"jsonrpc": "2.0", "id": 2, "method": "grant.delegate", "params": {"session": "bd875edf-c873-49d7-9b65-712d8bf2d40c", "rights": ["write"], "scope": "workspace"}}
+<< {"jsonrpc":"2.0","id":2,"error":{"code":-32602,"message":"grant.delegate refused: session bd875edf-c873-49d7-9b65-712d8bf2d40c was not spawned by the calling pane","data":{"reason":"not_spawned_by_caller"}}}
+# in pane surface 8252 (principal from its process tree)
+>> [worker] {"jsonrpc": "2.0", "id": 1, "method": "worker.hello", "params": {"client": "qual-rpc-pane", "protocol": 1}}
+>> [worker] {"jsonrpc": "2.0", "id": 2, "method": "grant.revoke", "params": {"id": "g-1795548731814-129"}}
+<< {"jsonrpc":"2.0","id":2,"error":{"code":-32001,"message":"grant.revoke refused: grant g-1795548731814-129 was not delegated by the calling pane","data":{"reason":"principal_refused"}}}
+
+== C6. cascade: 1026 re-delegates to 8252, 8252 delegates on to 9280, then 1026 revokes the grant it delegated
+# in pane surface 1026 (principal from its process tree)
+>> [worker] {"jsonrpc": "2.0", "id": 1, "method": "worker.hello", "params": {"client": "qual-rpc-pane", "protocol": 1}}
+>> [worker] {"jsonrpc": "2.0", "id": 2, "method": "grant.delegate", "params": {"session": "bd875edf-c873-49d7-9b65-712d8bf2d40c", "rights": ["write"], "scope": "workspace", "duration_secs": 600}}
+<< {"jsonrpc":"2.0","id":2,"result":{"granted":true,"id":"g-1795548731851-132","expires_at_ms":1795550699620}}
+# in pane surface 8252 (principal from its process tree)
+>> [worker] {"jsonrpc": "2.0", "id": 1, "method": "worker.hello", "params": {"client": "qual-rpc-pane", "protocol": 1}}
+>> [worker] {"jsonrpc": "2.0", "id": 2, "method": "grant.delegate", "params": {"session": "093c6334-9dc3-49b2-80aa-3687ee77cf28", "rights": ["write"], "scope": "workspace", "duration_secs": 300}}
+<< {"jsonrpc":"2.0","id":2,"result":{"granted":true,"id":"g-1795548731852-133","expires_at_ms":1795550399733}}
+# in pane surface 1026 (principal from its process tree)
+>> [worker] {"jsonrpc": "2.0", "id": 1, "method": "worker.hello", "params": {"client": "qual-rpc-pane", "protocol": 1}}
+>> [worker] {"jsonrpc": "2.0", "id": 2, "method": "grant.revoke", "params": {"id": "g-1795548731851-132"}}
+<< {"jsonrpc":"2.0","id":2,"result":{"revoked":["g-1795548731851-132","g-1795548731852-133"],"revision":1795548731853}}
+# grant.list (external): revision 1795548731853 total 93 per holder {'16311124': 16, '4c8e1871': 15, '7382ea02': 16, '80469967': 1, 'a8475fe2': 12, 'ca1f3bc0': 16, 'd135268a': 16, 'db99a2ef': 1}
+
+== C7. paneflow grants ls as seen from outside every pane (head)
+g-1795548731802-1  session 16311124-5b13-4aec-81f3-95b5253a21d4    workspace  no expiry  profile claude
+g-1795548731802-2  session 16311124-5b13-4aec-81f3-95b5253a21d4    instance  no expiry  profile claude
+g-1795548731802-3  session 16311124-5b13-4aec-81f3-95b5253a21d4  write  workspace  no expiry  profile claude
+g-1795548731802-4  session 16311124-5b13-4aec-81f3-95b5253a21d4  write  instance  no expiry  profile claude
+g-1795548731802-5  session 16311124-5b13-4aec-81f3-95b5253a21d4  spawn  workspace  no expiry  profile claude
+g-1795548731802-6  session 16311124-5b13-4aec-81f3-95b5253a21d4  spawn  instance  no expiry  profile claude
+
+== C8. defect: a pane that splits through the window's JSON-RPC socket is not recorded as the spawner, so it cannot delegate (captured 20:49)
+# pane 5152 -> window socket:
+>> [window] {"jsonrpc": "2.0", "id": 1, "method": "surface.split", "params": {"direction": "vertical", "surface_id": 5152, "name": "g1-child"}}
+<< {"jsonrpc":"2.0","result":{"split":true,"direction":"vertical","panes":9,"surface_id":5176},"id":1}
+# child 5176 = session f146c1d7-0d60-48dd-8637-024fd7faa09d; serve/grants.json spawned_by stays {}
+>> [worker] {"jsonrpc": "2.0", "id": 2, "method": "grant.delegate", "params": {"session": "f146c1d7-0d60-48dd-8637-024fd7faa09d", "rights": ["write"], "scope": "workspace", "duration_secs": 300}}
+<< {"jsonrpc":"2.0","id":2,"error":{"code":-32602,"message":"grant.delegate refused: session f146c1d7-0d60-48dd-8637-024fd7faa09d was not spawned by the calling pane","data":{"reason":"not_spawned_by_caller"}}}
+# the same split sent by 5152 to the worker socket (surface 6200) is recorded: spawned_by {e4c5f278...: d135268a... (5152)}, and
+#   `paneflow split v` run inside a pane also records it (the CLI routes surface.split to the worker).
+# suspected: src-app/src/app/ipc_handler/split.rs prepare_split runs the split in the window and sends the op to the worker over the
+#   window's own layout link, so crates/paneflow-serve/src/structural.rs (record_spawn, only when call.authority.principal is a pane)
+#   never sees the calling pane.
+
+== verdict: pass for the ceilings: 16 per pane and 128 in all answer {granted:false, reason:grant_limit} without a prompt, for
+#   grant.request and grant.delegate; delegation refuses wider rights, a wider scope and a later expiry with grant_exceeds_holder, a
+#   pane it did not spawn with not_spawned_by_caller, and revoking a delegated grant revokes its own delegations.
+#   Notes: grant_limit is a result ({granted:false}) while grant_exceeds_holder / not_spawned_by_caller are -32602 errors with
+#   data.reason; the docs do not say which shape each takes. A profile grant with rights [] is accepted and stored, and occupies a slot.
+#   Defect C8 (surface.split through the window socket breaks grant.delegate).

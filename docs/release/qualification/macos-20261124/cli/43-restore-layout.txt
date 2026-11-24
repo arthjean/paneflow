@@ -1,0 +1,55 @@
+# 43-restore-layout: workspace.restore_layout over raw JSON-RPC (window socket, and the worker that owns it)
+# docs: reference.md 'workspace.restore_layout | layout | Apply a layout tree'; scripting.md: the layout right opens a restore_layout that launches;
+#       api docs: 'Holds between 1 and 32 panes'; 'A request that sets a command, a prompt or an env is refused with -32601 unless ...'
+# shown workspace: 'restore' (index 1, one pane); config ipc.scripting=false, ipc.orchestration=false
+
+== R1. external, plain two-pane layout, gates closed -> restored
+>> [window] {"jsonrpc": "2.0", "id": 1, "method": "workspace.restore_layout", "params": {"layout": {"type": "split", "direction": "vertical", "children": [{"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}]}}}
+<< {"jsonrpc":"2.0","result":{"restored":true,"panes":2},"id":1}
+# (pane count checked below through workspace.current)
+== R2. external, a layout whose surface sets a command, gates closed -> refused
+>> [window] {"jsonrpc": "2.0", "id": 1, "method": "workspace.restore_layout", "params": {"layout": {"type": "split", "direction": "horizontal", "children": [{"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{"command": "echo restored-by-layout-cmd", "name": "rl-cmd"}]}, {"type": "pane", "surfaces": [{}]}]}}}
+<< {"jsonrpc":"2.0","error":{"code":-32601,"message":"workspace.restore_layout orchestration disabled; set PANEFLOW_IPC_ORCHESTRATION=1 or PANEFLOW_IPC_SCRIPTING=1 to enable command, prompt, or env"},"id":1}
+>> [worker] {"jsonrpc": "2.0", "id": 1, "method": "worker.hello", "params": {"client": "qual-rpc", "protocol": 1}}
+>> [worker] {"jsonrpc": "2.0", "id": 2, "method": "workspace.restore_layout", "params": {"layout": {"type": "split", "direction": "horizontal", "children": [{"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{"command": "echo restored-by-layout-cmd", "name": "rl-cmd"}]}, {"type": "pane", "surfaces": [{}]}]}}}
+<< {"jsonrpc":"2.0","id":2,"error":{"code":-32601,"message":"workspace.restore_layout orchestration disabled; set PANEFLOW_IPC_ORCHESTRATION=1 or PANEFLOW_IPC_SCRIPTING=1 to enable command, prompt, or env"}}
+== R3. from pane 1026 (no grant), the same two calls
+# in pane surface 1026 (principal from its process tree)
+>> [window] {"jsonrpc": "2.0", "id": 1, "method": "workspace.restore_layout", "params": {"layout": {"type": "split", "direction": "horizontal", "children": [{"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{"command": "echo restored-by-layout-cmd", "name": "rl-cmd"}]}, {"type": "pane", "surfaces": [{}]}]}}}
+<< {"jsonrpc":"2.0","error":{"code":-32601,"message":"workspace.restore_layout orchestration disabled; set PANEFLOW_IPC_ORCHESTRATION=1 or PANEFLOW_IPC_SCRIPTING=1 to enable command, prompt, or env"},"id":1}
+>> [window] {"jsonrpc": "2.0", "id": 2, "method": "workspace.restore_layout", "params": {"layout": {"type": "split", "direction": "vertical", "children": [{"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}]}}}
+<< {"jsonrpc":"2.0","result":{"restored":true,"panes":2},"id":2}
+== R4. bounds: 33 panes and 0 panes -> invalid params
+>> [window] {"jsonrpc": "2.0", "id": 1, "method": "workspace.restore_layout", "params": {"layout": {"type": "split", "direction": "vertical", "children": [{"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}]}}}
+<< {"jsonrpc":"2.0","error":{"code":-32602,"message":"layout must hold between 1 and 32 panes"},"id":1}
+>> [window] {"jsonrpc": "2.0", "id": 2, "method": "workspace.restore_layout", "params": {"layout": {"type": "split", "direction": "vertical", "children": []}}}
+<< {"jsonrpc":"2.0","error":{"code":-32602,"message":"layout must hold between 1 and 32 panes"},"id":2}
+>> [window] {"jsonrpc": "2.0", "id": 3, "method": "workspace.restore_layout", "params": {}}
+<< {"jsonrpc":"2.0","error":{"code":-32602,"message":"missing 'layout' parameter"},"id":3}
+== R5. ipc.orchestration=true, external: the command layout on 'restore' (3 panes, two reused) and on a fresh one-pane workspace 'restore2'
+>> [window] workspace.restore_layout {layout: split horizontal [pane {}, pane {command: 'echo restored-by-layout-cmd', name: 'rl-cmd'}, pane {prompt: 'prefilled-by-layout'}]}
+<< {"jsonrpc":"2.0","result":{"restored":true,"panes":3},"id":1}   (both workspaces)
+# the worker's model (layout.view, workspace 'restore2') records the command and prompt on the new surfaces:
+#   surface 4125 {'name': None, 'command': None, 'prompt': None, 'session': 'a2d49a90-f23d-47aa-b92f-a5ca1c8ff8d1'}
+#   surface 4142 {'name': None, 'command': None, 'prompt': None, 'session': '9557b4a0-50eb-402d-91a0-3b5b5efe4643'}
+#   surface 4131 {'name': 'rl-cmd', 'command': 'echo restored-by-layout-cmd', 'prompt': None, 'session': '2b6e0b1d-04f5-49da-8cab-e504023ec3c7'}
+#   surface 4133 {'name': None, 'command': None, 'prompt': 'prefilled-by-layout', 'session': '8485f9cd-590e-49d0-a42b-b28a3e47bc90'}
+# but nothing was typed into any of them, minutes later (paneflow read <id> --raw --lines 3):
+-- 4131
+user@host scratchpad %
+-- 4133
+user@host scratchpad %
+# control, same config: surface.split with a command runs it at once; workspace.create with a layout command does not either:
+>> [window] surface.split {direction: vertical, command: 'echo split-cmd-ran'} -> surface 4142
+-- 4142
+split-cmd-ran
+user@host scrat
+chpad %
+>> [window] workspace.create {name: wc-layout, layout: [pane {command: 'echo created-by-layout-cmd'}, pane {}]} -> surface 4138
+-- 4138
+user@host scratchpad %
+
+== verdict: FAIL (partial). Gate, bounds and reuse behave as documented; but a command or prompt in the layout is gated and then silently dropped:
+#   the reply says restored:true, the model records the command, no pane runs it or shows the prompt (also for workspace.create with a layout).
+#   suspected: crates/paneflow-serve/src/structural.rs plant_into clears definition.session, and type_into (session_of) returns when the built
+#   state has no session yet for a planted surface, so type_when_settled is never called. surface.split assigns the session first and works.

@@ -1,0 +1,55 @@
+# 45-grants-unsynced: the grants_unsynced refusal over raw JSON-RPC
+# docs (scripting.md): grants 'reach the session host and the window within a moment of each change; a request that needs a grant during
+#   that moment is refused with grants_unsynced and the message Grants are being synchronized; retry the call'.
+# mechanism (crates/paneflow-host/src/pane_grants.rs GrantMirror::snapshot): the host and the window compare the revision they hold with
+#   the revision the worker last persisted in $PANEFLOW_HOME/serve/grants.json; the worker persists first, then pushes (host.grants.set)
+#   and announces (grant.changed). Caller: pane 1026, which holds a profile write grant for its own workspace; ipc.scripting=false.
+
+== U0. synced: the pane's grant opens the write on the window and on the host
+# in pane surface 1026 (principal from its process tree)
+>> [window] {"jsonrpc": "2.0", "id": 1, "method": "surface.send_text", "params": {"surface_id": 8252, "text": "# U0-window"}}
+<< {"jsonrpc":"2.0","result":{"sent":true,"length":11,"submitted":false,"paste":false,"submit_mode":null,"agent_target":false,"agent_tool":null,"terminal_bracketed_paste":true},"id":1}
+# in pane surface 1026 (principal from its process tree)
+>> [host] {"jsonrpc": "2.0", "id": 1, "method": "host.hello", "params": {"client": "qual-rpc-pane", "protocol": 1}}
+>> [host] {"jsonrpc": "2.0", "id": 2, "method": "session.input", "params": {"session": "bd875edf-c873-49d7-9b65-712d8bf2d40c", "data": "IyBVMC1ob3N0"}}
+<< {"jsonrpc":"2.0","id":2,"result":{"accepted_bytes":9}}
+
+== U1. reproduce the moment between persist and push: raise the persisted revision by 1000 without pushing (what a worker
+#   that has written grants.json but not yet reached the host and window leaves behind), then retry the same calls
+# grants.json revision 1795548731817 -> 1795548732817
+# in pane surface 1026 (principal from its process tree)
+>> [window] {"jsonrpc": "2.0", "id": 1, "method": "surface.send_text", "params": {"surface_id": 8252, "text": "# U1-window"}}
+<< {"jsonrpc":"2.0","error":{"code":-32601,"message":"Grants are being synchronized; retry the call","data":{"reason":"grants_unsynced","principal":"pane"}},"id":1}
+# in pane surface 1026 (principal from its process tree)
+>> [host] {"jsonrpc": "2.0", "id": 1, "method": "host.hello", "params": {"client": "qual-rpc-pane", "protocol": 1}}
+>> [host] {"jsonrpc": "2.0", "id": 2, "method": "session.input", "params": {"session": "bd875edf-c873-49d7-9b65-712d8bf2d40c", "data": "IyBVMS1ob3N0"}}
+<< {"jsonrpc":"2.0","id":2,"error":{"code":-32601,"message":"Grants are being synchronized; retry the call","data":{"reason":"grants_unsynced","principal":"pane"}}}
+# a call that needs no grant is unaffected (surface.read from the same pane):
+# in pane surface 1026 (principal from its process tree)
+>> [window] {"jsonrpc": "2.0", "id": 1, "method": "surface.read", "params": {"surface_id": 8252, "lines": 1}}
+<< {"jsonrpc":"2.0","result":{"text":"<untrusted_terminal_output source=\"surface:8252\" total_lines=\"5\" eof=\"false\" id=\"dadd66a22bbe4ba7\">\n# U0-host\n</untrusted_terminal_output id=\"dadd66a22
+# an external caller does not depend on grants and is unaffected (gates closed, so its write is refused as usual):
+>> [window] {"jsonrpc": "2.0", "id": 1, "method": "surface.send_text", "params": {"surface_id": 8252, "text": "# U1-external-window"}}
+<< {"jsonrpc":"2.0","error":{"code":-32601,"message":"surface.send_text disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable"},"id":1}
+
+== U2. the worker's next real change persists and pushes its own revision; the same calls pass again
+>> [worker] grant.revoke {id: g-1795548731803-17}  (external, a profile grant of pane 5153)
+{  "revoked": [    "g-1795548731803-17"  ],  "revision": 1795548731818}
+# grants.json revision now 1795548731818
+# in pane surface 1026 (principal from its process tree)
+>> [window] {"jsonrpc": "2.0", "id": 1, "method": "surface.send_text", "params": {"surface_id": 8252, "text": "# U2-window"}}
+<< {"jsonrpc":"2.0","result":{"sent":true,"length":11,"submitted":false,"paste":false,"submit_mode":null,"agent_target":false,"agent_tool":null,"terminal_bracketed_paste":true},"id":1}
+# in pane surface 1026 (principal from its process tree)
+>> [host] {"jsonrpc": "2.0", "id": 1, "method": "host.hello", "params": {"client": "qual-rpc-pane", "protocol": 1}}
+>> [host] {"jsonrpc": "2.0", "id": 2, "method": "session.input", "params": {"session": "bd875edf-c873-49d7-9b65-712d8bf2d40c", "data": "IyBVMi1ob3N0"}}
+<< {"jsonrpc":"2.0","id":2,"result":{"accepted_bytes":9}}
+
+== U3. natural race: pane 1026 sent 600 host session.input and 400 window surface.send_text calls back to back while an external
+#   script revoked 16 grants one by one (16 persist-then-push cycles), twice
+# race-host:   600 accepted, 0 grants_unsynced
+# race-window: 400 accepted, 0 grants_unsynced
+#   the window between persist and push is shorter than one request round trip here, so it was not hit naturally; U1 holds it open.
+
+== verdict: pass. A pane request that needs a grant while the host or window mirror lags the persisted revision is refused with
+#   reason grants_unsynced and the documented message, on both the window and the host; it passes again once the worker pushes.
+#   Note: the refusal uses JSON-RPC code -32601 (the gated-method code); the docs name the reason and message but no code.

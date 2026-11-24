@@ -1,0 +1,24 @@
+## Mouse-driven worktree flows (dev build, home ~/.paneflow-dev-qual-m, repo ~/pfq-mouse)
+$ git worktree list
+~/pfq-mouse                                                      f2b3b25 [mouse-three]
+~/.paneflow-dev-qual-m/worktrees/pfq-mouse-84766b78/existing-b   f2b3b25 [existing-b]
+~/.paneflow-dev-qual-m/worktrees/pfq-mouse-84766b78/main-f2b3b25 f2b3b25 [mouse-two]
+~/.paneflow-dev-qual-m/worktrees/pfq-mouse-84766b78/mouse-one    f2b3b25 [mouse-one]
+$ git branch
++ existing-b
+  main
++ mouse-one
+* mouse-three
++ mouse-two
+$ git -C <main-f2b3b25 worktree> status --short (after Create branch here: mouse-two)
+?? wip.txt
+$ grep for_new_branches paneflow.json
+"for_new_branches": false
+$ paneflow ls (surface cwd)
+1026 ~/pfq-mouse
+3083 ~/.paneflow-dev-qual-m/worktrees/pfq-mouse-84766b78/mouse-one
+3088 ~/.paneflow-dev-qual-m/worktrees/pfq-mouse-84766b78/main-f2b3b25
+3093 ~/pfq-mouse
+3098 ~/.paneflow-dev-qual-m/worktrees/pfq-mouse-84766b78/mouse-one
+3103 ~/.paneflow-dev-qual-m/worktrees/pfq-mouse-84766b78/existing-b
+2054 ~/pfq-mouse

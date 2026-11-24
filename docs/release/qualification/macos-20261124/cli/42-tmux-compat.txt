@@ -1,0 +1,118 @@
+# 42-tmux-compat: tmux.compat (the Claude Code agent-team tmux shim) over the shim and over raw JSON-RPC
+# docs: reference.md 'tmux.compat | team, surface_id, argv, scope_session? | tmux command from a Claude Code team pane; team is the token
+#   Paneflow gave that team's panes, and the reply is {stdout, stderr, exit}'. features.md: the Claude Code (team) launcher entry (Linux, macOS);
+#   'A team can only open, list, rename, and close its own panes. Typing into a teammate with send-keys follows the same ipc.scripting
+#   rule as paneflow send.' There is no paneflow.json key for tmux.compat; the shim is $PANEFLOW_HOME/bin/tmux-compat/tmux -> paneflow.
+# setup: config ipc.scripting=false, ipc.orchestration=false, no agent grants. A stand-in 'claude' script was placed in
+#   $PANEFLOW_HOME/bin/tmux-compat/ (first on the team launcher's PATH) so the real Claude Code never ran; it logs every tmux call
+#   it makes and then execs a sleep loop. The Claude Code (team) entry was picked in the dev window's New pane palette (the only way
+#   Paneflow issues a team token: src-app/src/app/pane_palette.rs). Lead pane: surface 10314. The token is redacted below.
+
+== A. the lead's tmux calls through the shim (team/lead.log, written by the stand-in)
+# fake claude started as the team lead: argv=--teammate-mode tmux
+# TMUX=paneflow-tmux-compat,0,0 TMUX_PANE=%0 PANEFLOW_SURFACE_ID=10314 PANEFLOW_TMUX_TEAM=<set, 32 chars>
+# which tmux: /Users/m1/.paneflow-dev-qual-rpc/bin/tmux-compat/tmux
+$ tmux -V
+tmux 3.5a
+[exit=0]
+$ tmux display-message -p #{pane_id}
+%0
+[exit=0]
+$ tmux list-panes -F #{pane_id} #{pane_title} #{pane_active}
+%0  1
+[exit=0]
+$ tmux list-windows -F #{window_id}
+@0
+[exit=0]
+$ tmux split-window -h -P -F #{pane_id} -c /private/tmp/claude-501/-Users-m1-dev-paneflow/ed7b9b96-428f-465c-a947-cceac364368b/scratchpad echo teammate-1-started; sleep 100000
+%1
+[exit=0]
+$ tmux split-window -v -P -F #{pane_id} cat
+%2
+[exit=0]
+$ tmux select-pane -t %1 -T reviewer
+[exit=0]
+$ tmux list-panes -F #{pane_id} #{pane_title}
+%0 
+%1 reviewer
+%2 
+[exit=0]
+$ tmux send-keys -t %1 echo typed-by-send-keys Enter
+surface.send_text disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable
+[exit=1]
+$ tmux send-keys -t %9 x
+can't find pane: %9
+[exit=1]
+$ tmux kill-pane -t %0
+paneflow tmux-compat: the team leader pane is closed by its user, not by the team
+[exit=1]
+$ tmux new-session -d
+[exit=0]
+$ tmux kill-pane -t %2
+[exit=0]
+$ tmux list-panes -F #{pane_id}
+%0
+%1
+%3
+[exit=0]
+# done
+
+== B. raw JSON-RPC to the window socket
+-- B1. external process holding the token, naming the lead surface: answered as the team
+>> [window] {"jsonrpc": "2.0", "id": 1, "method": "tmux.compat", "params": {"team": "<team-token>", "surface_id": 10314, "argv": ["list-panes", "-F", "#{pane_id} #{pane_title}"]}}
+<< {"jsonrpc":"2.0","result":{"stdout":"%0 \n%1 reviewer\n%3 ","stderr":"","exit":0},"id":1}
+>> [window] {"jsonrpc": "2.0", "id": 2, "method": "tmux.compat", "params": {"team": "<team-token>", "surface_id": 10314, "argv": ["display-message", "-p", "#{pane_id}"]}}
+<< {"jsonrpc":"2.0","result":{"stdout":"%0","stderr":"","exit":0},"id":2}
+-- B2. the token with a surface outside the team (1026), an unknown token, and malformed params
+>> [window] {"jsonrpc": "2.0", "id": 1, "method": "tmux.compat", "params": {"team": "<team-token>", "surface_id": 1026, "argv": ["list-panes"]}}
+<< {"jsonrpc":"2.0","result":{"stdout":"","stderr":"paneflow tmux-compat: the calling pane is not part of this team","exit":1},"id":1}
+>> [window] {"jsonrpc": "2.0", "id": 2, "method": "tmux.compat", "params": {"team": "0000000000000000000000000000beef", "surface_id": 10314, "argv": ["list-panes"]}}
+<< {"jsonrpc":"2.0","result":{"stdout":"","stderr":"paneflow tmux-compat: this pane does not belong to a Paneflow team","exit":1},"id":2}
+>> [window] {"jsonrpc": "2.0", "id": 3, "method": "tmux.compat", "params": {"surface_id": 10314, "argv": ["list-panes"]}}
+<< {"jsonrpc":"2.0","error":{"code":-32602,"message":"missing 'team' parameter"},"id":3}
+>> [window] {"jsonrpc": "2.0", "id": 4, "method": "tmux.compat", "params": {"team": "<team-token>", "surface_id": 10314, "argv": "list-panes"}}
+<< {"jsonrpc":"2.0","error":{"code":-32602,"message":"'argv' must be an array"},"id":4}
+>> [window] {"jsonrpc": "2.0", "id": 5, "method": "tmux.compat", "params": {"team": "<team-token>", "argv": ["list-panes"]}}
+<< {"jsonrpc":"2.0","error":{"code":-32602,"message":"missing 'surface_id' parameter"},"id":5}
+-- B3. send-keys into teammate %1 (surface 10317): refused while ipc.scripting=false, typed once it is true
+>> [window] {"jsonrpc": "2.0", "id": 1, "method": "tmux.compat", "params": {"team": "<team-token>", "surface_id": 10314, "argv": ["send-keys", "-t", "%1", "-l", "# typed-by-raw-send-keys"]}}
+<< {"jsonrpc":"2.0","result":{"stdout":"","stderr":"surface.send_text disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable","exit":1},"id":1}
+>> [window] {"jsonrpc": "2.0", "id": 1, "method": "tmux.compat", "params": {"team": "<team-token>", "surface_id": 10314, "argv": ["send-keys", "-t", "%1", "-l", "# typed-by-raw-send-keys"]}}
+<< {"jsonrpc":"2.0","result":{"stdout":"","stderr":"","exit":0},"id":1}
+# paneflow read 10317 --raw --lines 2:
+# typed-by-raw-send-
+keys-- B4. an unsupported verb, and a pane outside the team that knows the token (pane 1026, gates closed) splitting with a command
+>> [window] {"jsonrpc": "2.0", "id": 1, "method": "tmux.compat", "params": {"team": "<team-token>", "surface_id": 10314, "argv": ["attach-session"]}}
+<< {"jsonrpc":"2.0","result":{"stdout":"","stderr":"paneflow tmux-compat: unsupported verb: attach-session","exit":1},"id":1}
+# in pane surface 1026 (principal from its process tree)
+>> [window] {"jsonrpc": "2.0", "id": 1, "method": "tmux.compat", "params": {"team": "<team-token>", "surface_id": 10314, "argv": ["split-window", "-h", "-P", "-F", "#{pane_id}", "echo spawned-through-the-team-token; sleep 600"]}}
+<< {"jsonrpc":"2.0","result":{"stdout":"%4","stderr":"","exit":0},"id":1}
+# workspace 'team' now:
+  ID  NAME                  SPACE             CMD                       CWD
+10309  shell@scratchpad-2    Default           zsh                       /private/tmp/claude-501/-Users-m1-dev-paneflow/ed7b9b96-428f-465c-a947-cceac364368b/scratchpad
+10314  claude@scratchpad     Default           claude                    /private/tmp/claude-501/-Users-m1-dev-paneflow/ed7b9b96-428f-465c-a947-cceac364368b/scratchpad
+10320  shell@scratchpad-3    Default           bash                      /private/tmp/claude-501/-Users-m1-dev-paneflow/ed7b9b96-428f-465c-a947-cceac364368b/scratchpad
+10317  reviewer              Default           bash                      /private/tmp/claude-501/-Users-m1-dev-paneflow/ed7b9b96-428f-465c-a947-cceac364368b/scratchpad
+
+== C. the shim outside a team pane
+$ $PANEFLOW_HOME/bin/tmux-compat/tmux -V
+tmux 3.5a
+[exit=0]
+$ $PANEFLOW_HOME/bin/tmux-compat/tmux list-panes   (no PANEFLOW_TMUX_TEAM)
+paneflow tmux-compat: PANEFLOW_TMUX_TEAM is not set; this pane is not a Paneflow team pane
+[exit=1]
+
+== D. the pane B4 opened (surface 10320) ran the command it was given (paneflow read 10320 --raw --lines 3; the pane is narrow):
+hrough-th
+e-team-to
+ken
+# and the token is readable by any process of the user: ps eww -o command= -p <lead claude pid> | tr ' ' '
+' | grep -c '^PANEFLOW_TMUX_TEAM=' -> 1
+
+== verdict: pass for the documented contract (token-scoped team, own panes only, %N pane ids, {stdout, stderr, exit} replies,
+#   send-keys refused while ipc.scripting=false and typed once it is true, leader cannot be killed by the team, unknown verbs refused).
+#   Finding: the window trusts the caller-supplied surface_id. Any process that knows the token (it sits in the lead's environment,
+#   readable with ps eww) can act as the lead from outside the team; B4 shows pane 1026, outside the team with ipc.orchestration=false,
+#   launching a command in a new pane, because start_team_pane splits with Gates::OPEN.
+#   Suspected: src-app/src/app/ipc_handler/tmux_compat.rs tmux_compat_reply (TmuxTeams::enter keyed on request.surface_id; caller_pid unused
+#   for membership) and start_team_pane (prepare_split(&params, Gates::OPEN, cx)).

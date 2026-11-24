@@ -1,0 +1,19 @@
+## bunx skills add (throwaway HOME and project, conductor.md)
+$ bunx skills add https://github.com/arthjean/paneflow/tree/main/skills/paneflow-conductor -y   -> exit 0
+│    universal: Amp, Antigravity, Antigravity CLI, Cline, Codex +19 more     │
+◇  Installed 1 skill ───────────────────────────────────────────────────────╮
+│  ✓ ~/proj/.agents/skills/paneflow-conductor                               │
+│    universal: Amp, Antigravity, Antigravity CLI, Cline, Codex +19 more    │
+│    symlinked: Claude Code, Eve                                            │
+└  Done!  Review skills before use; they run with full agent permissions.
+files:
+<home>/proj/.agents/skills/paneflow-conductor/SKILL.md
+<home>/proj/agent/skills/paneflow-conductor/SKILL.md
+
+$ bunx skills add ... -a codex -y   -> exit 0
+│    universal: Codex                         │
+◇  Installed 1 skill ─────────────────────────────╮
+│  ✓ paneflow-conductor (copied)                  │
+└  Done!  Review skills before use; they run with full agent permissions.
+files:
+<home>/proj2/.agents/skills/paneflow-conductor/SKILL.md

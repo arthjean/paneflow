@@ -1,0 +1,10 @@
+HEAD e6f85806205f3aeeb2963f13672880ce1e014db8
+=== exit=0 (3s): cargo fmt --check
+=== exit=0 (24s): cargo clippy --workspace --all-targets --locked -- -D warnings
+  TRY 1 FAIL [   0.943s] (─────────) paneflow-serve::pane_grants the_host_applies_the_set_the_worker_pushes_and_refuses_while_it_lags
+     Summary [ 495.903s] 5995 tests run: 5994 passed (2 slow), 1 failed, 131 skipped
+ FLKY-FL 2/2 [   0.894s] (5631/5995) paneflow-serve::pane_grants the_host_applies_the_set_the_worker_pushes_and_refuses_while_it_lags
+=== exit=100 (603s): cargo nextest run --workspace --locked --profile ci
+=== exit=0 (1s): bash scripts/check-test-wallclock.sh
+=== exit=0 (0s): bash scripts/check-helper-sizes.sh target/embed-build/aarch64-apple-darwin/release-min
+after 62150c5c: cargo nextest run -p paneflow-serve --test pane_grants, 20 consecutive runs, 0 failures

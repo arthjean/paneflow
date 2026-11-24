@@ -1,0 +1,45 @@
+# 44-session-input-journal: host session.input over raw JSON-RPC, and the info-level journal line the docs promise
+# docs (scripting.md): 'The host logs each accepted session.input from a control client at info level with the client name, the target
+#   session, and the byte count, never the content.' reference.md: 'Host session.input from a control client | PANEFLOW_IPC_SCRIPTING=1'
+# journal file: $PANEFLOW_HOME/host/host.log. Targets: session bd875edf-c873-49d7-9b65-712d8bf2d40c (pane 8252, workspace 'rpcq'),
+#   session d135268a-fbb7-4106-b77f-634e5f9264fa (pane 5152, workspace 'grants'). Payloads are shell comments, never executed.
+
+== J1. external control client, gates closed (ipc.scripting=false) -> refused, nothing journaled
+>> [host] {"jsonrpc": "2.0", "id": 1, "method": "host.hello", "params": {"client": "qual-rpc-journal", "protocol": 1}}
+>> [host] {"jsonrpc": "2.0", "id": 2, "method": "session.input", "params": {"session": "bd875edf-c873-49d7-9b65-712d8bf2d40c", "data": "IyBKMS1zaG91bGQtbm90LWxhbmQ="}}
+<< {"jsonrpc":"2.0","id":2,"error":{"code":-32601,"message":"session.input disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable"}}
+# new host.log lines:
+
+== J2. external control client, ipc.scripting=true -> accepted; one info line with client, session and byte count, no content
+>> [host] {"jsonrpc": "2.0", "id": 1, "method": "host.hello", "params": {"client": "qual-rpc-journal", "protocol": 1}}
+>> [host] {"jsonrpc": "2.0", "id": 2, "method": "session.input", "params": {"session": "bd875edf-c873-49d7-9b65-712d8bf2d40c", "data": "IyBKMi1zZWNyZXQtY29udGVudC14eXo="}}
+<< {"jsonrpc":"2.0","id":2,"result":{"accepted_bytes":23}}
+# new host.log lines:
+[2026-11-24T19:53:23Z INFO  paneflow_host::server] paneflow-host: control client qual-rpc-journal wrote 23 bytes to session bd875edf-c873-49d7-9b65-712d8bf2d40c
+# grep for the payload text in host.log: 0 match(es)
+
+== J3. pane 1026 (holds a write grant for its own workspace, gates closed): own workspace accepted and journaled; other workspace refused
+# in pane surface 1026 (principal from its process tree)
+>> [host] {"jsonrpc": "2.0", "id": 1, "method": "host.hello", "params": {"client": "qual-rpc-pane", "protocol": 1}}
+>> [host] {"jsonrpc": "2.0", "id": 2, "method": "session.input", "params": {"session": "bd875edf-c873-49d7-9b65-712d8bf2d40c", "data": "IyBKMy1wYW5lLXdyaXRl"}}
+<< {"jsonrpc":"2.0","id":2,"result":{"accepted_bytes":15}}
+>> [host] {"jsonrpc": "2.0", "id": 3, "method": "session.input", "params": {"session": "d135268a-fbb7-4106-b77f-634e5f9264fa", "data": "IyBKMy1vdGhlci13cw=="}}
+<< {"jsonrpc":"2.0","id":3,"error":{"code":-32602,"message":"session.input refused: session d135268a-fbb7-4106-b77f-634e5f9264fa belongs to workspace 3bf97262-a67d-4c02-8c15-e087db7e544b, outside the workspace of the calling pane; reaching another workspace needs ipc.orchestration","data":{"reason":"scope_refused","principal":"pane"}}}
+# new host.log lines:
+[2026-11-24T19:53:24Z INFO  paneflow_host::server] paneflow-host: control client qual-rpc-pane wrote 15 bytes to session bd875edf-c873-49d7-9b65-712d8bf2d40c
+
+== J4. external client whose hello carries a terminal engine identity (declared window): accepted with gates closed, and NOT journaled
+>> [host] {"jsonrpc": "2.0", "id": 1, "method": "host.hello", "params": {"client": "qual-rpc-script", "protocol": 1, "engine": {"engine": "libghostty-vt", "app_version": "1.4.1-dev+108cacb17", "api_version": "1.0.1", "source_sha": "108cacb17ed8990840cd14abfce43d8ed8503ca1"}}}
+<< {"jsonrpc":"2.0","id":1,"result":{"name":"paneflow-host","version":"0.20.0","protocol":1,"build_id":"0.20.0+108cacb17ed8","host_instance":"15be695d-e2bb-4ae0-a1ab-6ed38d2b9d5a","engine":{"engine":"lib...[510 bytes]
+>> [host] {"jsonrpc": "2.0", "id": 2, "method": "system.whoami", "params": {}}
+<< {"jsonrpc":"2.0","id":2,"result":{"principal":"window"}}
+>> [host] {"jsonrpc": "2.0", "id": 3, "method": "session.input", "params": {"session": "bd875edf-c873-49d7-9b65-712d8bf2d40c", "data": "IyBKNC1kZWNsYXJlZC13aW5kb3c="}}
+<< {"jsonrpc":"2.0","id":3,"result":{"accepted_bytes":20}}
+# new host.log lines:
+# pane 8252 screen after J2-J4 (paneflow read 8252 --raw --lines 3):
+8f-465c-a947-cceac364368b/scratchpad/proxy.py 8bd1d7d1e0362f12 &
+[1] 73056
+user@host paneflow % # J2-secret-content-xyz# J3-pane-write# J4-declared-window
+== verdict: pass for the documented contract (gate, scope, one info line per accepted control-client input with client name, session and
+#   byte count, never the content). Caveat tied to 40-principals B: the client name in the line is whatever the hello declares, and a
+#   hello that carries an engine identity is treated as the window (typed input), so its writes pass the closed gate and are not journaled.

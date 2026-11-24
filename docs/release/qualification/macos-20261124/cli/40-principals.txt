@@ -1,0 +1,143 @@
+# 40-principals: caller principals window, worker, unverified (plus pane/external for contrast) over raw JSON-RPC
+# macOS 27.2 Apple Silicon, target/debug binaries as provided (worker build_id 78848e51d384), PANEFLOW_HOME=~/.paneflow-dev-qual-rpc
+# endpoints: window /var/folders/jz/rpbxwt2d4wjgct6stdnkzd9w0000gn/T/paneflow-ipc-8bd1d7d1e0362f12.sock
+#            worker /var/folders/jz/rpbxwt2d4wjgct6stdnkzd9w0000gn/T/paneflow-serve-8bd1d7d1e0362f12.sock
+#            host   /var/folders/jz/rpbxwt2d4wjgct6stdnkzd9w0000gn/T/paneflow-host-8bd1d7d1e0362f12.sock
+# client: python3 rpc.py (newline-delimited JSON-RPC 2.0; worker.hello / host.hello first on worker and host)
+
+== A. external script, honest client name: external on worker and host; reserved methods refused
+>> [worker] {"jsonrpc": "2.0", "id": 1, "method": "worker.hello", "params": {"client": "qual-rpc", "protocol": 1}}
+<< {"jsonrpc":"2.0","id":1,"result":{"name":"paneflow-serve","version":"0.20.0","build_id":"78848e51d3849c7f17f6bc367392db427587b75fd3ac05a53fa740af56b87d75","protocol":1,"required_core_protocol":1,"pid":79614,"home":"/Users/m1/.paneflow-dev-qual-rpc","endpoint":"/var/folders/jz/rpbxwt2d4wjgct6stdnkzd9...[607 bytes]
+>> [worker] {"jsonrpc": "2.0", "id": 2, "method": "system.whoami", "params": {}}
+<< {"jsonrpc":"2.0","id":2,"result":{"principal":"external"}}
+>> [worker] {"jsonrpc": "2.0", "id": 3, "method": "layout.sweep", "params": {}}
+<< {"jsonrpc":"2.0","id":3,"error":{"code":-32070,"message":"layout.sweep needs a connection attached with layout.attach","data":{"reason":"not_attached","principal":"external"}}}
+>> [host] {"jsonrpc": "2.0", "id": 1, "method": "host.hello", "params": {"client": "qual-rpc", "protocol": 1}}
+<< {"jsonrpc":"2.0","id":1,"result":{"name":"paneflow-host","version":"0.20.0","protocol":1,"build_id":"0.20.0+108cacb17ed8","host_instance":"15be695d-e2bb-4ae0-a1ab-6ed38d2b9d5a","engine":{"engine":"libghostty-vt","app_version":"1.4.1-dev+108cacb17","api_version":"1.0.1","source_sha":"108cacb17ed89908...[510 bytes]
+>> [host] {"jsonrpc": "2.0", "id": 2, "method": "system.whoami", "params": {}}
+<< {"jsonrpc":"2.0","id":2,"result":{"principal":"external"}}
+>> [host] {"jsonrpc": "2.0", "id": 3, "method": "approval.decide", "params": {}}
+<< {"jsonrpc":"2.0","id":3,"error":{"code":-32031,"message":"approval.decide belongs to the Paneflow window: only the window sees or decides write approvals; this caller is identified as external","data":{"reason":"principal_refused","principal":"external"}}}
+>> [host] {"jsonrpc": "2.0", "id": 4, "method": "host.shutdown", "params": {}}
+<< {"jsonrpc":"2.0","id":4,"error":{"code":-32001,"message":"host.shutdown does not answer a caller identified as external","data":{"reason":"principal_refused","principal":"external"}}}
+>> [host] {"jsonrpc": "2.0", "id": 5, "method": "host.grants.set", "params": {"revision": 0, "grants": []}}
+<< {"jsonrpc":"2.0","id":5,"error":{"code":-32001,"message":"host.grants.set does not answer a caller identified as external","data":{"reason":"principal_refused","principal":"external"}}}
+
+== B. how window and worker are assigned: by what a non-pane caller declares, not by process identity
+-- B1. host: hello client prefix paneflow-serve -> worker; paneflow-desktop -> window
+>> [host] {"jsonrpc": "2.0", "id": 1, "method": "host.hello", "params": {"client": "paneflow-serve", "protocol": 1}}
+<< {"jsonrpc":"2.0","id":1,"result":{"name":"paneflow-host","version":"0.20.0","protocol":1,"build_id":"0.20.0+108cacb17ed8","host_instance":"15be695d-e2bb-4ae0-a1ab-6ed38d2b9d5a","engine":{"engine":"libghostty-vt","app_version":"1.4.1-dev+108cacb17","api_version":"1.0.1","source_sha":"108cacb17ed89908...[510 bytes]
+>> [host] {"jsonrpc": "2.0", "id": 2, "method": "system.whoami", "params": {}}
+<< {"jsonrpc":"2.0","id":2,"result":{"principal":"worker"}}
+>> [host] {"jsonrpc": "2.0", "id": 3, "method": "host.grants.set", "params": {"revision": 0, "grants": []}}
+<< {"jsonrpc":"2.0","id":3,"result":{"revision":0,"installed":false}}
+>> [host] {"jsonrpc": "2.0", "id": 1, "method": "host.hello", "params": {"client": "paneflow-desktop", "protocol": 1}}
+<< {"jsonrpc":"2.0","id":1,"result":{"name":"paneflow-host","version":"0.20.0","protocol":1,"build_id":"0.20.0+108cacb17ed8","host_instance":"15be695d-e2bb-4ae0-a1ab-6ed38d2b9d5a","engine":{"engine":"libghostty-vt","app_version":"1.4.1-dev+108cacb17","api_version":"1.0.1","source_sha":"108cacb17ed89908...[510 bytes]
+>> [host] {"jsonrpc": "2.0", "id": 2, "method": "system.whoami", "params": {}}
+<< {"jsonrpc":"2.0","id":2,"result":{"principal":"window"}}
+>> [host] {"jsonrpc": "2.0", "id": 3, "method": "approval.follow", "params": {}}
+<< {"jsonrpc":"2.0","id":3,"error":{"code":-32031,"message":"approval.follow belongs to the Paneflow window: only a client that attaches a terminal engine sees or decides write approvals"}}
+-- B2. host: a hello that carries a terminal engine identity (what the window sends) -> window, and approval.follow/decide are admitted
+>> [host] {"jsonrpc": "2.0", "id": 1, "method": "host.hello", "params": {"client": "qual-rpc-script", "protocol": 1, "engine": {"engine": "libghostty-vt", "app_version": "1.4.1-dev+108cacb17", "api_version": "1.0.1", "source_sha": "108cacb17ed8990840cd14abfce43d8ed8503ca1"}, "build": "0.20.0"}}
+<< {"jsonrpc":"2.0","id":1,"result":{"name":"paneflow-host","version":"0.20.0","protocol":1,"build_id":"0.20.0+108cacb17ed8","host_instance":"15be695d-e2bb-4ae0-a1ab-6ed38d2b9d5a","engine":{"engine":"libghostty-vt","app_version":"1.4.1-dev+108cacb17","api_version":"1.0.1","source_sha":"108cacb17ed8990840cd14abfce43d8ed8503ca1"},"pid":80046,"home":"/Users/m1/.paneflow-dev-qual-rpc","endpoint":"/var/folders/jz/rpbxwt2d4wjgct6stdnkzd9w0000gn/T/paneflow-host-8bd1d7d1e0362f12.sock","started_at_ms":17955...[510 bytes]
+>> [host] {"jsonrpc": "2.0", "id": 2, "method": "system.whoami", "params": {}}
+<< {"jsonrpc":"2.0","id":2,"result":{"principal":"window"}}
+>> [host] {"jsonrpc": "2.0", "id": 3, "method": "approval.decide", "params": {}}
+<< {"jsonrpc":"2.0","id":3,"error":{"code":-32602,"message":"approval.decide needs the numeric id of a pending request"}}
+>> [host] {"jsonrpc": "2.0", "id": 4, "method": "approval.follow", "params": {}}
+<< {"jsonrpc":"2.0","id":4,"result":{"type":"approvals","pending":[]}}
+-- B3. worker: layout.attach with client=window upgrades an external connection to window; layout.sweep (window/worker only) then answers
+>> [worker] {"jsonrpc": "2.0", "id": 1, "method": "worker.hello", "params": {"client": "qual-rpc", "protocol": 1}}
+<< {"jsonrpc":"2.0","id":1,"result":{"name":"paneflow-serve","version":"0.20.0","build_id":"78848e51d3849c7f17f6bc367392db427587b75fd3ac05a53fa740af56b87d75","protocol":1,"required_core_protocol":1,"pid":79614,"home":"/Users/m1/.paneflow-dev-qual-rpc","endpoint":"/var/folders/jz/rpbxwt2d4wjgct6stdnkzd9...[607 bytes]
+>> [worker] {"jsonrpc": "2.0", "id": 2, "method": "system.whoami", "params": {}}
+<< {"jsonrpc":"2.0","id":2,"result":{"principal":"external"}}
+>> [worker] {"jsonrpc": "2.0", "id": 3, "method": "layout.attach", "params": {"client": "window"}}
+<< {"jsonrpc":"2.0","id":3,"result":{"epoch":"136fe-1a20f0b5997-0","revision":3,"view":{"revision":3,"state":{"version":3,"workspaces":[{"id":1027,"title":"rpcq","cwd":"/Users/m1/dev/paneflow","space":null,"tabs":[{"id":1028,"title":"","title_source":"preset","root":{"kind":"pane","id":1025,"surfaces":...[920 bytes]
+>> [worker] {"jsonrpc": "2.0", "id": 4, "method": "system.whoami", "params": {}}
+<< {"jsonrpc":"2.0","id":4,"result":{"principal":"window"}}
+>> [worker] {"jsonrpc": "2.0", "id": 5, "method": "layout.sweep", "params": {}}
+<< {"jsonrpc":"2.0","id":5,"result":{"forgotten":[],"stopped":[]}}
+
+== C. the same declarations from a process inside pane 1026 stay pane (membership wins over the declared name)
+# in pane surface 1026 (principal from its process tree)
+>> [host] {"jsonrpc": "2.0", "id": 1, "method": "host.hello", "params": {"client": "paneflow-serve", "protocol": 1}}
+<< {"jsonrpc":"2.0","id":1,"result":{"name":"paneflow-host","version":"0.20.0","protocol":1,"build_id":"0.20.0+108cacb17ed8","host_instance":"15be695d-e2bb-4ae0-a1ab-6ed38d2b9d5a","engine":{"engine":"libghostty-vt","app_version":"1.4.1-dev+108cacb17","api_version":"1.0.1","source_sha":"108cacb17ed8990840cd14abfce43d8ed8503ca1"},"pid":80046,"home":"/Users/m1/.paneflow-dev-qual-rpc","endpoint":"/var/folders/jz/rpbxwt2d4wjgct6stdnkzd9w0000gn/T/paneflow-host-8bd1d7d1e0362f12.sock","started_at_ms":1795548743934}}
+>> [host] {"jsonrpc": "2.0", "id": 2, "method": "system.whoami", "params": {}}
+<< {"jsonrpc":"2.0","id":2,"result":{"principal":"pane","session":"db99a2ef-1fa7-4548-9ae7-d468fe60d34a","workspace":"9bafb22b-a238-495f-82e3-d7d07cc5c23e"}}
+>> [host] {"jsonrpc": "2.0", "id": 3, "method": "host.grants.set", "params": {"revision": 1, "grants": []}}
+<< {"jsonrpc":"2.0","id":3,"error":{"code":-32001,"message":"host.grants.set does not answer a caller identified as pane","data":{"reason":"principal_refused","principal":"pane"}}}
+>> [host] {"jsonrpc": "2.0", "id": 4, "method": "approval.follow", "params": {}}
+<< {"jsonrpc":"2.0","id":4,"error":{"code":-32031,"message":"approval.follow belongs to the Paneflow window: only the window sees or decides write approvals; this caller is identified as pane","data":{"reason":"principal_refused","principal":"pane"}}}
+# in pane surface 1026 (principal from its process tree)
+>> [host] {"jsonrpc": "2.0", "id": 1, "method": "host.hello", "params": {"client": "paneflow-desktop", "protocol": 1}}
+<< {"jsonrpc":"2.0","id":1,"result":{"name":"paneflow-host","version":"0.20.0","protocol":1,"build_id":"0.20.0+108cacb17ed8","host_instance":"15be695d-e2bb-4ae0-a1ab-6ed38d2b9d5a","engine":{"engine":"libghostty-vt","app_version":"1.4.1-dev+108cacb17","api_version":"1.0.1","source_sha":"108cacb17ed8990840cd14abfce43d8ed8503ca1"},"pid":80046,"home":"/Users/m1/.paneflow-dev-qual-rpc","endpoint":"/var/folders/jz/rpbxwt2d4wjgct6stdnkzd9w0000gn/T/paneflow-host-8bd1d7d1e0362f12.sock","started_at_ms":1795548743934}}
+>> [host] {"jsonrpc": "2.0", "id": 2, "method": "system.whoami", "params": {}}
+<< {"jsonrpc":"2.0","id":2,"result":{"principal":"pane","session":"db99a2ef-1fa7-4548-9ae7-d468fe60d34a","workspace":"9bafb22b-a238-495f-82e3-d7d07cc5c23e"}}
+# in pane surface 1026 (principal from its process tree)
+>> [worker] {"jsonrpc": "2.0", "id": 1, "method": "worker.hello", "params": {"client": "qual-rpc-pane", "protocol": 1}}
+<< {"jsonrpc":"2.0","id":1,"result":{"name":"paneflow-serve","version":"0.20.0","build_id":"78848e51d3849c7f17f6bc367392db427587b75fd3ac05a53fa740af56b87d75","protocol":1,"required_core_protocol":1,"pid":79614,"home":"/Users/m1/.paneflow-dev-qual-rpc","endpoint":"/var/folders/jz/rpbxwt2d4wjgct6stdnkzd9w0000gn/T/paneflow-serve-8bd1d7d1e0362f12.sock","started_at_ms":1795548731799,"capabilities":["agent.snapshot","agent.follow","restart.recommendation","integrations.refresh","activity.reducer","activity.notifications","agent.unread","agent.activity_log","events.follow","prompt.follow","layout.authority"]}}
+>> [worker] {"jsonrpc": "2.0", "id": 2, "method": "layout.attach", "params": {"client": "window"}}
+<< {"jsonrpc":"2.0","id":2,"error":{"code":-32070,"message":"layout.attach does not answer a caller identified as pane","data":{"reason":"principal_refused","principal":"pane"}}}
+>> [worker] {"jsonrpc": "2.0", "id": 3, "method": "system.whoami", "params": {}}
+<< {"jsonrpc":"2.0","id":3,"result":{"principal":"pane","session":"db99a2ef-1fa7-4548-9ae7-d468fe60d34a","workspace":"9bafb22b-a238-495f-82e3-d7d07cc5c23e"}}
+>> [worker] {"jsonrpc": "2.0", "id": 4, "method": "layout.sweep", "params": {}}
+<< {"jsonrpc":"2.0","id":4,"error":{"code":-32070,"message":"layout.sweep does not answer a caller identified as pane","data":{"reason":"principal_refused","principal":"pane"}}}
+# in pane surface 1026 (principal from its process tree)
+>> [window] {"jsonrpc": "2.0", "id": 1, "method": "system.whoami", "params": {}}
+<< {"jsonrpc":"2.0","result":{"principal":"pane","session":"db99a2ef-1fa7-4548-9ae7-d468fe60d34a","workspace":"9bafb22b-a238-495f-82e3-d7d07cc5c23e"},"id":1}
+
+== D. unverified: the process that last wrote on the connection exits before the server classifies it
+#    (macOS LOCAL_PEERTOKEN names the last process to use the socket; once it is gone getsockopt fails with EINVAL)
+# attempt 1: the sender pid=96156 wrote every frame and exited at once; its parent read the replies
+>> [worker] {"jsonrpc": "2.0", "id": 1, "method": "worker.hello", "params": {"client": "qual-rpc", "protocol": 1}}
+<< {"jsonrpc":"2.0","id":1,"result":{"name":"paneflow-serve","version":"0.20.0","build_id":"78848e51d3849c7f17f6bc367392db427587b75fd3ac05a53fa740af56b87d75","protocol":1,"required_core_protocol":1,"pid":79614,"home":"/Users/m1/.paneflow-dev-qual-rpc","endpoint":"/var/folders/jz/rpbxwt2d4wjgct6stdnkzd9w0000gn/T/paneflow-serve-8bd1d7d1e0362f12.sock","started_at_ms":1795548731799,"capabilities":["agent...[607 bytes]
+>> [worker] {"jsonrpc": "2.0", "id": 2, "method": "system.whoami", "params": {}}
+<< {"jsonrpc":"2.0","id":2,"result":{"principal":"unverified","reason":"LOCAL_PEERTOKEN failed: Invalid argument (os error 22)"}}
+>> [worker] {"jsonrpc": "2.0", "id": 3, "method": "system.describe", "params": {"method": "system.ping"}}
+<< {"jsonrpc":"2.0","id":3,"result":{"name":"system.ping","summary":"Check that the endpoint answers.","owner":"window","fallback":null,"gate":"none","gate_note":null,"audience":"anyone","scope":"none","scope_note":null,"reply":"inline","stream":false,"in_capabilities":true,"params":{"type":"object","title":"NoParams","$schema":"https://json-schema.org/draft/2020-12/schema"},"result":{"type":"object"...[632 bytes]
+>> [worker] {"jsonrpc": "2.0", "id": 4, "method": "system.capabilities", "params": {}}
+<< {"jsonrpc":"2.0","id":4,"error":{"code":-32601,"message":"method not handled by the worker: system.capabilities"}}
+>> [worker] {"jsonrpc": "2.0", "id": 5, "method": "grant.list", "params": {}}
+<< {"jsonrpc":"2.0","id":5,"error":{"code":-32001,"message":"Paneflow could not identify the calling process: LOCAL_PEERTOKEN failed: Invalid argument (os error 22); grant.list needs an identified caller","data":{"reason":"unverified_caller","principal":"unverified"}}}
+>> [worker] {"jsonrpc": "2.0", "id": 6, "method": "layout.view", "params": {}}
+<< {"jsonrpc":"2.0","id":6,"error":{"code":-32001,"message":"Paneflow could not identify the calling process: LOCAL_PEERTOKEN failed: Invalid argument (os error 22); layout.view needs an identified caller","data":{"reason":"unverified_caller","principal":"unverified"}}}
+>> [worker] {"jsonrpc": "2.0", "id": 7, "method": "agent.snapshot", "params": {}}
+<< {"jsonrpc":"2.0","id":7,"error":{"code":-32001,"message":"Paneflow could not identify the calling process: LOCAL_PEERTOKEN failed: Invalid argument (os error 22); agent.snapshot needs an identified caller","data":{"reason":"unverified_caller","principal":"unverified"}}}
+# attempt 1: the sender pid=96175 wrote every frame and exited at once; its parent read the replies
+>> [host] {"jsonrpc": "2.0", "id": 1, "method": "host.hello", "params": {"client": "qual-rpc", "protocol": 1}}
+<< {"jsonrpc":"2.0","id":1,"result":{"name":"paneflow-host","version":"0.20.0","protocol":1,"build_id":"0.20.0+108cacb17ed8","host_instance":"15be695d-e2bb-4ae0-a1ab-6ed38d2b9d5a","engine":{"engine":"libghostty-vt","app_version":"1.4.1-dev+108cacb17","api_version":"1.0.1","source_sha":"108cacb17ed8990840cd14abfce43d8ed8503ca1"},"pid":80046,"home":"/Users/m1/.paneflow-dev-qual-rpc","endpoint":"/var/fo...[510 bytes]
+>> [host] {"jsonrpc": "2.0", "id": 2, "method": "system.whoami", "params": {}}
+<< {"jsonrpc":"2.0","id":2,"result":{"principal":"unverified","reason":"LOCAL_PEERTOKEN failed: Invalid argument (os error 22)"}}
+>> [host] {"jsonrpc": "2.0", "id": 3, "method": "system.capabilities", "params": {}}
+<< {"jsonrpc":"2.0","id":3,"result":{"scripting":false,"orchestration":false,"controller":false,"host":{"name":"paneflow-host","version":"0.20.0","protocol":1,"build_id":"0.20.0+108cacb17ed8","host_instance":"15be695d-e2bb-4ae0-a1ab-6ed38d2b9d5a","engine":{"engine":"libghostty-vt","app_version":"1.4.1-dev+108cacb17","api_version":"1.0.1","source_sha":"108cacb17ed8990840cd14abfce43d8ed8503ca1"},"pid":...[578 bytes]
+>> [host] {"jsonrpc": "2.0", "id": 4, "method": "surface.list", "params": {}}
+<< {"jsonrpc":"2.0","id":4,"error":{"code":-32001,"message":"Paneflow could not identify the calling process: LOCAL_PEERTOKEN failed: Invalid argument (os error 22); surface.list needs an identified caller","data":{"reason":"unverified_caller","principal":"unverified"}}}
+>> [host] {"jsonrpc": "2.0", "id": 5, "method": "session.list", "params": {}}
+<< {"jsonrpc":"2.0","id":5,"error":{"code":-32001,"message":"Paneflow could not identify the calling process: LOCAL_PEERTOKEN failed: Invalid argument (os error 22); session.list needs an identified caller","data":{"reason":"unverified_caller","principal":"unverified"}}}
+>> [host] {"jsonrpc": "2.0", "id": 6, "method": "session.input", "params": {"session_id": "x", "data": "eA=="}}
+<< {"jsonrpc":"2.0","id":6,"error":{"code":-32001,"message":"Paneflow could not identify the calling process: LOCAL_PEERTOKEN failed: Invalid argument (os error 22); session.input needs an identified caller","data":{"reason":"unverified_caller","principal":"unverified"}}}
+-- D2. window socket (no handshake): same race
+# attempt 1: the sender pid=96665 wrote every frame and exited at once; its parent read the replies
+>> [window] {"jsonrpc": "2.0", "id": 1, "method": "system.whoami", "params": {}}
+<< {"jsonrpc":"2.0","result":{"principal":"unverified","reason":"the calling process exited while it was classified"},"id":1}
+>> [window] {"jsonrpc": "2.0", "id": 2, "method": "system.capabilities", "params": {}}
+<< {"jsonrpc":"2.0","result":{"scripting":false,"orchestration":false,"methods":["system.ping","system.capabilities","system.identify","system.counters","workspace.list","workspace.create","workspace.select","workspace.close","workspace.current","workspace.restore_layout","workspace.up","surface.list","surface.read","surface.search","surface.rename","surface.send_text","surface.send_keystroke","surfa...[498 bytes]
+>> [window] {"jsonrpc": "2.0", "id": 3, "method": "system.describe", "params": {"method": "system.ping"}}
+<< {"jsonrpc":"2.0","result":{"name":"system.ping","summary":"Check that the endpoint answers.","owner":"window","fallback":null,"gate":"none","gate_note":null,"audience":"anyone","scope":"none","scope_note":null,"reply":"inline","stream":false,"in_capabilities":true,"params":{"type":"object","title":"NoParams","$schema":"https://json-schema.org/draft/2020-12/schema"},"result":{"type":"object","addit...[631 bytes]
+>> [window] {"jsonrpc": "2.0", "id": 4, "method": "system.ping", "params": {}}
+<< {"jsonrpc":"2.0","error":{"code":-32001,"message":"Paneflow could not identify the calling process: the calling process exited while it was classified; system.ping needs an identified caller","data":{"reason":"unverified_caller","principal":"unverified"}},"id":4}
+>> [window] {"jsonrpc": "2.0", "id": 5, "method": "surface.list", "params": {}}
+<< {"jsonrpc":"2.0","error":{"code":-32001,"message":"Paneflow could not identify the calling process: the calling process exited while it was classified; surface.list needs an identified caller","data":{"reason":"unverified_caller","principal":"unverified"}},"id":5}
+
+== verdict: window/worker/unverified behave as the decision table says; window and worker are self-declared by any non-pane caller (see B), which the docs do not state
+
+== B4. (at cleanup, window closed, 18 sessions still live in the host) an external script declaring client paneflow-serve calls host.shutdown
+>> [host] {"jsonrpc": "2.0", "id": 1, "method": "host.hello", "params": {"client": "qual-rpc", "protocol": 1}}
+>> [host] {"jsonrpc": "2.0", "id": 2, "method": "host.shutdown", "params": {}}
+<< {"jsonrpc":"2.0","id":2,"error":{"code":-32001,"message":"host.shutdown does not answer a caller identified as external","data":{"reason":"principal_refused","principal":"external"}}}
+>> [host] {"jsonrpc": "2.0", "id": 1, "method": "host.hello", "params": {"client": "paneflow-serve", "protocol": 1}}
+>> [host] {"jsonrpc": "2.0", "id": 2, "method": "system.whoami", "params": {}}
+<< {"jsonrpc":"2.0","id":2,"result":{"principal":"worker"}}
+>> [host] {"jsonrpc": "2.0", "id": 3, "method": "host.shutdown", "params": {}}
+<< {"jsonrpc":"2.0","id":3,"error":{"code":-32029,"message":"18 live session(s) remain; stop them before stopping the host","data":{"live_sessions":[{"schema":1,"session":"093c6334-9dc3-49b2-80aa-3687ee77cf28","workspace":"9bafb22b-a238-495f-82e3-d7d07cc5c23e","generation":1,"host_instance":"15be695d-e2bb-4ae0-a1ab-6ed38d2b9d5a","cwd":"/Users/m1/dev/paneflow","launch":{"shell":"/bin/zsh","cols":120,"...[15755 bytes]
+# the declared worker passes the principal check (an external caller is refused) and reaches the live-session check, -32029

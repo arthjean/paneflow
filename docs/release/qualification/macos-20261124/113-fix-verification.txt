@@ -1,0 +1,9 @@
+## ls after the fix (dev build, home ~/.paneflow-dev-qual-v, two workspaces)
+active=verify: workspace 0 pane_count 4 rows (surface,workspace) [(1026,0),(1037,0),(1031,0),(1034,0)]
+after select 1: workspace 1 pane_count 1 rows [(2054,1)]
+## accessibility tree of the New pane palette (agent-desktop snapshot -i)
+group 'New pane' / button 'Branch: main' / button 'Terminal' / button 'Claude Code' ...
+## git worktree list after the GUI flows
+~/pfq-v                                               4e510fd [main]
+~/.paneflow-dev-qual-v/worktrees/pfq-v-78fc2e19/v-one 4e510fd [v-one]
+~/.paneflow-dev-qual-v/worktrees/pfq-v-78fc2e19/v-two 4e510fd [v-two]

@@ -1,0 +1,47 @@
+# 41-dropped-busy: the dropped event frame and the -32000 backpressure error over raw JSON-RPC
+# macOS 27.2 Apple Silicon, target/debug binaries as provided (worker build_id 78848e51d384), PANEFLOW_HOME=~/.paneflow-dev-qual-rpc
+# docs: reference.md 'Backpressure: Connection cap and bounded event queues return structured errors or dropped frames';
+#       '-32000 backpressure'; events table 'dropped: Subscriber lagged and events were shed'; resync with ps/status
+# setup: workspace 'flood' (paneflow up flood.toml) with six panes running: while :; do echo flood-N $RANDOM; sleep 0.02; done
+
+== A. dropped: a subscriber that reads slowly overflows its 1024-event queue; the stream then carries {type: dropped, count}
+>> [window] {"jsonrpc": "2.0", "id": 1, "method": "events.subscribe", "params": {"types": ["surface_changed"]}}
+<< {"type":"subscribed","id":19}
+# slow reader: 64 bytes per second for 25 s (the server's 5 s send timeout never fires because each send makes progress),
+#   while six panes print every 20 ms (one surface_changed per pane per 50 ms tick, subscriber queue cap 1024)
+# now reading at full speed
+# read 139 surface_changed frames in all
+<< (after 100 surface_changed frames) {"type":"dropped","count":172}
+<< (after 101 surface_changed frames) {"type":"dropped","count":119}
+<< (after 102 surface_changed frames) {"type":"dropped","count":233}
+<< (after 103 surface_changed frames) {"type":"dropped","count":239}
+<< (after 104 surface_changed frames) {"type":"dropped","count":233}
+<< (after 105 surface_changed frames) {"type":"dropped","count":227}
+<< (after 106 surface_changed frames) {"type":"dropped","count":239}
+<< (after 107 surface_changed frames) {"type":"dropped","count":233}
+<< (after 108 surface_changed frames) {"type":"dropped","count":113}
+# a later event: {"type":"surface_changed","surface_id":2053,"output_generation":6393,"ts":1795549358031}
+
+== A2. a subscriber that stops reading entirely is disconnected after the 5 s send timeout instead (no dropped frame reaches it)
+>> [window] events.subscribe types=[surface_changed]; then no read for 20 s
+# EOF: the server closed the stalled subscription
+# 92 frames were buffered before the close; dropped frames among them: 0
+
+== B. -32000 on the window socket: subscription cap (16) and connection cap (32)
+# held 16 subscriptions open; each acknowledged with {"type":"subscribed","id":36}
+>> [window] (subscription 17) {"jsonrpc": "2.0", "id": 1, "method": "events.subscribe", "params": {"types": ["ai.stop"]}}
+<< {"jsonrpc":"2.0","error":{"code":-32000,"message":"server busy: too many event subscriptions"},"id":null}
+# after releasing them: system.ping -> {"jsonrpc":"2.0","result":{"pong":true},"id":9}
+# held 32 idle connections open (no request sent)
+>> [window] (connection 33) {"jsonrpc": "2.0", "id": 1, "method": "system.ping", "params": {}}
+<< {"jsonrpc":"2.0","error":{"code":-32000,"message":"server busy: too many concurrent connections"},"id":null}
+# after releasing them: system.ping -> {"jsonrpc":"2.0","result":{"pong":true},"id":9}
+
+== C. -32000 on the worker (128 connections) and the host (128, shared with the window's own attachments)
+# held 128 idle connections open (no request sent)
+>> [worker] (connection 129) {"jsonrpc": "2.0", "id": 1, "method": "system.ping", "params": {}}
+<< {"jsonrpc":"2.0","id":null,"error":{"code":-32000,"message":"worker busy: too many concurrent connections"}}
+# connection 112 (with 111 idle ones of ours held, plus the window's own attachments):
+<< {"jsonrpc":"2.0","id":null,"error":{"code":-32000,"message":"host busy: too many concurrent connections"}}
+
+== verdict: pass. dropped frames carry {type, count} as documented; -32000 answers every cap. Nit: the busy envelope carries id null even when the request id was read (subscription cap).
