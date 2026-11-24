@@ -57,7 +57,7 @@
     {
       "id": "EP-007",
       "title": "macOS validation on real hardware",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 3,
       "stories_done": 0
@@ -280,44 +280,44 @@
       "id": "US-017",
       "title": "Blended on macOS",
       "epic": "EP-007",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-010",
         "US-012"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-24",
+      "completed_at": "2026-11-24",
+      "reviewed_at": "2026-11-24"
     },
     {
       "id": "US-018",
       "title": "Accessibility, upgrade paths and the fallback on macOS",
       "epic": "EP-007",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-006",
         "US-010",
         "US-012"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-24",
+      "completed_at": "2026-11-24",
+      "reviewed_at": "2026-11-24"
     },
     {
       "id": "US-019",
       "title": "Fix what the macOS hardware pass finds",
       "epic": "EP-007",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-017",
         "US-018"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-24",
+      "completed_at": "2026-11-24",
+      "reviewed_at": "2026-11-24"
     }
   ]
 }

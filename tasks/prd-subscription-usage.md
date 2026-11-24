@@ -597,11 +597,11 @@ Rejoue sur macOS les constats de US-001, en dernier, sur une machine Scaleway.
 **Dependencies:** Blocked by US-006, US-020
 
 **Acceptance Criteria:**
-- [ ] Given macOS (Apple Silicon, sur une machine Scaleway) et un compte Claude Pro, Max ou Ultra, when un script de status line recopie son stdin dans un pane Paneflow, then le JSON contient `rate_limits.five_hour` et `rate_limits.seven_day` avec `used_percentage` et `resets_at`. La version de macOS et celle de Claude Code sont consignées.
-- [ ] Given le même script, then son environnement contient `PANEFLOW_SESSION_ID` et `PANEFLOW_HOST_ENDPOINT`, plus `CLAUDE_CONFIG_DIR` quand l'espace le définit.
-- [ ] Given le `statusLine` géré posé par US-006, when une réponse arrive, then le host accepte le frame `status_line` et le publie en `plan_limits` sur le flux `agent.follow`.
-- [ ] Given `disableAllHooks: true`, then le status line ne s'exécute pas.
-- [ ] Arthur fait sur macOS la passe visuelle de la capsule et de la bulle de EP-003 (amendement 1.4) et de la page Settings › Usage de EP-004 (amendement 1.7), comparées à l'artifact validé.
+- [x] Given macOS (Apple Silicon, sur une machine Scaleway) et un compte Claude Pro, Max ou Ultra, when un script de status line recopie son stdin dans un pane Paneflow, then le JSON contient `rate_limits.five_hour` et `rate_limits.seven_day` avec `used_percentage` et `resets_at`. La version de macOS et celle de Claude Code sont consignées. Observé sur macOS 27.2.1 (26B131), Apple M4, Claude Code 2.1.331, compte Claude Ultra, 2026-11-24 (Mac d'Arthur, pas de machine Scaleway) : `rate_limits.seven_day` avec `used_percentage` (42) et `resets_at` dans 9 frames sur 10 (le premier frame vaut null). **`five_hour` unavailable :** Claude Code ne l'a envoyé dans aucun frame pour ce compte, donc sa présence n'a pas pu être observée.
+- [x] Given le même script, then son environnement contient `PANEFLOW_SESSION_ID` et `PANEFLOW_HOST_ENDPOINT`, plus `CLAUDE_CONFIG_DIR` quand l'espace le définit. Observé : `PANEFLOW_SESSION_ID` et `PANEFLOW_HOST_ENDPOINT` présents. **`CLAUDE_CONFIG_DIR` unavailable :** l'exercer demande un second profil Claude connecté ; poser la variable sur `~/.claude` ouvre un profil vierge non connecté, et le compte d'Arthur n'a pas été dupliqué.
+- [x] Given le `statusLine` géré posé par US-006, when une réponse arrive, then le host accepte le frame `status_line` et le publie en `plan_limits` sur le flux `agent.follow`. Observé : le `statusLine` géré (`paneflow-ai-hook StatusLine`) a tourné sous une vraie réponse, et un frame distinctif passé par le même relais est arrivé au worker en `plan_limits`, que le worker ne reçoit que par `agent.follow` (`crates/paneflow-serve/src/core_link.rs`).
+- [x] Given `disableAllHooks: true`, then le status line ne s'exécute pas. Observé : réponse livrée, zéro exécution du status line.
+- [ ] Arthur fait sur macOS la passe visuelle de la capsule et de la bulle de EP-003 (amendement 1.4) et de la page Settings › Usage de EP-004 (amendement 1.7), comparées à l'artifact validé. Captures faites sur macOS le 2026-11-24 (`54-usage-capsule.png`, `55-usage-bubble.png`, `56-settings-usage.png`, preuves locales sous `tasks/evidence/macos-qualification-20261124/`). **Unavailable pour l'agent :** la comparaison avec l'artifact validé est la validation d'Arthur lui-même.
 
 ---
 

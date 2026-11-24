@@ -7,6 +7,7 @@
 |---------|------|--------|---------|
 | 1.0 | 2026-11-20 | Arthur Jean | Initial PRD, from the 2026-11-20 comparison of Paneflow's backdrop code with Zeron's (zgx), a reading of the pinned GPUI sources, and a live blur test on GNOME 51.1. One `background_style` key replaces seven, one veil function owns every translucent fill, and the veil thickens where the system cannot blur. 6 epics, 16 stories. Reviewed against the PRD rubric the same day; the failures it reported are fixed in this version. |
 | 1.1 | 2026-11-21 | Arthur Jean | Every macOS real-hardware check and visual pass moves to a final epic, EP-007, run on an Apple Silicon bare-metal Mac mini rented from Scaleway. US-010 keeps only the fullscreen rule and becomes code-only; A3 and A4 are validated in EP-007. 7 epics, 19 stories. |
+| 1.2 | 2026-11-24 | Arthur Jean | EP-007 runs on Arthur's own Apple Silicon Mac (M4, macOS 27.2.1) instead of a rented one. A3 confirmed; A4 refuted and fixed in `357a9a4a`. The evidence files EP-007 names are local, untracked, under `tasks/evidence/macos-qualification-20261124/`. |
 
 ## Problem Statement
 
@@ -130,8 +131,8 @@ Web research was not run: every design question was answered by source code (Pan
 |---|------------|------|------------|
 | A1 | Keeping 25 % of the see-through reads as color, not shapes, on Paneflow's dark and light themes. | Medium: a wrong value is a one-constant change. | US-006. Dark theme observed 2026-11-20 by Arthur on GNOME 51.1 Wayland (debug build, `veil` tagged home, `PANEFLOW_DEV_BLUR_SUPPORT=none`): the shell read as a faint tint with no shapes, the terminal card as opaque. Light theme observed the same day with the same override: the sidebar and the panes read as near-opaque color, with no shapes. That run kept the compositor blur on behind the window; the light veil (0.95) lets through less than the dark one (0.93), which showed no shapes over a sharp desktop. The `Full` column (real blur) was approved the same day for the sidebar and the panes. **Confirmed**, 0.25 kept |
 | A2 | Treating an offered Wayland blur as `Full` is right even on a compositor configured for a weak blur (Hyprland with a small radius). | Low: the result is today's veil. | None, accepted; see Non-Goals |
-| A3 | GPUI's `BlurredView` follows the window's rounded corners and leaves the shadow intact under Paneflow's client-side chrome on macOS. | High: not verifiable on Linux. | US-017, on an Apple Silicon bare-metal Mac (EP-007) |
-| A4 | With Reduce transparency on, macOS renders the `NSVisualEffectView` solid, so no desktop content shows through the veil, with no code of ours. | Medium | US-018, on an Apple Silicon bare-metal Mac (EP-007) |
+| A3 | GPUI's `BlurredView` follows the window's rounded corners and leaves the shadow intact under Paneflow's client-side chrome on macOS. | High: not verifiable on Linux. | US-017, on an Apple Silicon bare-metal Mac (EP-007). Observed on macOS 27.2.1 (26B131), Apple M4, 2026-11-24 (debug build, `qual` tagged home): the blur follows the rounded corners and the shadow is intact (`32-blended-corners.png`). **Confirmed** |
+| A4 | With Reduce transparency on, macOS renders the `NSVisualEffectView` solid, so no desktop content shows through the veil, with no code of ours. | Medium | US-018, on an Apple Silicon bare-metal Mac (EP-007). Observed on macOS 27.2.1 (26B131), Apple M4, 2026-11-24: with Reduce transparency on, macOS kept a lighter blur and the desktop still showed through (`45-reduce-transparency-on.png`). **Refuted**, replaced by `357a9a4a`, which reads `NSWorkspace.accessibilityDisplayShouldReduceTransparency` and drops the surface alpha, so the window turns opaque Themed live |
 | A5 | With Transparency effects off, or the window inactive, the Acrylic system backdrop is solid, so no desktop content shows through the veil and the window is not black. | Medium | US-014 |
 | A6 | The Wayland probe, one registry round trip, usually answers before the first frame is presented; when it does not, the first frames use the thick veil and the veil thins once. | Low | US-007 logs the probe's duration. Measured 2026-11-20 on GNOME Shell 51.1 Wayland (debug build, `ep003-blur` tagged home): 2.5 ms and 4.1 ms at startup, 0.36 ms on a hot reload from Themed to Blended |
 | A7 | KDE's `org_kde_kwin_blur_manager` path in the vendored backend blurs as the `ext-background-effect-v1` path does. Only GNOME 51 was tested live (R6). | Low: the path is upstream GPUI code, unchanged here, and a failure leaves today's sharp veil. | None on Arthur's machine; accepted, Open Question 5 |
@@ -458,14 +459,14 @@ Every macOS check that needs a real Mac, visual passes included, and the fixes t
 **Dependencies:** Blocked by US-010, US-012
 
 **Acceptance Criteria:**
-- [ ] Given Blended in a dark and in a light theme, when the window sits over other windows, then what is behind the whole window, sidebar, title bar and terminal card included, is blurred under the veil
-- [ ] Assumption A3 is recorded in this PRD as observed, with the macOS version: the blur follows the window's rounded corners and the window shadow is intact
-- [ ] Given Themed, when the window renders, then it looks as it did on the previous release with no material key, checked against a screenshot of that release kept as local evidence
-- [ ] Given a detached pane window, when it opens under Blended, then it matches the main window
-- [ ] Given the style is switched in Settings, when the choice is saved, then the main and detached windows repaint without a restart
-- [ ] Given Blended, when the window enters fullscreen, then no blur shows and the fills are the Themed ones; when it leaves fullscreen, then the blur returns
-- [ ] Given Blended and a hand edit of `background_style` to an invalid value, when the config hot-reloads, then the window turns Themed and no blur remains
-- [ ] Given the window loses focus, when it renders inactive, then it is neither black nor broken, and what it shows is recorded here
+- [x] Given Blended in a dark and in a light theme, when the window sits over other windows, then what is behind the whole window, sidebar, title bar and terminal card included, is blurred under the veil (observed on macOS 27.2.1 (26B131), Apple M4, 2026-11-24, `31-blended-dark.png`, `33-blended-light.png`)
+- [x] Assumption A3 is recorded in this PRD as observed, with the macOS version: the blur follows the window's rounded corners and the window shadow is intact (recorded in the Assumptions table, `32-blended-corners.png`)
+- [x] Given Themed, when the window renders, then it looks as it did on the previous release with no material key, checked against a screenshot of that release kept as local evidence (v0.20.0 and this build rendered on the same home and window, `36-v0200-themed.png`, `37-head-themed.png`)
+- [x] Given a detached pane window, when it opens under Blended, then it matches the main window (`41-blended-detached.png`)
+- [x] Given the style is switched in Settings, when the choice is saved, then the main and detached windows repaint without a restart (both ways, `background_style` written, `42-settings-themed-both.png`, `43-settings-blended-both.png`)
+- [x] Given Blended, when the window enters fullscreen, then no blur shows and the fills are the Themed ones; when it leaves fullscreen, then the blur returns (`39-fullscreen.png`, `40-after-fullscreen.png`)
+- [x] Given Blended and a hand edit of `background_style` to an invalid value, when the config hot-reloads, then the window turns Themed and no blur remains (`"frosted"` logs a warning and both windows turn Themed, `44-invalid-style-both.png`)
+- [x] Given the window loses focus, when it renders inactive, then it is neither black nor broken, and what it shows is recorded here (an inactive Blended window keeps its blur and veil, the same as a focused one, `38-inactive.png`)
 
 #### US-018: Accessibility, upgrade paths and the fallback on macOS
 **Description:** As a macOS user upgrading, I want my config and my accessibility settings to give a correct window so that the update is invisible.
@@ -474,11 +475,11 @@ Every macOS check that needs a real Mac, visual passes included, and the fixes t
 **Dependencies:** Blocked by US-006, US-010, US-012
 
 **Acceptance Criteria:**
-- [ ] Assumption A4 is recorded in this PRD as observed with Reduce transparency on: no desktop content shows through the window under Blended
-- [ ] Given Reduce transparency is turned on while Paneflow runs, when the window repaints, then no desktop content shows through and the window is not black
-- [ ] Given a config saved by the previous release with `"macos_chrome_material": true`, when the new build starts, then the window opens Blended and the file is not rewritten until a style is chosen
-- [ ] Given a config with none of the eight keys, when the new build starts, then the window opens Themed
-- [ ] Given a debug build started with `PANEFLOW_DEV_BLUR_SUPPORT=none`, when Blended renders, then the shell uses the thick veil and the terminal card is opaque
+- [x] Assumption A4 is recorded in this PRD as observed with Reduce transparency on: no desktop content shows through the window under Blended (A4 failed and is recorded with the fix that replaced it, `357a9a4a`; `45-reduce-transparency-on.png` before, `49-fix-reduce-transparency-on.png` after)
+- [x] Given Reduce transparency is turned on while Paneflow runs, when the window repaints, then no desktop content shows through and the window is not black (after `357a9a4a` the window turns opaque Themed live and returns to Blended when the setting is turned off, `49-fix-reduce-transparency-on.png`, `50-fix-reduce-transparency-off.png`)
+- [x] Given a config saved by the previous release with `"macos_chrome_material": true`, when the new build starts, then the window opens Blended and the file is not rewritten until a style is chosen (same file hash before and after, `51-upgrade-macos-chrome-material.png`)
+- [x] Given a config with none of the eight keys, when the new build starts, then the window opens Themed (`52-upgrade-no-keys.png`)
+- [x] Given a debug build started with `PANEFLOW_DEV_BLUR_SUPPORT=none`, when Blended renders, then the shell uses the thick veil and the terminal card is opaque (`53-blur-support-none.png`)
 
 #### US-019: Fix what the macOS hardware pass finds
 **Description:** As the maintainer, I want every macOS defect from US-017 and US-018 closed or tracked so that the epic ends with a known state.
@@ -487,11 +488,11 @@ Every macOS check that needs a real Mac, visual passes included, and the fixes t
 **Dependencies:** Blocked by US-017, US-018
 
 **Acceptance Criteria:**
-- [ ] Each failed criterion of US-017 and US-018 has a fix commit observed working on the Mac, or a GitHub issue referenced in this PRD
-- [ ] The `macOS aarch64 smoke build` and `macOS aarch64 render smoke (visual)` jobs are green on the commit that closes the epic
-- [ ] Given no criterion failed, when the epic closes, then this story records that fact and changes no code
-- [ ] Given a defect whose fix does not fit the rented session, when it is found, then it is tracked in a GitHub issue referenced here instead of fixed in this story
-- [ ] Assumptions A3 and A4 are recorded in this PRD as confirmed or as the defect that replaced them
+- [x] Each failed criterion of US-017 and US-018 has a fix commit observed working on the Mac, or a GitHub issue referenced in this PRD (one failed: A4, Reduce transparency; fixed in `357a9a4a` and observed working on the M4, `49-fix-reduce-transparency-on.png`, `50-fix-reduce-transparency-off.png`)
+- [x] The `macOS aarch64 smoke build` and `macOS aarch64 render smoke (visual)` jobs are green on the commit that closes the epic (nothing was pushed, so both jobs were replayed step by step on the M4 at `0b7aeeba`: fmt, clippy, the `aarch64-apple-darwin` release build, the Mach-O arm64 check and the Dock tile plug-in check pass; the bundled app restores the fixture session, reaches first paint in 1 s and serves `fixture idle` through `paneflow read`, `103-render-smoke-local.png`. The hosted runs follow Arthur's push; see `docs/release/qualification/macos-20261124.md`, Gates)
+- [x] Given no criterion failed, when the epic closes, then this story records that fact and changes no code (not applicable: A4 failed, see the first criterion)
+- [x] Given a defect whose fix does not fit the rented session, when it is found, then it is tracked in a GitHub issue referenced here instead of fixed in this story (none: the one defect was fixed in the session)
+- [x] Assumptions A3 and A4 are recorded in this PRD as confirmed or as the defect that replaced them (A3 confirmed, A4 replaced by `357a9a4a`; see the Assumptions table)
 
 ## Edge Cases & Error States
 
