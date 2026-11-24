@@ -306,6 +306,9 @@ objc2-metal = { version = "0.3.2", default-features = false, features = [
     "std",
     "MTLDevice",
 ] }
+# The app writes the chosen app icon where the Dock tile plug-in of the bundle
+# reads it, so the Dock keeps that icon while Paneflow is closed.
+paneflow-dock-tile = { path = "../crates/paneflow-dock-tile" }
 
 # Windows: windows-sys powers the TerminateProcess path in TerminalState::drop
 # (US-004 - prd-windows-port.md). Feature set kept minimal on purpose: adding

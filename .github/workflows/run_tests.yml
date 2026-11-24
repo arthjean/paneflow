@@ -548,6 +548,13 @@ jobs:
           file "$BIN"
           file "$BIN" | grep -q 'Mach-O 64-bit executable arm64'
 
+      # The Dock tile plug-in runs inside the Dock's helper process, which
+      # nothing else in CI exercises. This links it as a Mach-O bundle, loads
+      # it the way the Dock does, and checks that its principal class shows
+      # the chosen icon and follows a change posted by the app.
+      - name: Dock tile plug-in loads and follows the app icon
+        run: bash scripts/check-dock-tile-plugin.sh aarch64-apple-darwin
+
       # AC4 - on failure the job logs already capture the failing crate and
       # error; uploading the binary on success gives reviewers an artifact
       # they can `file`/`otool` locally if something downstream misbehaves.

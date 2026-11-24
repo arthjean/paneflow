@@ -19,6 +19,8 @@ the files described here.
 ```
 dist/PaneFlow.app/Contents/
   MacOS/paneflow
+  MacOS/paneflow-host
+  PlugIns/PaneflowDockTile.docktileplugin
   Info.plist
   Resources/PaneFlow.icns
 ```
@@ -26,10 +28,11 @@ dist/PaneFlow.app/Contents/
 `scripts/sign-macos.sh` runs in two passes:
 
 1. **Inside-out walk** - every Mach-O / `.dylib` / `.framework` / `.xpc`
-   under `Contents/Frameworks`, `Contents/Helpers`, `Contents/PlugIns`,
-   `Contents/XPCServices`. Today the bundle has none of those, so this
-   pass is a no-op; it stays in place so adding a helper bundle later
-   needs zero signing-script changes.
+   under `Contents/MacOS`, `Contents/Frameworks`, `Contents/Helpers`,
+   `Contents/PlugIns`, `Contents/XPCServices`. A `.docktileplugin` is
+   signed as a whole bundle, with the hardened runtime and without
+   entitlements, which only a main executable carries; the walk skips the
+   files inside it. The Dock tile plug-in is the only one today.
 2. **Top-level sign** - `Contents/MacOS/paneflow` and the parent `.app`
    wrapper, with `--entitlements` bound and the hardened runtime enabled.
 
