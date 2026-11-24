@@ -551,6 +551,9 @@ pub(crate) fn surface_split(
     };
     let mut built = apply(worker, op)?;
     prepared.keep();
+    if let Some(worktree) = &worktree {
+        record_unlisted_worktree(worker, workspace_id, &worktree.record);
+    }
     if let (
         paneflow_api::Principal::Pane {
             session: parent, ..
@@ -699,6 +702,24 @@ pub(crate) fn workspace_close(
         .workspaces
         .get(index)
         .ok_or_else(|| index_out_of_bounds(index, state.workspaces.len()))?;
+    let worktrees: Vec<paneflow_git::worktree::ManagedWorktree> = ws
+        .extras
+        .managed_worktrees
+        .iter()
+        .map(|def| paneflow_git::worktree::ManagedWorktree {
+            path: PathBuf::from(&def.path),
+            repo_root: PathBuf::from(&def.repo_root),
+            branch: def.branch.clone(),
+            teardown: paneflow_git::worktree::TeardownPolicy::from_record(&def.teardown),
+        })
+        .collect();
+    let sessions: Vec<SessionId> = ws
+        .tabs
+        .iter()
+        .filter_map(|tab| tab.root.as_ref())
+        .flat_map(|root| root.panes())
+        .flat_map(|pane| pane.surfaces.iter().filter_map(|s| s.session().cloned()))
+        .collect();
     apply(
         worker,
         Op::CloseWorkspace {
@@ -706,7 +727,145 @@ pub(crate) fn workspace_close(
             focus: true,
         },
     )?;
+    tear_down_closed_worktrees(worker, worktrees, sessions);
     Ok(json!({"closed": index}))
+}
+
+const WORKTREE_HOST_CLIENT: &str = "paneflow-serve-worktrees";
+
+fn live_host_sessions(endpoint: &Path) -> paneflow_git::worktree::SessionListing<SessionId> {
+    let hello = paneflow_host::protocol::ClientHello::control(WORKTREE_HOST_CLIENT);
+    let mut client = match paneflow_host::HostClient::connect(endpoint, &hello) {
+        Ok(client) => client,
+        Err(error) if error.is_endpoint_absent() => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    let rows = client.list(None).map_err(|error| error.to_string())?;
+    Ok(Some(
+        rows.into_iter()
+            .filter(|row| row.live)
+            .map(|row| (row.session, PathBuf::from(row.cwd)))
+            .collect(),
+    ))
+}
+
+fn listed_by_a_workspace(state: &State, path: &str) -> bool {
+    state
+        .workspaces
+        .iter()
+        .flat_map(|ws| ws.extras.managed_worktrees.iter())
+        .any(|known| known.path == path)
+}
+
+fn record_unlisted_worktree(
+    worker: &Arc<Worker>,
+    workspace: WorkspaceId,
+    record: &paneflow_config::schema::ManagedWorktreeDef,
+) {
+    if listed_by_a_workspace(&worker.layout.current_state(), &record.path) {
+        return;
+    }
+    if let Err(error) = apply(
+        worker,
+        Op::RecordWorktree {
+            workspace,
+            worktree: record.clone(),
+        },
+    ) {
+        log::warn!(
+            "paneflow-serve: cannot record the worktree {}: {}",
+            record.path,
+            error.message
+        );
+    }
+}
+
+fn checkouts_in_use(state: &State) -> Vec<PathBuf> {
+    state
+        .workspaces
+        .iter()
+        .flat_map(|ws| {
+            ws.tabs
+                .iter()
+                .filter_map(|tab| tab.worktree.clone())
+                .chain(std::iter::once(ws.cwd.clone()))
+        })
+        .filter(|dir| !dir.is_empty())
+        .map(PathBuf::from)
+        .collect()
+}
+
+fn worktree_heir(
+    state: &State,
+    wt: &paneflow_git::worktree::ManagedWorktree,
+) -> Option<WorkspaceId> {
+    let path = wt.path.display().to_string();
+    state
+        .workspaces
+        .iter()
+        .find(|ws| {
+            ws.tabs
+                .iter()
+                .any(|tab| tab.worktree.as_deref() == Some(path.as_str()))
+        })
+        .or_else(|| {
+            state
+                .workspaces
+                .iter()
+                .find(|ws| !ws.cwd.is_empty() && Path::new(&ws.cwd).starts_with(&wt.repo_root))
+        })
+        .or_else(|| state.workspaces.get(state.active_workspace))
+        .or_else(|| state.workspaces.first())
+        .map(|ws| ws.id)
+}
+
+fn tear_down_closed_worktrees(
+    worker: &Arc<Worker>,
+    worktrees: Vec<paneflow_git::worktree::ManagedWorktree>,
+    sessions: Vec<SessionId>,
+) {
+    use paneflow_git::worktree;
+    if worktrees.is_empty() {
+        return;
+    }
+    let worker = Arc::clone(worker);
+    let spawned = std::thread::Builder::new()
+        .name("paneflow-serve-worktree-teardown".into())
+        .spawn(move || {
+            let endpoint = worker.core_endpoint.clone();
+            let seen = worktree::after_sessions_end(
+                &sessions,
+                || live_host_sessions(&endpoint),
+                || std::thread::sleep(worktree::SESSION_END_PAUSE),
+                worktree::SESSION_END_POLLS,
+            );
+            let auto_remove = load_config(&worker).worktrees.auto_remove_enabled();
+            let checkouts = checkouts_in_use(&worker.layout.current_state());
+            let outcome = worktree::close_teardown(worktrees, auto_remove, seen, checkouts);
+            for message in &outcome.messages {
+                log::warn!("paneflow-serve: {message}");
+            }
+            for wt in outcome.kept {
+                let state = worker.layout.current_state();
+                let Some(heir) = worktree_heir(&state, &wt) else {
+                    log::warn!(
+                        "paneflow-serve: worktree kept ({}) but no open workspace can list it",
+                        wt.path.display()
+                    );
+                    continue;
+                };
+                let record = paneflow_config::schema::ManagedWorktreeDef {
+                    path: wt.path.display().to_string(),
+                    repo_root: wt.repo_root.display().to_string(),
+                    branch: wt.branch,
+                    teardown: wt.teardown.as_str().to_string(),
+                };
+                record_unlisted_worktree(&worker, heir, &record);
+            }
+        });
+    if let Err(error) = spawned {
+        log::warn!("paneflow-serve: cannot start the worktree teardown: {error}");
+    }
 }
 
 fn layout_param(
@@ -1074,6 +1233,7 @@ pub(crate) fn workspace_up(
     let managed_worktrees: Vec<paneflow_config::schema::ManagedWorktreeDef> = groups
         .iter()
         .filter_map(|(worktree, _)| worktree.as_ref().map(|worktree| worktree.record.clone()))
+        .filter(|record| !listed_by_a_workspace(&state, &record.path))
         .collect();
     let surfaces: Vec<SurfaceId> = planned
         .iter()

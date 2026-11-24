@@ -1784,6 +1784,31 @@ fn a_reopened_tab_keeps_its_worktree() {
 }
 
 #[test]
+fn a_recorded_worktree_is_listed_once_by_its_workspace() {
+    let mut fx = Fixture::new();
+    let workspace = fx.workspace("alpha", "a");
+    let record = paneflow_config::schema::ManagedWorktreeDef {
+        path: "/wt/feat-a".to_string(),
+        repo_root: "/repo".to_string(),
+        branch: "feat/a".to_string(),
+        teardown: "auto".to_string(),
+    };
+    for _ in 0..2 {
+        fx.apply(Op::RecordWorktree {
+            workspace,
+            worktree: record.clone(),
+        });
+    }
+    assert_eq!(
+        fx.model
+            .state()
+            .workspace(workspace)
+            .map(|ws| ws.extras.managed_worktrees.clone()),
+        Some(vec![record])
+    );
+}
+
+#[test]
 fn every_event_of_an_op_is_scoped_with_the_ids_it_concerns_even_once_closed() {
     let mut fx = Fixture::new();
     let workspace = fx.workspace("one", "a");

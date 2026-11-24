@@ -39,6 +39,7 @@ impl PaneFlowApp {
             self.layout.workspaces.insert(model_ws.id, ws.id);
             ws.title.clone_from(&model_ws.title);
             ws.cwd.clone_from(&model_ws.cwd);
+            adopt_recorded_worktrees(&mut ws, &model_ws.extras.managed_worktrees);
             if ws.space != model_ws.space {
                 ws.set_space(model_ws.space.clone());
             }
@@ -166,6 +167,25 @@ impl PaneFlowApp {
         let pane = self.create_pane_with_surfaces(surfaces, model_pane.active, app_ws, cx);
         self.layout.register_pane(model_pane.id, pane.clone());
         pane
+    }
+}
+
+fn adopt_recorded_worktrees(
+    ws: &mut Workspace,
+    recorded: &[paneflow_config::schema::ManagedWorktreeDef],
+) {
+    for def in recorded {
+        let path = std::path::PathBuf::from(&def.path);
+        if path.as_os_str().is_empty() || ws.managed_worktrees.iter().any(|wt| wt.path == path) {
+            continue;
+        }
+        ws.managed_worktrees
+            .push(crate::workspace::worktree::ManagedWorktree {
+                path,
+                repo_root: std::path::PathBuf::from(&def.repo_root),
+                branch: def.branch.clone(),
+                teardown: crate::workspace::worktree::TeardownPolicy::from_record(&def.teardown),
+            });
     }
 }
 

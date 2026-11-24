@@ -10,7 +10,7 @@ use super::Rig;
 use crate::PaneFlowApp;
 use crate::{ClosePane, SplitVertically};
 
-pub(super) const PINS: usize = 14;
+pub(super) const PINS: usize = 15;
 
 const PATIENCE: Duration = Duration::from_secs(60);
 
@@ -538,6 +538,76 @@ fn pin_every_pane_of_a_workspace_another_client_opens_shares_its_durable_id(
         .find(|ws| ws.title == "remote")
         .and_then(|ws| ws.extras.durable_id.clone());
     assert_eq!(model_durable, Some(window_durable));
+    finish(&mut rig, worker, &home);
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_a_worktree_the_worker_creates_is_listed_by_the_window_and_removed_when_it_closes(
+    cx: &mut TestAppContext,
+) {
+    let home = home();
+    let repo_dir = tempfile::tempdir().expect("a repository directory");
+    let repo = repo_dir.path().join("repo");
+    paneflow_git::fixture::committed_repo(&repo, &[("README.md", "init\n")]);
+    let mut rig = Rig::mount(cx);
+    rig.workspace("alpha");
+    let worker = Running::open(&home);
+    attach(&mut rig);
+    control(&home)
+        .request(
+            "workspace.up",
+            json!({"name": "remote", "panes": [{"cwd": repo, "worktree": {"branch": "feat/remote"}}]}),
+        )
+        .expect("the worker creates the worktree");
+    pump(&mut rig, "the window drawing the remote workspace", |app| {
+        app.workspaces.iter().any(|ws| ws.title == "remote")
+    });
+    let listed: Vec<(String, PathBuf)> = rig.cx.update(|_, cx| {
+        let app = rig.app.read(cx);
+        app.managed_worktrees_snapshot()
+            .into_iter()
+            .filter_map(|(ws_id, wt)| {
+                let ws = app.workspaces.iter().find(|ws| ws.id == ws_id)?;
+                Some((ws.title.clone(), wt.path))
+            })
+            .collect()
+    });
+    let [(owner, path)] = listed.as_slice() else {
+        panic!("the window lists the worker's worktree once: {listed:?}");
+    };
+    assert_eq!(owner, "remote");
+    assert!(path.join("README.md").is_file());
+
+    let path = path.clone();
+    assert_converged(&mut rig, &home);
+    rig.act(|app, window, cx| {
+        let idx = app
+            .workspaces
+            .iter()
+            .position(|ws| ws.title == "remote")
+            .expect("the remote workspace");
+        app.remove_workspace(idx, Some(window), cx);
+    });
+    let deadline = Instant::now() + PATIENCE;
+    while path.exists() {
+        if Instant::now() >= deadline {
+            let toasts = rig.toasts();
+            let titles: Vec<String> = rig.cx.update(|_, cx| {
+                let app = rig.app.read(cx);
+                app.workspaces
+                    .iter()
+                    .map(|ws| format!("{} {:?}", ws.title, ws.managed_worktrees))
+                    .collect()
+            });
+            panic!(
+                "closing the workspace never removed its worktree: {toasts:?} {titles:?} {:?}",
+                worker_view(&home).state.workspaces
+            );
+        }
+        rig.act(|app, _, cx| app.process_layout_client(cx));
+        std::thread::sleep(Duration::from_millis(5));
+    }
     finish(&mut rig, worker, &home);
 }
 

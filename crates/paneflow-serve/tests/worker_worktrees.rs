@@ -137,12 +137,22 @@ fn workspace_up_creates_the_worktree_starts_the_pane_in_it_and_records_it() {
     )
     .expect("a second up reuses the worktree Paneflow owns");
     let index = reused["index"].as_u64().unwrap() as usize;
+    let all = workspaces(home.path());
     assert_eq!(
-        workspaces(home.path())[index]["extras"]["managed_worktrees"][0]["path"]
-            .as_str()
-            .map(PathBuf::from),
-        Some(path)
+        bound_tab(&all[index], "feat/login"),
+        path,
+        "the second workspace opens a tab in the same worktree"
     );
+    assert!(
+        recorded_paths(&all[index]).is_empty(),
+        "the reused worktree stays listed by the workspace that holds it: {}",
+        all[index]
+    );
+    let owners = all
+        .iter()
+        .filter(|ws| recorded_paths(ws).contains(&path))
+        .count();
+    assert_eq!(owners, 1, "one workspace lists the worktree");
     worker.stop();
 }
 
@@ -314,6 +324,117 @@ fn a_host_refusal_after_the_layout_took_the_worktree_keeps_the_worktree_it_point
     assert!(
         split_path.join("README.md").is_file(),
         "the split's worktree still exists"
+    );
+    worker.stop();
+}
+
+fn recorded_paths(ws: &Value) -> Vec<PathBuf> {
+    ws["extras"]["managed_worktrees"]
+        .as_array()
+        .map(|records| {
+            records
+                .iter()
+                .filter_map(|record| record["path"].as_str().map(PathBuf::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn bound_tab(ws: &Value, branch: &str) -> PathBuf {
+    ws["tabs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tab| tab["title"] == branch)
+        .and_then(|tab| tab["worktree"].as_str().map(PathBuf::from))
+        .unwrap_or_else(|| panic!("no tab is bound to {branch}: {ws}"))
+}
+
+fn wait_for(what: &str, done: impl Fn() -> bool) {
+    let deadline = std::time::Instant::now() + REPLY_WAIT;
+    while !done() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{what} never happened"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn a_split_with_a_worktree_records_it_in_the_workspace_that_owns_the_tab() {
+    let _serial = one_worker_plans_worktrees_at_a_time();
+    let home = tempfile::tempdir().unwrap();
+    let repo = repo_with_a_local_file(home.path());
+    let worker = common::open_starting_terminals(home.path());
+    let opened = call(
+        home.path(),
+        "workspace.up",
+        json!({"name": "main", "panes": [{"cwd": repo.repo}]}),
+    )
+    .unwrap();
+    let anchor = opened["surface_ids"][0].as_u64().unwrap();
+
+    call(
+        home.path(),
+        "surface.split",
+        json!({"surface_id": anchor, "direction": "vertical", "cwd": repo.repo,
+               "worktree": {"branch": "feat/recorded"}}),
+    )
+    .expect("the worker creates the worktree for the split");
+
+    let index = opened["index"].as_u64().unwrap() as usize;
+    let ws = workspaces(home.path())[index].clone();
+    let path = bound_tab(&ws, "feat/recorded");
+    assert_eq!(recorded_paths(&ws), [path], "{ws}");
+    worker.stop();
+}
+
+#[test]
+fn closing_a_workspace_through_the_worker_removes_its_unused_worktree_and_keeps_a_used_one_listed()
+{
+    let _serial = one_worker_plans_worktrees_at_a_time();
+    let home = tempfile::tempdir().unwrap();
+    let repo = repo_with_a_local_file(home.path());
+    let worker = common::open_starting_terminals(home.path());
+    let main = call(
+        home.path(),
+        "workspace.up",
+        json!({"name": "main", "panes": [{"cwd": repo.repo, "worktree": {"branch": "feat/shared"}}]}),
+    )
+    .unwrap();
+    let main_index = main["index"].as_u64().unwrap() as usize;
+    let shared = bound_tab(&workspaces(home.path())[main_index], "feat/shared");
+    let side = call(
+        home.path(),
+        "workspace.up",
+        json!({"name": "side", "panes": [
+            {"cwd": repo.repo, "worktree": {"branch": "feat/shared"}},
+            {"cwd": repo.repo, "worktree": {"branch": "feat/alone"}}
+        ]}),
+    )
+    .unwrap();
+    let side_index = side["index"].as_u64().unwrap() as usize;
+    let alone = bound_tab(&workspaces(home.path())[side_index], "feat/alone");
+    assert!(alone.join("README.md").is_file());
+
+    call(home.path(), "workspace.close", json!({"index": side_index}))
+        .expect("the worker closes the workspace");
+
+    wait_for("the unused worktree is removed", || !alone.exists());
+    assert!(
+        shared.join("README.md").is_file(),
+        "the worktree a tab of main uses stays on disk"
+    );
+    let all = workspaces(home.path());
+    let main_ws = all
+        .iter()
+        .find(|ws| ws["title"] == "main")
+        .expect("main is open");
+    assert_eq!(recorded_paths(main_ws), [shared], "{main_ws}");
+    assert!(
+        branches(&repo.repo).contains("feat/alone"),
+        "the branch is never deleted"
     );
     worker.stop();
 }

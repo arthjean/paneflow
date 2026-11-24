@@ -1726,7 +1726,12 @@ submodules) and whatever git ships next.
   A `workspace.up` or `surface.split` pane with a `worktree` request has its
   worktree planned, created and, when the layout refuses the call, removed
   again by the process that serves the call; a `setup` command in the request
-  needs the orchestration gate, like any other command.
+  needs the orchestration gate, like any other command. That process records
+  the worktree in the workspace's `managed_worktrees` (the model op
+  `record_worktree` on the worker) unless an open workspace already lists it,
+  and the window copies every record of the model into its own list when it
+  draws a workspace. A `workspace.close` the worker serves runs the same close
+  teardown as the window, on a thread of its own.
 - **Known residual on Windows (#124).** Git for Windows memory-maps a worktree
   file while it hashes it, and Windows refuses a truncating write
   (`CREATE_ALWAYS`, `TRUNCATE_EXISTING`) to a mapped file with OS error 1224.

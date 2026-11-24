@@ -26,6 +26,14 @@ impl TeardownPolicy {
             TeardownPolicy::Keep => "keep",
         }
     }
+
+    pub fn from_record(raw: &str) -> Self {
+        if raw == "auto" {
+            TeardownPolicy::Auto
+        } else {
+            TeardownPolicy::Keep
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -69,11 +77,7 @@ pub fn managed_worktree_from_record(
         path: record.path,
         repo_root: record.repo_root,
         branch: record.branch,
-        teardown: if record.teardown == "auto" {
-            TeardownPolicy::Auto
-        } else {
-            TeardownPolicy::Keep
-        },
+        teardown: TeardownPolicy::from_record(record.teardown),
     })
 }
 

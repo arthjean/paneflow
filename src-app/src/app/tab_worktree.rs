@@ -795,6 +795,9 @@ impl PaneFlowApp {
                 touched.push(ws_idx);
             }
         }
+        if !touched.is_empty() {
+            self.adopt_layout(cx);
+        }
         for ws_idx in touched {
             self.spawn_worktree_listing(ws_idx, cx);
         }

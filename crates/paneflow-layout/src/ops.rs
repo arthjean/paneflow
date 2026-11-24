@@ -164,6 +164,10 @@ pub enum Op {
         tab: TabId,
         worktree: Option<String>,
     },
+    RecordWorktree {
+        workspace: WorkspaceId,
+        worktree: ManagedWorktreeDef,
+    },
     SwapPanes {
         a: PaneId,
         b: PaneId,
@@ -307,6 +311,7 @@ impl Op {
             Self::UnbindSession { .. } => "unbind_session",
             Self::UpdateSurface { .. } => "update_surface",
             Self::BindWorktree { .. } => "bind_worktree",
+            Self::RecordWorktree { .. } => "record_worktree",
             Self::SwapPanes { .. } => "swap_panes",
             Self::MovePane { .. } => "move_pane",
             Self::MoveSurface { .. } => "move_surface",
@@ -408,6 +413,18 @@ pub(crate) fn run(s: &mut Scratch, op: Op) -> Result<(), OpError> {
         } => update_surface(s, surface, *definition),
         Op::BindWorktree { tab, worktree } => {
             tab_mut(&mut s.state, tab)?.worktree = worktree;
+            Ok(())
+        }
+        Op::RecordWorktree {
+            workspace,
+            worktree,
+        } => {
+            let recorded = &mut workspace_mut(&mut s.state, workspace)?
+                .extras
+                .managed_worktrees;
+            if !recorded.iter().any(|known| known.path == worktree.path) {
+                recorded.push(worktree);
+            }
             Ok(())
         }
         Op::SwapPanes { a, b } => swap_panes(s, a, b),
