@@ -7,6 +7,8 @@ pub mod linux_backdrop;
 pub(crate) mod system_blur;
 pub(crate) mod title_band;
 pub mod title_bar;
+#[cfg(any(target_os = "macos", test))]
+pub(crate) mod traffic_lights;
 pub(crate) mod veil;
 
 use gpui::{IntoElement, PathBuilder, Styled, canvas, point};

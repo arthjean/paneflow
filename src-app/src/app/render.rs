@@ -190,6 +190,8 @@ impl Render for PaneFlowApp {
         self.macos_appearance.sync(window, backdrop);
         let title_bar_h =
             (1.75 * window.rem_size()).max(crate::app::constants::TITLE_BAR_MIN_HEIGHT);
+        #[cfg(target_os = "macos")]
+        self.macos_traffic_lights.sync(window, title_bar_h);
         let content_frame = crate::window_chrome::csd::client_content_frame(
             crate::window_chrome::csd::decorations(window),
         );

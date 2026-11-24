@@ -1,8 +1,5 @@
 use super::*;
 
-#[cfg(target_os = "macos")]
-use gpui::point;
-
 fn should_load_login_shell_env_for_startup(
     is_msi_relay: bool,
     is_mcp_subcommand: bool,
@@ -174,7 +171,9 @@ fn main_window_titlebar() -> gpui::TitlebarOptions {
         title: Some(MAIN_WINDOW_TITLE.into()),
         appears_transparent: true,
         #[cfg(target_os = "macos")]
-        traffic_light_position: Some(point(px(12.0), px(14.0))),
+        traffic_light_position: Some(crate::window_chrome::traffic_lights::origin_centered_in(
+            crate::app::constants::TITLE_BAR_MIN_HEIGHT,
+        )),
         ..Default::default()
     }
 }

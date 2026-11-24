@@ -11,6 +11,7 @@ use super::DetachedPanePlacement;
 
 const MIN_WIDTH: f32 = 420.;
 const MIN_HEIGHT: f32 = 280.;
+const TITLE_BAR_HEIGHT: Pixels = px(44.);
 
 pub(crate) struct DetachedPaneWindow {
     pane: Entity<Pane>,
@@ -82,7 +83,9 @@ impl PaneFlowApp {
                     title: None,
                     appears_transparent: true,
                     #[cfg(target_os = "macos")]
-                    traffic_light_position: Some(point(px(12.), px(12.))),
+                    traffic_light_position: Some(
+                        crate::window_chrome::traffic_lights::origin_centered_in(TITLE_BAR_HEIGHT),
+                    ),
                     ..Default::default()
                 }),
                 app_owns_titlebar_drag: true,
@@ -349,7 +352,7 @@ impl Render for DetachedPaneWindow {
             .window_control_area(WindowControlArea::Drag)
             .flex()
             .items_center()
-            .h(px(44.))
+            .h(TITLE_BAR_HEIGHT)
             .flex_none()
             .gap(px(12.))
             .pl(px(if cfg!(target_os = "macos") { 80. } else { 7. }))

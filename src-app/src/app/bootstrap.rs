@@ -518,6 +518,8 @@ impl PaneFlowApp {
             windows_backdrop_acrylic: None,
             #[cfg(target_os = "macos")]
             macos_appearance: Default::default(),
+            #[cfg(target_os = "macos")]
+            macos_traffic_lights: Default::default(),
             jump_cursor: None,
             layout: crate::app::layout_bridge::LayoutBridge::default(),
             owned_sessions: Default::default(),
