@@ -1,7 +1,6 @@
 use gpui::{
     AnyElement, ClickEvent, Context, CursorStyle, Div, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, SharedString, StatefulInteractiveElement, Styled, Window, div,
-    prelude::*, px,
+    KeyDownEvent, ParentElement, SharedString, Styled, Window, div, prelude::*, px,
 };
 use paneflow_mcp_install::IntegrationState;
 
@@ -183,7 +182,7 @@ impl PaneFlowApp {
                         Size::Small,
                         ink,
                     )
-                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         this.open_agent_profile_editor(None, agent, false, window, cx);
                     }))
                     .into_any_element(),
@@ -211,7 +210,7 @@ impl PaneFlowApp {
                     Size::Medium,
                     ink,
                 )
-                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
                     this.close_agent_settings(window, cx);
                 }))
                 .into_any_element(),
@@ -375,7 +374,7 @@ impl PaneFlowApp {
                 installed,
                 ink,
             )
-            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+            .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 this.change_integration(owned.clone(), !installed, cx);
             }))
             .into_any_element()
@@ -454,7 +453,7 @@ impl PaneFlowApp {
                     Size::Medium,
                     ink,
                 )
-                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
                     this.close_agent_account_namer(window, cx);
                 }))
                 .into_any_element(),
@@ -465,7 +464,7 @@ impl PaneFlowApp {
                     Size::Medium,
                     ink,
                 )
-                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
                     this.confirm_agent_account_name(window, cx);
                 }))
                 .into_any_element(),
@@ -567,7 +566,7 @@ impl PaneFlowApp {
                 Size::Medium,
                 ink,
             )
-            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 let armed = this
                     .agent_profile_editor
                     .as_ref()
@@ -596,7 +595,7 @@ impl PaneFlowApp {
                         Size::Medium,
                         ink,
                     )
-                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                    .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
                         this.close_agent_profile_editor(window, cx);
                     }))
                     .into_any_element(),
@@ -607,7 +606,7 @@ impl PaneFlowApp {
                         Size::Medium,
                         ink,
                     )
-                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                    .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
                         this.save_agent_profile(window, cx);
                     }))
                     .into_any_element(),
@@ -667,7 +666,7 @@ impl PaneFlowApp {
                                             REMOVE_ICON,
                                             ink,
                                         )
-                                        .on_click(
+                                        .on_activate(
                                             cx.listener(move |this, _: &ClickEvent, _w, cx| {
                                                 if let Some(editor) =
                                                     this.agent_profile_editor.as_mut()
@@ -693,7 +692,7 @@ impl PaneFlowApp {
                     Size::Small,
                     ink,
                 )
-                .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+                .on_activate(cx.listener(|this, _: &ClickEvent, _w, cx| {
                     this.add_agent_profile_env_row(cx);
                 })),
             ),
@@ -801,7 +800,7 @@ fn copy_row(
         Text::new(title).line(kit::mono_line(ink, value)),
         Some(
             kit::icon_button(id, copy_label, COPY_ICON, ink)
-                .on_click(cx.listener(move |_, _: &ClickEvent, _w, cx| {
+                .on_activate(cx.listener(move |_, _: &ClickEvent, _w, cx| {
                     cx.write_to_clipboard(gpui::ClipboardItem::new_string(copied.clone()));
                 }))
                 .into_any_element(),

@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use gpui::{
     AnyElement, ClickEvent, Context, CursorStyle, InteractiveElement, IntoElement, KeyDownEvent,
-    ParentElement, SharedString, StatefulInteractiveElement, Styled, div, prelude::*, px, svg,
+    ParentElement, SharedString, Styled, div, prelude::*, px, svg,
 };
 use paneflow_agent_config::usage::accounts::{UsageAgent, account_dir_key, canonical_account_dir};
 use paneflow_config::schema::{SpaceConfig, SpaceId};
@@ -375,7 +375,7 @@ impl PaneFlowApp {
                             Size::Small,
                             ink,
                         )
-                        .on_click(cx.listener(
+                        .on_activate(cx.listener(
                             |this, _: &ClickEvent, _w, cx| {
                                 this.reopen_sign_in_page(cx);
                             },
@@ -390,9 +390,11 @@ impl PaneFlowApp {
                         Size::Small,
                         ink,
                     )
-                    .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
-                        this.cancel_agent_sign_in(cx);
-                    })),
+                    .on_activate(cx.listener(
+                        |this, _: &ClickEvent, _w, cx| {
+                            this.cancel_agent_sign_in(cx);
+                        },
+                    )),
                 );
             }
             None => {
@@ -406,7 +408,7 @@ impl PaneFlowApp {
                             Size::Small,
                             ink,
                         )
-                        .on_click(cx.listener(
+                        .on_activate(cx.listener(
                             move |this, _: &ClickEvent, _w, cx| {
                                 this.start_agent_sign_in(agent, dir.clone(), cx);
                             },
@@ -485,7 +487,7 @@ impl PaneFlowApp {
                                 Size::Small,
                                 ink,
                             )
-                            .on_click(cx.listener(
+                            .on_activate(cx.listener(
                                 |this, _: &ClickEvent, _w, cx| {
                                     this.submit_sign_in_code(cx);
                                 },
@@ -539,7 +541,7 @@ impl PaneFlowApp {
             Size::Small,
             ink,
         )
-        .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+        .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
             this.retry_space_integration(&id, slug, cx);
         }))
         .into_any_element();

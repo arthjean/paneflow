@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use gpui::{
     AnyElement, ClickEvent, Context, Div, Entity, InteractiveElement, IntoElement, ParentElement,
-    SharedString, StatefulInteractiveElement, Styled, Window, div, prelude::*, px, svg,
+    SharedString, Styled, Window, div, prelude::*, px, svg,
 };
 use paneflow_config::schema::AgentProfileConfig;
 
@@ -20,6 +20,7 @@ use crate::agent_updates::{self, AgentUpdateState, UpdateMethod, UpdatePhase};
 use crate::app::usage::model::AgentAccountRow;
 use crate::settings::components::{deferred_select_menu, select_menu, select_option};
 use crate::settings::search::{self, Block, SearchCard};
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::{TooltipDelayExt, text_tooltip};
 use crate::widgets::text_input::TextInput;
 
@@ -251,9 +252,11 @@ impl PaneFlowApp {
                     Text::new("Add account"),
                     kit::Place::Last,
                 )
-                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    this.open_agent_account_namer(agent, None, window, cx);
-                })),
+                .on_activate(cx.listener(
+                    move |this, _: &ClickEvent, window, cx| {
+                        this.open_agent_account_namer(agent, None, window, cx);
+                    },
+                )),
             );
         }
         card.into_any_element()
@@ -278,7 +281,7 @@ impl PaneFlowApp {
                     Size::Small,
                     ink,
                 )
-                .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                     this.start_agent_sign_in(agent, dir.clone(), cx);
                 })),
             );
@@ -295,7 +298,7 @@ impl PaneFlowApp {
                     ink.primary,
                     ink.accent,
                 )
-                .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                     this.private_reveals.toggle(&key);
                     cx.notify();
                 })),
@@ -354,7 +357,7 @@ impl PaneFlowApp {
                     true,
                     ink,
                 )
-                .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                     this.start_agent_update(agent, cx);
                 })),
             );
@@ -368,9 +371,11 @@ impl PaneFlowApp {
                     SETTINGS_ICON,
                     ink,
                 )
-                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    this.open_agent_settings(agent, window, cx);
-                })),
+                .on_activate(cx.listener(
+                    move |this, _: &ClickEvent, window, cx| {
+                        this.open_agent_settings(agent, window, cx);
+                    },
+                )),
             )
             .child(
                 kit::switch(
@@ -379,7 +384,7 @@ impl PaneFlowApp {
                     visible,
                     ink,
                 )
-                .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                     this.persist_setting(false, key, serde_json::Value::Bool(!visible), cx);
                 })),
             );
@@ -477,7 +482,7 @@ impl PaneFlowApp {
             ACTIONS_ICON,
             ink,
         )
-        .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+        .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
             this.agent_profile_menu = match this.agent_profile_menu {
                 Some(menu) if menu.target == AgentMenuTarget::Profile(idx) => None,
                 _ => Some(AgentProfileMenu {
@@ -846,7 +851,7 @@ impl PaneFlowApp {
             Text::new(copy.title).line(kit::line(ink, copy.description)),
             Some(
                 kit::switch(id, copy.title, on, ink)
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                    .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                         this.persist_setting(false, config_key, serde_json::Value::Bool(!on), cx);
                     }))
                     .into_any_element(),

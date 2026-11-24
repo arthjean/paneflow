@@ -8,6 +8,7 @@ use paneflow_mcp_install::{InstallKind, OverallState, StatusKind};
 use crate::PaneFlowApp;
 use crate::settings::kit::{self, Ink, Size, Text, Tone};
 use crate::settings::search::{self, Block, SearchCard};
+use crate::ui_primitives::AccessibleControlExt as _;
 
 const PLUGINS_INTRO: &str = "Connect the coding agents on this computer to Paneflow.";
 const AGENTS_HINT: &str = "Where each detected agent stands with the bridge.";
@@ -68,7 +69,7 @@ impl PaneFlowApp {
             ink,
         )
         .when(enabled, |button| {
-            button.on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+            button.on_activate(cx.listener(|this, _: &ClickEvent, _window, cx| {
                 this.start_mcp_install(cx);
             }))
         });

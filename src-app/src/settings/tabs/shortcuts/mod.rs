@@ -551,7 +551,7 @@ impl PaneFlowApp {
                 UNDO_ICON,
                 ink,
             )
-            .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+            .on_activate(cx.listener(|this, _: &ClickEvent, _w, cx| {
                 this.persist_shortcut_change(config_writer::reset_shortcuts_checked, cx);
             }))
         });
@@ -634,7 +634,7 @@ impl PaneFlowApp {
                 gpui::accesskit::Toggled::False
             })
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.set_shortcut_key_search(!armed, cx);
                 this.settings_focus.focus(window, cx);
                 cx.notify();
@@ -862,7 +862,7 @@ impl PaneFlowApp {
                 ink,
             )
             .aria_label(format!("Reset {} to its default", entry.description))
-            .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+            .on_activate(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                 this.persist_shortcut_change(
                     move || config_writer::reset_shortcut(action_name),
                     cx,
@@ -889,7 +889,7 @@ impl PaneFlowApp {
                 }))
             })
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.shortcut_cursor = Some(ShortcutCursor {
                     action: action_name,
                     keyboard: false,

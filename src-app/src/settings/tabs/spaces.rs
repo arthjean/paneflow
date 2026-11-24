@@ -854,7 +854,7 @@ impl PaneFlowApp {
             kit::Place::Middle,
         )
         .aria_label(format!("Open space {}", space.name))
-        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+        .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
             this.open_space_detail(&id, window, cx);
         }))
         .into_any_element()
@@ -927,7 +927,7 @@ impl PaneFlowApp {
                 DELETE_ICON,
                 ink,
             )
-            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+            .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 this.set_space_avatar(&id, None, cx);
             }))
         });
@@ -996,7 +996,7 @@ impl PaneFlowApp {
             .aria_label(format!("{action} for space {}", space.name))
             .opaque_keyboard_stop(px(IDENTITY_MARK / 2.))
             .delayed_tooltip(text_tooltip(action))
-            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+            .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 this.choose_space_avatar(&id, cx);
             }))
             .child(crate::app::sidebar::space_mark(
@@ -1184,7 +1184,7 @@ impl PaneFlowApp {
                         gpui::accesskit::Toggled::False
                     })
                     .delayed_tooltip(text_tooltip(label))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                    .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                         this.set_space_color(&id, choice, cx);
                     }))
                     .child(crate::app::sidebar::space_mark(
@@ -1246,7 +1246,7 @@ impl PaneFlowApp {
                             kit::Place::Last
                         },
                     )
-                    .on_click(cx.listener(
+                    .on_activate(cx.listener(
                         move |this, _: &ClickEvent, window, cx| {
                             this.open_space_env_editor(&id, window, cx);
                         },
@@ -1358,7 +1358,7 @@ impl PaneFlowApp {
                                         ink,
                                     )
                                     .keyboard_stop(px(8.))
-                                    .on_click(cx.listener(
+                                    .on_activate(cx.listener(
                                         move |this, _: &ClickEvent, _w, cx| {
                                             if let Some(editor) = this.space_env_editor.as_mut()
                                                 && row_idx < editor.rows.len()
@@ -1395,7 +1395,7 @@ impl PaneFlowApp {
                     Size::Small,
                     ink,
                 )
-                .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+                .on_activate(cx.listener(|this, _: &ClickEvent, _w, cx| {
                     let row = space_env_row("", "", cx);
                     if let Some(editor) = this.space_env_editor.as_mut() {
                         editor.rows.push(row);
@@ -1416,7 +1416,7 @@ impl PaneFlowApp {
                             Size::Small,
                             ink,
                         )
-                        .on_click(cx.listener(
+                        .on_activate(cx.listener(
                             |this, _: &ClickEvent, _w, cx| {
                                 this.space_env_editor = None;
                                 cx.notify();
@@ -1425,7 +1425,7 @@ impl PaneFlowApp {
                     )
                     .child(
                         kit::button("space-env-save", "Save", Tone::Primary, Size::Small, ink)
-                            .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+                            .on_activate(cx.listener(|this, _: &ClickEvent, _w, cx| {
                                 this.save_space_env(cx);
                             })),
                     ),
@@ -1468,7 +1468,7 @@ impl PaneFlowApp {
                     Size::Small,
                     ink,
                 )
-                .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                     this.turn_off_inherited(&id, key, cx);
                 })),
             )
@@ -1515,7 +1515,7 @@ impl PaneFlowApp {
                             Size::Small,
                             ink,
                         )
-                        .on_click(cx.listener(
+                        .on_activate(cx.listener(
                             |this, _: &ClickEvent, _w, cx| {
                                 this.space_delete_armed = None;
                                 cx.notify();
@@ -1530,7 +1530,7 @@ impl PaneFlowApp {
                             Size::Small,
                             ink,
                         )
-                        .on_click(cx.listener(
+                        .on_activate(cx.listener(
                             move |this, _: &ClickEvent, _w, cx| {
                                 this.delete_space(&id, cx);
                             },
@@ -1548,7 +1548,7 @@ impl PaneFlowApp {
                     Size::Small,
                     ink,
                 )
-                .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                     this.space_delete_armed = Some(id.clone());
                     this.space_name_editor = None;
                     this.space_env_editor = None;
@@ -1607,7 +1607,7 @@ fn render_new_space_row(at_limit: bool, ink: Ink, cx: &mut Context<PaneFlowApp>)
         Text::new("New space"),
         kit::Place::Last,
     )
-    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+    .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
         if let Some(id) = this.add_space(cx) {
             this.edit_space_name(id, window, cx);
         }
@@ -1648,7 +1648,7 @@ fn render_spaces_welcome(
                 crate::app::sidebar::space_mark(Some(color), None, PRESET_MARK, ui),
                 ink,
             )
-            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.create_preset_space(name, color, window, cx);
             })),
         );
@@ -1665,7 +1665,7 @@ fn render_spaces_welcome(
                 .into_any_element(),
             ink,
         )
-        .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+        .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
             if let Some(id) = this.add_space(cx) {
                 this.edit_space_name(id, window, cx);
             }

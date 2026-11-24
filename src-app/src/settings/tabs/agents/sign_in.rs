@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use gpui::{
     AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, KeyDownEvent, ParentElement,
-    SharedString, StatefulInteractiveElement, Styled, div, px,
+    SharedString, Styled, div, px,
 };
 use paneflow_agent_config::usage::accounts::{UsageAgent, account_dir_key, canonical_account_dir};
 use paneflow_config::schema::SpaceId;
@@ -18,6 +18,7 @@ use crate::PaneFlowApp;
 use crate::agent_launcher::TerminalAgent;
 use crate::settings::components::{ModalKey, modal_key};
 use crate::settings::kit::{self, Ink, Size, Text, Tone};
+use crate::ui_primitives::AccessibleControlExt as _;
 
 const CODE_FIELD_HEIGHT: f32 = 28.;
 const NEW_ACCOUNT_TITLE: &str = "New account";
@@ -330,7 +331,7 @@ impl PaneFlowApp {
                     Size::Small,
                     ink,
                 )
-                .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+                .on_activate(cx.listener(|this, _: &ClickEvent, _w, cx| {
                     this.reopen_sign_in_page(cx);
                 })),
             );
@@ -343,7 +344,7 @@ impl PaneFlowApp {
                 Size::Small,
                 ink,
             )
-            .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+            .on_activate(cx.listener(|this, _: &ClickEvent, _w, cx| {
                 this.cancel_agent_sign_in(cx);
             })),
         );
@@ -403,7 +404,7 @@ impl PaneFlowApp {
                             typed,
                             ink,
                         )
-                        .on_click(cx.listener(
+                        .on_activate(cx.listener(
                             |this, _: &ClickEvent, _w, cx| {
                                 this.submit_sign_in_code(cx);
                             },

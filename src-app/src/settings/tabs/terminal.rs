@@ -641,7 +641,7 @@ impl PaneFlowApp {
                     } else {
                         gpui::accesskit::Toggled::False
                     })
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                    .on_activate(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                         this.persist_setting(
                             true,
                             "cursor_color",
@@ -674,7 +674,7 @@ impl PaneFlowApp {
             .hover(move |style| style.bg(ink.well_hover))
             .active(move |style| style.bg(ink.well_pressed))
             .accessible_control(gpui::accesskit::Role::Button, "Use color scheme color")
-            .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+            .on_activate(cx.listener(|this, _: &ClickEvent, _window, cx| {
                 this.persist_setting(true, "cursor_color", Value::Null, cx);
             }))
             .child(
@@ -809,7 +809,7 @@ impl PaneFlowApp {
             setting_copy(copy, ink),
             Some(
                 kit::switch(id, copy.title, current, ink)
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                    .on_activate(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                         this.persist_setting(true, config_key, Value::Bool(!current), cx);
                     }))
                     .into_any_element(),
@@ -847,7 +847,7 @@ impl PaneFlowApp {
             ink,
         )
         .when(can_decrease, |button| {
-            button.on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+            button.on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 this.persist_setting(false, config_key, json!(round(value - step)), cx);
             }))
         });
@@ -859,7 +859,7 @@ impl PaneFlowApp {
             ink,
         )
         .when(can_increase, |button| {
-            button.on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+            button.on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 this.persist_setting(false, config_key, json!(round(value + step)), cx);
             }))
         });
@@ -897,7 +897,7 @@ impl PaneFlowApp {
             ink,
         )
         .when(can_decrease, |button| {
-            button.on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+            button.on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 this.persist_setting(true, "minimum_contrast", previous.clone(), cx);
             }))
         });
@@ -909,7 +909,7 @@ impl PaneFlowApp {
             ink,
         )
         .when(can_increase, |button| {
-            button.on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+            button.on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 this.persist_setting(true, "minimum_contrast", next.clone(), cx);
             }))
         });

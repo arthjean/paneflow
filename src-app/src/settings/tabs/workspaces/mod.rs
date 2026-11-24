@@ -154,7 +154,7 @@ impl PaneFlowApp {
                 Text::new("New template"),
                 kit::Place::Last,
             )
-            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+            .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
                 this.create_workspace_template(TemplatePreset::Blank, cx);
                 let input = this.workspace_template_name_input.clone();
                 input.update(cx, |input, cx| input.select_all_text(cx));
@@ -197,7 +197,7 @@ impl PaneFlowApp {
                 ink,
             )
             .when(launchable, |button| {
-                button.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                button.on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.launch_workspace_template(idx, window, cx);
                 }))
             });
@@ -270,7 +270,7 @@ impl PaneFlowApp {
             place,
         )
         .aria_label(format!("Open template {title}"))
-        .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+        .on_activate(cx.listener(move |this, _: &ClickEvent, _window, cx| {
             this.open_workspace_template(idx, cx);
         }))
         .into_any_element()
@@ -301,7 +301,7 @@ impl PaneFlowApp {
                     ink.secondary,
                 )
             };
-            presets = presets.child(template_chip(preset, mark, ink).on_click(cx.listener(
+            presets = presets.child(template_chip(preset, mark, ink).on_activate(cx.listener(
                 move |this, _: &ClickEvent, _window, cx| {
                     this.create_workspace_template(preset, cx);
                 },

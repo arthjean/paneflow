@@ -11,6 +11,7 @@ use crate::settings::components::{
     deferred_select_menu, input_frame, select_chevron, select_menu, select_option, select_trigger,
     text_field, with_alpha,
 };
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::{
     BODY, LABEL_SM, TITLE, TooltipDelayExt, squircle::squircle_border, squircle_skin, text_tooltip,
 };
@@ -140,7 +141,7 @@ impl PaneFlowApp {
             .active(move |style| style.bg(ink.well_hover))
             .accessible_control(gpui::accesskit::Role::Button, "Choose the project folder")
             .keyboard_stop(px(PICKER_RADIUS))
-            .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+            .on_activate(cx.listener(|this, _: &ClickEvent, _window, cx| {
                 this.pick_workspace_template_project_path(cx);
             }))
             .child(glyph(FOLDER_ICON, 14., ink.secondary))
@@ -191,7 +192,7 @@ impl PaneFlowApp {
         let preset = workspace_layout_preset(workspace);
         let add = kit::icon_button("workspace-pane-add", "Add pane", ADD_ICON, ink)
             .keyboard_stop(px(8.))
-            .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+            .on_activate(cx.listener(|this, _: &ClickEvent, _window, cx| {
                 this.add_workspace_template_pane(cx);
             }));
         let actions = div()
@@ -376,7 +377,7 @@ impl PaneFlowApp {
         } else {
             gpui::accesskit::Toggled::False
         })
-        .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+        .on_activate(cx.listener(move |this, _: &ClickEvent, _window, cx| {
             this.select_workspace_template_pane(pane_idx, cx);
         }))
         .when(selected, |tile| {
@@ -434,7 +435,7 @@ impl PaneFlowApp {
                         gpui::accesskit::Toggled::False
                     })
                     .delayed_tooltip(text_tooltip(*label))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                    .on_activate(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                         this.set_workspace_template_layout(next.clone(), cx);
                     }))
                     .child(preset_glyph(
@@ -465,7 +466,7 @@ impl PaneFlowApp {
             Size::Small,
             ink,
         )
-        .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+        .on_activate(cx.listener(move |this, _: &ClickEvent, _window, cx| {
             this.remove_workspace_template_pane_at(pane_idx, cx);
         }));
 
@@ -586,7 +587,7 @@ impl PaneFlowApp {
                     } else {
                         gpui::accesskit::Toggled::False
                     })
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                    .on_activate(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                         this.set_workspace_template_pane_kind(kind, cx);
                     }))
                     .child(glyph(icon, 13., label_ink))
@@ -680,7 +681,7 @@ impl PaneFlowApp {
             Size::Small,
             ink,
         )
-        .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+        .on_activate(cx.listener(move |this, _: &ClickEvent, _window, cx| {
             this.duplicate_workspace_template(idx, cx);
         }));
         let (delete_text, delete_control) = if armed {
@@ -699,7 +700,7 @@ impl PaneFlowApp {
                             Size::Small,
                             ink,
                         )
-                        .on_click(cx.listener(
+                        .on_activate(cx.listener(
                             |this, _: &ClickEvent, _w, cx| {
                                 this.workspace_template_delete_armed = false;
                                 cx.notify();
@@ -714,7 +715,7 @@ impl PaneFlowApp {
                             Size::Small,
                             ink,
                         )
-                        .on_click(cx.listener(
+                        .on_activate(cx.listener(
                             move |this, _: &ClickEvent, window, cx| {
                                 this.delete_workspace_template(idx, window, cx);
                             },
@@ -732,7 +733,7 @@ impl PaneFlowApp {
                     Size::Small,
                     ink,
                 )
-                .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+                .on_activate(cx.listener(|this, _: &ClickEvent, _w, cx| {
                     this.workspace_template_delete_armed = true;
                     cx.notify();
                 }))

@@ -79,7 +79,7 @@ impl PaneFlowApp {
             Size::Small,
             ink,
         )
-        .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+        .on_activate(cx.listener(|this, _: &ClickEvent, _w, cx| {
             this.reset_theme_selection(cx);
         }));
         let preset = self.current_theme_preset();
@@ -202,7 +202,7 @@ impl PaneFlowApp {
             setting_copy(copy, ink),
             Some(
                 kit::switch(id, copy.title, on, ink)
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                    .on_activate(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                         this.persist_setting(false, config_key, serde_json::Value::Bool(!on), cx);
                     }))
                     .into_any_element(),
@@ -269,7 +269,7 @@ impl PaneFlowApp {
             } else {
                 gpui::accesskit::Toggled::False
             })
-            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.apply_theme_mode(mode, window, cx);
             }))
             .child(mockup);
@@ -623,7 +623,7 @@ impl PaneFlowApp {
                 .gap_y(px(APP_ICON_GRID_ROW_GAP));
             for (idx, &icon) in AppIcon::ALL.iter().enumerate() {
                 let is_active = current == icon;
-                let tile = app_icon_tile(idx, icon, is_active, scale_factor, ink).on_click(
+                let tile = app_icon_tile(idx, icon, is_active, scale_factor, ink).on_activate(
                     cx.listener(move |this, _: &ClickEvent, _window, cx| {
                         this.apply_app_icon(icon, cx);
                     }),

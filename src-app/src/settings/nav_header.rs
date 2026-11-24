@@ -3,6 +3,7 @@ use crate::settings::chrome::{
     SETTINGS_NAV_ROW_GAP, SETTINGS_NAV_ROW_MARGIN_X, SETTINGS_NAV_ROW_PADDING_X, settings_nav_icon,
 };
 use crate::theme::UiColors;
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::squircle_skin;
 use gpui::{
     AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, ParentElement, Role,
@@ -43,7 +44,7 @@ impl PaneFlowApp {
                     None,
                     Some(hover_background),
                 )
-                .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+                .on_activate(cx.listener(|this, _: &ClickEvent, _w, cx| {
                     this.close_settings(cx);
                     cx.notify();
                 }))

@@ -1,6 +1,6 @@
 use gpui::{
     AnyElement, App, ClickEvent, Context, Div, InteractiveElement, IntoElement, ParentElement,
-    StatefulInteractiveElement, Styled, Window, div, px,
+    Styled, Window, div, px,
 };
 use paneflow_config::schema::PaneFlowConfig;
 
@@ -9,6 +9,7 @@ use crate::app::diff_dock::code::controls::EditorDisplay;
 use crate::app::diff_dock::code::language_server;
 use crate::settings::kit::{self, Ink, Size, Text, Tone};
 use crate::settings::search::{self, Block, SearchCard};
+use crate::ui_primitives::AccessibleControlExt as _;
 
 const EDITOR_INTRO: &str = "How the Files dock editor colors code.";
 
@@ -106,7 +107,7 @@ pub(crate) fn editor_section(
                         ink,
                     )
                     .debug_selector(move || state.into())
-                    .on_click(on_toggle)
+                    .on_activate(on_toggle)
                     .into_any_element(),
                 ),
             ),
@@ -126,7 +127,7 @@ pub(crate) fn editor_section(
                         ink,
                     )
                     .debug_selector(|| FORGET_PERMISSIONS_BUTTON.into())
-                    .on_click(on_forget)
+                    .on_activate(on_forget)
                     .into_any_element(),
                 ),
             ),

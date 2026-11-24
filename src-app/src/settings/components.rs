@@ -364,7 +364,7 @@ pub fn secondary_button(
     .accessible_control(gpui::accesskit::Role::Button, label)
     .keyboard_stop(ROW_RADIUS)
     .child(label)
-    .on_click(on_click)
+    .on_activate(on_click)
 }
 
 pub fn raised_button(
@@ -1161,7 +1161,7 @@ impl RenderOnce for SelectMenu {
                         row.when(highlighted == Some(index), |row| {
                             row.bg(highlight).rounded(action_menu::ROW_RADIUS)
                         })
-                        .on_click(move |_, window, cx| {
+                        .on_activate(move |_, window, cx| {
                             restore_select_focus(&click_state, window, cx);
                             click_handler(&(), window, cx);
                         })
@@ -1417,7 +1417,7 @@ pub(crate) fn settings_breadcrumb(
                 .role(gpui::accesskit::Role::Button)
                 .aria_label(back_label)
                 .keyboard_stop(px(6.))
-                .on_click(on_back)
+                .on_activate(on_back)
                 .child(parent),
         )
         .child(

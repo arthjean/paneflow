@@ -719,7 +719,7 @@ impl PaneFlowApp {
                     .cursor(CursorStyle::PointingHand)
                     .hover(|style| style.bg(with_alpha(ui.text, 0.06)))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                    .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
                         this.pane_palette_close_new_branch(window, cx);
                         cx.stop_propagation();
                     }))
@@ -888,7 +888,7 @@ impl PaneFlowApp {
 
         let trigger = palette_branch_trigger(current, open, ui)
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+            .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 if let Some(palette) = this.pane_palette.as_mut() {
                     palette.branch_picker_open = !open;
                     cx.notify();
@@ -917,7 +917,7 @@ impl PaneFlowApp {
                         menu_row("palette-branch-new", false, ui)
                             .role(Role::MenuItem)
                             .aria_label(NEW_BRANCH_ROW)
-                            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                            .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
                                 this.pane_palette_open_new_branch(window, cx);
                                 cx.stop_propagation();
                             }))
@@ -1046,7 +1046,7 @@ impl PaneFlowApp {
             )
             .cursor(CursorStyle::PointingHand)
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+            .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 if let Some(draft) = this
                     .pane_palette
                     .as_mut()
@@ -1090,7 +1090,7 @@ impl PaneFlowApp {
                     .role(Role::MenuItemRadio)
                     .aria_label(SharedString::from(branch.clone()))
                     .aria_toggled(toggled(selected))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                    .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                         if let Some(draft) = this
                             .pane_palette
                             .as_mut()
@@ -1134,7 +1134,7 @@ impl PaneFlowApp {
 
         let worktree_row = palette_worktree_switch(worktree, ui)
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+            .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 if let Some(draft) = this
                     .pane_palette
                     .as_mut()
@@ -1221,7 +1221,7 @@ impl PaneFlowApp {
             needs_checkout,
         } = option;
         palette_branch_option_row(label, selected, needs_checkout, ui)
-            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+            .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 match target.clone() {
                     BranchTarget::Branch(branch) => {
                         this.bind_tab_to_branch(ws_idx, tab_idx, branch, cx)
@@ -1248,7 +1248,7 @@ impl PaneFlowApp {
     ) -> AnyElement {
         palette_preset_row(idx, preset, idx == palette.selected, ui)
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.pane_palette_launch(idx, window, cx);
                 cx.stop_propagation();
             }))

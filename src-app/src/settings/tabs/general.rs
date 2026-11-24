@@ -215,7 +215,7 @@ impl PaneFlowApp {
             enabled,
             ink,
         )
-        .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+        .on_activate(cx.listener(move |this, _: &ClickEvent, _window, cx| {
             this.persist_agent_panel_setting("notify_when_agent_waiting", target.clone(), cx);
         }));
         let (matched, rows) = SearchCard::new()

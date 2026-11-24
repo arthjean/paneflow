@@ -1,12 +1,13 @@
 use gpui::{
     AnyElement, ClickEvent, Context, Div, InteractiveElement, IntoElement, ParentElement,
-    PathPromptOptions, SharedString, StatefulInteractiveElement, Styled, div, prelude::*, px,
+    PathPromptOptions, SharedString, Styled, div, prelude::*, px,
 };
 use paneflow_config::schema::{WORKTREES_KEEP_LIMIT_MAX, WorktreesConfig};
 
 use crate::PaneFlowApp;
 use crate::settings::kit::{self, Ink, Size, Text, Tone};
 use crate::settings::search::{self, Block, SearchCard};
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::workspace::worktree::{self, ManagedWorktree, Snapshot};
 
 const WORKTREES_INTRO: &str =
@@ -68,7 +69,7 @@ impl PaneFlowApp {
                             auto_remove,
                             ink,
                         )
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                        .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                             let mut next = this.cached_config.worktrees.clone();
                             next.auto_remove = Some(!auto_remove);
                             this.persist_worktrees(next, cx);
@@ -111,7 +112,7 @@ impl PaneFlowApp {
                 Size::Small,
                 ink,
             )
-            .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+            .on_activate(cx.listener(|this, _: &ClickEvent, _w, cx| {
                 this.choose_worktrees_dir(cx);
             })),
         );
@@ -124,7 +125,7 @@ impl PaneFlowApp {
                     Size::Small,
                     ink,
                 )
-                .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+                .on_activate(cx.listener(|this, _: &ClickEvent, _w, cx| {
                     let mut next = this.cached_config.worktrees.clone();
                     next.dir = None;
                     this.persist_worktrees(next, cx);
@@ -150,7 +151,7 @@ impl PaneFlowApp {
             ink,
         )
         .when(can_decrease, |button| {
-            button.on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+            button.on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 let mut next = this.cached_config.worktrees.clone();
                 next.keep_limit = Some(keep_limit.saturating_sub(1));
                 this.persist_worktrees(next, cx);
@@ -164,7 +165,7 @@ impl PaneFlowApp {
             ink,
         )
         .when(can_increase, |button| {
-            button.on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+            button.on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 let mut next = this.cached_config.worktrees.clone();
                 next.keep_limit = Some((keep_limit + 1).min(WORKTREES_KEEP_LIMIT_MAX));
                 this.persist_worktrees(next, cx);
@@ -231,7 +232,7 @@ impl PaneFlowApp {
             Size::Small,
             ink,
         )
-        .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+        .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
             this.request_worktree_removal(ws_id, path.clone(), cx);
         }));
         kit::row(
@@ -306,7 +307,7 @@ impl PaneFlowApp {
                     Size::Small,
                     ink,
                 )
-                .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                     this.restore_worktree_snapshot(ws_id, restore_snapshot.clone(), cx);
                 })),
             )
@@ -326,7 +327,7 @@ impl PaneFlowApp {
                         cx.notify();
                     }
                 }))
-                .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                     if this.worktree_snapshot_delete_armed.as_deref() == Some(reference.as_str()) {
                         this.worktree_snapshot_delete_armed = None;
                         this.delete_worktree_snapshot(ws_id, delete_snapshot.clone(), cx);

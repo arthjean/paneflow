@@ -694,9 +694,25 @@ pub(crate) trait AccessibleControlExt: StatefulInteractiveElement + Sized {
                 }
             })
     }
+
+    fn on_activate(
+        self,
+        handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        let handler = std::rc::Rc::new(handler);
+        let click = handler.clone();
+        self.on_click(move |event, window, cx| click(event, window, cx))
+            .on_a11y_action(gpui::accesskit::Action::Click, move |_, window, cx| {
+                handler(&accessible_press(), window, cx)
+            })
+    }
 }
 
 impl<E: StatefulInteractiveElement> AccessibleControlExt for E {}
+
+pub(crate) fn accessible_press() -> gpui::ClickEvent {
+    gpui::ClickEvent::Keyboard(gpui::KeyboardClickEvent::default())
+}
 
 pub(crate) const TOOLTIP_RADIUS: Pixels = px(14.);
 pub(crate) const TOOLTIP_MAX_WIDTH: Pixels = px(400.);
@@ -1321,6 +1337,48 @@ mod tests {
             };
             assert_eq!(label.as_deref(), Some(expected), "{name}");
         }
+    }
+
+    #[test]
+    fn settings_and_palette_controls_answer_a_press_without_hit_testing() {
+        use std::path::{Path, PathBuf};
+
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut files: Vec<PathBuf> = vec![root.join("app/pane_palette.rs")];
+        let mut stack = vec![root.join("settings")];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+                    files.push(path);
+                }
+            }
+        }
+        let mut violations = Vec::new();
+        for path in files {
+            let rel = path.strip_prefix(&root).unwrap().display().to_string();
+            let text = std::fs::read_to_string(&path).unwrap();
+            for (i, line) in text.lines().enumerate() {
+                if line.contains(".on_click(") {
+                    violations.push(format!("{rel}:{}", i + 1));
+                }
+            }
+        }
+        assert!(
+            violations.is_empty(),
+            "GPUI answers an accessibility press on a bare on_click with a synthetic mouse click at the control's center, which misses a control scrolled out of view; use on_activate:\n{}",
+            violations.join("\n")
+        );
+    }
+
+    #[test]
+    fn an_accessibility_press_reaches_the_handler_as_a_keyboard_click() {
+        let press = accessible_press();
+        assert!(press.is_keyboard());
+        assert!(press.standard_click());
+        assert_eq!(press.mouse_position(), None);
     }
 
     #[test]

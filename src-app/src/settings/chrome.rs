@@ -6,6 +6,7 @@ use gpui::{
 use crate::keybindings::ShortcutEntry;
 use crate::settings::search;
 use crate::settings::tabs::shortcuts::any_shortcut_matches;
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::squircle_skin;
 use crate::{PaneFlowApp, SettingsSection};
 
@@ -333,7 +334,7 @@ impl PaneFlowApp {
                 let row = if is_active {
                     row.into_any_element()
                 } else {
-                    row.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    row.on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         this.select_settings_section(section, window, cx);
                     }))
                     .into_any_element()
