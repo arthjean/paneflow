@@ -786,12 +786,20 @@ impl PaneFlowApp {
         window: &gpui::Window,
         cx: &mut Context<Self>,
     ) {
+        self.sync_system_theme(window.appearance(), cx);
+    }
+
+    pub(crate) fn sync_system_theme(
+        &mut self,
+        appearance: gpui::WindowAppearance,
+        cx: &mut Context<Self>,
+    ) {
         if self.theme_mode != crate::ThemeMode::System {
             return;
         }
         let name = self
             .theme_mode
-            .resolved_theme_name(self.current_theme_preset(), window.appearance());
+            .resolved_theme_name(self.current_theme_preset(), appearance);
         if self.cached_config.theme.as_deref() == Some(name) {
             return;
         }

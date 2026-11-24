@@ -11,7 +11,7 @@ use crate::{
     SplitVertically, ToggleZoom, UndoClosePane,
 };
 
-pub(super) const PINS: usize = 23;
+pub(super) const PINS: usize = 24;
 
 fn split_v(rig: &mut Rig<'_>) {
     rig.act(|app, window, cx| app.handle_split_v(&SplitVertically, window, cx));
@@ -516,5 +516,28 @@ fn pin_returning_to_a_new_pane_tab_gives_its_launcher_the_keyboard(cx: &mut Test
     assert!(
         launcher_focused(&mut rig),
         "the New pane launcher of the shown tab holds the keyboard"
+    );
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_a_config_reload_to_system_mode_takes_the_variant_of_the_system_appearance(
+    cx: &mut TestAppContext,
+) {
+    let mut rig = Rig::mount(cx);
+    let config = paneflow_config::schema::PaneFlowConfig {
+        theme: Some("Vercel Dark".to_string()),
+        theme_mode: Some("system".to_string()),
+        ..Default::default()
+    };
+    let theme = rig.act(move |app, _, cx| {
+        *app.pending_config.lock().unwrap_or_else(|e| e.into_inner()) = Some(config);
+        app.process_config_changes(cx);
+        app.cached_config.theme.clone()
+    });
+    assert_eq!(
+        theme.as_deref(),
+        Some("Vercel Light"),
+        "the test platform reports a light appearance"
     );
 }

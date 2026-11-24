@@ -634,6 +634,7 @@ impl PaneFlowApp {
             self.cached_config = config;
             crate::config_snapshot::publish(&self.cached_config, cx);
             self.theme_mode = theme_mode;
+            self.sync_system_theme(cx.window_appearance(), cx);
             crate::ui_primitives::set_reduce_motion(self.cached_config.reduce_motion_enabled(), cx);
             crate::ui_primitives::interface_style::set_interface_style(
                 self.cached_config.resolved_interface_style(),
