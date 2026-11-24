@@ -570,10 +570,10 @@ impl PaneFlowApp {
 
     pub(crate) fn apply_editor_display(&mut self, cx: &mut Context<Self>) {
         let display = EditorDisplay::from_config(&self.cached_config.editor);
-        if display == editor_display() {
+        if display == editor_display(cx) {
             return;
         }
-        set_editor_display(display);
+        set_editor_display(display, cx);
         let live = self.diff_dock.diff_tabs.iter();
         let parked = self
             .diff_dock

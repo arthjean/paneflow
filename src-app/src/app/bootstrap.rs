@@ -616,6 +616,7 @@ impl PaneFlowApp {
             crate::app::diff_dock::code::controls::EditorDisplay::from_config(
                 &app.cached_config.editor,
             ),
+            cx,
         );
 
         app.adopt_layout(cx);

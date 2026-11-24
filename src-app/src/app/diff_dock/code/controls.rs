@@ -1,8 +1,7 @@
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use gpui::{
-    AnyElement, AppContext, Context, Entity, EventEmitter, FocusHandle, InteractiveElement,
+    AnyElement, App, AppContext, Context, Entity, EventEmitter, FocusHandle, InteractiveElement,
     IntoElement, MouseButton, ParentElement, Render, StatefulInteractiveElement, Styled, Window,
     deferred, div, prelude::FluentBuilder, px, svg,
 };
@@ -43,28 +42,28 @@ impl EditorDisplay {
     }
 }
 
-static EDITOR_MINIMAP: AtomicBool = AtomicBool::new(false);
-static EDITOR_SCROLLBAR: AtomicBool = AtomicBool::new(true);
-static EDITOR_WORD_WRAP: AtomicBool = AtomicBool::new(false);
-static EDITOR_MARKDOWN_RENDERED: AtomicBool = AtomicBool::new(false);
-static EDITOR_CSV_TABLE: AtomicBool = AtomicBool::new(true);
-
-pub(crate) fn set_editor_display(display: EditorDisplay) {
-    EDITOR_MINIMAP.store(display.minimap, Ordering::Relaxed);
-    EDITOR_SCROLLBAR.store(display.scrollbar, Ordering::Relaxed);
-    EDITOR_WORD_WRAP.store(display.word_wrap, Ordering::Relaxed);
-    EDITOR_MARKDOWN_RENDERED.store(display.markdown_rendered, Ordering::Relaxed);
-    EDITOR_CSV_TABLE.store(display.csv_table, Ordering::Relaxed);
+impl Default for EditorDisplay {
+    fn default() -> Self {
+        Self {
+            minimap: false,
+            scrollbar: true,
+            word_wrap: false,
+            markdown_rendered: false,
+            csv_table: true,
+        }
+    }
 }
 
-pub(crate) fn editor_display() -> EditorDisplay {
-    EditorDisplay {
-        minimap: EDITOR_MINIMAP.load(Ordering::Relaxed),
-        scrollbar: EDITOR_SCROLLBAR.load(Ordering::Relaxed),
-        word_wrap: EDITOR_WORD_WRAP.load(Ordering::Relaxed),
-        markdown_rendered: EDITOR_MARKDOWN_RENDERED.load(Ordering::Relaxed),
-        csv_table: EDITOR_CSV_TABLE.load(Ordering::Relaxed),
-    }
+impl gpui::Global for EditorDisplay {}
+
+pub(crate) fn set_editor_display(display: EditorDisplay, cx: &mut App) {
+    cx.set_global(display);
+}
+
+pub(crate) fn editor_display(cx: &App) -> EditorDisplay {
+    cx.try_global::<EditorDisplay>()
+        .copied()
+        .unwrap_or_default()
 }
 
 pub(crate) struct EditorControls {
@@ -85,10 +84,11 @@ pub(crate) struct WordWrapToggled(pub(crate) bool);
 
 impl EditorControls {
     pub(crate) fn attach(editor_focus: FocusHandle, cx: &mut Context<CodeView>) -> Entity<Self> {
+        let word_wrap = editor_display(cx).word_wrap;
         let controls = cx.new(|_| Self {
             open: false,
             editor_focus,
-            word_wrap: editor_display().word_wrap,
+            word_wrap,
         });
         cx.observe(&controls, |_, _, cx| cx.notify()).detach();
         cx.subscribe(
@@ -122,7 +122,7 @@ impl EditorControls {
     }
 
     fn choose(&mut self, control: EditorControl, window: &mut Window, cx: &mut Context<Self>) {
-        let mut display = editor_display();
+        let mut display = editor_display(cx);
         match control {
             EditorControl::WordWrap => {
                 self.word_wrap = !self.word_wrap;
@@ -139,7 +139,7 @@ impl EditorControls {
 
     fn menu(&self, cx: &mut Context<Self>) -> AnyElement {
         let ui = crate::theme::ui_colors();
-        let display = editor_display();
+        let display = editor_display(cx);
         let menu = ActionMenu::new()
             .item(
                 MenuItem::new("Word Wrap", EditorControl::WordWrap)
