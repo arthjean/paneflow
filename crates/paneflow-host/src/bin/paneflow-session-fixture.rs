@@ -2,7 +2,7 @@ use std::io::{Read, Write};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::Duration;
 
-const USAGE: &str = "paneflow-session-fixture <idle|declare|echo|flood <bytes>|stream <bytes-per-second> <seconds>|history <lines>|delayed-exit <ms> <code>|blocked-stdin|descendants <count> <parent-ms>|descendants-orphan <count> <parent-ms>|split-sequences>";
+const USAGE: &str = "paneflow-session-fixture <idle|declare|echo|flood <bytes>|stream <bytes-per-second> <seconds>|history <lines>|delayed-exit <ms> <code>|blocked-stdin|descendants <count> <parent-ms>|descendants-orphan <count> <parent-ms>|split-sequences|whoami <host|worker|window> <endpoint> [engine|control|worker]|call <host|worker|window> <endpoint> <engine|control|worker> <method> <params>|setsid-whoami <args>|orphan-whoami <args>|escape-whoami <args>|outlive-host <socket>>";
 
 const FLOOD_CHUNK: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\r\n";
 
@@ -36,6 +36,13 @@ fn main() -> ExitCode {
         ),
         "descendant-sleep" => descendant_sleep(),
         "split-sequences" => split_sequences(),
+        "whoami" => whoami(&args[1..]),
+        "call" => call(&args[1..]),
+        "setsid-whoami" => spawn_whoami(&args[1..], Detach::Session),
+        "orphan-whoami" => spawn_whoami(&args[1..], Detach::Orphan),
+        "escape-whoami" => spawn_whoami(&args[1..], Detach::SessionAndOrphan),
+        "orphan-relay" => orphan_relay(&args[1..]),
+        "outlive-host" => outlive_host(&args[1..]),
         _ => {
             eprintln!("{USAGE}");
             Err(2)
@@ -244,4 +251,259 @@ fn split_sequences() -> Result<(), u8> {
         std::thread::sleep(Duration::from_millis(40));
     }
     announce("fixture split sequences done")
+}
+
+fn host_hello(kind: Option<&str>) -> paneflow_host::protocol::ClientHello {
+    use paneflow_host::protocol::ClientHello;
+    match kind {
+        Some("engine") => ClientHello::local("fixture-whoami"),
+        Some("worker") => ClientHello::control("paneflow-serve-fixture"),
+        _ => ClientHello::control("fixture-whoami"),
+    }
+}
+
+#[cfg(unix)]
+const ORPHAN_OF_ENV: &str = "PANEFLOW_FIXTURE_ORPHAN_OF";
+
+#[cfg(unix)]
+fn await_orphaning() {
+    let Some(relay) = std::env::var(ORPHAN_OF_ENV)
+        .ok()
+        .and_then(|raw| raw.parse::<i32>().ok())
+    else {
+        return;
+    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while unsafe { libc::getppid() } == relay && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[cfg(not(unix))]
+fn await_orphaning() {}
+
+#[cfg(unix)]
+fn outlive_host(args: &[String]) -> Result<(), u8> {
+    let socket = std::path::PathBuf::from(args.first().ok_or(2_u8)?);
+    unsafe {
+        libc::signal(libc::SIGHUP, libc::SIG_IGN);
+    }
+    let parent = unsafe { libc::getppid() };
+    announce(&format!("outlive ready parent={parent}"))?;
+    while unsafe { libc::getppid() } == parent {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    let mut stream = loop {
+        match std::os::unix::net::UnixStream::connect(&socket) {
+            Ok(stream) => break stream,
+            Err(_) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(_) => return Err(3),
+        }
+    };
+    let mut closed = [0_u8; 1];
+    let _ = stream.read(&mut closed);
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn outlive_host(_: &[String]) -> Result<(), u8> {
+    Err(2)
+}
+
+fn whoami(args: &[String]) -> Result<(), u8> {
+    use paneflow_ipc_client::IpcTransport;
+    use serde_json::json;
+    await_orphaning();
+    let server = args.first().map(String::as_str).unwrap_or_default();
+    let endpoint = std::path::PathBuf::from(args.get(1).ok_or(2_u8)?);
+    let mut classified = None;
+    let answer: Result<serde_json::Value, String> = match server {
+        "host" => {
+            let hello = host_hello(args.get(2).map(String::as_str));
+            match paneflow_host::HostClient::connect(&endpoint, &hello) {
+                Ok(mut client) => {
+                    let answer = client
+                        .call("system.whoami", json!({}))
+                        .map_err(|error| error.to_string());
+                    let pid = std::process::id();
+                    let started_at = paneflow_host::process::process_start_time(pid);
+                    classified = Some(client.call(
+                        "peer.classify",
+                        json!({"pid": pid, "started_at": started_at.unwrap_or_default()}),
+                    ));
+                    answer
+                }
+                Err(error) => Err(error.to_string()),
+            }
+        }
+        "worker" => paneflow_ipc_client::host_control::HostControl::open(
+            &endpoint,
+            "fixture-whoami",
+            Duration::from_secs(10),
+        )
+        .map_err(|error| format!("{error:?}"))
+        .and_then(|mut control| control.request("system.whoami", json!({}))),
+        "window" => paneflow_ipc_client::IpcClient::new(endpoint).call("system.whoami", json!({})),
+        _ => return Err(2),
+    };
+    match answer {
+        Ok(reply) => {
+            for key in ["principal", "session", "workspace"] {
+                if let Some(value) = reply[key].as_str() {
+                    announce(&format!("whoami {key}={value}"))?;
+                }
+            }
+        }
+        Err(error) => announce(&format!("whoami error={error}"))?,
+    }
+    match classified {
+        Some(Ok(reply)) => announce(&format!("classify in_pane={}", reply["in_pane"]))?,
+        Some(Err(error)) => announce(&format!(
+            "classify refused code={}",
+            error.code().unwrap_or_default()
+        ))?,
+        None => {}
+    }
+    announce("whoami done")?;
+    loop {
+        std::thread::sleep(Duration::from_secs(3600));
+    }
+}
+
+fn call(args: &[String]) -> Result<(), u8> {
+    use paneflow_ipc_client::IpcTransport;
+    let server = args.first().map(String::as_str).unwrap_or_default();
+    let endpoint = std::path::PathBuf::from(args.get(1).ok_or(2_u8)?);
+    let method = args.get(3).ok_or(2_u8)?;
+    let params: serde_json::Value = args
+        .get(4)
+        .and_then(|raw| serde_json::from_str(raw).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    let answer: Result<serde_json::Value, String> = match server {
+        "host" => {
+            let hello = host_hello(args.get(2).map(String::as_str));
+            match paneflow_host::HostClient::connect(&endpoint, &hello) {
+                Ok(mut client) => match client.call(method, params) {
+                    Ok(reply) => Ok(reply),
+                    Err(paneflow_host::HostClientError::Rpc {
+                        code,
+                        message,
+                        data,
+                    }) => {
+                        let reason = data
+                            .as_ref()
+                            .and_then(|data| data["reason"].as_str())
+                            .unwrap_or("none")
+                            .to_string();
+                        announce(&format!("call code={code}"))?;
+                        announce(&format!("call reason={reason}"))?;
+                        Err(message)
+                    }
+                    Err(error) => Err(error.to_string()),
+                },
+                Err(error) => Err(error.to_string()),
+            }
+        }
+        "worker" => paneflow_ipc_client::host_control::HostControl::open(
+            &endpoint,
+            "fixture-call",
+            Duration::from_secs(10),
+        )
+        .map_err(|error| format!("{error:?}"))
+        .and_then(|mut control| control.request(method, params)),
+        "window" => paneflow_ipc_client::IpcClient::new(endpoint).call(method, params),
+        _ => return Err(2),
+    };
+    match answer {
+        Ok(reply) => announce(&format!("call ok={reply}"))?,
+        Err(message) => announce(&format!("call error={message}"))?,
+    }
+    announce("call done")?;
+    loop {
+        std::thread::sleep(Duration::from_secs(3600));
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Detach {
+    Session,
+    Orphan,
+    SessionAndOrphan,
+}
+
+#[cfg(unix)]
+fn whoami_command(args: &[String], new_session: bool) -> Result<Command, u8> {
+    use std::os::unix::process::CommandExt;
+    let executable = std::env::current_exe().map_err(|_| 3)?;
+    let mut command = Command::new(executable);
+    command
+        .arg("whoami")
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    if new_session {
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+    Ok(command)
+}
+
+#[cfg(unix)]
+fn spawn_whoami(args: &[String], detach: Detach) -> Result<(), u8> {
+    let child = match detach {
+        Detach::Session => whoami_command(args, true)?.spawn(),
+        Detach::Orphan | Detach::SessionAndOrphan => {
+            let executable = std::env::current_exe().map_err(|_| 3)?;
+            let mode = if detach == Detach::Orphan {
+                "keep-session"
+            } else {
+                "new-session"
+            };
+            Command::new(executable)
+                .arg("orphan-relay")
+                .arg(mode)
+                .args(args)
+                .stdin(Stdio::null())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .spawn()
+        }
+    };
+    let mut child = child.map_err(|_| 3)?;
+    if detach != Detach::Session {
+        let _ = child.wait();
+    }
+    loop {
+        std::thread::sleep(Duration::from_secs(3600));
+    }
+}
+
+#[cfg(unix)]
+fn orphan_relay(args: &[String]) -> Result<(), u8> {
+    let new_session = args.first().map(String::as_str) == Some("new-session");
+    whoami_command(&args[1..], new_session)?
+        .env(ORPHAN_OF_ENV, std::process::id().to_string())
+        .spawn()
+        .map(drop)
+        .map_err(|_| 3)
+}
+
+#[cfg(not(unix))]
+fn spawn_whoami(_args: &[String], _detach: Detach) -> Result<(), u8> {
+    Err(2)
+}
+
+#[cfg(not(unix))]
+fn orphan_relay(_args: &[String]) -> Result<(), u8> {
+    Err(2)
 }

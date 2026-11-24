@@ -288,8 +288,6 @@ pub(crate) const TOAST_EXIT_MS: u64 = 180;
 pub(crate) const RELEASE_TOAST_DELAY_MS: u64 = 1500;
 pub(crate) const UPDATE_CHECK_PILL_HOLD_MS: u64 = 3000;
 
-pub(crate) const MAX_CLOSED_PANES: usize = 5;
-
 pub(crate) const CLOSED_SESSION_GRACE_MS: u64 = 5_000;
 
 pub(crate) const RESIZE_BORDER: Pixels = px(10.0);

@@ -105,7 +105,7 @@ pub(crate) fn agent_candidates(
             .flat_map(|(tab_idx, pane)| {
                 pane.read(cx)
                     .terminals()
-                    .map(|terminal| (terminal.entity_id().as_u64(), tab_idx))
+                    .map(|terminal| (terminal.read(cx).surface_id(), tab_idx))
                     .collect::<Vec<_>>()
             })
             .collect();
@@ -319,7 +319,7 @@ mod tests {
             .into_iter()
             .map(|(id, space)| {
                 let terminal = cx.new(|cx| TerminalView::display_only_for_test(id, cx));
-                surfaces_by_workspace.push(terminal.entity_id().as_u64());
+                surfaces_by_workspace.push(terminal.read_with(cx, |view, _| view.surface_id()));
                 let pane = cx.new(|cx| Pane::new(terminal, id, cx));
                 let mut workspace = Workspace::with_id(id, format!("ws{id}"), pane);
                 workspace.space = space;

@@ -239,7 +239,7 @@ impl PaneFlowApp {
                     .terminals()
                     .filter_map(|tv| {
                         let child_pid = tv.read(cx).terminal.child_pid;
-                        (child_pid > 0).then_some((tv.entity_id().as_u64(), child_pid))
+                        (child_pid > 0).then_some((tv.read(cx).surface_id(), child_pid))
                     })
                     .collect::<Vec<_>>()
             })
@@ -303,7 +303,7 @@ impl PaneFlowApp {
             std::collections::HashMap::new();
         for pane in &leaves {
             for tv in pane.read(cx).terminals() {
-                let tid = tv.entity_id().as_u64();
+                let tid = tv.read(cx).surface_id();
                 let r = tv.read(cx);
                 let name = r
                     .terminal
@@ -327,7 +327,7 @@ impl PaneFlowApp {
                 pane.read(cx).terminals().cloned().collect();
             let mut pane_changed = false;
             for tv in terminals {
-                let tid = tv.entity_id().as_u64();
+                let tid = tv.read(cx).surface_id();
                 let Some(s) = scan.get(&tid) else {
                     continue;
                 };

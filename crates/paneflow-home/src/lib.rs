@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 mod endpoint;
+mod pane;
 mod read;
 mod write;
 
@@ -12,6 +13,12 @@ pub use endpoint::{
     same_endpoint,
 };
 
+pub use pane::{
+    PANE_ENDPOINT_ENV, PANE_HOST_ENDPOINT_ENV, PANE_SERVE_ENDPOINT_ENV, PANE_WINDOW_ENDPOINT_ENV,
+    PANES_DIR_NAME, PaneServer, SANDBOX_SHARED_SID, SANDBOX_SID_PREFIX, is_pane_session_name,
+    pane_dir_in, pane_endpoint_for_current_home, pane_endpoint_from, pane_endpoint_path,
+    pane_endpoint_session, pane_sandbox_sid, panes_dir_in,
+};
 pub use read::{
     create_private_dir_all, not_regular_file, open_for_reading, open_regular_for_reading,
     read_regular_capped, read_regular_string_capped, secure_home_dir, too_large,
@@ -79,6 +86,14 @@ pub fn config_path() -> Option<PathBuf> {
 
 pub fn config_path_in(home: &Path) -> PathBuf {
     home.join("paneflow.json")
+}
+
+pub fn session_path_in(home: &Path) -> PathBuf {
+    home.join("session.json")
+}
+
+pub fn window_state_path_in(home: &Path) -> PathBuf {
+    home.join("window-state.json")
 }
 
 pub fn session_path() -> Option<PathBuf> {
@@ -202,7 +217,8 @@ pub fn host_endpoint_path(home: &Path) -> PathBuf {
 }
 
 pub fn host_endpoint_path_for_current_home() -> Option<PathBuf> {
-    paneflow_home().map(|home| host_endpoint_path(&home))
+    pane_endpoint_for_current_home(PaneServer::Host)
+        .or_else(|| paneflow_home().map(|home| host_endpoint_path(&home)))
 }
 
 pub fn reserved_host_endpoint() -> Option<PathBuf> {
@@ -229,6 +245,7 @@ pub const SERVE_DIR_NAME: &str = "serve";
 pub const SERVE_OWNER_LOCK_FILE_NAME: &str = "owner.lock";
 
 pub const SERVE_INSTANCE_FILE_NAME: &str = "instance.json";
+pub const SERVE_GRANTS_FILE_NAME: &str = "grants.json";
 
 pub const SERVE_LOG_FILE_NAME: &str = "serve.log";
 
@@ -246,12 +263,36 @@ pub fn serve_instance_record_path_in(home: &Path) -> PathBuf {
     serve_dir_in(home).join(SERVE_INSTANCE_FILE_NAME)
 }
 
+pub fn serve_grants_path_in(home: &Path) -> PathBuf {
+    serve_dir_in(home).join(SERVE_GRANTS_FILE_NAME)
+}
+
 pub fn serve_log_path_in(home: &Path) -> PathBuf {
     serve_dir_in(home).join(SERVE_LOG_FILE_NAME)
 }
 
 pub fn serve_runtime_dir_in(home: &Path) -> PathBuf {
     serve_dir_in(home).join(SERVE_RUNTIME_DIR_NAME)
+}
+
+pub const LUA_DIR_NAME: &str = "lua";
+
+pub fn lua_dir_in(home: &Path) -> PathBuf {
+    home.join(LUA_DIR_NAME)
+}
+
+pub fn lua_dir() -> Option<PathBuf> {
+    paneflow_home().map(|home| lua_dir_in(&home))
+}
+
+pub const INIT_LUA_FILE_NAME: &str = "init.lua";
+
+pub fn init_lua_path_in(home: &Path) -> PathBuf {
+    home.join(INIT_LUA_FILE_NAME)
+}
+
+pub fn init_lua_path() -> Option<PathBuf> {
+    paneflow_home().map(|home| init_lua_path_in(&home))
 }
 
 const SERVE_ENDPOINT_PREFIX: &str = "paneflow-serve-";
@@ -273,7 +314,17 @@ pub fn serve_endpoint_path(home: &Path) -> PathBuf {
 }
 
 pub fn serve_endpoint_path_for_current_home() -> Option<PathBuf> {
-    paneflow_home().map(|home| serve_endpoint_path(&home))
+    pane_endpoint_for_current_home(PaneServer::Worker)
+        .or_else(|| paneflow_home().map(|home| serve_endpoint_path(&home)))
+}
+
+pub fn serve_endpoint_beside_host_endpoint(host_endpoint: &Path) -> Option<PathBuf> {
+    let name = host_endpoint.file_name()?.to_str()?;
+    let rest = name.strip_prefix(HOST_ENDPOINT_PREFIX)?;
+    let mut serve = String::with_capacity(SERVE_ENDPOINT_PREFIX.len() + rest.len());
+    serve.push_str(SERVE_ENDPOINT_PREFIX);
+    serve.push_str(rest);
+    Some(host_endpoint.with_file_name(serve))
 }
 
 const IPC_ENDPOINT_PREFIX: &str = "paneflow-ipc-";
@@ -379,6 +430,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_worker_endpoint_beside_a_host_endpoint_is_the_one_of_the_same_home() {
+        let home = Path::new(if cfg!(windows) {
+            r"C:\Users\someone\.paneflow-dev-tagged"
+        } else {
+            "/home/someone/.paneflow-dev-tagged"
+        });
+        assert_eq!(
+            serve_endpoint_beside_host_endpoint(&host_endpoint_path(home)),
+            Some(serve_endpoint_path(home))
+        );
+        assert_eq!(
+            serve_endpoint_beside_host_endpoint(Path::new("elsewhere.sock")),
+            None
+        );
+    }
+
+    #[test]
     fn an_explicit_home_never_imports_the_legacy_state() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let legacy = tmp.path().join("legacy");
@@ -456,6 +524,9 @@ mod tests {
             home.join("cache").join("path-index.bin")
         );
         assert_eq!(worktrees_dir().expect("worktrees"), home.join("worktrees"));
+        assert_eq!(init_lua_path().expect("init.lua"), home.join("init.lua"));
+        assert_eq!(init_lua_path_in(&home), home.join("init.lua"));
+        assert_eq!(lua_dir().expect("lua"), home.join("lua"));
         assert_eq!(host_dir_in(&home), home.join("host"));
         assert_eq!(
             host_sessions_dir_in(&home),

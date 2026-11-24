@@ -1,0 +1,31 @@
+{
+  "annotations": {
+    "destructiveHint": true,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+  },
+  "description": "Run one of the user's workflows that list_actions returns, with arguments matching its schema. Waits up to 20 s: the result is {status: \"done\", result}, or {status: \"running\", run_id} - call again with only that run_id to keep waiting. rate_limited means more than 3 runs or questions in a burst or 1 per second after it.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "args": {
+        "description": "The action's arguments, as its schema in list_actions describes.",
+        "type": "object"
+      },
+      "name": {
+        "description": "The action's name, from list_actions.",
+        "minLength": 1,
+        "type": "string"
+      },
+      "run_id": {
+        "description": "The run_id of a running action, to keep waiting for its result instead of starting a run.",
+        "maxLength": 64,
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "type": "object"
+  },
+  "name": "run_action"
+}

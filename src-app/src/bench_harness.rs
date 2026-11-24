@@ -229,7 +229,7 @@ impl Metric {
     }
 }
 
-fn from_samples(
+pub(crate) fn from_samples(
     name: &'static str,
     note: &'static str,
     samples: &mut [Duration],

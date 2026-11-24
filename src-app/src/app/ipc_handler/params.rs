@@ -25,11 +25,6 @@ pub(super) fn opt_usize(
         .transpose()
 }
 
-pub(super) fn required_index(params: &serde_json::Value) -> Result<usize, JsonRpcError> {
-    opt_usize(params, "index")?
-        .ok_or_else(|| JsonRpcError::invalid_params("missing 'index' parameter"))
-}
-
 pub(super) fn opt_str<'a>(
     params: &'a serde_json::Value,
     key: &str,
@@ -121,22 +116,6 @@ mod tests {
             opt_u64(&serde_json::json!({"surface_id": null}), "surface_id"),
             Ok(None)
         );
-    }
-
-    #[test]
-    fn an_index_is_required_and_typed() {
-        assert_eq!(required_index(&serde_json::json!({"index": 2})), Ok(2));
-        for bad in [
-            serde_json::json!({}),
-            serde_json::json!({"index": "1"}),
-            serde_json::json!({"index": -1}),
-        ] {
-            assert_eq!(
-                required_index(&bad).map_err(|error| error.code),
-                Err(JsonRpcError::INVALID_PARAMS),
-                "{bad}"
-            );
-        }
     }
 
     #[test]

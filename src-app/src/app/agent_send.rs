@@ -337,9 +337,7 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(terminal) =
-            crate::app::ipc_handler::find_terminal_by_surface_id(&self.workspaces, surface_id, cx)
-        else {
+        let Some(terminal) = self.terminal_for_surface(surface_id) else {
             self.show_toast(AGENT_GONE, cx);
             return;
         };
@@ -396,14 +394,8 @@ impl PaneFlowApp {
                 if let Some(view) = origin.and_then(|origin| origin.upgrade()) {
                     view.update(cx, |view, cx| view.comment_delivered(cx));
                 }
-                let surface_id = terminal.entity_id().as_u64();
-                if crate::app::ipc_handler::find_terminal_by_surface_id(
-                    &self.workspaces,
-                    surface_id,
-                    cx,
-                )
-                .is_some()
-                {
+                let surface_id = terminal.read(cx).surface_id();
+                if self.terminal_for_surface(surface_id).is_some() {
                     self.focus_agent_surface(surface_id, window, cx);
                 } else {
                     let focus = terminal.read(cx).focus_handle(cx);

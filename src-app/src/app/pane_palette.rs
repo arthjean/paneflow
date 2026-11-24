@@ -99,10 +99,13 @@ impl Preset {
         }
     }
 
-    pub(crate) fn env(&self) -> Option<std::collections::HashMap<String, String>> {
+    pub(crate) fn env(
+        &self,
+        config: &PaneFlowConfig,
+    ) -> Result<Option<std::collections::HashMap<String, String>>, String> {
         match &self.source {
-            PresetSource::Agent(launch) => launch.process_env(),
-            _ => None,
+            PresetSource::Agent(launch) => launch.launch_env(config),
+            _ => Ok(None),
         }
     }
 
@@ -187,16 +190,18 @@ impl PaneFlowApp {
         self.dismiss_transient_surfaces();
         let restore_focus = crate::FocusReturn::capture(window, cx);
 
-        let tab = crate::workspace::Tab::new(PALETTE_TAB_TITLE, None);
-        let tab_id = tab.id;
-        let opened = self
-            .workspaces
-            .get_mut(ws_idx)
-            .is_some_and(|ws| ws.open_tab(tab));
-        if !opened {
+        let opened = self.open_tab_through_model(
+            ws_idx,
+            PALETTE_TAB_TITLE.to_string(),
+            None,
+            None,
+            false,
+            cx,
+        );
+        let Some(tab_id) = opened.ok().and_then(|tab| self.layout_app_tab_id(tab)) else {
             self.show_toast("Tab limit reached for this workspace", cx);
             return;
-        }
+        };
         if let Some(ws) = self.workspaces.get_mut(ws_idx) {
             ws.sidebar_expanded = true;
         }
@@ -405,7 +410,13 @@ impl PaneFlowApp {
         if self.pane_palette_create_branch_then_launch(idx, cx) {
             return;
         }
-        let mut env = preset.env();
+        let mut env = match preset.env(&self.cached_config) {
+            Ok(env) => env,
+            Err(message) => {
+                self.pane_palette_set_error(message, cx);
+                return;
+            }
+        };
         if preset.opens_a_team() {
             env.get_or_insert_with(Default::default).insert(
                 crate::tmux_compat::TEAM_ENV.to_string(),

@@ -571,11 +571,11 @@ impl PaneFlowApp {
 
     pub(crate) fn apply_editor_display(&mut self, cx: &mut Context<Self>) {
         let display = EditorDisplay::from_config(&self.cached_config.editor);
-        if display == editor_display() {
+        if display == editor_display(cx) {
             return;
         }
-        let servers_changed = display.semantic_tokens != editor_display().semantic_tokens;
-        set_editor_display(display);
+        let servers_changed = display.semantic_tokens != editor_display(cx).semantic_tokens;
+        set_editor_display(display, cx);
         let live = self.diff_dock.diff_tabs.iter();
         let parked = self
             .diff_dock

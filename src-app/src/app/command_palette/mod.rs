@@ -31,6 +31,8 @@ const CHIP_HEIGHT: f32 = 24.;
 const CHIP_RADIUS: gpui::Pixels = px(6.);
 const SHORTCUT_SIZE: f32 = 13.;
 const PALETTE_TOP_MARGIN: f32 = 96.;
+const LUA_CATEGORY_ICON: &str = "icons/palette/source-code.svg";
+const LUA_ACTION_ICON: &str = "icons/palette/command-line.svg";
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct PaletteContext {
@@ -57,6 +59,8 @@ enum Source {
     Command(usize),
     Value(usize),
     Section(Section),
+    LuaCategory(usize),
+    LuaAction(usize),
 }
 
 struct PaletteRow {
@@ -71,6 +75,9 @@ struct PaletteRow {
 
 impl PaneFlowApp {
     pub(crate) fn open_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.prompts.shown.is_some() {
+            return;
+        }
         if self.command_palette_open {
             self.close_command_palette(window, cx);
             return;
@@ -81,6 +88,7 @@ impl PaneFlowApp {
         self.command_palette_open = true;
         self.command_palette_scope = None;
         self.command_palette_section = None;
+        self.command_palette_lua_category = None;
         self.command_palette_context = context;
         self.command_palette_restore_focus = restore;
         self.command_palette_selected = 0;
@@ -98,6 +106,7 @@ impl PaneFlowApp {
         self.command_palette_open = false;
         self.command_palette_scope = None;
         self.command_palette_section = None;
+        self.command_palette_lua_category = None;
         self.command_palette_selected = 0;
         self.reset_palette_input(cx);
         if let Some(handle) = self.command_palette_restore_focus.take() {
@@ -116,10 +125,15 @@ impl PaneFlowApp {
     }
 
     fn reset_palette_input(&mut self, cx: &mut Context<Self>) {
-        let placeholder = match (self.command_palette_scope, self.command_palette_section) {
-            (Some(scope), _) => scope.placeholder(),
-            (None, Some(section)) => section.placeholder(),
-            (None, None) => PALETTE_PLACEHOLDER.to_string(),
+        let placeholder = match (
+            self.command_palette_scope,
+            self.command_palette_section,
+            self.command_palette_lua_category.as_deref(),
+        ) {
+            (Some(scope), _, _) => scope.placeholder(),
+            (None, Some(section), _) => section.placeholder(),
+            (None, None, Some(category)) => format!("Search {}…", category.to_lowercase()),
+            (None, None, None) => PALETTE_PLACEHOLDER.to_string(),
         };
         self.command_palette_input.update(cx, |input, cx| {
             input.clear(cx);
@@ -234,6 +248,13 @@ impl PaneFlowApp {
                     ));
                 }
             }
+            None if self.command_palette_lua_category.is_some() => {
+                self.push_lua_action_rows(
+                    self.command_palette_lua_category.as_deref(),
+                    query,
+                    &mut ranked,
+                );
+            }
             None => {
                 let section = self.command_palette_section;
                 let browsing = section.is_none() && query.is_empty();
@@ -280,7 +301,24 @@ impl PaneFlowApp {
                         },
                     ));
                 }
+                if section.is_none() && !browsing {
+                    self.push_lua_action_rows(None, query, &mut ranked);
+                }
                 if browsing {
+                    for (idx, category) in self.lua_config.categories().into_iter().enumerate() {
+                        ranked.push((
+                            matcher::Rank::LabelWordStart,
+                            PaletteRow {
+                                source: Source::LuaCategory(idx),
+                                icon: Some(LUA_CATEGORY_ICON),
+                                label: category,
+                                highlights: Vec::new(),
+                                value: None,
+                                shortcut: None,
+                                trailing: Trailing::Chevron,
+                            },
+                        ));
+                    }
                     for section in Section::ALL {
                         if !self.section_is_available(section) {
                             continue;
@@ -314,6 +352,78 @@ impl PaneFlowApp {
         }
 
         ranked.into_iter().map(|(_, row)| row).collect()
+    }
+
+    fn push_lua_action_rows(
+        &self,
+        category: Option<&str>,
+        query: &str,
+        ranked: &mut Vec<(matcher::Rank, PaletteRow)>,
+    ) {
+        for (idx, action) in self.lua_config.actions.iter().enumerate() {
+            if category.is_some_and(|category| category != action.category) {
+                continue;
+            }
+            let keywords = std::iter::once(action.name.as_str())
+                .chain(action.description.as_deref())
+                .chain(action.keywords.iter().map(String::as_str))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let value = category.is_none().then(|| action.category.clone());
+            let Some(matched) =
+                matcher::match_entry(&action.title, value.as_deref(), &keywords, query)
+            else {
+                continue;
+            };
+            ranked.push((
+                matched.rank,
+                PaletteRow {
+                    source: Source::LuaAction(idx),
+                    icon: Some(LUA_ACTION_ICON),
+                    label: action.title.clone(),
+                    highlights: matched.highlights,
+                    value,
+                    shortcut: None,
+                    trailing: Trailing::None,
+                },
+            ));
+        }
+    }
+
+    fn enter_lua_category(&mut self, idx: usize, cx: &mut Context<Self>) {
+        let Some(category) = self.lua_config.categories().into_iter().nth(idx) else {
+            return;
+        };
+        self.command_palette_lua_category = Some(category);
+        self.command_palette_section = None;
+        self.command_palette_scope = None;
+        self.reset_palette_input(cx);
+        self.command_palette_select(0, cx);
+    }
+
+    fn leave_lua_category(&mut self, cx: &mut Context<Self>) {
+        let Some(category) = self.command_palette_lua_category.take() else {
+            return;
+        };
+        self.reset_palette_input(cx);
+        let position = self
+            .lua_config
+            .categories()
+            .iter()
+            .position(|known| *known == category);
+        match position {
+            Some(idx) => self.select_palette_row(Source::LuaCategory(idx), cx),
+            None => self.command_palette_select(0, cx),
+        }
+    }
+
+    fn run_lua_palette_action(&mut self, idx: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(action) = self.lua_config.actions.get(idx) else {
+            return;
+        };
+        let name = action.name.clone();
+        self.close_command_palette(window, cx);
+        self.invoke_lua_action(name, None, "palette", window, cx);
     }
 
     fn command_palette_select(&mut self, idx: usize, cx: &mut Context<Self>) {
@@ -354,6 +464,9 @@ impl PaneFlowApp {
         if !self.command_palette_open {
             self.open_command_palette(window, cx);
         }
+        if !self.command_palette_open {
+            return;
+        }
         self.command_palette_section = None;
         self.enter_palette_scope(Scope::MoveToSpace, cx);
     }
@@ -388,6 +501,9 @@ impl PaneFlowApp {
             true
         } else if self.command_palette_section.is_some() {
             self.leave_palette_section(cx);
+            true
+        } else if self.command_palette_lua_category.is_some() {
+            self.leave_lua_category(cx);
             true
         } else {
             false
@@ -487,6 +603,14 @@ impl PaneFlowApp {
             }
             (Source::Section(section), _) => {
                 self.enter_palette_section(section, cx);
+                return;
+            }
+            (Source::LuaCategory(idx), _) => {
+                self.enter_lua_category(idx, cx);
+                return;
+            }
+            (Source::LuaAction(idx), _) => {
+                self.run_lua_palette_action(idx, window, cx);
                 return;
             }
             (Source::Command(command), _) => command,
@@ -828,4 +952,38 @@ impl PaneFlowApp {
 
 fn list_height(rows: usize) -> Pixels {
     px(rows as f32 * (ROW_HEIGHT + ROW_SPACING)).min(MENU_MAX_HEIGHT)
+}
+
+#[cfg(test)]
+impl PaneFlowApp {
+    pub(crate) fn command_palette_entries(&self, cx: &App) -> Vec<(String, Option<String>)> {
+        self.command_palette_rows(cx)
+            .into_iter()
+            .map(|row| (row.label, row.value))
+            .collect()
+    }
+
+    pub(crate) fn command_palette_filter(&mut self, query: &str, cx: &mut Context<Self>) {
+        let query = query.to_string();
+        self.command_palette_input
+            .update(cx, |input, cx| input.set_value(query, cx));
+    }
+
+    pub(crate) fn command_palette_choose(
+        &mut self,
+        label: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let idx = self
+            .command_palette_rows(cx)
+            .iter()
+            .position(|row| row.label == label)
+            .unwrap_or_else(|| panic!("no palette row labelled {label}"));
+        self.command_palette_run(idx, window, cx);
+    }
+
+    pub(crate) fn command_palette_is_open(&self) -> bool {
+        self.command_palette_open
+    }
 }

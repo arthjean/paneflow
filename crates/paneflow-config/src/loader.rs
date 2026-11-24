@@ -124,6 +124,15 @@ pub fn try_parse_and_validate(json: &str) -> Result<PaneFlowConfig, ConfigError>
     }
 
     let mut config: PaneFlowConfig = serde_json::from_value(Value::Object(root))?;
+    if let Some(error) = config.ipc_section().error() {
+        warn!("{error}");
+    }
+    for error in config.agent_grant_profiles().errors() {
+        warn!("{error}");
+    }
+    for error in config.agent_sandbox_profiles().errors() {
+        warn!("{error}");
+    }
 
     for cmd in &mut config.commands {
         if let Some(ws) = cmd.workspace_mut() {

@@ -172,10 +172,14 @@ impl PaneFlowApp {
                     let surface = team.surface_of(local);
                     team.set_title(local, title.clone());
                     if let Some(surface) = surface
-                        && let Some(terminal) =
-                            find_terminal_by_surface_id(&self.workspaces, surface, cx)
+                        && let Some(terminal) = self.terminal_for_surface(surface)
                         && let Some(name) = sanitize_pane_name(&title)
                     {
+                        self.rename_surface_through_model(
+                            terminal.entity_id(),
+                            Some(name.clone()),
+                            cx,
+                        );
                         terminal.update(cx, |view, cx| {
                             view.terminal.custom_name = Some(name);
                             cx.notify();
@@ -236,8 +240,21 @@ impl PaneFlowApp {
                 if let Some(session) = &request.scope_session {
                     params["scope_session"] = serde_json::Value::String(session.clone());
                 }
-                let reply =
-                    self.handle_surface_method("surface.send_text", &params, caller_pid, cx);
+                let reply = match registry().serve(
+                    self,
+                    "surface.send_text",
+                    &params,
+                    caller_pid,
+                    self.ipc_gates,
+                    cx,
+                ) {
+                    IpcReply::Ready(reply) => reply,
+                    IpcReply::Deferred(_) | IpcReply::Async(_) => {
+                        return ready(failure(
+                            "paneflow tmux-compat: send-keys was not answered at once".to_string(),
+                        ));
+                    }
+                };
                 if reply.get(JSONRPC_ERROR_KEY).is_some() {
                     return ready(failure(error_message(&reply)));
                 }
@@ -300,10 +317,17 @@ impl PaneFlowApp {
         if !title.is_empty() {
             params["name"] = serde_json::Value::String(title);
         }
+        if let Some(request) = self
+            .terminal_for_surface(anchor)
+            .and_then(|terminal| terminal.read(cx).sandbox_request())
+        {
+            params["env"][paneflow_config::schema::SANDBOX_REQUEST_ENV] =
+                serde_json::Value::String(request);
+        }
         if let Some(cwd) = cwd {
             params["cwd"] = serde_json::Value::String(cwd);
         }
-        let task = match self.prepare_split(&params, true, cx) {
+        let task = match self.prepare_split(&params, paneflow_api::Gates::OPEN, cx) {
             Ok(task) => task,
             Err(error) => {
                 self.forget_team_pane(&token, local);
@@ -345,7 +369,7 @@ impl PaneFlowApp {
                 let count = pane_ref.terminals().count();
                 pane_ref
                     .terminals()
-                    .find(|terminal| terminal.entity_id().as_u64() == surface)
+                    .find(|terminal| terminal.read(cx).surface_id() == surface)
                     .map(|terminal| (pane.clone(), terminal.clone(), count))
             })
         });

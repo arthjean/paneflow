@@ -1,21 +1,17 @@
 use std::collections::{HashSet, VecDeque};
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use gpui::{App, Context, Entity, Window};
 use paneflow_config::schema::{SessionGeneration, SessionId};
 use paneflow_host::SessionLifecycle;
 use paneflow_host::protocol::ERR_PROCESS_UNVERIFIED;
 
-use crate::app::workspace_ops::{
-    expire_held_sessions, settle_closed_sessions, take_undo_window_sessions,
-    undo_window_session_ids,
-};
 use crate::pane::{Pane, PaneSurface};
 use crate::terminal::TerminalView;
 use crate::terminal::host_link::{self, HostLinkState};
 use crate::workspace::Tab;
-use crate::{CLOSED_SESSION_GRACE_MS, PaneFlowApp, SessionHold, StopSession};
+use crate::{PaneFlowApp, StopSession};
 
 pub(crate) type StopTarget = (PathBuf, SessionId, SessionGeneration);
 
@@ -50,42 +46,6 @@ pub(crate) struct ListedRecord {
     pub(crate) owned: bool,
     pub(crate) live: bool,
     pub(crate) lifecycle: SessionLifecycle,
-}
-
-#[derive(Debug, Default, PartialEq, Eq)]
-pub(crate) struct OrphanSweep {
-    pub(crate) forget: Vec<SessionId>,
-    pub(crate) stop: Vec<OwnedSession>,
-}
-
-fn has_ended(lifecycle: &SessionLifecycle) -> bool {
-    matches!(
-        lifecycle,
-        SessionLifecycle::Exited { .. } | SessionLifecycle::Failed { .. } | SessionLifecycle::Lost
-    )
-}
-
-pub(crate) fn orphan_sweep(
-    listed: &[ListedRecord],
-    held: &HashSet<SessionId>,
-    forgetting: &HashSet<SessionId>,
-    sweep_live: bool,
-) -> OrphanSweep {
-    let mut sweep = OrphanSweep::default();
-    for record in listed {
-        if held.contains(&record.session) || forgetting.contains(&record.session) {
-            continue;
-        }
-        if !record.live && has_ended(&record.lifecycle) {
-            sweep.forget.push(record.session.clone());
-        } else if sweep_live && record.live && record.owned {
-            sweep.stop.push(OwnedSession {
-                session: record.session.clone(),
-                generation: record.generation,
-            });
-        }
-    }
-    sweep
 }
 
 pub(crate) fn pane_terminals(pane: &Entity<Pane>, cx: &App) -> Vec<Entity<TerminalView>> {
@@ -142,22 +102,6 @@ pub(crate) fn stop_and_forget(targets: Vec<StopTarget>) -> Vec<SessionId> {
         }
     }
     failures
-}
-
-fn forget_ended(endpoint: PathBuf, sessions: Vec<SessionId>) -> usize {
-    let mut removed = 0;
-    for session in sessions {
-        match host_link::remove_session(&endpoint, &session) {
-            Ok(()) => {
-                removed += 1;
-                log::info!("paneflow: ended session {session} had no view left; record removed");
-            }
-            Err(error) => {
-                log::debug!("paneflow: ended session {session} record kept: {error}");
-            }
-        }
-    }
-    removed
 }
 
 impl PaneFlowApp {
@@ -219,55 +163,21 @@ impl PaneFlowApp {
         Some((endpoint, row.session.clone(), row.generation))
     }
 
-    pub(crate) fn hold_closed_sessions(
-        &mut self,
-        terminals: Vec<Entity<TerminalView>>,
-        cx: &mut Context<Self>,
-    ) {
-        let until = Instant::now() + Duration::from_millis(CLOSED_SESSION_GRACE_MS);
-        let closed: HashSet<SessionId> = terminals
-            .iter()
-            .map(|terminal| terminal.read(cx).terminal.session_id.clone())
-            .collect();
-        let kept = settle_closed_sessions(
-            &mut self.closed_panes,
-            &closed,
-            Some(SessionHold::UndoWindow { until }),
-        );
-        let unkept = terminals
-            .into_iter()
-            .filter(|terminal| !kept.contains(&terminal.read(cx).terminal.session_id))
-            .collect();
-        self.stop_terminals(unkept, cx);
-        if kept.is_empty() {
-            return;
-        }
-        let executor = cx.background_executor().clone();
-        cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
-            loop {
-                let left = until.saturating_duration_since(Instant::now());
-                if left.is_zero() {
-                    break;
-                }
-                executor.timer(left).await;
-            }
-            let _ = this.update(cx, |app, cx| app.expire_closed_sessions(cx));
-        })
-        .detach();
+    pub(crate) fn expire_closed_sessions(&mut self, cx: &mut Context<Self>) {
+        self.expire_closed_sessions_at(Instant::now(), cx);
     }
 
-    pub(crate) fn expire_closed_sessions(&mut self, cx: &mut Context<Self>) {
-        let expired = expire_held_sessions(&mut self.closed_panes, Instant::now());
-        self.stop_hosted_sessions(expired, cx);
+    pub(crate) fn expire_closed_sessions_at(&mut self, now: Instant, cx: &mut Context<Self>) {
+        self.expire_layout_holds(now, cx);
     }
 
     pub(crate) fn release_undo_window_sessions(&mut self) -> Vec<StopTarget> {
-        take_undo_window_sessions(&mut self.closed_panes)
+        self.release_layout_holds()
     }
 
     fn held_session_ids(&self, cx: &App) -> HashSet<SessionId> {
         let mut held = self.attached_session_ids(cx);
-        held.extend(undo_window_session_ids(&self.closed_panes));
+        held.extend(self.layout_held_sessions());
         held
     }
 
@@ -281,6 +191,16 @@ impl PaneFlowApp {
             .filter(|(_, session, _)| !self.owned_sessions.forgetting.contains(session))
             .collect();
         if targets.is_empty() {
+            return;
+        }
+        #[cfg(test)]
+        if crate::app::fake_host::installed(cx) {
+            for (_, session, _) in targets {
+                crate::app::fake_host::record(
+                    cx,
+                    crate::app::fake_host::HostRequest::Stop { session },
+                );
+            }
             return;
         }
         let attempted: Vec<SessionId> = targets
@@ -310,34 +230,6 @@ impl PaneFlowApp {
                     );
                 }
                 app.refresh_owned_sessions(cx);
-            });
-        })
-        .detach();
-    }
-
-    fn forget_ended_sessions(&mut self, sessions: Vec<SessionId>, cx: &mut Context<Self>) {
-        if sessions.is_empty() {
-            return;
-        }
-        let Some(endpoint) = host_link::host_endpoint().map(|target| target.endpoint) else {
-            return;
-        };
-        self.owned_sessions
-            .forgetting
-            .extend(sessions.iter().cloned());
-        let executor = cx.background_executor().clone();
-        cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
-            let attempted = sessions.clone();
-            let removed = executor
-                .spawn(async move { forget_ended(endpoint, sessions) })
-                .await;
-            let _ = this.update(cx, |app, cx| {
-                for session in &attempted {
-                    app.owned_sessions.forgetting.remove(session);
-                }
-                if removed > 0 {
-                    app.refresh_owned_sessions(cx);
-                }
             });
         })
         .detach();
@@ -417,30 +309,41 @@ impl PaneFlowApp {
         if self.session_restore_failed {
             return;
         }
-        let sweep_live = std::mem::take(&mut self.owned_sessions.live_sweep_pending);
-        let sweep = orphan_sweep(
-            &records,
-            &self.held_session_ids(cx),
-            &self.owned_sessions.forgetting,
-            sweep_live,
-        );
-        self.forget_ended_sessions(sweep.forget, cx);
-        if sweep.stop.is_empty() {
-            return;
-        }
-        let Some(endpoint) = host_link::host_endpoint().map(|target| target.endpoint) else {
+        let Some(sweeper) = self.layout.sync.sweeper() else {
             return;
         };
-        log::info!(
-            "paneflow: stopping {} live session(s) no view holds after the restore",
-            sweep.stop.len()
-        );
-        let targets = sweep
-            .stop
-            .into_iter()
-            .map(|orphan| (endpoint.clone(), orphan.session, orphan.generation))
+        let live = std::mem::take(&mut self.owned_sessions.live_sweep_pending);
+        let mut keep: Vec<String> = self
+            .held_session_ids(cx)
+            .iter()
+            .chain(self.owned_sessions.forgetting.iter())
+            .map(ToString::to_string)
             .collect();
-        self.stop_hosted_sessions(targets, cx);
+        keep.sort();
+        let params = serde_json::json!({"live": live, "keep": keep});
+        let executor = cx.background_executor().clone();
+        cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
+            let swept = executor.spawn(async move { sweeper.sweep(params) }).await;
+            let _ = this.update(cx, |app, cx| {
+                let Some(swept) = swept else {
+                    if live {
+                        app.owned_sessions.live_sweep_pending = true;
+                    }
+                    return;
+                };
+                let changed = ["forgotten", "stopped"]
+                    .iter()
+                    .any(|key| swept[key].as_array().is_some_and(|list| !list.is_empty()));
+                if changed {
+                    app.refresh_owned_sessions(cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    pub(crate) fn owned_sessions_sweep_waits(&self) -> bool {
+        self.owned_sessions.live_sweep_pending
     }
 
     pub(crate) fn attached_terminals(&self, cx: &App) -> Vec<Entity<TerminalView>> {
@@ -477,7 +380,7 @@ impl PaneFlowApp {
         self.resume_batch = Some(ResumeBatch {
             pending: terminals
                 .iter()
-                .map(|terminal| terminal.entity_id().as_u64())
+                .map(|terminal| terminal.read(cx).surface_id())
                 .collect(),
             requested: terminals.len(),
             resumed: 0,
@@ -490,7 +393,7 @@ impl PaneFlowApp {
         terminal: &Entity<TerminalView>,
         cx: &mut Context<Self>,
     ) {
-        let surface = terminal.entity_id().as_u64();
+        let surface = terminal.read(cx).surface_id();
         let resumed = terminal.read(cx).terminal.host_link.accepts_input();
         let Some(batch) = self.resume_batch.as_mut() else {
             return;
@@ -525,94 +428,6 @@ pub(crate) struct ResumeBatch {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn record(owned: bool, lifecycle: SessionLifecycle) -> ListedRecord {
-        ListedRecord {
-            session: SessionId::new(),
-            generation: SessionGeneration::FIRST,
-            owned,
-            live: matches!(lifecycle, SessionLifecycle::Running),
-            lifecycle,
-        }
-    }
-
-    fn exited() -> SessionLifecycle {
-        SessionLifecycle::Exited {
-            code: 0,
-            signal: None,
-        }
-    }
-
-    #[test]
-    fn every_ended_record_no_view_holds_is_forgotten_whoever_owns_it() {
-        let held = record(true, exited());
-        let in_flight = record(true, exited());
-        let lost_from_a_previous_host = record(false, SessionLifecycle::Lost);
-        let failed = record(
-            true,
-            SessionLifecycle::Failed {
-                reason: "shell not found".to_string(),
-            },
-        );
-        let orphan = record(true, exited());
-        let unverified = record(
-            true,
-            SessionLifecycle::Unverified {
-                reason: "descendants unresolved".to_string(),
-            },
-        );
-        let starting = record(true, SessionLifecycle::Starting);
-        let listed = vec![
-            held.clone(),
-            in_flight.clone(),
-            lost_from_a_previous_host.clone(),
-            failed.clone(),
-            orphan.clone(),
-            unverified,
-            starting,
-        ];
-
-        let sweep = orphan_sweep(
-            &listed,
-            &HashSet::from([held.session.clone()]),
-            &HashSet::from([in_flight.session.clone()]),
-            false,
-        );
-
-        assert_eq!(
-            sweep.forget,
-            vec![
-                lost_from_a_previous_host.session,
-                failed.session,
-                orphan.session
-            ],
-            "a held or in-flight record stays, and an unverified or starting one may still own a process"
-        );
-        assert!(sweep.stop.is_empty());
-    }
-
-    #[test]
-    fn a_live_orphan_is_stopped_only_by_the_sweep_that_follows_a_restore() {
-        let attached = record(true, SessionLifecycle::Running);
-        let orphan = record(true, SessionLifecycle::Running);
-        let foreign = record(false, SessionLifecycle::Running);
-        let listed = vec![attached.clone(), orphan.clone(), foreign];
-        let held = HashSet::from([attached.session.clone()]);
-
-        assert_eq!(
-            orphan_sweep(&listed, &held, &HashSet::new(), false),
-            OrphanSweep::default(),
-            "a routine refresh never stops a live session"
-        );
-        assert_eq!(
-            orphan_sweep(&listed, &held, &HashSet::new(), true).stop,
-            vec![OwnedSession {
-                session: orphan.session,
-                generation: orphan.generation,
-            }],
-            "only an owned live session that no view holds is stopped"
-        );
-    }
 
     #[test]
     fn a_stopped_session_leaves_no_record_behind() {
@@ -655,6 +470,8 @@ mod tests {
                 title: None,
                 appearance: None,
                 cell: None,
+                sandbox: false,
+                sandbox_unix_scope: false,
             })
             .expect("hosted session");
         let session = created.manifest.session.clone();

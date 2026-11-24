@@ -52,6 +52,7 @@ pub const CONTROLLER_ONLY_METHODS: &[&str] = &[
 pub enum ControlError {
     Params(String),
     Disabled(String),
+    GrantsUnsynced,
     NoController(&'static str),
     Host(HostError),
 }
@@ -66,20 +67,9 @@ impl From<HostError> for ControlError {
 pub struct ControlPermissions {
     pub scripting: bool,
     pub orchestration: bool,
+    pub reach: bool,
+    pub stale_grants: bool,
     pub fenced_reads: bool,
-}
-
-impl ControlPermissions {
-    pub fn from_environment(unrestricted: bool, fenced_reads: bool) -> Self {
-        let scripting = std::env::var("PANEFLOW_IPC_SCRIPTING").as_deref() == Ok("1");
-        let orchestration =
-            scripting || std::env::var("PANEFLOW_IPC_ORCHESTRATION").as_deref() == Ok("1");
-        Self {
-            scripting: scripting || unrestricted,
-            orchestration: orchestration || unrestricted,
-            fenced_reads,
-        }
-    }
 }
 
 #[derive(Debug, Default)]
@@ -147,6 +137,7 @@ fn surface_value(alias: u64, summary: &SessionSummary) -> Value {
         "lifecycle": summary.manifest.lifecycle.label(),
         "tab_id": Value::Null,
         "tab_title": Value::Null,
+        "sandboxed": summary.manifest.launch.sandbox,
     })
 }
 
@@ -256,6 +247,9 @@ fn create_gate(params: &Value, permissions: ControlPermissions) -> Result<(), Co
         if permissions.orchestration {
             return Ok(());
         }
+        if permissions.stale_grants {
+            return Err(ControlError::GrantsUnsynced);
+        }
         return Err(ControlError::Disabled(
             "session.create orchestration disabled; set PANEFLOW_IPC_ORCHESTRATION=1 or \
              PANEFLOW_IPC_SCRIPTING=1 to launch a command, prompt, or env"
@@ -274,6 +268,9 @@ fn input_gate(permissions: ControlPermissions) -> Result<(), ControlError> {
     if permissions.scripting {
         return Ok(());
     }
+    if permissions.stale_grants {
+        return Err(ControlError::GrantsUnsynced);
+    }
     Err(ControlError::Disabled(
         "session.input disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable".to_string(),
     ))
@@ -281,16 +278,13 @@ fn input_gate(permissions: ControlPermissions) -> Result<(), ControlError> {
 
 pub fn authorize_session_write(
     host: &SessionHost,
-    attaches: bool,
     permissions: ControlPermissions,
     method: &str,
     params: &Value,
 ) -> Result<(), ControlError> {
     match method {
         "session.input" => {
-            if !attaches {
-                input_gate(permissions)?;
-            }
+            input_gate(permissions)?;
             match params
                 .get("session")
                 .and_then(Value::as_str)
@@ -300,7 +294,7 @@ pub fn authorize_session_write(
                 _ => Ok(()),
             }
         }
-        "session.create" if !attaches => create_gate(params, permissions),
+        "session.create" => create_gate(params, permissions),
         _ => Ok(()),
     }
 }
@@ -330,8 +324,11 @@ pub fn authorize_write_scope(
     match params.get("scope").map(Value::as_str) {
         None | Some(Some(SCOPE_WORKSPACE)) => {}
         Some(Some(SCOPE_ALL)) => {
-            if permissions.orchestration {
+            if permissions.reach {
                 return Ok(());
+            }
+            if permissions.stale_grants {
+                return Err(ControlError::GrantsUnsynced);
             }
             return Err(ControlError::Disabled(
                 "scope all needs orchestration; set PANEFLOW_IPC_ORCHESTRATION=1 or \
@@ -783,9 +780,12 @@ mod tests {
                     env: Default::default(),
                     cols: 80,
                     rows: 24,
+                    sandbox: false,
+                    sandbox_unix_scope: false,
                 },
                 lifecycle: SessionLifecycle::Running,
                 process: None,
+                process_session: None,
                 name: None,
                 title: title.map(str::to_string),
                 current_cwd: None,
@@ -878,6 +878,8 @@ mod tests {
         let permissions = ControlPermissions {
             scripting: true,
             orchestration: true,
+            reach: true,
+            stale_grants: false,
             fenced_reads: true,
         };
         for method in CONTROLLER_ONLY_METHODS {
@@ -1014,6 +1016,8 @@ mod tests {
         let closed = ControlPermissions {
             scripting: false,
             orchestration: false,
+            reach: false,
+            stale_grants: false,
             fenced_reads: true,
         };
         let error = send_text_gate(closed).unwrap_err();
@@ -1026,10 +1030,6 @@ mod tests {
                 ..closed
             }),
             Ok(())
-        );
-        assert!(
-            ControlPermissions::from_environment(true, true).scripting,
-            "free access opens the gate without the env switch"
         );
     }
 }

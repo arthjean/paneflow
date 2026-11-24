@@ -7,6 +7,19 @@ use crate::{PaneFlowApp, ipc, keybindings, update};
 
 const SURFACE_BROADCAST_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Startup {
+    Desktop,
+    #[cfg(test)]
+    Conformance,
+}
+
+impl Startup {
+    fn runs_desktop_services(self) -> bool {
+        matches!(self, Self::Desktop)
+    }
+}
+
 impl PaneFlowApp {
     pub(crate) fn spawn_telemetry_flusher(
         telemetry: std::sync::Arc<telemetry::client::TelemetryClient>,
@@ -39,6 +52,10 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn new(cx: &mut Context<Self>) -> Self {
+        Self::start(Startup::Desktop, cx)
+    }
+
+    pub(crate) fn start(startup: Startup, cx: &mut Context<Self>) -> Self {
         let title_bar = cx.new(title_bar::TitleBar::new);
         cx.subscribe(&title_bar, Self::handle_title_bar_event)
             .detach();
@@ -63,20 +80,26 @@ impl PaneFlowApp {
         let (app_wake, wake_rx) = super::wake::AppWake::channel();
         Self::spawn_ipc_dispatch(ipc_rx, cx);
         Self::spawn_surface_broadcast(event_bus.subscription_signal(), cx);
-        cx.spawn(
-            async |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                smol::unblock(crate::agent_launcher::refresh_installed_binaries).await;
-                let _ = this.update(cx, |_app: &mut Self, cx: &mut Context<Self>| cx.notify());
-            },
-        )
-        .detach();
+        if startup.runs_desktop_services() {
+            cx.spawn(
+                async |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                    smol::unblock(crate::agent_launcher::refresh_installed_binaries).await;
+                    let _ = this.update(cx, |_app: &mut Self, cx: &mut Context<Self>| cx.notify());
+                },
+            )
+            .detach();
+        }
 
         let blink_phase = cx.new(|_| BlinkPhase::default());
         cx.set_global(BlinkPhaseGlobal(blink_phase.clone()));
         crate::theme::install_theme_signal(cx);
         Self::spawn_cursor_blink(cx);
 
-        let (pending_config, running_config_watcher) = Self::start_config_watcher(app_wake.clone());
+        let (pending_config, running_config_watcher) = if startup.runs_desktop_services() {
+            Self::start_config_watcher(app_wake.clone())
+        } else {
+            (std::sync::Arc::new(std::sync::Mutex::new(None)), None)
+        };
 
         let cached_config = paneflow_config::loader::load_config();
         crate::config_snapshot::publish(&cached_config, cx);
@@ -85,10 +108,17 @@ impl PaneFlowApp {
         let session_restore_failed = session_corruption.is_some();
         crate::startup_trace::mark("session_loaded");
 
-        let pending_detached_panes = saved_session
+        let file_revision = saved_session
             .as_ref()
-            .map(|session| session.detached_panes.clone())
-            .unwrap_or_default();
+            .and_then(|session| session.layout_revision)
+            .unwrap_or(0);
+        let pending_detached_panes = crate::app::detached_panes::persistence::pending_placements(
+            crate::window_state::loaded_detached(),
+            saved_session
+                .as_ref()
+                .map(|session| session.detached_panes.clone())
+                .unwrap_or_default(),
+        );
 
         let (workspaces, active_idx, active_space, session_restored) = match saved_session {
             Some(session) => {
@@ -122,12 +152,16 @@ impl PaneFlowApp {
 
         let install_method = update::install_method::detect();
         #[cfg(target_os = "linux")]
-        update::migrations::run_startup_migrations(&install_method);
+        if startup.runs_desktop_services() {
+            update::migrations::run_startup_migrations(&install_method);
+        }
         #[cfg(target_os = "windows")]
-        cx.background_spawn(smol::unblock(
-            update::windows::msi::remove_stale_relay_copies,
-        ))
-        .detach();
+        if startup.runs_desktop_services() {
+            cx.background_spawn(smol::unblock(
+                update::windows::msi::remove_stale_relay_copies,
+            ))
+            .detach();
+        }
 
         let (posthog_api_key, posthog_host) = super::telemetry_events::posthog_endpoint();
         let telemetry_config_snapshot = cached_config.clone();
@@ -135,8 +169,11 @@ impl PaneFlowApp {
             .telemetry
             .as_ref()
             .and_then(|t| t.enabled);
-        let telemetry_consent =
-            telemetry::client::TelemetryConsent::from_config(telemetry_enabled_last);
+        let telemetry_consent = if startup.runs_desktop_services() {
+            telemetry::client::TelemetryConsent::from_config(telemetry_enabled_last)
+        } else {
+            telemetry::client::TelemetryConsent::Declined
+        };
         let (telemetry_client, is_first_run_for_telemetry) =
             telemetry::client::TelemetryClient::from_consent(
                 telemetry_consent,
@@ -150,14 +187,17 @@ impl PaneFlowApp {
                 "ai.unrestricted is ON; same-UID callers may auto-submit prompts to agent panes without PANEFLOW_IPC_SCRIPTING (toggle in Settings -> Agents)"
             );
         }
-        let (pending_update, check_trigger) =
-            update::checker::spawn_check(std::sync::Arc::clone(&telemetry), app_wake.clone());
-        Self::spawn_telemetry_flusher(std::sync::Arc::clone(&telemetry), cx);
-
-        #[cfg(target_os = "linux")]
-        Self::schedule_coexistence_toast(&install_method, cx);
-
-        Self::schedule_release_toast(cx);
+        let (pending_update, check_trigger) = if startup.runs_desktop_services() {
+            let checker =
+                update::checker::spawn_check(std::sync::Arc::clone(&telemetry), app_wake.clone());
+            Self::spawn_telemetry_flusher(std::sync::Arc::clone(&telemetry), cx);
+            #[cfg(target_os = "linux")]
+            Self::schedule_coexistence_toast(&install_method, cx);
+            Self::schedule_release_toast(cx);
+            checker
+        } else {
+            update::checker::idle_check()
+        };
         Self::follow_keyboard_layout(cx);
 
         cx.observe_self(|this, cx| this.sync_terminal_visibility(cx))
@@ -286,6 +326,12 @@ impl PaneFlowApp {
         cx.observe(&sidebar_filter_input, |_, _, cx| cx.notify())
             .detach();
         cx.observe(&rename_input, |_, _, cx| cx.notify()).detach();
+        let prompt_input = cx.new(|cx| crate::widgets::text_input::TextInput::new("", "", cx));
+        cx.observe(&prompt_input, |this: &mut PaneFlowApp, _, cx| {
+            this.prompt_query_changed(cx);
+            cx.notify();
+        })
+        .detach();
         let file_finder_input = cx.new(|cx| {
             crate::widgets::text_input::TextInput::new("", "Search files…", cx)
                 .with_accessible_name("Search files")
@@ -329,6 +375,7 @@ impl PaneFlowApp {
             session_exit_pending: false,
             session_save_error_shown: false,
             cached_config,
+            ipc_gates: paneflow_api::Gates::CLOSED,
             app_wake,
             ipc_status,
             event_bus,
@@ -472,7 +519,7 @@ impl PaneFlowApp {
             #[cfg(target_os = "macos")]
             macos_appearance: Default::default(),
             jump_cursor: None,
-            closed_panes: Vec::new(),
+            layout: crate::app::layout_bridge::LayoutBridge::default(),
             owned_sessions: Default::default(),
             resume_batch: None,
             conversation_restore: Default::default(),
@@ -481,6 +528,9 @@ impl PaneFlowApp {
             worktree_remove_dialog: None,
             worktree_remove_focus: cx.focus_handle(),
             host_agents: Default::default(),
+            lua_config: Default::default(),
+            prompts: Default::default(),
+            prompt_input,
             usage: crate::app::usage::UsagePanel::new(cx),
             write_approvals: Default::default(),
             about_dialog: None,
@@ -506,6 +556,7 @@ impl PaneFlowApp {
             command_palette_scroll: gpui::UniformListScrollHandle::new(),
             command_palette_scope: None,
             command_palette_section: None,
+            command_palette_lua_category: None,
             command_palette_context: Default::default(),
             command_palette_restore_focus: None,
             pane_palette: None,
@@ -592,20 +643,26 @@ impl PaneFlowApp {
             app.plan_conversation_restore(cx);
         }
 
+        app.note_layout_file_revision(file_revision);
         app.restore_dock_sessions(cx);
-        app.spawn_restore_probe(cx);
-        app.spawn_recents_prune(cx);
-        app.refresh_pull_requests(cx);
-        app.refresh_owned_sessions(cx);
-        app.refresh_space_integrations_at_launch(cx);
-        app.start_host_agent_stream();
-        app.refresh_usage_inventory(false, cx);
-        app.start_usage_auto_refresh(cx);
-        app.start_write_approval_stream();
+        if startup.runs_desktop_services() {
+            app.spawn_restore_probe(cx);
+            app.spawn_recents_prune(cx);
+            app.refresh_pull_requests(cx);
+            app.refresh_owned_sessions(cx);
+            app.refresh_space_integrations_at_launch(cx);
+            app.start_host_agent_stream();
+            app.start_lua_config_stream();
+            app.start_prompt_stream();
+            app.start_layout_client();
+            app.refresh_usage_inventory(false, cx);
+            app.start_usage_auto_refresh(cx);
+            app.start_write_approval_stream();
 
-        app.emit_app_started(is_first_run_for_telemetry);
-        if let Some(info) = session_corruption {
-            app.emit_session_corrupted(&info);
+            app.emit_app_started(is_first_run_for_telemetry);
+            if let Some(info) = session_corruption {
+                app.emit_session_corrupted(&info);
+            }
         }
 
         crate::ui_primitives::set_reduce_motion(app.cached_config.reduce_motion_enabled(), cx);
@@ -613,13 +670,17 @@ impl PaneFlowApp {
             app.cached_config.resolved_interface_style(),
             cx,
         );
-        crate::app_icon::apply(app.cached_config.resolved_app_icon(), cx);
+        if startup.runs_desktop_services() {
+            crate::app_icon::apply(app.cached_config.resolved_app_icon(), cx);
+        }
         crate::app::diff_dock::code::controls::set_editor_display(
             crate::app::diff_dock::code::controls::EditorDisplay::from_config(
                 &app.cached_config.editor,
             ),
+            cx,
         );
 
+        app.adopt_layout(cx);
         app
     }
 
@@ -708,7 +769,10 @@ impl PaneFlowApp {
                     let result = cx.update(|cx| {
                         this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
                             app.process_host_agent_frames(cx);
+                            app.process_lua_config_frames(cx);
+                            app.process_prompt_frames(cx);
                             app.process_write_approval_frames(cx);
+                            app.process_layout_client(cx);
                             app.process_config_changes(cx);
                             app.process_update_check(cx);
                         })

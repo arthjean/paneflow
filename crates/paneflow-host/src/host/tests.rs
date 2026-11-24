@@ -323,9 +323,12 @@ fn finished_manifest(
             env: BTreeMap::new(),
             cols: 80,
             rows: 24,
+            sandbox: false,
+            sandbox_unix_scope: false,
         },
         lifecycle,
         process: None,
+        process_session: None,
         name: None,
         title: Some("claude \u{00b7} feat/a-reasonably-long-branch-name".to_string()),
         current_cwd: Some(cwd.display().to_string()),
@@ -360,6 +363,8 @@ fn summary_at(workspace: Option<&WorkspaceId>, live: bool, updated_at_ms: u64) -
                 env: BTreeMap::new(),
                 cols: 80,
                 rows: 24,
+                sandbox: false,
+                sandbox_unix_scope: false,
             },
             lifecycle: if live {
                 SessionLifecycle::Running
@@ -370,6 +375,7 @@ fn summary_at(workspace: Option<&WorkspaceId>, live: bool, updated_at_ms: u64) -
                 }
             },
             process: None,
+            process_session: None,
             name: None,
             title: None,
             current_cwd: None,
@@ -663,6 +669,41 @@ const QUERY_PROGRAM_STATUS_COMMAND: &[u8] = b"printf '\\033]7501;?\\007'; sleep 
 
 #[cfg(windows)]
 const QUERY_PROGRAM_STATUS_COMMAND: &[u8] = b"powershell -NoProfile -Command \"[Console]::Write([char]27 + ']7501;?' + [char]7); Start-Sleep 30\"\r\n";
+
+#[cfg(windows)]
+#[test]
+fn a_running_windows_session_keeps_a_pane_job_named_after_it_until_it_stops() {
+    let home = tempfile::tempdir().unwrap();
+    let host = SessionHost::open(home.path(), Path::new("named-pane-job")).unwrap();
+    let created = host.create(shell_request(80, 24)).unwrap();
+    let session = created.manifest.session.clone();
+    let name = paneflow_peer::pane_job_name(session.as_str());
+    let leader = created.manifest.process.expect("a pane leader");
+    let job = paneflow_peer::PaneJob::open(&name)
+        .unwrap()
+        .expect("the session's job is named after it");
+    let leaders = [paneflow_peer::PaneLeader {
+        session: session.to_string(),
+        workspace: None,
+        pid: 0,
+        started_at: 0,
+        process_session: None,
+        job: Some(Arc::new(job)),
+    }];
+    assert!(matches!(
+        paneflow_peer::classify(leader.pid, leader.started_at.unwrap(), &leaders),
+        paneflow_peer::Membership::Pane { .. }
+    ));
+    host.stop(&session, Some(created.manifest.generation))
+        .unwrap();
+    drop(leaders);
+    assert!(
+        wait_until(Duration::from_secs(20), || {
+            paneflow_peer::PaneJob::open(&name).is_ok_and(|job| job.is_none())
+        }),
+        "a stopped session releases its named job"
+    );
+}
 
 #[test]
 fn an_answered_support_query_is_published_and_a_new_generation_starts_without_it() {
@@ -1351,11 +1392,14 @@ fn unverified_record(host: &SessionHost, reason: &str) -> SessionId {
             env: BTreeMap::new(),
             cols: 80,
             rows: 24,
+            sandbox: false,
+            sandbox_unix_scope: false,
         },
         lifecycle: SessionLifecycle::Unverified {
             reason: reason.to_string(),
         },
         process: None,
+        process_session: None,
         name: None,
         title: None,
         current_cwd: None,
@@ -1624,6 +1668,8 @@ fn launch_owner_thread_failure_is_reconciled_by_the_existing_scan() {
         appearance: None,
         cell: None,
         xt_checksum: crate::runtime::XtChecksum::default(),
+        session: None,
+        sandbox: None,
     };
     spec.env
         .insert("PANEFLOW_TEST_SPAWN_DELAY_MS".into(), "100".into());
@@ -1675,9 +1721,12 @@ fn unlaunched_record(host: &SessionHost, session: &SessionId) -> SessionRecord {
             env: BTreeMap::new(),
             cols: 80,
             rows: 24,
+            sandbox: false,
+            sandbox_unix_scope: false,
         },
         lifecycle: SessionLifecycle::Starting,
         process: None,
+        process_session: None,
         name: None,
         title: None,
         current_cwd: None,
@@ -3163,4 +3212,62 @@ fn the_final_text_is_served_while_its_cold_write_is_still_queued() {
     );
     let cold = host.text(&session).unwrap();
     assert!(cold.available && cold.text == text.text);
+}
+
+#[cfg(target_os = "linux")]
+fn children_of_this_process() -> Vec<u32> {
+    let mut children = Vec::new();
+    for task in std::fs::read_dir("/proc/self/task").unwrap().flatten() {
+        let listed = std::fs::read_to_string(task.path().join("children")).unwrap_or_default();
+        children.extend(
+            listed
+                .split_whitespace()
+                .filter_map(|pid| pid.parse::<u32>().ok()),
+        );
+    }
+    children
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_pane_leader_read_before_its_launch_commits_is_classified_as_that_pane() {
+    let home = tempfile::tempdir().unwrap();
+    let host = SessionHost::open(home.path(), Path::new("peer-launch-race")).unwrap();
+    let (reached, at_commit) = std::sync::mpsc::channel::<()>();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let gate = Arc::new(Mutex::new((reached, released)));
+    host.set_barrier(Arc::new(move |point| {
+        if point == Barrier::LaunchCommit {
+            let gate = gate.lock().unwrap();
+            let _ = gate.0.send(());
+            let _ = gate.1.recv();
+        }
+    }));
+    let create = {
+        let host = Arc::clone(&host);
+        std::thread::spawn(move || host.create(shell_request(80, 24)))
+    };
+    at_commit.recv().unwrap();
+    let leader = *children_of_this_process()
+        .first()
+        .expect("the pane shell is running before its launch commits");
+    let started_at = paneflow_peer::process_start_time(leader).unwrap();
+    assert!(host.pane_leaders().is_empty());
+    let classify = {
+        let host = Arc::clone(&host);
+        std::thread::spawn(move || host.classify_peer(leader, started_at))
+    };
+    std::thread::sleep(Duration::from_millis(100));
+    release.send(()).unwrap();
+    let created = create.join().unwrap().unwrap();
+    host.set_barrier(Arc::new(|_| {}));
+    assert_eq!(
+        classify.join().unwrap(),
+        paneflow_peer::Membership::Pane {
+            session: created.manifest.session.to_string(),
+            workspace: created.manifest.workspace.as_ref().map(ToString::to_string),
+        }
+    );
+    host.stop(&created.manifest.session, None).unwrap();
+    host.lock_sessions().clear();
 }

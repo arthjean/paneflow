@@ -1,6 +1,6 @@
 use gpui::{Entity, TestAppContext, VisualTestContext};
 
-use super::super::controls::{EditorDisplay, editor_display, set_editor_display};
+use super::super::controls::{EditorDisplay, set_editor_display};
 use super::super::rows::{self, RowSlot};
 use super::tests::*;
 use super::*;
@@ -79,10 +79,14 @@ fn word_wrap_from_the_controls_menu_folds_long_lines_and_drops_the_horizontal_sc
 
 #[gpui::test]
 fn the_setting_sets_the_initial_state_and_the_toggle_stays_with_its_tab(cx: &mut TestAppContext) {
-    let saved = editor_display();
-    set_editor_display(EditorDisplay {
-        word_wrap: true,
-        ..saved
+    cx.update(|cx| {
+        set_editor_display(
+            EditorDisplay {
+                word_wrap: true,
+                ..EditorDisplay::default()
+            },
+            cx,
+        )
     });
     let (first, cx) = scrolled(cx, "/nonexistent/one.md", &wrap_file(10));
     let second = cx.update(|window, cx| {
@@ -90,7 +94,6 @@ fn the_setting_sets_the_initial_state_and_the_toggle_stays_with_its_tab(cx: &mut
         let _ = window;
         cx.new(seeded)
     });
-    set_editor_display(saved);
 
     assert!(first.read_with(cx, |view, _| view.word_wrap()));
     assert!(second.read_with(cx, |view, _| view.word_wrap()));

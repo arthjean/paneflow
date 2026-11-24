@@ -7,7 +7,6 @@ use gpui::{
 
 use crate::PaneFlowApp;
 use crate::agent_sessions::{SessionAgent, SessionMeta, format_relative_time};
-use crate::app::ipc_handler::find_pane_by_surface_id;
 use crate::pane_drag::{DragPreview, SessionDrag};
 use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
@@ -22,7 +21,7 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) {
         let terminal = pane.read(cx).active_terminal_opt();
-        let surface_id = terminal.as_ref().map(|tv| tv.entity_id().as_u64());
+        let surface_id = terminal.as_ref().map(|tv| tv.read(cx).surface_id());
         let cwd_str = terminal.as_ref().and_then(|tv| {
             let view = tv.read(cx);
             view.terminal.current_cwd.clone().or_else(|| {
@@ -579,7 +578,7 @@ impl PaneFlowApp {
         let Some(expected_cwd) = self.agent_sessions.sessions_cwd.as_deref() else {
             return ResumeSendResult::Missing;
         };
-        let Some(loc) = find_pane_by_surface_id(&self.workspaces, surface_id, cx) else {
+        let Some(loc) = self.locate_surface(surface_id) else {
             return ResumeSendResult::Missing;
         };
         let Some(terminal) = loc.pane.read(cx).active_terminal_opt().cloned() else {

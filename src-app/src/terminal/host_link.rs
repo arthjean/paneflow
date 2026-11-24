@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use paneflow_config::schema::{HostInstanceToken, SessionGeneration, SessionId, WorkspaceId};
@@ -36,6 +36,28 @@ pub(crate) enum HostLinkError {
     NoHome,
     Bootstrap(BootstrapError),
     Client(HostClientError),
+    Launch(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum WorkerLaunchAnswer {
+    Launched,
+    Failed(String),
+    Unavailable,
+    Unknown,
+}
+
+pub(crate) trait WorkerLauncher: Send + Sync {
+    fn launch(&self, params: serde_json::Value) -> WorkerLaunchAnswer;
+}
+
+pub(crate) type LaunchRoute = std::sync::Arc<dyn WorkerLauncher>;
+
+#[derive(Clone)]
+pub(super) struct WorkerRoute {
+    pub(super) launcher: LaunchRoute,
+    pub(super) surface_id: u64,
+    pub(super) user_env: Option<std::collections::HashMap<String, String>>,
 }
 
 impl std::fmt::Display for HostLinkError {
@@ -46,6 +68,7 @@ impl std::fmt::Display for HostLinkError {
             }
             Self::Bootstrap(error) => write!(formatter, "{error}"),
             Self::Client(error) => write!(formatter, "{error}"),
+            Self::Launch(message) => formatter.write_str(message),
         }
     }
 }
@@ -78,6 +101,7 @@ impl HostLinkError {
                 "The local host is not reachable.".to_string()
             }
             Self::Client(error) => format!("The local host refused the request: {error}"),
+            Self::Launch(message) => format!("The terminal could not be started: {message}"),
         }
     }
 }
@@ -478,6 +502,7 @@ pub(super) struct AttachRequest {
     pub(super) params: SpawnParams,
     pub(super) appearance: SessionAppearance,
     pub(super) cell: Option<CellSize>,
+    pub(super) route: Option<WorkerRoute>,
 }
 
 pub(crate) enum ResolveOutcome {
@@ -507,24 +532,57 @@ fn ended_with_final_text(
     ResolveOutcome::Ended(end, final_text)
 }
 
-fn create_request(request: &AttachRequest) -> CreateSession {
-    let params = &request.params;
-    CreateSession {
-        session: Some(request.session.clone()),
-        workspace: request.workspace.clone(),
-        cwd: Some(params.cwd.display().to_string()),
-        shell: Some(params.shell.clone()),
-        args: params.extra_args.clone(),
-        env: params
-            .env
-            .iter()
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .collect::<BTreeMap<_, _>>(),
-        cols: u16::try_from(params.cols).ok().filter(|c| *c > 0),
-        rows: u16::try_from(params.rows).ok().filter(|r| *r > 0),
-        title: None,
-        appearance: Some(request.appearance.clone()),
-        cell: request.cell,
+pub(in crate::terminal) fn create_request(request: &AttachRequest) -> CreateSession {
+    paneflow_launch::create_request(
+        &request.params.launch(),
+        request.session.clone(),
+        request.workspace.clone(),
+        Some(request.appearance.clone()),
+        request.cell,
+    )
+}
+
+fn worker_launch_params(request: &AttachRequest, route: &WorkerRoute) -> serde_json::Value {
+    let mut params = serde_json::json!({
+        "surface_id": route.surface_id,
+        "session": request.session.as_str(),
+        "cwd": request.params.cwd.display().to_string(),
+        "cols": u16::try_from(request.params.cols).ok().filter(|cols| *cols > 0),
+        "rows": u16::try_from(request.params.rows).ok().filter(|rows| *rows > 0),
+        "appearance": request.appearance,
+        "cell": request.cell,
+    });
+    if let Some(env) = route.user_env.as_ref().filter(|env| !env.is_empty()) {
+        params["env"] = serde_json::json!(env);
+    }
+    if let Some(object) = params.as_object_mut() {
+        object.retain(|_, value| !value.is_null());
+    }
+    params
+}
+
+enum WorkerCreated {
+    NotRouted,
+    Created(Box<SessionSummary>),
+    NotYet,
+}
+
+fn created_by_worker(
+    client: &mut HostClient,
+    request: &AttachRequest,
+) -> Result<WorkerCreated, HostLinkError> {
+    let Some(route) = &request.route else {
+        return Ok(WorkerCreated::NotRouted);
+    };
+    match route.launcher.launch(worker_launch_params(request, route)) {
+        WorkerLaunchAnswer::Unavailable => Ok(WorkerCreated::NotRouted),
+        WorkerLaunchAnswer::Failed(message) => Err(HostLinkError::Launch(message)),
+        WorkerLaunchAnswer::Launched | WorkerLaunchAnswer::Unknown => {
+            Ok(match inspect_optional(client, &request.session)? {
+                Some(summary) => WorkerCreated::Created(Box::new(summary)),
+                None => WorkerCreated::NotYet,
+            })
+        }
     }
 }
 
@@ -570,12 +628,23 @@ fn resolve_at(
         (_, Some(summary)) if summary.owned && summary.pending_launch => {
             return Ok(ResolveOutcome::Starting);
         }
-        (SessionIntent::Create, None) => match client.create(&create_request(&request)) {
-            Ok(created) => created,
-            Err(error) if error.code() == Some(ERR_LAUNCH_PENDING) => {
+        (SessionIntent::Create, None) => match created_by_worker(&mut client, &request)? {
+            WorkerCreated::Created(summary) if summary.live && summary.owned => *summary,
+            WorkerCreated::Created(summary) if summary.owned && summary.pending_launch => {
                 return Ok(ResolveOutcome::Starting);
             }
-            Err(error) => return Err(error.into()),
+            WorkerCreated::Created(summary) => {
+                let end = end_of(&client, &summary);
+                return Ok(ended_with_final_text(&mut client, &request.session, end));
+            }
+            WorkerCreated::NotYet => return Ok(ResolveOutcome::Starting),
+            WorkerCreated::NotRouted => match client.create(&create_request(&request)) {
+                Ok(created) => created,
+                Err(error) if error.code() == Some(ERR_LAUNCH_PENDING) => {
+                    return Ok(ResolveOutcome::Starting);
+                }
+                Err(error) => return Err(error.into()),
+            },
         },
         (SessionIntent::Create, Some(summary)) => {
             let end = end_of(&client, &summary);
@@ -1138,6 +1207,36 @@ fn workspace_to_assign<'a>(
     requested.filter(|requested| current != Some(*requested))
 }
 
+pub(crate) fn spawned_surface_ids(sessions: &[SessionId]) -> HashMap<SessionId, u64> {
+    let Some(target) = host_endpoint() else {
+        return HashMap::new();
+    };
+    let Ok(mut client) = connect(&target.endpoint) else {
+        return HashMap::new();
+    };
+    let mut spawned = HashMap::new();
+    for session in sessions {
+        let summary = match inspect_optional(&mut client, session) {
+            Ok(Some(summary)) => summary,
+            Ok(None) => continue,
+            Err(error) => {
+                log::warn!("session restore: the host stopped answering id lookups: {error}");
+                break;
+            }
+        };
+        if let Some(id) = summary
+            .manifest
+            .launch
+            .env
+            .get("PANEFLOW_SURFACE_ID")
+            .and_then(|value| value.trim().parse::<u64>().ok())
+        {
+            spawned.insert(session.clone(), id);
+        }
+    }
+    spawned
+}
+
 pub(crate) fn assign_workspace(sessions: &[SessionId], workspace: &WorkspaceId) {
     let Some(target) = host_endpoint() else {
         return;
@@ -1431,6 +1530,7 @@ mod tests {
                 width: 9,
                 height: 19,
             }),
+            route: None,
         };
         let created = create_request(&request);
         assert_eq!(created.session, Some(session));
@@ -1503,6 +1603,7 @@ mod tests {
                     },
                     appearance: crate::terminal::ghostty_session::current_host_appearance(),
                     cell: None,
+                    route: None,
                 },
                 target.clone(),
             )
@@ -1513,6 +1614,123 @@ mod tests {
                 host.inspect(&failed).unwrap().manifest.generation,
                 SessionGeneration::FIRST
             );
+        }
+        server.stop().unwrap();
+    }
+
+    #[cfg(unix)]
+    struct StubLauncher {
+        host: std::sync::Arc<paneflow_host::SessionHost>,
+        answer: WorkerLaunchAnswer,
+        seen: std::sync::Mutex<Vec<serde_json::Value>>,
+    }
+
+    #[cfg(unix)]
+    impl WorkerLauncher for StubLauncher {
+        fn launch(&self, params: serde_json::Value) -> WorkerLaunchAnswer {
+            self.seen.lock().unwrap().push(params.clone());
+            if self.answer == WorkerLaunchAnswer::Launched {
+                let session: SessionId = params["session"].as_str().unwrap().parse().unwrap();
+                self.host
+                    .create(CreateSession {
+                        session: Some(session),
+                        shell: Some("/bin/sh".into()),
+                        args: vec!["-s".into()],
+                        cwd: Some(std::env::temp_dir().display().to_string()),
+                        ..CreateSession::default()
+                    })
+                    .unwrap();
+            }
+            self.answer.clone()
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_routed_create_is_made_by_the_worker_and_the_window_only_attaches() {
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = paneflow_host::endpoint::host_endpoint_path(home.path());
+        let host = paneflow_host::SessionHost::open(home.path(), &endpoint).unwrap();
+        let server =
+            paneflow_host::ServerHandle::spawn(std::sync::Arc::clone(&host), endpoint.clone())
+                .unwrap();
+        let target = HostEndpoint {
+            home: home.path().to_path_buf(),
+            endpoint,
+        };
+        let request = |session: SessionId, launcher: &std::sync::Arc<StubLauncher>| AttachRequest {
+            intent: SessionIntent::Create,
+            session,
+            workspace: None,
+            params: SpawnParams {
+                shell: "/bin/sh".into(),
+                shell_quoting: super::super::types::ShellQuoting::default_for_platform(),
+                extra_args: vec!["-s".into()],
+                env: Default::default(),
+                cwd: home.path().to_path_buf(),
+                cols: 100,
+                rows: 30,
+                profile: paneflow_config::schema::TerminalSurfaceProfile::Normal,
+            },
+            appearance: crate::terminal::ghostty_session::current_host_appearance(),
+            cell: None,
+            route: Some(WorkerRoute {
+                launcher: std::sync::Arc::clone(launcher) as LaunchRoute,
+                surface_id: 42,
+                user_env: None,
+            }),
+        };
+        let stub = |answer| {
+            std::sync::Arc::new(StubLauncher {
+                host: std::sync::Arc::clone(&host),
+                answer,
+                seen: std::sync::Mutex::new(Vec::new()),
+            })
+        };
+
+        let worker = stub(WorkerLaunchAnswer::Launched);
+        let routed = SessionId::new();
+        let outcome = resolve_at(request(routed.clone(), &worker), target.clone()).unwrap();
+        assert!(matches!(outcome, ResolveOutcome::Attached(..)));
+        let seen = worker.seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0]["surface_id"], 42);
+        assert_eq!(seen[0]["session"], routed.as_str());
+        assert_eq!(
+            (seen[0]["cols"].as_u64(), seen[0]["rows"].as_u64()),
+            (Some(100), Some(30))
+        );
+        assert_eq!(
+            host.list(None).len(),
+            1,
+            "the worker's session is the only one"
+        );
+
+        let refused = stub(WorkerLaunchAnswer::Failed(
+            "the terminal host refused the session: the pty pool is exhausted".into(),
+        ));
+        let error = match resolve_at(request(SessionId::new(), &refused), target.clone()) {
+            Err(error) => error,
+            Ok(_) => panic!("a refused launch attaches nothing"),
+        };
+        assert!(
+            error.user_message().contains("the pty pool is exhausted"),
+            "{error}"
+        );
+        assert_eq!(host.list(None).len(), 1, "a refused launch creates nothing");
+
+        let older = stub(WorkerLaunchAnswer::Unavailable);
+        let fallback = SessionId::new();
+        let outcome = resolve_at(request(fallback.clone(), &older), target).unwrap();
+        assert!(matches!(outcome, ResolveOutcome::Attached(..)));
+        assert_eq!(
+            host.list(None).len(),
+            2,
+            "with no worker to ask, the window creates the session itself"
+        );
+        for session in [routed, fallback] {
+            let generation = host.inspect(&session).unwrap().manifest.generation;
+            let _ = host.stop(&session, Some(generation));
         }
         server.stop().unwrap();
     }
@@ -1577,6 +1795,7 @@ mod tests {
                         },
                         appearance: crate::terminal::ghostty_session::current_host_appearance(),
                         cell: None,
+                        route: None,
                     },
                     HostEndpoint {
                         home: home.path().into(),
@@ -1664,6 +1883,7 @@ mod tests {
             },
             appearance: crate::terminal::ghostty_session::current_host_appearance(),
             cell: None,
+            route: None,
         }
     }
 
@@ -2166,6 +2386,123 @@ mod tests {
             host.stop(session, None).unwrap();
         }
         assert!(host.live_sessions().is_empty());
+        server.stop().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_quit_cut_between_the_stops_and_the_unbind_restores_a_fresh_shell_per_pane() {
+        use paneflow_ipc_client::host_control::HostControl;
+        use std::sync::Arc;
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(
+            home.path().join("paneflow.json"),
+            serde_json::to_vec(
+                &serde_json::json!({"default_shell": TEST_SHELL, "shell_integration": false}),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let endpoint = paneflow_home::host_endpoint_path(home.path());
+        let host = paneflow_host::SessionHost::open(home.path(), &endpoint).unwrap();
+        let server =
+            paneflow_host::ServerHandle::spawn(Arc::clone(&host), endpoint.clone()).unwrap();
+        let worker = paneflow_serve::open(home.path()).expect("a worker");
+        let mut control = HostControl::connect(
+            &paneflow_home::serve_endpoint_path(home.path()),
+            "quit-cut-test",
+        )
+        .unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        control
+            .request(
+                "workspace.up",
+                serde_json::json!({"panes": [{"cwd": cwd.path()}, {"cwd": cwd.path()}]}),
+            )
+            .expect("the worker starts two terminals");
+        let bound = |control: &mut HostControl| -> Vec<SessionId> {
+            let view = control
+                .request("layout.view", serde_json::json!({}))
+                .unwrap();
+            let state: paneflow_layout::State =
+                serde_json::from_value(view["view"]["state"].clone()).unwrap();
+            state
+                .workspaces
+                .iter()
+                .flat_map(|ws| ws.tabs.iter())
+                .filter_map(|tab| tab.root.as_ref())
+                .flat_map(paneflow_layout::Node::panes)
+                .flat_map(|pane| pane.surfaces.iter())
+                .filter_map(|surface| surface.definition.session.clone())
+                .collect()
+        };
+        let sessions = bound(&mut control);
+        assert_eq!(sessions.len(), 2);
+
+        let outcome = stop_sessions_and_shutdown(Vec::new(), Some(endpoint.clone()));
+        assert!(outcome.confirmed(), "{}", outcome.detail());
+        assert_eq!(outcome.stopped, 2);
+        server.stop().unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        while Arc::strong_count(&host) > 1 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "a host connection outlived the shutdown"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        drop(host);
+        assert_eq!(
+            bound(&mut control),
+            sessions,
+            "the quit was cut before the window unbound its terminals"
+        );
+
+        let host = paneflow_host::SessionHost::open(home.path(), &endpoint).unwrap();
+        assert!(host.list(None).is_empty(), "stop everything left no record");
+        let server =
+            paneflow_host::ServerHandle::spawn(Arc::clone(&host), endpoint.clone()).unwrap();
+        let target = HostEndpoint {
+            home: home.path().to_path_buf(),
+            endpoint,
+        };
+        for session in &sessions {
+            let Ok(ResolveOutcome::Ended(end, _)) = resolve_at(
+                shell_request(SessionIntent::Reattach, session.clone()),
+                target.clone(),
+            ) else {
+                panic!("a stopped or removed session ends its restored pane");
+            };
+            let Some((intent, fresh_identity)) = end.restore_recovery(None) else {
+                panic!("{:?} recovers on the next start", end.kind);
+            };
+            let recovered = if fresh_identity {
+                SessionId::new()
+            } else {
+                session.clone()
+            };
+            let settled = smol::block_on(resolve_until_settled(
+                recovered.clone(),
+                async || resolve_at(shell_request(intent, recovered.clone()), target.clone()),
+                async |pause| {
+                    std::thread::sleep(pause.quiet + pause.visible);
+                    true
+                },
+            ));
+            let Some(Ok(ResolveOutcome::Attached(hosted, _))) = settled else {
+                panic!("{:?} recovers into a live shell", end.kind);
+            };
+            assert_eq!(hosted.attachment.session, recovered);
+            assert!(
+                host.inspect(&recovered).unwrap().live,
+                "the pane runs a fresh shell"
+            );
+        }
+
+        for summary in host.list(None) {
+            host.stop(&summary.manifest.session, None).unwrap();
+        }
+        worker.stop();
         server.stop().unwrap();
     }
 }

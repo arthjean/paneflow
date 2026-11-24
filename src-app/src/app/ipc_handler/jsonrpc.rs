@@ -2,6 +2,7 @@
 pub(crate) struct JsonRpcError {
     pub code: i32,
     pub message: String,
+    pub data: Option<serde_json::Value>,
 }
 
 pub(crate) const JSONRPC_ERROR_KEY: &str = "_jsonrpc_error";
@@ -15,11 +16,21 @@ impl JsonRpcError {
     pub(crate) const RUNTIME_UNAVAILABLE: i32 = -32003;
     pub(crate) const CONFIRMATION_REQUIRED: i32 = -32005;
     pub(crate) const REQUEST_CANCELLED: i32 = -32800;
+    pub(crate) const INTERNAL: i32 = -32603;
 
     pub(crate) fn invalid_params(message: impl Into<String>) -> Self {
         Self {
             code: Self::INVALID_PARAMS,
             message: message.into(),
+            data: None,
+        }
+    }
+
+    pub(crate) fn internal(message: impl Into<String>) -> Self {
+        Self {
+            code: Self::INTERNAL,
+            message: message.into(),
+            data: None,
         }
     }
 
@@ -27,6 +38,7 @@ impl JsonRpcError {
         Self {
             code: Self::METHOD_NOT_ENABLED,
             message: message.into(),
+            data: None,
         }
     }
 
@@ -34,6 +46,7 @@ impl JsonRpcError {
         Self {
             code: Self::METHOD_NOT_FOUND,
             message: message.into(),
+            data: None,
         }
     }
 
@@ -41,6 +54,7 @@ impl JsonRpcError {
         Self {
             code: Self::CONFIRMATION_REQUIRED,
             message: message.into(),
+            data: None,
         }
     }
 
@@ -55,16 +69,27 @@ impl JsonRpcError {
         Self {
             code,
             message: error.to_string(),
+            data: None,
+        }
+    }
+
+    pub(crate) fn grants_unsynced() -> Self {
+        Self {
+            code: Self::METHOD_NOT_ENABLED,
+            message: paneflow_api::grants::GRANTS_UNSYNCED_MESSAGE.to_string(),
+            data: Some(serde_json::json!({"reason": paneflow_api::grants::REASON_GRANTS_UNSYNCED})),
         }
     }
 
     pub(crate) fn into_value(self) -> serde_json::Value {
-        serde_json::json!({
-            JSONRPC_ERROR_KEY: {
-                "code": self.code,
-                "message": self.message,
-            }
-        })
+        let mut error = serde_json::json!({
+            "code": self.code,
+            "message": self.message,
+        });
+        if let Some(data) = self.data {
+            error["data"] = data;
+        }
+        serde_json::json!({ JSONRPC_ERROR_KEY: error })
     }
 }
 
@@ -79,9 +104,13 @@ pub(crate) fn promote_response(
             .and_then(|m| m.as_str())
             .unwrap_or("Unknown error")
             .to_string();
+        let mut error = serde_json::json!({ "code": code, "message": message });
+        if let Some(data) = err.get("data") {
+            error["data"] = data.clone();
+        }
         return serde_json::json!({
             "jsonrpc": "2.0",
-            "error": { "code": code, "message": message },
+            "error": error,
             "id": id,
         });
     }

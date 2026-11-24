@@ -67,6 +67,8 @@ pub struct SpawnSpec {
     pub appearance: Option<SessionAppearance>,
     pub cell: Option<CellSize>,
     pub xt_checksum: XtChecksum,
+    pub session: Option<paneflow_config::schema::SessionId>,
+    pub sandbox: Option<crate::sandbox::SandboxPlan>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -343,6 +345,7 @@ struct Shared {
     resets: AtomicU64,
     stream: Arc<OutputStream>,
     inbox: PtyInbox,
+    containment: Mutex<Option<crate::peer::PaneContainment>>,
     #[cfg(test)]
     tracked_descendants: AtomicUsize,
 }
@@ -362,9 +365,42 @@ impl Shared {
             resets: AtomicU64::new(0),
             stream: OutputStream::new(MAX_OUTPUT_TAIL_BYTES),
             inbox: PtyInbox::default(),
+            containment: Mutex::new(None),
             #[cfg(test)]
             tracked_descendants: AtomicUsize::new(0),
         })
+    }
+
+    fn contain(&self, pid: u32, session: Option<&paneflow_config::schema::SessionId>) {
+        let containment = crate::peer::PaneContainment::of(pid, session);
+        *self
+            .containment
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(containment);
+    }
+
+    fn release_containment(&self) {
+        *self
+            .containment
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    }
+
+    fn process_session(&self) -> Option<u32> {
+        self.containment
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .and_then(|containment| containment.process_session)
+    }
+
+    #[cfg(windows)]
+    fn pane_job(&self) -> Option<Arc<paneflow_peer::PaneJob>> {
+        self.containment
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .and_then(|containment| containment.job.clone())
     }
 
     fn exit(&self) -> Option<ExitOutcome> {
@@ -528,6 +564,15 @@ impl SessionRuntime {
 
     pub fn process(&self) -> ProcessIdentity {
         self.process
+    }
+
+    pub fn process_session(&self) -> Option<u32> {
+        self.shared.process_session()
+    }
+
+    #[cfg(windows)]
+    pub fn pane_job(&self) -> Option<Arc<paneflow_peer::PaneJob>> {
+        self.shared.pane_job()
     }
 
     pub fn exit(&self) -> Option<ExitOutcome> {
@@ -883,6 +928,7 @@ fn run(
         }
     }
     let _ = catch_unwind(AssertUnwindSafe(|| session.retire_terminal()));
+    shared.release_containment();
 }
 
 fn serve_loop(session: &mut Session, rx: &Receiver<Message>) {
@@ -1069,13 +1115,29 @@ fn start(
     let cell = spec.cell.unwrap_or(DEFAULT_CELL);
     let pair = crate::pty::open(pty_size(spec.cols, spec.rows, cell))
         .map_err(|e| format!("failed to open a native PTY: {e}"))?;
-    let mut command = CommandBuilder::new(&spec.shell);
-    command.args(&spec.args);
+    let (program, args, sandbox_env) = match &spec.sandbox {
+        Some(plan) => {
+            let wrapped = plan.wrap(&spec.shell, &spec.args)?;
+            log::debug!(
+                "paneflow-host: session {} runs sandboxed under {}",
+                plan.session,
+                plan.describe()
+            );
+            (wrapped.program, wrapped.args, wrapped.env)
+        }
+        None => (spec.shell.clone(), spec.args.clone(), Vec::new()),
+    };
+    let mut command = CommandBuilder::new(&program);
+    command.args(&args);
     command.cwd(&spec.cwd);
     for key in crate::env::inherited_env_keys_to_strip() {
         command.env_remove(&key);
     }
-    for (key, value) in &spec.env {
+    for (key, value) in spec
+        .env
+        .iter()
+        .chain(sandbox_env.iter().map(|(key, value)| (key, value)))
+    {
         command.env(key, value);
     }
     #[cfg(debug_assertions)]
@@ -1089,8 +1151,9 @@ fn start(
     let child = pair
         .slave
         .spawn_command(command)
-        .map_err(|e| format!("failed to spawn {} in the PTY: {e}", spec.shell))?;
+        .map_err(|e| format!("failed to spawn {program} in the PTY: {e}"))?;
     let child_pid = child.process_id().unwrap_or(0);
+    shared.contain(child_pid, spec.session.as_ref());
     drop(pair.slave);
     let mut session = Session {
         terminal: Some(terminal),
@@ -2201,6 +2264,8 @@ mod tests {
             appearance: None,
             cell: None,
             xt_checksum: XtChecksum::default(),
+            session: None,
+            sandbox: None,
         }
     }
 
@@ -3248,5 +3313,32 @@ mod tests {
                 .any(|n| matches!(n, RuntimeNotice::Unverified(_))),
             "the observer saw the unverified transition"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_windows_pane_is_contained_in_a_job_that_is_released_when_the_session_ends() {
+        let mut spec = echo_shell_spec(80, 24);
+        spec.args = vec![
+            "/D".to_string(),
+            "/C".to_string(),
+            "ping -n 3 127.0.0.1 >NUL".to_string(),
+        ];
+        let runtime = SessionRuntime::spawn(spec, SessionGeneration::FIRST, Arc::new(|_| {}))
+            .expect("the pane spawns");
+        let job = runtime
+            .pane_job()
+            .expect("the pane process is contained in a job");
+        let released = Arc::downgrade(&job);
+        drop(job);
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while released.upgrade().is_some() {
+            assert!(
+                Instant::now() < deadline,
+                "the pane's job outlived its session"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(runtime.pane_job().is_none());
     }
 }

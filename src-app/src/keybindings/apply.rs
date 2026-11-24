@@ -1,6 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use gpui::{Action, App, KeyBinding, KeyBindingContextPredicate, Keystroke, OperatingSystem};
+use paneflow_api::methods::config::{BindingTarget, KeyBindingRow, UnboundKey};
 
 use super::defaults::{DEFAULTS, PLATFORM_DEFAULTS};
 use super::registry::{action_from_name, context_for_action};
@@ -70,6 +71,102 @@ pub(super) fn make_binding(
     }
 }
 
+#[derive(Clone, Debug, PartialEq, gpui::Action)]
+#[action(namespace = paneflow, no_json)]
+pub struct RunLuaAction {
+    pub name: String,
+    pub args: Option<serde_json::Map<String, serde_json::Value>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LuaKeymap {
+    pub bindings: Vec<KeyBindingRow>,
+    pub unbound: Vec<UnboundKey>,
+}
+
+impl gpui::Global for LuaKeymap {}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LuaKeymapWarnings(pub Vec<String>);
+
+impl gpui::Global for LuaKeymapWarnings {}
+
+struct LuaPlan {
+    bindings: Vec<KeyBinding>,
+    claimed: HashSet<Keystroke>,
+    unbound: HashSet<Keystroke>,
+    warnings: Vec<String>,
+}
+
+fn plan_lua_bindings(
+    keymap: &LuaKeymap,
+    settings_claims: &HashSet<Keystroke>,
+    cx: &App,
+) -> LuaPlan {
+    let mut plan = LuaPlan {
+        bindings: Vec::new(),
+        claimed: HashSet::new(),
+        unbound: HashSet::new(),
+        warnings: Vec::new(),
+    };
+    for unbound in &keymap.unbound {
+        match canonical_keystroke(&unbound.key) {
+            Some(key) => {
+                plan.unbound.insert(key);
+            }
+            None => plan.warnings.push(format!(
+                "{}: paneflow.unbind({}): the key does not parse",
+                unbound.source, unbound.key
+            )),
+        }
+    }
+    for row in &keymap.bindings {
+        let canonical = canonical_keystroke(&row.key);
+        if canonical
+            .as_ref()
+            .is_some_and(|key| settings_claims.contains(key))
+        {
+            plan.warnings.push(format!(
+                "{} is bound in {} and in paneflow.json; the paneflow.json shortcut wins",
+                row.key, row.source
+            ));
+            continue;
+        }
+        let (action, context): (Box<dyn Action>, Option<&str>) = match row.target {
+            BindingTarget::Lua => (
+                Box::new(RunLuaAction {
+                    name: row.action.clone(),
+                    args: row.args.clone(),
+                }),
+                None,
+            ),
+            BindingTarget::Builtin => match action_from_name(&row.action) {
+                Some(action) => (action, context_for_action(&row.action)),
+                None => {
+                    plan.warnings.push(format!(
+                        "{}: {} is bound to {}, which is neither an action of init.lua nor a built-in action",
+                        row.source, row.key, row.action
+                    ));
+                    continue;
+                }
+            },
+        };
+        match make_binding(&row.key, action, context, cx) {
+            Some(binding) => {
+                plan.bindings.push(binding);
+                if let Some(key) = canonical {
+                    plan.claimed.insert(key);
+                }
+            }
+            None => plan.warnings.push(format!(
+                "{}: the key {} does not parse",
+                row.source, row.key
+            )),
+        }
+    }
+    plan
+}
+
 pub fn apply_keybindings(cx: &mut App, user_shortcuts: &HashMap<String, String>) {
     cx.clear_key_bindings();
 
@@ -99,10 +196,21 @@ pub fn apply_keybindings(cx: &mut App, user_shortcuts: &HashMap<String, String>)
         .filter_map(|(k, _)| canonical_keystroke(k))
         .collect();
 
-    let is_unbound =
-        |key: &str| canonical_keystroke(key).is_some_and(|k| unbound_canonical.contains(&k));
-    let is_user_claimed =
-        |key: &str| canonical_keystroke(key).is_some_and(|k| user_bound_canonical.contains(&k));
+    let settings_claims: HashSet<Keystroke> = user_shortcuts
+        .keys()
+        .filter_map(|key| canonical_keystroke(key))
+        .collect();
+    let lua_keymap = cx.try_global::<LuaKeymap>().cloned().unwrap_or_default();
+    let lua = plan_lua_bindings(&lua_keymap, &settings_claims, cx);
+
+    let is_unbound = |key: &str| {
+        canonical_keystroke(key)
+            .is_some_and(|k| unbound_canonical.contains(&k) || lua.unbound.contains(&k))
+    };
+    let is_user_claimed = |key: &str| {
+        canonical_keystroke(key)
+            .is_some_and(|k| user_bound_canonical.contains(&k) || lua.claimed.contains(&k))
+    };
 
     let default_bindings: Vec<KeyBinding> = DEFAULTS
         .iter()
@@ -116,6 +224,11 @@ pub fn apply_keybindings(cx: &mut App, user_shortcuts: &HashMap<String, String>)
         })
         .collect();
     cx.bind_keys(default_bindings);
+    for warning in &lua.warnings {
+        log::warn!("shortcuts: {warning}");
+    }
+    cx.bind_keys(lua.bindings);
+    cx.set_global(LuaKeymapWarnings(lua.warnings));
 
     for (key, action_name) in user_shortcuts {
         if action_name == "none" {
@@ -306,6 +419,214 @@ mod tests {
             "the close_pane default ({}) must survive an invalid user chord for close_pane",
             default_chord.key
         );
+    }
+
+    fn lua_row(key: &str, action: &str, target: BindingTarget, line: u32) -> KeyBindingRow {
+        KeyBindingRow {
+            key: key.to_string(),
+            action: action.to_string(),
+            args: None,
+            source: format!("init.lua:{line}"),
+            target,
+        }
+    }
+
+    fn bound_names(cx: &App, key: &str) -> Vec<String> {
+        let keystroke = parse_keystroke(key).expect("a valid chord");
+        cx.all_bindings_for_input(std::slice::from_ref(&keystroke))
+            .iter()
+            .map(|binding| binding.action().name().to_string())
+            .collect()
+    }
+
+    #[gpui::test]
+    fn init_lua_bindings_sit_between_the_defaults_and_paneflow_json(cx: &mut gpui::TestAppContext) {
+        let close_pane = DEFAULTS
+            .iter()
+            .chain(PLATFORM_DEFAULTS.iter())
+            .find(|d| d.action_name == "close_pane" && d.context.is_none())
+            .expect("a global close_pane default")
+            .key;
+        let new_tab = DEFAULTS
+            .iter()
+            .chain(PLATFORM_DEFAULTS.iter())
+            .find(|d| d.action_name == "new_tab" && d.context.is_none())
+            .expect("a global new_tab default")
+            .key;
+        let mut args = serde_json::Map::new();
+        args.insert("file".into(), serde_json::json!("app.log"));
+        let mut lua = lua_row("ctrl-alt-shift-k", "dev_layout", BindingTarget::Lua, 3);
+        lua.args = Some(args.clone());
+        let keymap = LuaKeymap {
+            bindings: vec![
+                lua,
+                lua_row("ctrl-alt-shift-j", "dev_layout", BindingTarget::Lua, 4),
+                lua_row(
+                    "ctrl-alt-shift-h",
+                    "split_horizontally",
+                    BindingTarget::Builtin,
+                    5,
+                ),
+                lua_row(
+                    "ctrl-alt-shift-u",
+                    "no_such_thing",
+                    BindingTarget::Builtin,
+                    6,
+                ),
+                lua_row("ctrl-", "dev_layout", BindingTarget::Lua, 7),
+                lua_row(new_tab, "dev_layout", BindingTarget::Lua, 8),
+            ],
+            unbound: vec![UnboundKey {
+                key: close_pane.to_string(),
+                source: "init.lua:9".into(),
+            }],
+        };
+        let shortcuts = HashMap::from([(
+            "ctrl-alt-shift-j".to_string(),
+            "split_vertically".to_string(),
+        )]);
+
+        cx.update(|cx| {
+            cx.set_global(keymap);
+            apply_keybindings(cx, &shortcuts);
+
+            let keystroke = parse_keystroke("ctrl-alt-shift-k").expect("a valid chord");
+            let bound = cx.all_bindings_for_input(std::slice::from_ref(&keystroke));
+            assert_eq!(bound.len(), 1);
+            assert!(bound[0].action().partial_eq(&RunLuaAction {
+                name: "dev_layout".into(),
+                args: Some(args.clone()),
+            }));
+
+            assert_eq!(
+                bound_names(cx, "ctrl-alt-shift-j"),
+                vec!["paneflow::SplitVertically"],
+                "the paneflow.json shortcut wins over init.lua"
+            );
+            assert_eq!(
+                bound_names(cx, "ctrl-alt-shift-h"),
+                vec!["paneflow::SplitHorizontally"],
+                "a built-in name dispatches the built-in action"
+            );
+            assert!(bound_names(cx, "ctrl-alt-shift-u").is_empty());
+            assert!(
+                bound_names(cx, close_pane).is_empty(),
+                "paneflow.unbind drops the default"
+            );
+            assert_eq!(
+                bound_names(cx, new_tab),
+                vec!["paneflow::RunLuaAction"],
+                "an init.lua binding replaces the default of its key"
+            );
+
+            let warnings = &cx.global::<LuaKeymapWarnings>().0;
+            assert_eq!(warnings.len(), 3, "{warnings:?}");
+            assert!(
+                warnings
+                    .iter()
+                    .any(|warning| warning.contains("ctrl-alt-shift-j")
+                        && warning.contains("init.lua:4")
+                        && warning.contains("paneflow.json"))
+            );
+            assert!(
+                warnings
+                    .iter()
+                    .any(|warning| warning.contains("no_such_thing"))
+            );
+            assert!(
+                warnings
+                    .iter()
+                    .any(|warning| warning.contains("init.lua:7"))
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn without_init_lua_the_bindings_are_unchanged(cx: &mut gpui::TestAppContext) {
+        let shortcuts = HashMap::from([(
+            "ctrl-alt-shift-j".to_string(),
+            "split_vertically".to_string(),
+        )]);
+        let count = |cx: &App| cx.key_bindings().borrow().bindings().count();
+        let before = cx.update(|cx| {
+            apply_keybindings(cx, &shortcuts);
+            count(cx)
+        });
+        let after = cx.update(|cx| {
+            cx.set_global(LuaKeymap::default());
+            apply_keybindings(cx, &shortcuts);
+            assert!(cx.global::<LuaKeymapWarnings>().0.is_empty());
+            count(cx)
+        });
+        assert_eq!(before, after);
+    }
+
+    struct LuaKeyProbe {
+        focus: gpui::FocusHandle,
+        received: Vec<RunLuaAction>,
+        keys: usize,
+    }
+
+    impl gpui::Render for LuaKeyProbe {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            cx: &mut gpui::Context<Self>,
+        ) -> impl gpui::IntoElement {
+            use gpui::{InteractiveElement as _, ParentElement as _};
+            gpui::div()
+                .key_context("Terminal")
+                .track_focus(&self.focus)
+                .on_action(
+                    cx.listener(|probe: &mut Self, action: &RunLuaAction, _, _| {
+                        probe.received.push(action.clone());
+                    }),
+                )
+                .on_key_down(
+                    cx.listener(|probe: &mut Self, _: &gpui::KeyDownEvent, _, _| {
+                        probe.keys += 1;
+                    }),
+                )
+                .child("probe")
+        }
+    }
+
+    #[gpui::test]
+    fn a_runtime_bound_lua_action_reaches_its_handler_with_name_and_arguments(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let mut args = serde_json::Map::new();
+        args.insert("ratio".into(), serde_json::json!(0.4));
+        let expected = RunLuaAction {
+            name: "dev_layout".into(),
+            args: Some(args),
+        };
+        let bound = expected.clone();
+        cx.update(|cx| {
+            cx.bind_keys([KeyBinding::new("ctrl-alt-shift-k", bound, None)]);
+        });
+        let (probe, cx) = cx.add_window_view(|_, cx| LuaKeyProbe {
+            focus: cx.focus_handle(),
+            received: Vec::new(),
+            keys: 0,
+        });
+        cx.update(|window, cx| {
+            let focus = probe.read(cx).focus.clone();
+            window.focus(&focus, cx);
+        });
+        cx.run_until_parked();
+        cx.simulate_keystrokes("ctrl-alt-shift-k");
+        cx.run_until_parked();
+        probe.read_with(cx, |probe, _| {
+            assert_eq!(probe.received, vec![expected.clone()]);
+            assert_eq!(
+                probe.keys, 0,
+                "a bound key never reaches the key-down handler"
+            );
+        });
+        cx.simulate_keystrokes("x");
+        cx.run_until_parked();
+        probe.read_with(cx, |probe, _| assert_eq!(probe.keys, 1));
     }
 
     #[gpui::test]

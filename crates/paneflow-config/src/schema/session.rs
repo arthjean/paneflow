@@ -27,6 +27,10 @@ pub struct SessionState {
         deserialize_with = "lenient_space_ref"
     )]
     pub active_space: Option<SpaceId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_layout_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout_revision: Option<u64>,
 }
 
 pub const MAX_DETACHED_PANE_WINDOWS: usize = 16;
@@ -71,6 +75,8 @@ pub struct DetachedPaneSession {
     pub location: DetachedPaneLocation,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub layout_leaf_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pane: Option<u64>,
     pub x: f32,
     pub y: f32,
     pub width: f32,
@@ -194,6 +200,17 @@ pub struct TabSession {
     pub pull_request: Option<PullRequestSession>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dock: Option<DockSession>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout_ids: Option<TabLayoutIds>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TabLayoutIds {
+    pub tab: u64,
+    #[serde(default)]
+    pub panes: Vec<u64>,
+    #[serde(default)]
+    pub surfaces: Vec<Vec<u64>>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -242,6 +259,7 @@ impl TabSession {
             unread: false,
             pull_request: None,
             dock: None,
+            layout_ids: None,
         }
     }
 }
@@ -250,6 +268,8 @@ impl TabSession {
 pub struct WorkspaceSession {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<WorkspaceId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout_id: Option<u64>,
     pub title: String,
     pub cwd: String,
     #[serde(default)]
@@ -427,6 +447,7 @@ fn demote_panes_to_focused_surface(node: &mut LayoutNode, promoted: &mut Vec<Tab
                     unread: false,
                     pull_request: None,
                     dock: None,
+                    layout_ids: None,
                 });
             }
         }

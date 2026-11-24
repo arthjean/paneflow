@@ -1,6 +1,4 @@
-mod close;
 mod density;
-mod mutations;
 mod navigation;
 mod presets;
 mod queries;
@@ -13,7 +11,10 @@ pub(crate) use density::{
 };
 pub use navigation::{FocusDirection, FocusNav};
 pub(crate) use render::SplitPreview;
+#[cfg(test)]
+pub(crate) use tree::DragState;
 pub(crate) use tree::MIN_PANE_SIZE;
+pub(crate) use tree::{LayoutChild, SplitCells};
 pub use tree::{LayoutTree, SplitDirection};
 
 pub(crate) const PANE_GUTTER_PX: f32 = tree::DIVIDER_PX;

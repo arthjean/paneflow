@@ -428,6 +428,19 @@ pub(crate) fn unified_tab_chip(
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
 }
 
+const SANDBOXED_TAB_TOOLTIP: &str = "Sandboxed: Paneflow and other panes are out of reach";
+
+const SANDBOX_TAB_MARKER_SIZE: f32 = 12.;
+
+pub(crate) fn sandbox_tab_marker(color: Hsla) -> AnyElement {
+    svg()
+        .size(px(SANDBOX_TAB_MARKER_SIZE))
+        .flex_none()
+        .path("icons/shield-sandbox.svg")
+        .text_color(color)
+        .into_any_element()
+}
+
 pub(crate) fn unified_tab_icon(path: &'static str, color: Hsla) -> AnyElement {
     svg()
         .w(px(20.))
@@ -619,7 +632,6 @@ pub enum PaneEvent {
     ToggleDetached {
         window: gpui::AnyWindowHandle,
     },
-    Remove,
     NewTab,
     OpenNewTabMenu,
     NewTabPreset(crate::app::pane_palette::Preset),
@@ -627,6 +639,7 @@ pub enum PaneEvent {
     ActiveSurfaceChanged,
     CloseRequested,
     CloseSurfaceRequested(Entity<crate::terminal::TerminalView>),
+    CloseViewRequested(gpui::EntityId),
     Split(crate::layout::SplitDirection),
     ToggleAgentSessions,
     OpenPaneMenu {
@@ -669,6 +682,7 @@ impl HeaderHoverMotion {
 
 pub struct Pane {
     pub(crate) detached: Option<crate::app::detached_panes::DetachedPanePlacement>,
+    pub(crate) restored_layout_id: Option<u64>,
     surfaces: Vec<PaneSurface>,
     active_surface: usize,
     attention: bool,
@@ -734,6 +748,7 @@ impl Pane {
         Self {
             surfaces,
             detached: None,
+            restored_layout_id: None,
             active_surface,
             attention: false,
             errored: false,
@@ -800,6 +815,7 @@ impl Pane {
         self.surfaces.len() < MAX_PANE_TABS
     }
 
+    #[cfg(test)]
     pub fn push_surface(&mut self, surface: PaneSurface, cx: &mut Context<Self>) {
         if let PaneSurface::Terminal(t) = &surface {
             Self::subscribe_terminal(t, cx);
@@ -810,6 +826,48 @@ impl Pane {
         self.tab_scroll.scroll_to_item(self.active_surface);
         cx.emit(PaneEvent::ActiveSurfaceChanged);
         cx.notify();
+    }
+
+    pub(crate) fn project_surfaces(
+        &mut self,
+        surfaces: Vec<PaneSurface>,
+        active: usize,
+        cx: &mut Context<Self>,
+    ) {
+        if surfaces.is_empty() {
+            return;
+        }
+        let same = self.surfaces.len() == surfaces.len()
+            && self
+                .surfaces
+                .iter()
+                .zip(&surfaces)
+                .all(|(old, new)| old.entity_id() == new.entity_id());
+        let mut changed = false;
+        if !same {
+            for surface in &surfaces {
+                let known = self
+                    .surfaces
+                    .iter()
+                    .any(|old| old.entity_id() == surface.entity_id());
+                if !known && let PaneSurface::Terminal(terminal) = surface {
+                    Self::subscribe_terminal(terminal, cx);
+                    Self::apply_terminal_render_config(terminal, &self.cached_config, cx);
+                }
+            }
+            self.surfaces = surfaces;
+            changed = true;
+        }
+        let active = active.min(self.surfaces.len() - 1);
+        if active != self.active_surface {
+            self.active_surface = active;
+            self.tab_scroll.scroll_to_item(active);
+            changed = true;
+        }
+        if changed {
+            cx.emit(PaneEvent::SurfacesChanged);
+            cx.notify();
+        }
     }
 
     pub fn activate_surface(&mut self, idx: usize, cx: &mut Context<Self>) {
@@ -831,30 +889,15 @@ impl Pane {
         }
         match crate::app::hosted_sessions::surface_terminal(&self.surfaces[idx]) {
             Some(terminal) => cx.emit(PaneEvent::CloseSurfaceRequested(terminal)),
-            None => self.remove_surface_at(idx, cx),
+            None => cx.emit(PaneEvent::CloseViewRequested(
+                crate::app::layout_bridge::surface_entity(&self.surfaces[idx]),
+            )),
         }
     }
 
-    pub(crate) fn remove_surface(
-        &mut self,
-        terminal: &Entity<crate::terminal::TerminalView>,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(idx) = self
-            .surfaces
-            .iter()
-            .position(|surface| surface.as_terminal() == Some(terminal))
-        {
-            self.remove_surface_at(idx, cx);
-        }
-    }
-
+    #[cfg(test)]
     pub(crate) fn remove_surface_at(&mut self, idx: usize, cx: &mut Context<Self>) {
-        if idx >= self.surfaces.len() {
-            return;
-        }
-        if self.surfaces.len() == 1 {
-            cx.emit(PaneEvent::Remove);
+        if idx >= self.surfaces.len() || self.surfaces.len() == 1 {
             return;
         }
         self.surfaces.remove(idx);
@@ -1734,7 +1777,18 @@ impl Pane {
 
         for (index, surface) in self.surfaces.iter().enumerate() {
             let active = index == self.active_surface;
-            let full_title = Self::surface_full_title(surface, cx);
+            let sandboxed = match surface {
+                PaneSurface::Terminal(terminal) => terminal.read(cx).sandbox_request().is_some(),
+                _ => false,
+            };
+            let full_title = if sandboxed {
+                format!(
+                    "{}\n{SANDBOXED_TAB_TOOLTIP}",
+                    Self::surface_full_title(surface, cx)
+                )
+            } else {
+                Self::surface_full_title(surface, cx)
+            };
             let label = Self::surface_title(surface, cx);
             let (resting, hovered) = if active {
                 (Some(rail_active), None)
@@ -1825,6 +1879,7 @@ impl Pane {
                             .child(label)
                     }
                 }))
+                .children((fit.label && sandboxed).then(|| sandbox_tab_marker(ui.muted)))
                 .children(fit.label.then(|| {
                     tab_close_button(
                         SharedString::from(format!("pane-{pane_id}-tab-close-{index}")),
@@ -2782,13 +2837,11 @@ mod tests {
         let pane = tabbed_pane(1, cx);
         let requested = std::rc::Rc::new(std::cell::Cell::new(false));
         let requested_for_sub = requested.clone();
-        let removed = std::rc::Rc::new(std::cell::Cell::new(false));
-        let removed_for_sub = removed.clone();
         cx.update(|_, cx| {
-            cx.subscribe(&pane, move |_, event: &PaneEvent, _| match event {
-                PaneEvent::CloseRequested => requested_for_sub.set(true),
-                PaneEvent::Remove => removed_for_sub.set(true),
-                _ => {}
+            cx.subscribe(&pane, move |_, event: &PaneEvent, _| {
+                if matches!(event, PaneEvent::CloseRequested) {
+                    requested_for_sub.set(true);
+                }
             })
             .detach();
         });
@@ -2797,10 +2850,6 @@ mod tests {
         assert!(
             requested.get(),
             "closing the last tab asks the owner to close the pane"
-        );
-        assert!(
-            !removed.get(),
-            "no removal happens before the owner decides"
         );
         assert_eq!(tab_state(&pane, cx), (1, 0));
     }

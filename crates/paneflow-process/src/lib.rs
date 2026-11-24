@@ -519,6 +519,54 @@ impl ProcessTree {
     }
 }
 
+pub fn isolate_process_tree(cmd: &mut Command) {
+    configure_process_tree(cmd);
+}
+
+pub struct ProcessTreeHandle {
+    tree: ProcessTree,
+}
+
+impl ProcessTreeHandle {
+    pub fn attach(child: &Child) -> io::Result<Self> {
+        Ok(Self {
+            tree: ProcessTree::for_child(child)?,
+        })
+    }
+
+    pub fn signal(&self, signal: i32) {
+        #[cfg(unix)]
+        signal_process_group(self.tree.pid, signal);
+        #[cfg(windows)]
+        {
+            let _ = signal;
+            let _ = self.tree.job.terminate();
+        }
+    }
+
+    pub fn kill(&self) {
+        #[cfg(unix)]
+        kill_process_group(self.tree.pid);
+        #[cfg(windows)]
+        let _ = self.tree.job.terminate();
+    }
+
+    pub fn release(&self) -> io::Result<()> {
+        self.tree.disarm()
+    }
+}
+
+#[cfg(unix)]
+fn signal_process_group(pid: u32, signal: i32) {
+    unsafe extern "C" {
+        fn kill(pid: i32, sig: i32) -> i32;
+    }
+
+    if let Ok(pid) = i32::try_from(pid) {
+        let _ = unsafe { kill(-pid, signal) };
+    }
+}
+
 #[cfg(unix)]
 fn kill_process_group(pid: u32) {
     const SIGKILL: i32 = 9;

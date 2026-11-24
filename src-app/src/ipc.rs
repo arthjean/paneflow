@@ -23,6 +23,8 @@ pub struct IpcRequest {
     pub response_tx: mpsc::Sender<Value>,
     pub state: Arc<RequestState>,
     pub caller_pid: Option<i64>,
+    pub grant: Option<String>,
+    pub gates: paneflow_api::Gates,
 }
 
 const REQUEST_QUEUED: u8 = 0;
@@ -68,6 +70,8 @@ const IPC_STATE_DISABLED: u8 = 1;
 use crate::limits::MAX_REQUEST_LEN;
 
 const MAX_REQUEST_CONNECTIONS: usize = 16;
+
+const WINDOW_CLASSIFY_CLIENT: &str = "paneflow-window-classify";
 
 const MAX_SUBSCRIPTION_CONNECTIONS: usize = 16;
 
@@ -120,17 +124,19 @@ pub fn start_server() -> (
     IpcStatus,
     Arc<crate::ipc_events::EventBus>,
 ) {
-    let scripting_enabled = std::env::var("PANEFLOW_IPC_SCRIPTING").as_deref() == Ok("1");
-    let orchestration_enabled =
-        scripting_enabled || std::env::var("PANEFLOW_IPC_ORCHESTRATION").as_deref() == Ok("1");
-    if scripting_enabled {
+    let policy = Arc::new(window_policy());
+    let grants = crate::ipc_grants::WindowGrants::start(paneflow_home::paneflow_home());
+    let opened = policy
+        .current()
+        .gates_for(&paneflow_api::Principal::External);
+    if opened.scripting {
         tracing::warn!(
-            "ipc.scripting_enabled is ON; any same-UID process can inject keystrokes into agent panes"
+            "ipc.scripting is ON; any same-UID process outside a pane can inject keystrokes into agent panes"
         );
     }
-    if orchestration_enabled {
+    if opened.orchestration {
         tracing::warn!(
-            "ipc.orchestration_enabled is ON; any same-UID process can create panes with commands, prompts, or env"
+            "ipc.orchestration is ON; any same-UID process outside a pane can create panes with commands, prompts, or env"
         );
     }
 
@@ -208,6 +214,17 @@ pub fn start_server() -> (
 
             let active_connections = Arc::new(AtomicUsize::new(0));
             let active_subscriptions = Arc::new(AtomicUsize::new(0));
+            let classifier = Arc::new(window_classifier());
+            let policy = Arc::clone(&policy);
+            let grants = Arc::clone(&grants);
+            let pane_serve = pane_connection_server(
+                tx.clone(),
+                Arc::clone(&thread_event_bus),
+                Arc::clone(&active_subscriptions),
+                Arc::clone(&classifier),
+                (Arc::clone(&policy), Arc::clone(&grants)),
+            );
+            crate::ipc_panes::start(pane_serve);
 
             loop {
                 match listener.accept() {
@@ -231,11 +248,22 @@ pub fn start_server() -> (
                         let tx = tx.clone();
                         let bus = Arc::clone(&thread_event_bus);
                         let subscriptions = Arc::clone(&active_subscriptions);
+                        let classifier = Arc::clone(&classifier);
+                        let policy = Arc::clone(&policy);
+                        let grants = Arc::clone(&grants);
                         if let Err(e) = std::thread::Builder::new()
                             .name("paneflow-ipc-conn".into())
                             .spawn(move || {
                                 let _guard = guard;
-                                handle_connection(stream, tx, bus, subscriptions);
+                                handle_connection(
+                                    stream,
+                                    tx,
+                                    bus,
+                                    subscriptions,
+                                    &classifier,
+                                    (&policy, &grants),
+                                    None,
+                                );
                             })
                         {
                             log::warn!(
@@ -305,6 +333,32 @@ pub fn start_server() -> (
     }
 
     (rx, status, event_bus)
+}
+
+pub(crate) fn pane_connection_server(
+    tx: smol::channel::Sender<IpcRequest>,
+    bus: Arc<crate::ipc_events::EventBus>,
+    subscriptions: Arc<AtomicUsize>,
+    classifier: Arc<paneflow_host::peer::PeerClassifier>,
+    (policy, grants): (
+        Arc<paneflow_host::policy::PolicySource>,
+        Arc<crate::ipc_grants::WindowGrants>,
+    ),
+) -> paneflow_host::pane_endpoint::ServeStream {
+    Arc::new(move |stream, principal| {
+        let Ok(stream) = blocking_connection(stream) else {
+            return;
+        };
+        handle_connection(
+            stream,
+            tx.clone(),
+            Arc::clone(&bus),
+            Arc::clone(&subscriptions),
+            &classifier,
+            (&policy, &grants),
+            Some(principal),
+        );
+    })
 }
 
 fn multiple_instances_allowed(value: Option<&str>) -> bool {
@@ -785,11 +839,56 @@ fn peer_pid(_stream: &Stream) -> Option<i64> {
     None
 }
 
+fn window_policy() -> paneflow_host::policy::PolicySource {
+    paneflow_host::policy::PolicySource::new(
+        paneflow_home::config_path().unwrap_or_default(),
+        paneflow_api::policy::Switches::from_environment(),
+    )
+}
+
+fn refusal_envelope(code: i64, message: String, data: Value, id: Value) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "error": {"code": code, "message": message, "data": data},
+        "id": id,
+    })
+}
+
+fn window_classifier() -> paneflow_host::peer::PeerClassifier {
+    paneflow_host::peer::PeerClassifier::new(
+        paneflow_host::endpoint::host_endpoint_path_for_current_home(),
+        paneflow_home::paneflow_home(),
+        WINDOW_CLASSIFY_CLIENT,
+    )
+}
+
+#[cfg(unix)]
+fn stream_peer(stream: &Stream) -> paneflow_peer::PeerRead {
+    use std::os::fd::AsFd;
+    match stream {
+        Stream::UdSocket(socket) => paneflow_peer::read_unix_peer(socket.as_fd()),
+    }
+}
+
+#[cfg(windows)]
+fn stream_peer(stream: &Stream) -> paneflow_peer::PeerRead {
+    use std::os::windows::io::AsHandle;
+    match stream {
+        Stream::NamedPipe(pipe) => paneflow_peer::read_pipe_peer(pipe.as_handle()),
+    }
+}
+
 fn handle_connection(
     stream: Stream,
     request_tx: smol::channel::Sender<IpcRequest>,
     event_bus: Arc<crate::ipc_events::EventBus>,
     active_subscriptions: Arc<AtomicUsize>,
+    classifier: &paneflow_host::peer::PeerClassifier,
+    (policy, grants): (
+        &paneflow_host::policy::PolicySource,
+        &crate::ipc_grants::WindowGrants,
+    ),
+    fixed: Option<paneflow_api::Principal>,
 ) {
     let Ok(writer_stream) = stream.try_clone() else {
         return;
@@ -835,6 +934,7 @@ fn handle_connection(
     #[cfg(not(windows))]
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
+    let mut principal: Option<paneflow_api::Principal> = fixed;
 
     loop {
         match read_request_line(&mut reader, &mut line) {
@@ -851,6 +951,13 @@ fn handle_connection(
             Ok(LineRead::Got) => {}
             Err(_) => break,
         }
+        #[cfg(windows)]
+        let connection = &reader;
+        #[cfg(not(windows))]
+        let connection = reader.get_ref();
+        let caller = principal
+            .get_or_insert_with(|| classifier.principal(&stream_peer(connection), "window"))
+            .clone();
 
         let line = line.trim();
         if line.is_empty() {
@@ -866,7 +973,7 @@ fn handle_connection(
                 match req.get("method").and_then(|m| m.as_str()) {
                     Some(method) => {
                         let method = method.to_string();
-                        let params = match request_params(&req) {
+                        let mut params = match request_params(&req) {
                             Ok(params) => params,
                             Err(message) => {
                                 let envelope = json!({
@@ -884,7 +991,54 @@ fn handle_connection(
                             }
                         };
 
-                        if method == "events.subscribe" {
+                        let grant = request_grant(&req);
+                        let gates =
+                            match grants.admit(&caller, &method, &mut params, &policy.current()) {
+                                crate::app::ipc_handler::Admission::Allowed(gates) => gates,
+                                crate::app::ipc_handler::Admission::Refused {
+                                    code,
+                                    message,
+                                    data,
+                                } => {
+                                    let envelope =
+                                        refusal_envelope(code, message, data, response_id.clone());
+                                    if !suppress_reply && !write_envelope(&mut writer, &envelope) {
+                                        break;
+                                    }
+                                    #[cfg(windows)]
+                                    break;
+                                    #[cfg(not(windows))]
+                                    continue;
+                                }
+                            };
+                        if let Err(message) =
+                            crate::ipc_panes::confine_spawn(&caller, &method, &mut params)
+                        {
+                            let envelope = refusal_envelope(
+                                paneflow_api::principal::ERR_PRINCIPAL_REFUSED,
+                                message,
+                                json!({"reason": paneflow_api::principal::REASON_PRINCIPAL_REFUSED}),
+                                response_id.clone(),
+                            );
+                            if !suppress_reply && !write_envelope(&mut writer, &envelope) {
+                                break;
+                            }
+                            #[cfg(windows)]
+                            break;
+                            #[cfg(not(windows))]
+                            continue;
+                        }
+                        let route = crate::app::ipc_handler::registry().route(&method);
+                        if let crate::app::ipc_handler::Route::Stream(entry) = route {
+                            if let Err(error) = entry.validate(&params) {
+                                let envelope = json!({
+                                    "jsonrpc": "2.0",
+                                    "error": {"code": error.code, "message": error.message},
+                                    "id": response_id,
+                                });
+                                push_frame(&mut writer, &envelope);
+                                return;
+                            }
                             let Some(_subscription_guard) = ConnectionGuard::try_acquire(
                                 Arc::clone(&active_subscriptions),
                                 MAX_SUBSCRIPTION_CONNECTIONS,
@@ -908,26 +1062,22 @@ fn handle_connection(
                             ));
                         }
 
-                        match method.as_str() {
-                            "system.ping" => {
-                                json!({"jsonrpc": "2.0", "result": {"pong": true}, "id": response_id})
+                        match route {
+                            crate::app::ipc_handler::Route::Inline(entry) => {
+                                crate::app::ipc_handler::promote_response(
+                                    entry.answer_inline(&params, &caller),
+                                    response_id,
+                                )
                             }
-                            "system.identify" => {
-                                json!({"jsonrpc": "2.0", "result": {
-                                    "name": "PaneFlow",
-                                    "version": env!("CARGO_PKG_VERSION"),
-                                    "protocol": "jsonrpc-2.0"
-                                }, "id": response_id})
-                            }
-                            "system.counters" => {
-                                json!({"jsonrpc": "2.0", "result": crate::work_counters::counters(), "id": response_id})
-                            }
-                            _ => dispatch_to_gpui(
+                            crate::app::ipc_handler::Route::Stream(_)
+                            | crate::app::ipc_handler::Route::App => dispatch_to_gpui(
                                 &request_tx,
                                 method,
                                 params,
                                 response_id,
                                 caller_pid,
+                                grant,
+                                gates,
                             ),
                         }
                     }
@@ -1252,12 +1402,21 @@ fn subscriber_connected(writer: &Stream) -> bool {
     connected != 0
 }
 
+fn request_grant(request: &Value) -> Option<String> {
+    request
+        .get(paneflow_ipc_client::GRANT_FIELD)
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
 fn dispatch_to_gpui(
     request_tx: &smol::channel::Sender<IpcRequest>,
     method: String,
     params: Value,
     id: Value,
     caller_pid: Option<i64>,
+    grant: Option<String>,
+    gates: paneflow_api::Gates,
 ) -> Value {
     let (resp_tx, resp_rx) = mpsc::channel();
     let state = Arc::new(RequestState::default());
@@ -1267,6 +1426,8 @@ fn dispatch_to_gpui(
         response_tx: resp_tx,
         state: Arc::clone(&state),
         caller_pid,
+        grant,
+        gates,
     };
 
     match request_tx.try_send(ipc_req) {
@@ -1463,7 +1624,9 @@ mod connection_limit_tests {
 
 #[cfg(test)]
 mod request_contract_tests {
-    use super::{json, multiple_instances_allowed, request_params, subscription_filter};
+    use super::{
+        json, multiple_instances_allowed, request_grant, request_params, subscription_filter,
+    };
 
     #[test]
     fn only_the_documented_value_allows_multiple_instances() {
@@ -1471,6 +1634,19 @@ mod request_contract_tests {
         for value in [None, Some(""), Some("0"), Some("true"), Some("yes")] {
             assert!(!multiple_instances_allowed(value), "{value:?}");
         }
+    }
+
+    #[test]
+    fn a_grant_is_read_from_the_envelope_and_never_from_the_params() {
+        assert_eq!(
+            request_grant(&json!({"method": "m", "grant": "g-1", "params": {}})),
+            Some("g-1".to_string())
+        );
+        assert_eq!(
+            request_grant(&json!({"method": "m", "params": {"grant": "g-1"}})),
+            None
+        );
+        assert_eq!(request_grant(&json!({"method": "m", "grant": 7})), None);
     }
 
     #[test]
@@ -1810,6 +1986,8 @@ mod dispatch_tests {
             response_tx,
             state: Arc::new(RequestState::default()),
             caller_pid: None,
+            grant: None,
+            gates: paneflow_api::Gates::CLOSED,
         }
     }
 
@@ -1824,6 +2002,8 @@ mod dispatch_tests {
             json!({ "surface_id": 1 }),
             json!("req-overload"),
             None,
+            None,
+            paneflow_api::Gates::CLOSED,
         );
 
         assert_eq!(resp["error"]["code"], -32000);
@@ -1842,6 +2022,8 @@ mod dispatch_tests {
             json!({ "surface_id": 1 }),
             json!("req-closed"),
             None,
+            None,
+            paneflow_api::Gates::CLOSED,
         );
 
         assert_eq!(resp["error"]["code"], -32000);
@@ -2157,6 +2339,16 @@ mod counters_tests {
                 .unwrap_or("x")
         ));
         let listener = bind_socket(&path).expect("the test socket binds");
+        let host_endpoint = paneflow_home::host_endpoint_path(dir.path());
+        let host = paneflow_host::SessionHost::open(dir.path(), &host_endpoint).expect("a host");
+        let host_server =
+            paneflow_host::ServerHandle::spawn(Arc::clone(&host), host_endpoint.clone())
+                .expect("the host serves");
+        let classifier = paneflow_host::peer::PeerClassifier::new(
+            Some(host_endpoint),
+            Some(dir.path().to_path_buf()),
+            WINDOW_CLASSIFY_CLIENT,
+        );
         let (request_tx, _never_drained) = smol::channel::bounded(1);
         let server = std::thread::spawn(move || {
             let stream = listener.accept().expect("the client connects");
@@ -2165,6 +2357,9 @@ mod counters_tests {
                 request_tx,
                 crate::ipc_events::EventBus::new(),
                 Arc::new(AtomicUsize::new(0)),
+                &classifier,
+                (&window_policy(), &crate::ipc_grants::detached_grants()),
+                None,
             );
         });
         let name = path
@@ -2197,6 +2392,8 @@ mod counters_tests {
         );
         drop(client);
         server.join().expect("the connection thread ends");
+        let _ = host.request_shutdown(true);
+        host_server.stop().expect("the host stops");
     }
 }
 
@@ -2274,5 +2471,299 @@ mod accept_wait_tests {
         let (outcome, elapsed) = waiter.join().expect("waiter thread");
         assert_eq!(outcome, Ok(()));
         assert!(elapsed < Duration::from_secs(4));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod caller_identity_tests {
+    use super::*;
+    use std::io::{BufRead, BufReader, Write};
+
+    const CHILD_ENV: &str = "PANEFLOW_WINDOW_WHOAMI_CHILD";
+    const CHILD_TEST: &str = "ipc::caller_identity_tests::ask_the_window_socket_who_this_pane_is";
+
+    fn whoami_over(path: &std::path::Path) -> Value {
+        let name = path
+            .to_fs_name::<GenericFilePath>()
+            .expect("the socket name");
+        let mut client = Stream::connect(name).expect("the client connects");
+        client
+            .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"system.whoami\"}\n")
+            .expect("the request is written");
+        let mut line = String::new();
+        BufReader::new(&mut client)
+            .read_line(&mut line)
+            .expect("the reply arrives");
+        let reply: Value = serde_json::from_str(&line).expect("a JSON reply");
+        reply["result"].clone()
+    }
+
+    #[test]
+    #[ignore = "runs inside a pane of the parent test"]
+    fn ask_the_window_socket_who_this_pane_is() {
+        let Some(path) = std::env::var_os(CHILD_ENV) else {
+            return;
+        };
+        let answer = whoami_over(std::path::Path::new(&path));
+        println!(
+            "window whoami principal={} session={}",
+            answer["principal"].as_str().unwrap_or("none"),
+            answer["session"].as_str().unwrap_or("none")
+        );
+        std::thread::sleep(Duration::from_secs(30));
+    }
+
+    const REQUEST_ENV: &str = "PANEFLOW_WINDOW_REQUEST_CHILD";
+    const REQUEST_TEST: &str =
+        "ipc::caller_identity_tests::send_the_window_socket_a_request_from_this_pane";
+
+    fn request_over(path: &std::path::Path, request: &str) -> Value {
+        let name = path
+            .to_fs_name::<GenericFilePath>()
+            .expect("the socket name");
+        let mut client = Stream::connect(name).expect("the client connects");
+        client
+            .write_all(format!("{request}\n").as_bytes())
+            .expect("the request is written");
+        let mut line = String::new();
+        BufReader::new(&mut client)
+            .read_line(&mut line)
+            .expect("the reply arrives");
+        serde_json::from_str(&line).expect("a JSON reply")
+    }
+
+    #[test]
+    #[ignore = "runs inside a pane of the parent test"]
+    fn send_the_window_socket_a_request_from_this_pane() {
+        let Some(path) = std::env::var_os(REQUEST_ENV) else {
+            return;
+        };
+        let reply = request_over(
+            std::path::Path::new(&path),
+            r#"{"jsonrpc":"2.0","id":1,"method":"surface.send_text","params":{"surface_id":1,"text":"ls","scope_session":"s-foreign"}}"#,
+        );
+        println!("window reply {} end", reply["result"]);
+        std::thread::sleep(Duration::from_secs(30));
+    }
+
+    fn pane_request_under(config: &str) -> (IpcRequest, paneflow_host::SessionId) {
+        let home = tempfile::tempdir().expect("a home");
+        let config_path = home.path().join("paneflow.json");
+        std::fs::write(&config_path, config).expect("the config is written");
+        let host_endpoint = home.path().join("host.sock");
+        let host = paneflow_host::SessionHost::open(home.path(), &host_endpoint).expect("a host");
+        let host_server =
+            paneflow_host::ServerHandle::spawn(Arc::clone(&host), host_endpoint.clone())
+                .expect("the host serves");
+        let socket = home.path().join("window.sock");
+        let listener = bind_socket(&socket).expect("the window socket binds");
+        let classifier = Arc::new(paneflow_host::peer::PeerClassifier::new(
+            Some(host_endpoint.clone()),
+            Some(home.path().to_path_buf()),
+            WINDOW_CLASSIFY_CLIENT,
+        ));
+        let policy = Arc::new(paneflow_host::policy::PolicySource::new(
+            config_path,
+            paneflow_api::policy::Switches::CLOSED,
+        ));
+        let (request_tx, window_thread) = smol::channel::bounded(4);
+        std::thread::spawn(move || {
+            let stream = listener.accept().expect("a client connects");
+            handle_connection(
+                stream,
+                request_tx,
+                crate::ipc_events::EventBus::new(),
+                Arc::new(AtomicUsize::new(0)),
+                &classifier,
+                (&policy, &crate::ipc_grants::detached_grants()),
+                None,
+            );
+        });
+        let mut client = paneflow_host::HostClient::connect(
+            &host_endpoint,
+            &paneflow_host::ClientHello::local("window-authorization-test"),
+        )
+        .expect("a host client");
+        let request = paneflow_host::CreateSession {
+            workspace: Some(paneflow_config::schema::WorkspaceId::new()),
+            shell: Some(
+                std::env::current_exe()
+                    .expect("the test binary")
+                    .display()
+                    .to_string(),
+            ),
+            args: [
+                REQUEST_TEST,
+                "--exact",
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ]
+            .iter()
+            .map(|arg| arg.to_string())
+            .collect(),
+            env: [(REQUEST_ENV.to_string(), socket.display().to_string())]
+                .into_iter()
+                .collect(),
+            cwd: Some(std::env::temp_dir().display().to_string()),
+            cols: Some(300),
+            rows: Some(40),
+            ..paneflow_host::CreateSession::default()
+        };
+        let session = client
+            .create(&request)
+            .expect("the pane starts")
+            .manifest
+            .session;
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        let received = loop {
+            if let Ok(received) = window_thread.try_recv() {
+                break received;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the pane request never reached the window thread"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        received
+            .response_tx
+            .send(serde_json::json!({"seen": true}))
+            .expect("the connection waits for the reply");
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        loop {
+            let text = client.text(&session).expect("the pane text").text;
+            if text.contains("window reply ") && text.contains(" end") {
+                assert!(text.contains(r#"window reply {"seen":true} end"#), "{text}");
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the pane never answered: {text}"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let _ = host.request_shutdown(true);
+        host_server.stop().expect("the host stops");
+        (received, session)
+    }
+
+    #[test]
+    fn a_pane_request_reaches_the_window_thread_with_the_gates_of_paneflow_json_and_its_own_scope()
+    {
+        let (closed, session) =
+            pane_request_under(r#"{"ipc": {"scripting": false, "orchestration": false}}"#);
+        assert_eq!(closed.gates, paneflow_api::Gates::CLOSED);
+        assert_eq!(closed.params["scope_session"], session.as_str());
+        let refusal = crate::app::ipc_handler::gate_refusal(
+            <paneflow_api::methods::surface::SendText as paneflow_api::Method>::SPEC.gate,
+            closed.gates.scripting,
+        )
+        .expect("the closed gate refuses the write");
+        assert_eq!(refusal.code, -32601);
+        assert_eq!(
+            refusal.message,
+            "surface.send_text disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable"
+        );
+
+        let (open, session) = pane_request_under(r#"{"ipc": {"scripting": true}}"#);
+        assert!(open.gates.scripting && open.gates.orchestration);
+        assert!(!open.gates.from_deprecated_environment);
+        assert_eq!(open.params["scope_session"], session.as_str());
+    }
+
+    #[test]
+    fn the_window_socket_names_a_pane_caller_by_its_session_and_an_outside_caller_external() {
+        let home = tempfile::tempdir().expect("a home");
+        let host_endpoint = home.path().join("host.sock");
+        let host = paneflow_host::SessionHost::open(home.path(), &host_endpoint).expect("a host");
+        let host_server =
+            paneflow_host::ServerHandle::spawn(Arc::clone(&host), host_endpoint.clone())
+                .expect("the host serves");
+        let socket = home.path().join("window.sock");
+        let listener = bind_socket(&socket).expect("the window socket binds");
+        let classifier = Arc::new(paneflow_host::peer::PeerClassifier::new(
+            Some(host_endpoint.clone()),
+            Some(home.path().to_path_buf()),
+            WINDOW_CLASSIFY_CLIENT,
+        ));
+        std::thread::spawn(move || {
+            for _ in 0..2 {
+                let stream = listener.accept().expect("a client connects");
+                let classifier = Arc::clone(&classifier);
+                std::thread::spawn(move || {
+                    let (request_tx, _never_drained) = smol::channel::bounded(1);
+                    handle_connection(
+                        stream,
+                        request_tx,
+                        crate::ipc_events::EventBus::new(),
+                        Arc::new(AtomicUsize::new(0)),
+                        &classifier,
+                        (&window_policy(), &crate::ipc_grants::detached_grants()),
+                        None,
+                    );
+                });
+            }
+        });
+
+        assert_eq!(
+            whoami_over(&socket),
+            serde_json::json!({"principal": "external"})
+        );
+
+        let mut client = paneflow_host::HostClient::connect(
+            &host_endpoint,
+            &paneflow_host::ClientHello::local("window-identity-test"),
+        )
+        .expect("a host client");
+        let request = paneflow_host::CreateSession {
+            workspace: Some(paneflow_config::schema::WorkspaceId::new()),
+            shell: Some(
+                std::env::current_exe()
+                    .expect("the test binary")
+                    .display()
+                    .to_string(),
+            ),
+            args: [
+                CHILD_TEST,
+                "--exact",
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ]
+            .iter()
+            .map(|arg| arg.to_string())
+            .collect(),
+            env: [(CHILD_ENV.to_string(), socket.display().to_string())]
+                .into_iter()
+                .collect(),
+            cwd: Some(std::env::temp_dir().display().to_string()),
+            cols: Some(200),
+            rows: Some(40),
+            ..paneflow_host::CreateSession::default()
+        };
+        let session = client
+            .create(&request)
+            .expect("the pane starts")
+            .manifest
+            .session;
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        let text = loop {
+            let text = client.text(&session).expect("the pane text").text;
+            if text.contains("window whoami principal=") {
+                break text;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the pane never answered: {text}"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        assert!(
+            text.contains(&format!("window whoami principal=pane session={session}")),
+            "{text}"
+        );
+        let _ = host.request_shutdown(true);
+        host_server.stop().expect("the host stops");
     }
 }

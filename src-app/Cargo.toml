@@ -69,6 +69,9 @@ ttf-parser = "0.25"
 
 # Internal crates
 paneflow-config = { path = "../crates/paneflow-config" }
+paneflow-git.workspace = true
+paneflow-launch.workspace = true
+paneflow-layout = { workspace = true }
 paneflow-home = { workspace = true }
 paneflow-agent-config = { workspace = true, features = ["config-io"] }
 paneflow-host = { workspace = true }
@@ -84,6 +87,7 @@ paneflow-telemetry = { workspace = true }
 # `toml_edit` dep stays out of the size-budgeted embedded `paneflow-mcp`
 # bridge binary (PRD decision D3).
 paneflow-mcp-install.workspace = true
+paneflow-peer.workspace = true
 paneflow-serve.workspace = true
 jiff.workspace = true
 # EP-002 (prd-ultron-remediation): std-only bounded-subprocess primitive
@@ -95,6 +99,8 @@ paneflow-lsp = { workspace = true }
 # `paneflow <verb>` CLI subcommands use to drive a RUNNING instance over the
 # existing IPC socket and exit before any GPUI init.
 paneflow-ipc-client = { workspace = true }
+paneflow-api.workspace = true
+paneflow-script.workspace = true
 # File system watcher (OS-native: inotify/FSEvents/ReadDirectoryChanges)
 notify = "7"
 
@@ -444,6 +450,7 @@ windows-sys = { version = "0.59", features = [
 # the process is spawned with `--paneflow-fake-language-server`, so no libtest
 # banner corrupts the framing. Already in the lockfile through GPUI on macOS.
 ctor = "1.0.13"
+paneflow-git = { workspace = true, features = ["test-support"] }
 # `profiler` gates `gpui::profiler::FrameTimingCollector`, which the
 # `layout::render` frame-pacing benchmark reads to measure dirty-to-draw
 # latency. Test-only: `cargo build` does not resolve dev-dependencies, so the

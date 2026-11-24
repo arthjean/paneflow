@@ -456,7 +456,7 @@ impl PaneFlowApp {
                 ));
             }
         }
-        let held = crate::app::workspace_ops::undo_window_session_ids(&self.closed_panes);
+        let held = self.layout_held_sessions();
         if let Some(target) = host_link::host_endpoint() {
             for listed in self.live_owned_sessions() {
                 if !held.contains(&listed.session) && seen.insert(listed.session.clone()) {

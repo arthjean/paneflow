@@ -39,9 +39,12 @@ pub const DEFAULT_SCROLLBACK_LINES: usize = 10_000;
 pub const MAX_PENDING_LAUNCHES: usize = 8;
 pub const LAUNCH_ADMISSION_DEADLINE: Duration = Duration::from_secs(5);
 pub const LAUNCH_RESPONSE_BUDGET: Duration = Duration::from_secs(9);
+pub const PEER_LAUNCH_SETTLE_DEADLINE: Duration = Duration::from_secs(2);
 const MAX_LAUNCH_ARGS: usize = 64;
 const MAX_LAUNCH_ENV_ENTRIES: usize = 256;
 const MAX_HOOK_RECEIPTS: usize = 16;
+#[cfg(debug_assertions)]
+const SANDBOX_SID_OVERRIDE_ENV: &str = "PANEFLOW_TEST_SANDBOX_SID";
 const MAX_PLAN_LIMITS_BYTES: usize = 4096;
 pub const PLAN_LIMITS_FRAME: &str = "plan_limits";
 const LATE_LAUNCH_WAIT: Duration = Duration::from_secs(3600);
@@ -233,7 +236,11 @@ pub struct SessionHost {
     agent_snapshots: crate::work_counters::Counter,
     write_approvals: crate::agent_write::WriteApprovals,
     helper_dir: Option<PathBuf>,
-    permissions: crate::control::ControlPermissions,
+    fenced_reads: bool,
+    policy: crate::policy::PolicySource,
+    pane_grants: crate::pane_grants::GrantMirror,
+    pane_endpoints: crate::pane_endpoint::PaneEndpoints,
+    sandbox_helper: Mutex<Option<PathBuf>>,
     submit_paste_delay: std::time::Duration,
     xt_checksum: Mutex<crate::runtime::XtChecksum>,
     next_operation: AtomicU64,
@@ -245,7 +252,7 @@ pub struct SessionHost {
     #[cfg(test)]
     checkpoint_estimate_floor: AtomicUsize,
     #[cfg(test)]
-    permission_override: Mutex<Option<crate::control::ControlPermissions>>,
+    fence_override: Mutex<Option<bool>>,
     weak: Weak<Self>,
     _owner: OwnerLock,
 }
@@ -344,7 +351,7 @@ impl SessionHost {
                 None
             }
         };
-        let (permissions, submit_paste_delay) = load_control_settings(home);
+        let (fenced_reads, submit_paste_delay) = load_control_settings(home);
         let persistence = Persistence::start(home).map_err(|error| {
             HostError::Storage(format!("cannot start the persistence service: {error}"))
         })?;
@@ -362,7 +369,11 @@ impl SessionHost {
             agent_snapshots: crate::work_counters::Counter::new(),
             write_approvals: crate::agent_write::WriteApprovals::default(),
             helper_dir,
-            permissions,
+            fenced_reads,
+            policy: crate::policy::PolicySource::for_home(home),
+            pane_grants: crate::pane_grants::GrantMirror::for_home(home),
+            pane_endpoints: crate::pane_endpoint::PaneEndpoints::default(),
+            sandbox_helper: Mutex::new(None),
             submit_paste_delay,
             xt_checksum: Mutex::new(crate::runtime::XtChecksum::default()),
             next_operation: AtomicU64::new(1),
@@ -374,10 +385,13 @@ impl SessionHost {
             #[cfg(test)]
             checkpoint_estimate_floor: AtomicUsize::new(0),
             #[cfg(test)]
-            permission_override: Mutex::new(None),
+            fence_override: Mutex::new(None),
             weak: weak.clone(),
             _owner: owner,
         });
+        for stale in crate::pane_endpoint::pane_dir_sessions(home) {
+            crate::pane_endpoint::remove_pane_dir(home, &stale);
+        }
         host.adopt_previous_records();
         host.trim_terminated_records();
         host.write_instance_record()?;
@@ -584,24 +598,60 @@ impl SessionHost {
         self.helper_dir.as_deref()
     }
 
-    pub fn permissions(&self) -> crate::control::ControlPermissions {
+    pub fn policy(&self) -> paneflow_api::Policy {
+        self.policy.current()
+    }
+
+    pub fn pane_grants(&self) -> &crate::pane_grants::GrantMirror {
+        &self.pane_grants
+    }
+
+    pub fn session_generation(&self, session: &str) -> Option<u64> {
+        let session = SessionId::parse(session).ok()?;
+        self.inspect(&session)
+            .ok()
+            .filter(|summary| summary.live)
+            .map(|summary| summary.manifest.generation.get())
+    }
+
+    pub fn fenced_reads(&self) -> bool {
         #[cfg(test)]
-        if let Some(permissions) = *self
-            .permission_override
+        if let Some(fenced) = *self
+            .fence_override
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
         {
-            return permissions;
+            return fenced;
         }
-        self.permissions
+        self.fenced_reads
+    }
+
+    pub fn permissions_for(
+        &self,
+        gates: paneflow_api::Gates,
+    ) -> crate::control::ControlPermissions {
+        crate::control::ControlPermissions {
+            scripting: gates.scripting,
+            orchestration: gates.orchestration && !gates.spawn_confined,
+            reach: gates.reach,
+            stale_grants: gates.stale_grants,
+            fenced_reads: self.fenced_reads(),
+        }
     }
 
     #[cfg(test)]
     pub(crate) fn override_permissions(&self, permissions: crate::control::ControlPermissions) {
         *self
-            .permission_override
+            .fence_override
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(permissions);
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(permissions.fenced_reads);
+        self.policy.pin(Some(paneflow_api::Policy {
+            environment: paneflow_api::policy::Switches {
+                scripting: permissions.scripting,
+                orchestration: permissions.orchestration,
+            },
+            ..paneflow_api::Policy::default()
+        }));
     }
 
     pub fn home(&self) -> &Path {
@@ -897,7 +947,11 @@ impl SessionHost {
                     .get(&summary.manifest.session)
                     .copied()
                     .unwrap_or_default();
+                let sandboxed = summary.manifest.launch.sandbox
+                    && self.pane_endpoint_open(&summary.manifest.session);
                 AgentSnapshotEntry {
+                    sandboxed,
+                    sandbox_unix_scope: sandboxed && summary.manifest.launch.sandbox_unix_scope,
                     output_changed_at_ms,
                     bell_at_ms,
                     input_at_ms,
@@ -931,8 +985,9 @@ impl SessionHost {
         generation: SessionGeneration,
         workspace: Option<&WorkspaceId>,
         user: &BTreeMap<String, String>,
+        sandbox: bool,
     ) -> BTreeMap<String, String> {
-        launch_env(
+        let mut env = launch_env(
             session,
             generation,
             workspace,
@@ -940,7 +995,102 @@ impl SessionHost {
             Path::new(&self.identity.endpoint),
             self.helper_dir.as_deref(),
             user,
+        );
+        if sandbox {
+            sandbox_env(&mut env, &self.home, session);
+        }
+        env
+    }
+
+    fn sandbox_plan(
+        &self,
+        session: &SessionId,
+        cwd: &Path,
+        user: &BTreeMap<String, String>,
+    ) -> crate::sandbox::SandboxPlan {
+        let window = user.get(paneflow_home::SOCKET_PATH_ENV).map(String::as_str);
+        let mut plan = crate::sandbox::SandboxPlan::new(
+            &self.home,
+            session.as_str(),
+            cwd,
+            crate::sandbox::shared_endpoints_for(
+                &self.home,
+                Path::new(&self.identity.endpoint),
+                window,
+            ),
+        );
+        #[cfg(debug_assertions)]
+        if let Some(sid) = user.get(SANDBOX_SID_OVERRIDE_ENV) {
+            plan.pane_sid.clone_from(sid);
+        }
+        if let Some(helper) = self
+            .sandbox_helper
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+        {
+            plan.helper = Ok(helper);
+        }
+        plan
+    }
+
+    pub fn confine_spawn(&self, caller: &paneflow_api::Principal, params: &mut serde_json::Value) {
+        let paneflow_api::Principal::Pane { session, .. } = caller else {
+            return;
+        };
+        let Ok(parent) = SessionId::parse(session) else {
+            return;
+        };
+        let Ok(summary) = self.inspect(&parent) else {
+            return;
+        };
+        let launched = &summary.manifest.launch;
+        let Some(object) = params.as_object_mut().filter(|_| launched.sandbox) else {
+            return;
+        };
+        object.insert("sandbox".into(), serde_json::Value::Bool(true));
+        if launched.sandbox_unix_scope {
+            object.insert("sandbox_unix_scope".into(), serde_json::Value::Bool(true));
+        }
+    }
+
+    pub fn use_sandbox_helper(&self, helper: PathBuf) {
+        *self
+            .sandbox_helper
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(helper);
+    }
+
+    fn open_pane_endpoint(
+        &self,
+        session: &SessionId,
+        workspace: Option<&WorkspaceId>,
+    ) -> std::io::Result<()> {
+        let weak = self.weak_self();
+        let serve: crate::pane_endpoint::ServeStream =
+            std::sync::Arc::new(move |stream, principal| {
+                if let Some(host) = weak.upgrade() {
+                    crate::server::serve_pane_stream(host, stream, principal);
+                }
+            });
+        self.pane_endpoints.ensure(
+            &self.home,
+            paneflow_home::PaneServer::Host,
+            crate::pane_endpoint::PaneIdentity {
+                session: session.to_string(),
+                workspace: workspace.map(ToString::to_string),
+            },
+            &serve,
         )
+    }
+
+    pub fn close_pane_endpoint(&self, session: &SessionId) {
+        self.pane_endpoints.close(session.as_str());
+        crate::pane_endpoint::remove_pane_dir(&self.home, session.as_str());
+    }
+
+    pub fn pane_endpoint_open(&self, session: &SessionId) -> bool {
+        self.pane_endpoints.is_open(session.as_str())
     }
 
     pub fn attribute_agent_tool(&self, params: &Value) -> Result<Value, &'static str> {
@@ -1198,8 +1348,22 @@ impl SessionHost {
         Ok(json!({"accepted": true}))
     }
 
-    pub fn create(&self, request: CreateSession) -> Result<SessionSummary, HostError> {
+    pub fn create(&self, mut request: CreateSession) -> Result<SessionSummary, HostError> {
         let requested = Instant::now();
+        if let Some(asked) = request
+            .env
+            .remove(paneflow_config::schema::SANDBOX_REQUEST_ENV)
+        {
+            let Some(sandbox) = paneflow_config::schema::ProfileSandbox::from_request(&asked)
+            else {
+                return Err(HostError::InvalidRequest(format!(
+                    "{} names an unknown sandbox {asked:?}; the pane does not start unsandboxed",
+                    paneflow_config::schema::SANDBOX_REQUEST_ENV
+                )));
+            };
+            request.sandbox = true;
+            request.sandbox_unix_scope |= sandbox.unix_scope;
+        }
         if request.args.len() > MAX_LAUNCH_ARGS {
             return Err(HostError::InvalidRequest(format!(
                 "at most {MAX_LAUNCH_ARGS} launch arguments are accepted"
@@ -1238,7 +1402,12 @@ impl SessionHost {
             SessionGeneration::FIRST,
             request.workspace.as_ref(),
             &request.env,
+            request.sandbox,
         );
+        let sandbox = request.sandbox.then(|| {
+            self.sandbox_plan(&session, &cwd, &request.env)
+                .with_pathname_unix_scope(request.sandbox_unix_scope)
+        });
         let launch = SessionLaunch {
             shell: shell.clone(),
             args: request.args.clone(),
@@ -1251,6 +1420,8 @@ impl SessionHost {
                 .collect(),
             cols,
             rows,
+            sandbox: request.sandbox,
+            sandbox_unix_scope: request.sandbox && request.sandbox_unix_scope,
         };
         let created = now_ms();
         let manifest = Arc::new(Mutex::new(SessionManifest {
@@ -1263,6 +1434,7 @@ impl SessionHost {
             launch,
             lifecycle: SessionLifecycle::Starting,
             process: None,
+            process_session: None,
             name: request.title.clone(),
             title: request.title.clone(),
             current_cwd: None,
@@ -1347,6 +1519,8 @@ impl SessionHost {
             appearance: request.appearance,
             cell: request.cell,
             xt_checksum: self.current_xt_checksum(),
+            session: Some(session.clone()),
+            sandbox,
         };
         let created = self.launch(
             session,
@@ -1493,6 +1667,7 @@ impl SessionHost {
             guard.host_instance = self.identity.host_instance.clone();
             guard.lifecycle = SessionLifecycle::Starting;
             guard.process = None;
+            guard.process_session = None;
             guard.current_cwd = None;
             guard.last_hook = None;
             guard.generation_started_at_ms = Some(now_ms());
@@ -1509,7 +1684,12 @@ impl SessionHost {
                 next,
                 guard.workspace.as_ref(),
                 &guard.launch.env,
+                guard.launch.sandbox,
             );
+            let sandbox = guard.launch.sandbox.then(|| {
+                self.sandbox_plan(&guard.session, &cwd, &guard.launch.env)
+                    .with_pathname_unix_scope(guard.launch.sandbox_unix_scope)
+            });
             let spec = SpawnSpec {
                 shell: guard.launch.shell.clone(),
                 args: Vec::new(),
@@ -1521,6 +1701,8 @@ impl SessionHost {
                 appearance: record.appearance.clone(),
                 cell: record.cell,
                 xt_checksum,
+                session: Some(guard.session.clone()),
+                sandbox,
             };
             drop(guard);
             record.launch = Some(PendingLaunch {
@@ -1631,6 +1813,20 @@ impl SessionHost {
                 .map(|record| Arc::clone(&record.durability))
                 .unwrap_or_default()
         };
+        if spec.sandbox.is_some() {
+            let workspace = manifest
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .workspace
+                .clone();
+            if let Err(error) = self.open_pane_endpoint(&session, workspace.as_ref()) {
+                return Err(self.fail_launch(
+                    &session,
+                    operation,
+                    format!("cannot create the sandboxed pane's endpoint: {error}"),
+                ));
+            }
+        }
         let observer = self.observer_for(Arc::clone(&manifest), durability, generation);
         let handle = match SessionRuntime::launch(spec, generation, observer) {
             Ok(handle) => handle,
@@ -1797,6 +1993,7 @@ impl SessionHost {
         operation: OperationId,
         reason: String,
     ) -> HostError {
+        self.close_pane_endpoint(session);
         let snapshot = {
             let mut sessions = self.lock_sessions();
             let Some(record) = sessions.get_mut(session) else {
@@ -1871,6 +2068,7 @@ impl SessionHost {
                 launch_binding_for_command(&guard.launch.shell).map(|bound| bound.id.to_string());
             guard.runtime = with_launch_binding(guard.runtime.take(), binding);
             guard.process = Some(process);
+            guard.process_session = runtime.process_session();
             guard.lifecycle = if cancelled {
                 SessionLifecycle::Unverified {
                     reason: "the cancelled launch is being stopped".into(),
@@ -2070,6 +2268,7 @@ impl SessionHost {
         seed.lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .removed = true;
+        self.close_pane_endpoint(session);
         self.agent_bus
             .broadcast(&json!({"type": "session_removed", "session": session}));
         self.persistence
@@ -2424,6 +2623,58 @@ impl SessionHost {
         generation: Option<SessionGeneration>,
     ) -> Result<(), HostError> {
         self.with_live_runtime(session, generation, SessionRuntime::reset)
+    }
+
+    pub fn pane_leaders(&self) -> Vec<paneflow_peer::PaneLeader> {
+        leaders_of(&self.lock_sessions())
+    }
+
+    pub fn classify_peer(&self, pid: u32, started_at: u64) -> paneflow_peer::Membership {
+        let (leaders, in_flight) = {
+            let sessions = self.lock_sessions();
+            (leaders_of(&sessions), launch_operations(&sessions))
+        };
+        let membership = paneflow_peer::classify(pid, started_at, &leaders);
+        if membership != paneflow_peer::Membership::NotInPane || in_flight.is_empty() {
+            return membership;
+        }
+        let leaders = match self.leaders_after_launches(&in_flight) {
+            Ok(leaders) => leaders,
+            Err(pending) => {
+                return paneflow_peer::Membership::Unverified {
+                    reason: format!(
+                        "{pending} pane launches that began before process {pid} was read were still unresolved after {PEER_LAUNCH_SETTLE_DEADLINE:?}"
+                    ),
+                };
+            }
+        };
+        paneflow_peer::classify(pid, started_at, &leaders)
+    }
+
+    fn leaders_after_launches(
+        &self,
+        in_flight: &[OperationId],
+    ) -> Result<Vec<paneflow_peer::PaneLeader>, usize> {
+        let deadline = Instant::now() + PEER_LAUNCH_SETTLE_DEADLINE;
+        let mut sessions = self.lock_sessions();
+        loop {
+            let pending = launch_operations(&sessions)
+                .into_iter()
+                .filter(|operation| in_flight.contains(operation))
+                .count();
+            if pending == 0 {
+                return Ok(leaders_of(&sessions));
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(pending);
+            }
+            sessions = self
+                .launch_slots
+                .wait_timeout(sessions, remaining)
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .0;
+        }
     }
 
     pub fn live_sessions(&self) -> Vec<SessionSummary> {
@@ -2822,6 +3073,7 @@ impl SessionHost {
             );
             if lifecycle_settled {
                 host.release_retired_runtime(&session, generation);
+                host.close_pane_endpoint(&session);
             }
         })
     }
@@ -3035,14 +3287,10 @@ fn payload_text(event: &AgentEvent, key: &str) -> Option<String> {
         })
 }
 
-fn load_control_settings(home: &Path) -> (crate::control::ControlPermissions, std::time::Duration) {
+fn load_control_settings(home: &Path) -> (bool, std::time::Duration) {
     let config = paneflow_config::loader::load_config_from_path(&home.join("paneflow.json"));
-    let permissions = crate::control::ControlPermissions::from_environment(
-        config.ai_unrestricted_enabled(),
-        config.ai_injection_fence_enabled(),
-    );
     let delay = std::time::Duration::from_millis(config.resolved_submit_paste_delay_ms());
-    (permissions, delay)
+    (config.ai_injection_fence_enabled(), delay)
 }
 
 fn read_xt_checksum(home: &Path) -> Option<crate::runtime::XtChecksum> {
@@ -3071,6 +3319,38 @@ fn read_xt_checksum(home: &Path) -> Option<crate::runtime::XtChecksum> {
             None
         }
     }
+}
+
+fn leaders_of(sessions: &BTreeMap<SessionId, SessionRecord>) -> Vec<paneflow_peer::PaneLeader> {
+    sessions
+        .iter()
+        .filter_map(|(session, record)| {
+            let manifest = record
+                .manifest
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let process = manifest.process?;
+            Some(paneflow_peer::PaneLeader {
+                session: session.to_string(),
+                workspace: manifest.workspace.as_ref().map(ToString::to_string),
+                pid: process.pid,
+                started_at: process.started_at?,
+                process_session: manifest.process_session,
+                #[cfg(windows)]
+                job: record
+                    .runtime
+                    .as_ref()
+                    .and_then(|runtime| runtime.pane_job()),
+            })
+        })
+        .collect()
+}
+
+fn launch_operations(sessions: &BTreeMap<SessionId, SessionRecord>) -> Vec<OperationId> {
+    sessions
+        .values()
+        .filter_map(|record| record.launch.as_ref().map(|launch| launch.operation))
+        .collect()
 }
 
 #[cfg(test)]

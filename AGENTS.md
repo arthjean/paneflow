@@ -19,6 +19,8 @@ bash scripts/check-workflows.sh                     # when .github/** changes: e
 uvx zizmor@1.32.0 --config .github/zizmor.yml --min-severity high .github   # when .github/** changes: the Workflow audit job; set GH_TOKEN for the online audits
 bash scripts/test-ci-scripts.sh                     # when a CI script changes: runs the scripts against fixtures
 bash scripts/check-test-wallclock.sh                # when a test changes: no new wall-clock budget
+bash scripts/sandbox-matrix.sh                      # when crates/paneflow-host/src/sandbox/** changes: the sandbox tests on each distribution's own kernel, in throwaway KVM machines (Linux host with /dev/kvm and podman; about 10 minutes)
+bash scripts/sandbox-matrix.sh --suite identity     # when crates/paneflow-peer/** or crates/paneflow-host/src/peer.rs changes: the caller identity tests on Ubuntu 22.04 (5.15, the SO_PEERCRED fallback) and 24.04 (6.8, SO_PEERPIDFD), plain and with /proc hidepid=2
 ```
 
 **`cargo fmt --check` before every `git commit` and every `git push` that
@@ -146,12 +148,18 @@ the two you did.
   (`terminal/types.rs::alacritty_is_absent_from_the_app_crate`) fails if a
   second engine reappears.
 - **One git implementation: the `git` CLI.** Every git read and write spawns
-  the user's `git` through `src-app/src/git_command.rs`, and a background read
+  the user's `git` through `crates/paneflow-git/src/command.rs`, and a background read
   uses `GitProfile::Probe`. Do not add libgit2, gitoxide (`gix`) or a
   hand-written reader of git's on-disk formats: an in-process engine was built
   and withdrawn in November 2026 (tag `archive/gix-engine`) because a second
   implementation trails git. ARCHITECTURE.md, "Git goes through the git CLI",
   has the reasons and the Windows residual that the CLI keeps (#124).
+  The window, the worker and the CLI share that crate: the worktree record
+  checks (owner marker, admin directory) in `worktree.rs` and the
+  plan, create and roll back sequence in `worktree_plan.rs`. A `worktree`
+  request on `workspace.up` or `surface.split` is created by whichever process
+  serves the call, which removes every worktree it created when the layout
+  refuses the call; `paneflow up` only plans locally for `--dry-run`.
 - **The render thread never blocks.** No synchronous file I/O, git subprocess,
   or recursive directory walk on the GPUI main thread. Push that work through
   `smol::unblock` or the bootstrap path.
@@ -223,6 +231,11 @@ and worker, and ignores a `PANEFLOW_SOCKET_PATH` it does not own unless
 tag's host and worker outlive the window: stop them with
 `PANEFLOW_HOME=~/.paneflow-dev-<name> target/debug/paneflow serve stop` and
 `... host stop` before trashing the home.
+Never stop a Paneflow process by name (`pkill paneflow-host`, `pkill -f
+"paneflow-host serve"`, `killall paneflow`): the installed app's host and
+worker carry the same names, and killing them ends every live pane of the
+user, the agent's own shell included. This happened on 2026-11-23. Stop a dev
+instance through its home's `stop` command or by the PID you started.
 
 Put unit tests beside the module when the logic is self-contained; keep broader
 UI and layout checks in `src-app/tests/`. Name tests descriptively, for example
@@ -261,8 +274,10 @@ when the run ends.
 subdirectory, is local, untracked evidence and review scratch space: never
 assume another agent can read it, and a tracked document that names such a path
 must state that it is local evidence. When you implement a PRD in a separate
-worktree, Arthur still reads the copy in `C:\dev\paneflow`: copy every status
-change and every ticked acceptance criterion back to both files there.
+worktree, Arthur still reads the copy in the main checkout (`C:\dev\paneflow`
+on Windows, `~/dev/paneflow` on Linux): copy every status change and every
+ticked acceptance criterion back to both files there, a review verdict
+included, before you report the work done.
 
 ## No comments in source code
 

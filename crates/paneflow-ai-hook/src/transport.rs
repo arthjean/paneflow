@@ -6,7 +6,7 @@ use paneflow_ipc_client::ai_hook::AiHookFrame;
 use paneflow_ipc_client::host_control::{HostControl, METHOD_AGENT_EVENT};
 
 const HOST_CLIENT_NAME: &str = "paneflow-ai-hook";
-const HOOK_REQUEST_DEADLINE: Duration = Duration::from_millis(350);
+pub(crate) const HOOK_REQUEST_DEADLINE: Duration = Duration::from_millis(350);
 
 pub(crate) fn send_agent_event(
     endpoint: &Path,

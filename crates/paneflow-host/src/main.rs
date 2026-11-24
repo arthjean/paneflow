@@ -82,6 +82,17 @@ enum SessionCommand {
         #[arg(long, default_value_t = 24, help = "Initial rows")]
         rows: u16,
         #[arg(
+            long,
+            help = "Run the shell in the 'paneflow' sandbox, reachable only through its own pane endpoints"
+        )]
+        sandbox: bool,
+        #[arg(
+            long,
+            requires = "sandbox",
+            help = "Also refuse unix sockets created outside the sandbox (Landlock ABI 9); the agent can no longer start its own sandbox"
+        )]
+        sandbox_unix_scope: bool,
+        #[arg(
             last = true,
             help = "Arguments passed to the shell, after `--`; never replayed on restart"
         )]
@@ -121,6 +132,13 @@ enum SessionCommand {
 }
 
 fn main() {
+    let mut raw = std::env::args_os().skip(1);
+    if raw
+        .next()
+        .is_some_and(|first| first == paneflow_host::sandbox::SANDBOX_EXEC_SUBCOMMAND)
+    {
+        std::process::exit(paneflow_host::sandbox::exec_main(raw.collect()));
+    }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let cli = Cli::parse();
     let home = cli
@@ -235,9 +253,17 @@ fn session(home: &Path, command: SessionCommand) -> i32 {
             workspace,
             cols,
             rows,
+            sandbox,
+            sandbox_unix_scope,
             args,
         } => {
             let mut params = json!({"cols": cols, "rows": rows, "args": args});
+            if sandbox {
+                params["sandbox"] = json!(true);
+            }
+            if sandbox_unix_scope {
+                params["sandbox_unix_scope"] = json!(true);
+            }
             for (key, value) in [
                 ("cwd", cwd),
                 ("shell", shell),

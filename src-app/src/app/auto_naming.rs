@@ -109,12 +109,6 @@ impl PaneFlowApp {
         let Some((tab_idx, 1)) = tab_for_surface(&self.workspaces[ws_idx], surface_id, cx) else {
             return;
         };
-        if self.workspaces[ws_idx]
-            .tab_mut(tab_idx)
-            .is_some_and(|tab| tab.set_title(&title, TabTitleSource::Summarized))
-        {
-            self.save_session(cx);
-            cx.notify();
-        }
+        self.retitle_tab_through_model(ws_idx, tab_idx, &title, TabTitleSource::Summarized, cx);
     }
 }

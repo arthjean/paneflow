@@ -14,11 +14,12 @@ use paneflow_config::schema::{SessionGeneration, SessionId, WorkspaceId};
 use serde_json::{Value, json};
 
 use crate::agent::AgentEvent;
-use crate::agent_write::{Decision, METHOD_APPROVAL_DECIDE, METHOD_APPROVAL_FOLLOW};
+use crate::agent_write::{METHOD_APPROVAL_DECIDE, METHOD_APPROVAL_FOLLOW};
 use crate::control::{ConnectionAliases, ControlError};
 use crate::host::{CellSize, CreateSession, HostError, SessionAppearance, SessionHost};
 use crate::manifest::now_ms;
 use crate::owner_watch::OwnerWatch;
+use crate::peer::{ClassifiedBy, METHOD_PEER_CLASSIFY};
 use crate::protocol::{
     self, ClientHello, DATA_CHUNK_RAW_BYTES, ERR_BUSY, ERR_CHECKPOINT_TOO_LARGE, ERR_DEADLINE,
     ERR_ENGINE_REQUIRED, ERR_FRAME_TOO_LARGE, ERR_GENERATION_MISMATCH, ERR_HANDSHAKE_REQUIRED,
@@ -30,7 +31,13 @@ use crate::protocol::{
     result_envelope,
 };
 use crate::runtime::RuntimeError;
+use paneflow_api::methods::host::PeerClassifyParams;
+use paneflow_api::{Decision, Principal, Refusal, Scope, ScopeRule};
 use paneflow_ipc_client::line_wire::{LineRead, Wire};
+use paneflow_peer::{Membership, PeerRead};
+
+const METHOD_WHOAMI: &str =
+    <paneflow_api::methods::system::WhoAmI as paneflow_api::Method>::SPEC.name;
 
 const CONTROL_CONNECTIONS_PER_PANE: usize = 2;
 const PANES_A_HEAVY_WORKSPACE_ATTACHES: usize = 48;
@@ -174,8 +181,30 @@ pub fn serve(host: Arc<SessionHost>, endpoint: &Path, shutdown: Arc<AtomicBool>)
     )
 }
 
+#[cfg(windows)]
 pub fn bind_owner_only(endpoint: &Path, label: &str) -> io::Result<Listener> {
-    #[cfg(unix)]
+    bind_with_sddl(endpoint, label, WINDOWS_PIPE_SDDL)
+}
+
+#[cfg(windows)]
+pub fn bind_with_sddl(endpoint: &Path, label: &str, sddl: &str) -> io::Result<Listener> {
+    use interprocess::os::windows::{
+        local_socket::ListenerOptionsExt, security_descriptor::SecurityDescriptor,
+    };
+    let name = endpoint.to_fs_name::<GenericFilePath>()?;
+    let sddl = widestring::U16CString::from_str(sddl)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+    let descriptor = SecurityDescriptor::deserialize(sddl.as_ucstr())?;
+    let listener = ListenerOptions::new()
+        .name(name)
+        .security_descriptor(descriptor)
+        .create_sync()?;
+    log::info!("{label}: listening on {}", endpoint.display());
+    Ok(listener)
+}
+
+#[cfg(unix)]
+pub fn bind_owner_only(endpoint: &Path, label: &str) -> io::Result<Listener> {
     {
         if let Some(parent) = endpoint.parent() {
             std::fs::create_dir_all(parent)?;
@@ -197,22 +226,7 @@ pub fn bind_owner_only(endpoint: &Path, label: &str) -> io::Result<Listener> {
         }
     }
     let name = endpoint.to_fs_name::<GenericFilePath>()?;
-    #[cfg(windows)]
-    let listener = {
-        use interprocess::os::windows::{
-            local_socket::ListenerOptionsExt, security_descriptor::SecurityDescriptor,
-        };
-        let sddl = widestring::U16CString::from_str(WINDOWS_PIPE_SDDL)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
-        let descriptor = SecurityDescriptor::deserialize(sddl.as_ucstr())?;
-        ListenerOptions::new()
-            .name(name)
-            .security_descriptor(descriptor)
-            .create_sync()?
-    };
-    #[cfg(not(windows))]
     let listener = ListenerOptions::new().name(name).create_sync()?;
-    #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(endpoint, std::fs::Permissions::from_mode(0o600))?;
@@ -342,7 +356,7 @@ fn serve_connections(
             .spawn(move || {
                 let _guard = guard;
                 match Wire::new(stream, protocol::MAX_CONTROL_FRAME_BYTES) {
-                    Ok(wire) => handle_connection(wire, host, shutdown),
+                    Ok(wire) => handle_connection(wire, host, shutdown, None),
                     Err(error) => log::debug!("paneflow-host: connection setup failed: {error}"),
                 }
             });
@@ -434,10 +448,30 @@ enum Flow {
     Close,
 }
 
-fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<AtomicBool>) {
+pub fn serve_pane_stream(host: Arc<SessionHost>, stream: Stream, principal: Principal) {
+    match Wire::new(stream, protocol::MAX_CONTROL_FRAME_BYTES) {
+        Ok(wire) => handle_connection(
+            wire,
+            host,
+            Arc::new(AtomicBool::new(false)),
+            Some(principal),
+        ),
+        Err(error) => log::debug!("paneflow-host: pane connection setup failed: {error}"),
+    }
+}
+
+fn handle_connection(
+    mut wire: Wire,
+    host: Arc<SessionHost>,
+    shutdown: Arc<AtomicBool>,
+    fixed: Option<Principal>,
+) {
     let mut greeted = false;
     let mut attaches = false;
     let mut client = String::new();
+    let mut principal = Principal::Unverified {
+        reason: "no request has been read yet".into(),
+    };
     let mut aliases = ConnectionAliases::default();
     loop {
         if shutdown.load(Ordering::Acquire) {
@@ -504,7 +538,7 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
             }
             continue;
         };
-        let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
+        let mut params = request.get("params").cloned().unwrap_or_else(|| json!({}));
         if !greeted {
             if method != "host.hello" {
                 let _ = wire.write_json(&error_envelope(
@@ -519,6 +553,10 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
                 Ok((identity, hello)) => {
                     greeted = true;
                     attaches = hello.attaches();
+                    principal = match &fixed {
+                        Some(pane) => pane.clone(),
+                        None => classify_connection(&host, &wire, &hello),
+                    };
                     client = hello.client;
                     if wire.write_json(&result_envelope(&id, identity)).is_err() {
                         return;
@@ -531,7 +569,32 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
             }
             continue;
         }
+        let permissions = match authorize_request(&host, &principal, &id, method, &mut params) {
+            Ok(permissions) => permissions,
+            Err(envelope) => {
+                if wire.write_json(&envelope).is_err() {
+                    return;
+                }
+                continue;
+            }
+        };
+        if method == "session.create" {
+            host.confine_spawn(&principal, &mut params);
+        }
+        let typed_input = attaches && !principal.is_pane();
         let flow = match method {
+            METHOD_WHOAMI => match wire.write_json(&result_envelope(&id, principal.whoami_value()))
+            {
+                Ok(()) => Flow::Continue,
+                Err(_) => Flow::Close,
+            },
+            METHOD_PEER_CLASSIFY => {
+                let envelope = classify_for(&host, &principal, &id, &params);
+                match wire.write_json(&envelope) {
+                    Ok(()) => Flow::Continue,
+                    Err(_) => Flow::Close,
+                }
+            }
             "session.attach" | "session.output" if !attaches => {
                 let written = wire.write_json(&error_envelope(
                     &id,
@@ -574,6 +637,27 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
                 }
             }
             METHOD_AGENT_FOLLOW => stream_agent_follow(&mut wire, &host, &shutdown, &id),
+            METHOD_HOST_GRANTS_SET => {
+                let envelope = match serde_json::from_value::<paneflow_api::grants::GrantSet>(
+                    params.clone(),
+                ) {
+                    Ok(set) => {
+                        let revision = set.revision;
+                        let installed = host.pane_grants().install(set);
+                        result_envelope(&id, json!({"revision": revision, "installed": installed}))
+                    }
+                    Err(error) => error_envelope(
+                        &id,
+                        ERR_INVALID_PARAMS,
+                        format!("invalid grant set: {error}"),
+                        None,
+                    ),
+                };
+                match wire.write_json(&envelope) {
+                    Ok(()) => Flow::Continue,
+                    Err(_) => Flow::Close,
+                }
+            }
             "host.shutdown" => {
                 let force = params
                     .get("force")
@@ -663,8 +747,7 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
             _ => {
                 let envelope = match crate::control::authorize_session_write(
                     &host,
-                    attaches,
-                    host.permissions(),
+                    permissions,
                     method,
                     &params,
                 ) {
@@ -673,7 +756,7 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
                         let answered = crate::control::dispatch(
                             &host,
                             &mut aliases,
-                            host.permissions(),
+                            permissions,
                             method,
                             &params,
                             now_ms(),
@@ -681,9 +764,9 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
                         match answered {
                             Some(Ok(result)) => result_envelope(&id, result),
                             Some(Err(error)) => control_error_to_envelope(&id, error),
-                            None => match dispatch(&host, method, &params, attaches) {
+                            None => match dispatch(&host, method, &params, typed_input) {
                                 Ok(result) => {
-                                    if method == "session.input" && !attaches {
+                                    if method == "session.input" && !typed_input {
                                         audit_control_input(&client, &params, &result);
                                     }
                                     fit_control_frame(&id, result_envelope(&id, result))
@@ -707,6 +790,202 @@ fn handle_connection(mut wire: Wire, host: Arc<SessionHost>, shutdown: Arc<Atomi
             return;
         }
     }
+}
+
+const METHOD_HOST_GRANTS_SET: &str = "host.grants.set";
+
+static CATALOG: std::sync::LazyLock<Option<paneflow_api::Catalog>> =
+    std::sync::LazyLock::new(|| paneflow_api::host_catalog().ok());
+
+fn refusal_envelope(id: &Value, method: &str, principal: &Principal, refusal: Refusal) -> Value {
+    let data = paneflow_api::authorize::refusal_data(principal, refusal);
+    match refusal {
+        Refusal::PrincipalRefused
+            if method == METHOD_APPROVAL_FOLLOW || method == METHOD_APPROVAL_DECIDE =>
+        {
+            error_envelope(
+                id,
+                ERR_ENGINE_REQUIRED,
+                format!(
+                    "{method} belongs to the Paneflow window: only the window sees or decides write approvals; this caller is identified as {}",
+                    principal.kind()
+                ),
+                Some(data),
+            )
+        }
+        Refusal::PrincipalRefused => {
+            let (code, message, data) = principal.refusal(method);
+            error_envelope(id, code, message, Some(data))
+        }
+        Refusal::UnverifiedCaller => error_envelope(
+            id,
+            paneflow_api::principal::ERR_PRINCIPAL_REFUSED,
+            paneflow_api::authorize::unverified_message(method, principal),
+            Some(data),
+        ),
+        Refusal::SourceMismatch => error_envelope(
+            id,
+            ERR_INVALID_PARAMS,
+            paneflow_api::authorize::source_mismatch_message(method),
+            Some(data),
+        ),
+        Refusal::GrantsUnsynced => error_envelope(
+            id,
+            ERR_METHOD_NOT_FOUND,
+            paneflow_api::grants::GRANTS_UNSYNCED_MESSAGE.to_string(),
+            Some(data),
+        ),
+        Refusal::ScopeRefused | Refusal::GateClosed { .. } => error_envelope(
+            id,
+            ERR_INVALID_PARAMS,
+            format!("{method} refused: {}", refusal.reason()),
+            Some(data),
+        ),
+    }
+}
+
+fn check_target_scope(
+    host: &SessionHost,
+    (scope, gates): (&Scope, &paneflow_api::Gates),
+    id: &Value,
+    method: &str,
+    principal: &Principal,
+    params: &Value,
+) -> Result<(), Value> {
+    let claimed;
+    let scope = match scope {
+        Scope::Instance => return Ok(()),
+        Scope::Claimed { .. } if method == "session.input" => return Ok(()),
+        Scope::Pane { .. } => scope,
+        Scope::Claimed { session } => {
+            let workspace = SessionId::parse(session).ok().and_then(|claimed| {
+                host.list(None)
+                    .into_iter()
+                    .find(|summary| summary.manifest.session == claimed)
+                    .map(|summary| summary.manifest.workspace.map(|w| w.to_string()))
+            });
+            let Some(workspace) = workspace else {
+                return Ok(());
+            };
+            claimed = Scope::Pane {
+                session: session.clone(),
+                workspace,
+            };
+            &claimed
+        }
+    };
+    let Some(target) = params
+        .get("session")
+        .and_then(Value::as_str)
+        .and_then(|raw| SessionId::parse(raw).ok())
+    else {
+        return Ok(());
+    };
+    let Ok(summary) = host.inspect(&target) else {
+        return Ok(());
+    };
+    let workspace = summary
+        .manifest
+        .workspace
+        .map(|workspace| workspace.to_string());
+    scope
+        .check(target.as_str(), workspace.as_deref())
+        .map_err(|_| match paneflow_api::authorize::scope_refusal(gates) {
+            Refusal::GrantsUnsynced => {
+                refusal_envelope(id, method, principal, Refusal::GrantsUnsynced)
+            }
+            refusal => error_envelope(
+                id,
+                ERR_INVALID_PARAMS,
+                paneflow_api::authorize::scope_refusal_message(
+                    method,
+                    target.as_str(),
+                    workspace.as_deref(),
+                ),
+                Some(paneflow_api::authorize::refusal_data(principal, refusal)),
+            ),
+        })
+}
+
+pub(crate) fn authorize_request(
+    host: &SessionHost,
+    principal: &Principal,
+    id: &Value,
+    method: &str,
+    params: &mut Value,
+) -> Result<crate::control::ControlPermissions, Value> {
+    let policy = host.policy();
+    let Some(descriptor) = CATALOG.as_ref().and_then(|catalog| catalog.get(method)) else {
+        return Ok(host.permissions_for(policy.gates_for(principal)));
+    };
+    let mirror = host.pane_grants().snapshot();
+    let generation = match principal {
+        Principal::Pane { session, .. } => host.session_generation(session),
+        _ => None,
+    };
+    let view = mirror.view(crate::manifest::now_ms(), generation);
+    let ungated = paneflow_api::grants::pane_gates(
+        principal,
+        &descriptor.spec,
+        policy.gates_for(principal),
+        &view,
+    );
+    match paneflow_api::authorize_with(principal, descriptor, params, &policy, &view) {
+        Decision::Refused {
+            reason: Refusal::GateClosed { .. },
+        } => Ok(host.permissions_for(ungated)),
+        Decision::Refused { reason } => Err(refusal_envelope(id, method, principal, reason)),
+        Decision::Allowed { scope, gates } => {
+            if let Some(notice) = paneflow_api::policy::deprecation_notice(&policy, &gates) {
+                log::warn!("paneflow-host: {notice}");
+            }
+            scope.bind(principal, params);
+            if descriptor.spec.scope == ScopeRule::Workspace {
+                check_target_scope(host, (&scope, &gates), id, method, principal, params)?;
+            }
+            Ok(host.permissions_for(gates))
+        }
+    }
+}
+
+fn classify_connection(host: &SessionHost, wire: &Wire, hello: &ClientHello) -> Principal {
+    let started = std::time::Instant::now();
+    let read = crate::peer::read_wire_peer(wire);
+    let membership = match &read {
+        PeerRead::Identified(identity) => host.classify_peer(identity.pid(), identity.started_at()),
+        PeerRead::Unverified { reason } => Membership::Unverified {
+            reason: reason.clone(),
+        },
+    };
+    let principal = crate::peer::host_principal(membership, hello);
+    crate::peer::log_classification(
+        "host",
+        &read,
+        &principal,
+        ClassifiedBy::Local,
+        started.elapsed(),
+    );
+    principal
+}
+
+fn classify_for(host: &SessionHost, caller: &Principal, id: &Value, params: &Value) -> Value {
+    if !caller.is_outside_every_pane() {
+        let (code, message, data) = caller.refusal(METHOD_PEER_CLASSIFY);
+        return error_envelope(id, code, message, Some(data));
+    }
+    let asked: PeerClassifyParams = match serde_json::from_value(params.clone()) {
+        Ok(asked) => asked,
+        Err(error) => {
+            return error_envelope(
+                id,
+                ERR_INVALID_PARAMS,
+                format!("invalid peer.classify params: {error}"),
+                None,
+            );
+        }
+    };
+    let membership = host.classify_peer(asked.pid, asked.started_at);
+    result_envelope(id, to_value(&crate::peer::membership_reply(&membership)))
 }
 
 fn wake_accept_loop(endpoint: &Path) {
@@ -767,6 +1046,12 @@ fn control_error_to_envelope(id: &Value, error: ControlError) -> Value {
     match error {
         ControlError::Params(message) => error_envelope(id, ERR_INVALID_PARAMS, message, None),
         ControlError::Disabled(message) => error_envelope(id, ERR_METHOD_NOT_FOUND, message, None),
+        ControlError::GrantsUnsynced => error_envelope(
+            id,
+            ERR_METHOD_NOT_FOUND,
+            paneflow_api::grants::GRANTS_UNSYNCED_MESSAGE.to_string(),
+            Some(json!({"reason": paneflow_api::grants::REASON_GRANTS_UNSYNCED})),
+        ),
         ControlError::NoController(message) => error_envelope(id, ERR_NO_CONTROLLER, message, None),
         ControlError::Host(error) => error_to_envelope(id, DispatchError::Host(error)),
     }
@@ -1178,7 +1463,7 @@ fn decide_approval(host: &SessionHost, client: &str, params: &Value) -> Result<V
     let decision = params
         .get("decision")
         .and_then(Value::as_str)
-        .and_then(Decision::parse)
+        .and_then(crate::agent_write::Decision::parse)
         .ok_or_else(|| "'decision' must be \"allow\" or \"deny\"".to_string())?;
     host.write_approvals()
         .decide(request, decision, std::time::Instant::now())?;
@@ -1443,6 +1728,79 @@ mod tests {
         let host = SessionHost::open(home.path(), &endpoint).unwrap();
         let server = ServerHandle::spawn(Arc::clone(&host), endpoint).unwrap();
         (home, host, server)
+    }
+
+    const DECISION_TABLE: &str = include_str!("../../paneflow-api/tests/decision_table.txt");
+
+    fn table_principal(kind: &str) -> Option<Principal> {
+        match kind {
+            "window" => Some(Principal::Window),
+            "worker" => Some(Principal::Worker),
+            "pane" => Some(Principal::Pane {
+                session: "s-caller".into(),
+                workspace: Some("w-caller".into()),
+            }),
+            "external" => Some(Principal::External),
+            "unverified" => Some(Principal::Unverified {
+                reason: "the peer exited".into(),
+            }),
+            _ => None,
+        }
+    }
+
+    fn served_decision(host: &SessionHost, principal: &Principal, method: &str) -> String {
+        let mut params = json!({"scope_session": "s-claimed"});
+        match authorize_request(host, principal, &json!(1), method, &mut params) {
+            Err(envelope) => format!(
+                "refused:{}",
+                envelope["error"]["data"]["reason"]
+                    .as_str()
+                    .unwrap_or("none")
+            ),
+            Ok(permissions) => {
+                let descriptor = CATALOG.as_ref().unwrap().get(method).unwrap();
+                match descriptor.spec.gate {
+                    paneflow_api::Gate::Scripting { .. } if !permissions.scripting => {
+                        "refused:gate_closed".to_string()
+                    }
+                    _ => "allowed".to_string(),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_host_method_is_authorized_as_the_checked_in_decision_table_says() {
+        let (_home, host, server) = start();
+        let mut checked = 0;
+        for (column, open) in [(3, false), (4, true)] {
+            host.override_permissions(granted(open, open));
+            for row in DECISION_TABLE.lines().filter(|row| !row.starts_with('#')) {
+                let fields: Vec<&str> = row.split_whitespace().collect();
+                let [method, owner, kind, ..] = fields[..] else {
+                    continue;
+                };
+                if owner != "host" {
+                    continue;
+                }
+                let principal = table_principal(kind).expect("a known principal");
+                let expected = fields[column];
+                let expected = if expected.starts_with("allowed") {
+                    "allowed"
+                } else {
+                    expected
+                };
+                assert_eq!(
+                    served_decision(&host, &principal, method),
+                    expected,
+                    "{method} as {kind} with every gate {}",
+                    if open { "open" } else { "closed" }
+                );
+                checked += 1;
+            }
+        }
+        assert!(checked >= 2 * 5 * 20, "{checked}");
+        server.stop().unwrap();
     }
 
     #[test]
@@ -3711,6 +4069,8 @@ mod tests {
         crate::control::ControlPermissions {
             scripting,
             orchestration,
+            reach: orchestration,
+            stale_grants: false,
             fenced_reads: true,
         }
     }
@@ -4351,5 +4711,32 @@ mod tests {
         host.stop(&source, None).unwrap();
         host.stop(&target, None).unwrap();
         server.stop().unwrap();
+    }
+    #[test]
+    fn peer_classify_answers_only_a_caller_identified_outside_every_pane() {
+        let home = tempfile::tempdir().unwrap();
+        let host = SessionHost::open(home.path(), Path::new("classify-callers")).unwrap();
+        let params = json!({"pid": std::process::id(), "started_at": 0});
+        let refused = [
+            Principal::Pane {
+                session: "s".into(),
+                workspace: None,
+            },
+            Principal::Unverified {
+                reason: "the parent chain is too long".into(),
+            },
+        ];
+        for caller in refused {
+            let envelope = classify_for(&host, &caller, &json!(1), &params);
+            assert_eq!(
+                envelope["error"]["data"]["reason"],
+                paneflow_api::principal::REASON_PRINCIPAL_REFUSED,
+                "{caller:?}: {envelope}"
+            );
+        }
+        for caller in [Principal::Window, Principal::Worker, Principal::External] {
+            let envelope = classify_for(&host, &caller, &json!(1), &params);
+            assert_eq!(envelope["result"]["stale"], true, "{caller:?}: {envelope}");
+        }
     }
 }

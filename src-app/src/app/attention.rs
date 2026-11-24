@@ -7,7 +7,6 @@ use paneflow_config::schema::SpaceId;
 use crate::PaneFlowApp;
 use crate::ai_types::AgentState;
 use crate::app::declared_status::surface_has_agent;
-use crate::app::ipc_handler::find_pane_by_surface_id;
 use crate::app::workspace_ops::WorkspaceFocusTarget;
 use crate::workspace::Workspace;
 
@@ -16,6 +15,25 @@ pub(crate) struct AttentionItem {
     pub(crate) workspace_idx: Option<usize>,
     pub(crate) waiting_secs: u64,
     pub(crate) errored: bool,
+}
+
+pub(crate) fn prompt_items(
+    pending: &[crate::app::prompts::PendingPrompt],
+    surface_workspaces: &HashMap<u64, usize>,
+) -> Vec<AttentionItem> {
+    pending
+        .iter()
+        .filter_map(|prompt| {
+            let surface_id = prompt.surface_id()?;
+            let workspace_idx = *surface_workspaces.get(&surface_id)?;
+            Some(AttentionItem {
+                surface_id: Some(surface_id),
+                workspace_idx: Some(workspace_idx),
+                waiting_secs: prompt.asked_at.elapsed().as_secs(),
+                errored: false,
+            })
+        })
+        .collect()
 }
 
 pub(crate) fn sort_items(items: &mut [AttentionItem]) {
@@ -93,12 +111,14 @@ impl PaneFlowApp {
 
     pub(crate) fn attention_items(&self, cx: &Context<Self>) -> Vec<AttentionItem> {
         let mut live_surfaces: HashSet<u64> = HashSet::new();
+        let mut surface_workspaces: HashMap<u64, usize> = HashMap::new();
         let mut session_surfaces = HashMap::new();
         for (ws_idx, ws) in self.workspaces.iter().enumerate() {
             for pane in ws.collect_panes() {
                 for t in pane.read(cx).terminals() {
-                    let surface_id = t.entity_id().as_u64();
+                    let surface_id = t.read(cx).surface_id();
                     live_surfaces.insert(surface_id);
+                    surface_workspaces.insert(surface_id, ws_idx);
                     session_surfaces
                         .insert(t.read(cx).terminal.session_id.clone(), (surface_id, ws_idx));
                 }
@@ -114,6 +134,7 @@ impl PaneFlowApp {
                 errored: false,
             });
         }
+        items.extend(prompt_items(&self.prompts.pending, &surface_workspaces));
         for (ws_idx, ws) in self.workspaces.iter().enumerate() {
             for session in ws.agent_sessions.values() {
                 if session.state != AgentState::WaitingForInput {
@@ -138,7 +159,7 @@ impl PaneFlowApp {
         for (ws_idx, ws) in self.workspaces.iter().enumerate() {
             for pane in ws.collect_panes() {
                 for terminal in pane.read(cx).terminals() {
-                    let surface_id = terminal.entity_id().as_u64();
+                    let surface_id = terminal.read(cx).surface_id();
                     let view = terminal.read(cx);
                     let row = self.host_agent_row(&view.terminal.session_id);
                     if surface_has_agent(ws, surface_id, row) {
@@ -173,13 +194,18 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(loc) = find_pane_by_surface_id(&self.workspaces, surface_id, cx) else {
+        if self.prompts.surface_agent_prompt(surface_id).is_some() {
+            self.activate_surface_prompt(surface_id, cx);
+            return;
+        }
+        let Some(loc) = self.locate_surface(surface_id) else {
             cx.notify();
             return;
         };
         let (ws_idx, pane) = (loc.workspace_idx, loc.pane);
         self.activate_workspace_at(ws_idx, WorkspaceFocusTarget::Pane { pane }, window, cx);
         self.jump_cursor = Some(surface_id);
+        self.activate_surface_prompt(surface_id, cx);
     }
 }
 
@@ -270,6 +296,62 @@ mod tests {
         assert_eq!(SpaceAttention::default().most_urgent(), None);
     }
 
+    fn asked(
+        id: u64,
+        surface: Option<u64>,
+        waited_secs: u64,
+    ) -> crate::app::prompts::PendingPrompt {
+        use paneflow_api::methods::prompt::{OriginKind, PromptKind, PromptOrigin, PromptSpec};
+        crate::app::prompts::PendingPrompt {
+            id,
+            spec: std::sync::Arc::new(PromptSpec {
+                kind: PromptKind::Input,
+                title: "Name".into(),
+                body: None,
+                placeholder: None,
+                value: None,
+                confirm: None,
+                timeout: None,
+                items: None,
+                multiple: None,
+                allow_other: None,
+            }),
+            origin: Some(PromptOrigin {
+                kind: OriginKind::Action,
+                title: Some("New branch".into()),
+                name: None,
+                file: None,
+                agent: None,
+                surface_id: surface,
+                workspace_id: None,
+                session: None,
+            }),
+            asked_at: std::time::Instant::now()
+                .checked_sub(std::time::Duration::from_secs(waited_secs))
+                .unwrap(),
+            token: None,
+        }
+    }
+
+    #[test]
+    fn a_pending_prompt_on_a_live_surface_is_one_item_with_its_wait_and_none_otherwise() {
+        let live = HashMap::from([(7_u64, 2_usize)]);
+        let items = prompt_items(
+            &[
+                asked(1, Some(7), 42),
+                asked(2, None, 5),
+                asked(3, Some(99), 5),
+            ],
+            &live,
+        );
+        assert_eq!(items.len(), 1, "no surface or a closed one gives no item");
+        assert_eq!(items[0].surface_id, Some(7));
+        assert_eq!(items[0].workspace_idx, Some(2));
+        assert!(items[0].waiting_secs >= 42);
+        assert!(!items[0].errored);
+        assert!(prompt_items(&[], &live).is_empty());
+    }
+
     #[test]
     fn a_finish_in_a_muted_workspace_does_not_count() {
         let mut workspaces = vec![workspace(1, None), workspace(2, Some(space(1)))];
@@ -281,58 +363,5 @@ mod tests {
         let counts = space_attention(&workspaces, &[]);
 
         assert_eq!(counts.get(&Some(space(1))), None);
-    }
-
-    #[gpui::test]
-    fn activating_a_hidden_agent_switches_to_its_space(cx: &mut gpui::TestAppContext) {
-        use crate::pane::Pane;
-        use crate::terminal::TerminalView;
-        use gpui::AppContext as _;
-
-        let cx = cx.add_empty_window();
-        let mut terminals = Vec::new();
-        let workspaces: Vec<Workspace> = [(1, None), (2, Some(space(1)))]
-            .into_iter()
-            .map(|(id, space)| {
-                let terminal = cx.new(|cx| TerminalView::display_only_for_test(id, cx));
-                terminals.push(terminal.entity_id().as_u64());
-                let pane = cx.new(|cx| Pane::new(terminal, id, cx));
-                let mut workspace = Workspace::with_id(id, format!("ws{id}"), pane);
-                workspace.space = space;
-                workspace
-            })
-            .collect();
-        let mut active_idx = 0;
-        let mut active_space = None;
-        let mut memory = crate::app::spaces::SpaceMemory::new();
-        let closed = cx.new(|cx| TerminalView::display_only_for_test(3, cx));
-        let closed = closed.entity_id().as_u64();
-
-        let gone = cx.update(|_, cx| find_pane_by_surface_id(&workspaces, closed, cx));
-        assert!(gone.is_none());
-        assert_eq!((active_idx, active_space.clone()), (0, None));
-
-        let destination = cx
-            .update(|_, cx| find_pane_by_surface_id(&workspaces, terminals[1], cx))
-            .expect("the waiting agent's pane is found");
-        assert!(crate::app::spaces::point_at(
-            &workspaces,
-            &mut active_idx,
-            &mut active_space,
-            &mut memory,
-            destination.workspace_idx,
-        ));
-
-        assert_eq!(active_space, Some(space(1)));
-        assert_eq!(active_idx, 1);
-        let focused = cx.update(|_, cx| {
-            destination
-                .pane
-                .read(cx)
-                .terminals()
-                .next()
-                .map(|terminal| terminal.entity_id().as_u64())
-        });
-        assert_eq!(focused, Some(terminals[1]));
     }
 }

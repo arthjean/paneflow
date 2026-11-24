@@ -315,11 +315,8 @@ impl Render for PaneFlowApp {
 
         self.settle_dock_restore_focus(window, cx);
         self.settle_diff_dock_picker_focus(window, cx);
-        if let Some(pane) = self.pending_pane_focus.take()
-            && !Self::focus_pane_window(pane.clone(), cx)
-        {
-            pane.read(cx).focus_handle(cx).focus(window, cx);
-        }
+        self.settle_layout_focus(window, cx);
+        self.note_layout_focus(window, cx);
         if std::mem::take(&mut self.pending_palette_focus) {
             if let Some(palette) = self.pane_palette.as_mut() {
                 palette.restore_focus.capture_once(window, cx);
@@ -358,8 +355,8 @@ impl Render for PaneFlowApp {
         } else if let Some(ws) = self.active_workspace() {
             if let Some(root) = &ws.active_tab().root {
                 let app_weak = cx.weak_entity();
-                let on_resize_end = std::rc::Rc::new(move |cx: &mut App| {
-                    let _ = app_weak.update(cx, |app, cx| app.save_session(cx));
+                let on_resize_end = std::rc::Rc::new(move |split: usize, cx: &mut App| {
+                    let _ = app_weak.update(cx, |app, cx| app.divider_drag_ended(split, cx));
                 });
                 root.sync_unfocused_dim(window, cx);
                 let split_palette = self.pending_split_palette();
@@ -588,6 +585,7 @@ impl Render for PaneFlowApp {
             .on_action(cx.listener(Self::handle_toggle_diff_dock))
             .on_action(cx.listener(Self::handle_toggle_diff_dock_maximize))
             .on_action(cx.listener(Self::handle_open_command_palette))
+            .on_action(cx.listener(Self::handle_run_lua_action))
             .on_action(cx.listener(Self::handle_clone_repository))
             .on_action(cx.listener(Self::handle_diff_new_file_tab))
             .on_action(cx.listener(Self::handle_open_file_finder))
@@ -917,6 +915,10 @@ impl Render for PaneFlowApp {
         }
         if self.command_palette_open {
             app_content = app_content.child(self.render_command_palette(window, cx));
+        }
+        self.show_next_prompt(window, cx);
+        if self.prompts.shown.is_some() {
+            app_content = app_content.child(self.render_prompt(window, cx));
         }
         if self.custom_buttons_modal.is_some() {
             app_content = app_content.child(self.render_custom_buttons_modal(cx));

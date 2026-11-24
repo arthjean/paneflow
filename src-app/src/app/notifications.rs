@@ -75,14 +75,21 @@ pub(crate) enum ToastAction {
     OpenReleaseNotes(String),
     ReopenTab(u64),
     ShowSpace(Option<paneflow_config::schema::SpaceId>),
+    OpenConfig {
+        path: std::path::PathBuf,
+        root: std::path::PathBuf,
+        line: Option<u32>,
+        failed: bool,
+    },
 }
 
 impl ToastAction {
     fn reports_failure(&self) -> bool {
-        !matches!(
-            self,
-            Self::ReopenTab(_) | Self::OpenReleaseNotes(_) | Self::ShowSpace(_)
-        )
+        match self {
+            Self::OpenConfig { failed, .. } => *failed,
+            Self::ReopenTab(_) | Self::OpenReleaseNotes(_) | Self::ShowSpace(_) => false,
+            Self::RetryUpdate | Self::OpenReleasesPage(_) => true,
+        }
     }
 
     fn label(&self) -> &'static str {
@@ -92,6 +99,7 @@ impl ToastAction {
             Self::OpenReleaseNotes(_) => "View release notes",
             Self::ReopenTab(_) => "Undo",
             Self::ShowSpace(_) => "Show",
+            Self::OpenConfig { .. } => "Open",
         }
     }
 
@@ -102,6 +110,7 @@ impl ToastAction {
             Self::OpenReleaseNotes(_) => "release-notes",
             Self::ReopenTab(_) => "undo",
             Self::ShowSpace(_) => "show-space",
+            Self::OpenConfig { .. } => "open-config",
         };
         format!("toast-{slug}-{idx}")
     }
@@ -270,6 +279,18 @@ impl PaneFlowApp {
             }
             ToastAction::ShowSpace(space) => {
                 self.activate_space(space.clone(), Some(window), cx);
+                self.dismiss_toast(cx);
+            }
+            ToastAction::OpenConfig {
+                path, root, line, ..
+            } => {
+                self.open_code_link_in_dock(
+                    path.clone(),
+                    root.clone(),
+                    crate::app::terminal_links::link_reveal(*line, None),
+                    window,
+                    cx,
+                );
                 self.dismiss_toast(cx);
             }
         }
@@ -555,6 +576,19 @@ mod tests {
             assert!(!action.label().trim().is_empty());
         }
         assert_eq!(ToastAction::ReopenTab(7).button_id(2), "toast-undo-2");
+    }
+
+    #[test]
+    fn a_configuration_toast_reads_as_a_failure_only_for_an_error() {
+        let open = |failed| ToastAction::OpenConfig {
+            path: "init.lua".into(),
+            root: ".".into(),
+            line: Some(3),
+            failed,
+        };
+        assert!(open(true).reports_failure());
+        assert!(!open(false).reports_failure());
+        assert_eq!(open(true).label(), "Open");
     }
 
     #[test]

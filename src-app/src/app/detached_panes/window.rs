@@ -192,13 +192,7 @@ impl PaneFlowApp {
                                     placement.bounds = bounds;
                                 }
                             });
-                            this.bounds_save = Some(cx.spawn(async move |this, cx| {
-                                smol::Timer::after(std::time::Duration::from_millis(300)).await;
-                                let _ = this.update(cx, |this, cx| {
-                                    let _ =
-                                        this.owner.update(cx, |owner, cx| owner.save_session(cx));
-                                });
-                            }));
+                            this.save_bounds_later(cx);
                         }
                     })
                     .detach();
@@ -214,13 +208,13 @@ impl PaneFlowApp {
             });
             cx.notify();
         });
+        self.set_detached_through_model(&pane, true, cx);
         if restored_bounds.is_none() {
             source.blur(cx);
             if let Some(root) = self.nav_root() {
                 root.focus_first(source, cx);
             }
         }
-        self.save_session(cx);
         cx.notify();
         Ok(())
     }
@@ -250,6 +244,17 @@ fn fit_bounds(proposed: Bounds<Pixels>, visible: Bounds<Pixels>) -> Bounds<Pixel
         ),
         size(px(width), px(height)),
     )
+}
+
+impl DetachedPaneWindow {
+    fn save_bounds_later(&mut self, cx: &mut Context<Self>) {
+        self.bounds_save = Some(cx.spawn(async move |this, cx| {
+            smol::Timer::after(std::time::Duration::from_millis(300)).await;
+            let _ = this.update(cx, |this, cx| {
+                let _ = this.owner.update(cx, |owner, cx| owner.save_session(cx));
+            });
+        }));
+    }
 }
 
 impl Render for DetachedPaneWindow {

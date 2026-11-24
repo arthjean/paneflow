@@ -4,7 +4,6 @@ use crate::PaneFlowApp;
 use crate::app::diff_dock::code::view::CodeView;
 use crate::app::hosted_sessions::{pane_terminals, tab_terminals};
 use crate::app::unsaved_dialog::UnsavedContinuation;
-use crate::app::workspace_ops::settle_closed_sessions;
 use crate::pane::Pane;
 use crate::terminal::TerminalView;
 
@@ -165,9 +164,9 @@ impl PaneFlowApp {
         window: Option<&mut Window>,
         cx: &mut Context<Self>,
     ) {
-        let terminals = self.close_target_terminals(&target, cx);
-        if intent == CloseIntent::Stop {
-            self.stop_terminals(terminals.clone(), cx);
+        if let CloseTarget::DiffTerminal(_) = target {
+            let terminals = self.close_target_terminals(&target, cx);
+            self.stop_terminals(terminals, cx);
         }
         match target {
             CloseTarget::Pane(pane) => self.remove_pane_from_layout(pane, cx),
@@ -177,13 +176,12 @@ impl PaneFlowApp {
                 }
             }
             CloseTarget::Surface { pane, terminal } => {
-                pane.update(cx, |pane, cx| pane.remove_surface(&terminal, cx));
-                self.save_session(cx);
-                cx.notify();
+                self.close_surface_through_model(&pane, &terminal, cx);
             }
             CloseTarget::Tab { ws_idx, tab_idx } => {
                 if let Some(window) = window {
-                    self.remove_workspace_tab(ws_idx, tab_idx, window, cx);
+                    let keep_sessions = intent == CloseIntent::Hold;
+                    self.remove_workspace_tab(ws_idx, tab_idx, keep_sessions, window, cx);
                 }
             }
             CloseTarget::Workspace(idx) => self.remove_workspace(idx, window, cx),
@@ -193,16 +191,6 @@ impl PaneFlowApp {
                     self.focus_diff_tab(self.diff_dock.diff_active_tab, window, cx);
                 }
             }
-        }
-        match intent {
-            CloseIntent::Stop => {
-                let closed = terminals
-                    .iter()
-                    .map(|terminal| terminal.read(cx).terminal.session_id.clone())
-                    .collect();
-                settle_closed_sessions(&mut self.closed_panes, &closed, None);
-            }
-            CloseIntent::Hold => self.hold_closed_sessions(terminals, cx),
         }
     }
 }

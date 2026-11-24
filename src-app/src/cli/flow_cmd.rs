@@ -130,7 +130,7 @@ fn dry_run_plan(plan: &FlowPlan, runs: &[UnitRun]) -> Value {
                         "command": r.command,
                         "prompt": s.pane.prompt,
                         "env": s.pane.env,
-                        "worktree": r.worktree.as_ref().map(|w| w.managed_json()),
+                        "worktree": r.worktree.as_ref().map(up_cmd::managed_json),
                     }),
                 ),
                 UnitAction::Send { target, text } => {
@@ -171,7 +171,13 @@ fn prepare_runs(
     let mut commands: Vec<Option<String>> = Vec::with_capacity(plan.units.len());
     let mut worktree_plans: Vec<Option<WorktreePlan>> = Vec::with_capacity(plan.units.len());
     let mut port_refs: Vec<bool> = Vec::with_capacity(plan.units.len());
-    for (i, unit) in plan.units.iter().enumerate() {
+    let mut units = plan.units.clone();
+    for (i, unit) in units.iter_mut().enumerate() {
+        if let UnitAction::Spawn(s) = &mut unit.action {
+            s.pane.env = up_cmd::sandbox_env(i, &s.pane, config, s.pane.env.clone())?;
+        }
+    }
+    for (i, unit) in units.iter().enumerate() {
         let (command, worktree, port_ref) = match &unit.action {
             UnitAction::Spawn(s) => (
                 up_cmd::resolve_command(i, &s.pane, config)?,
@@ -187,10 +193,8 @@ fn prepare_runs(
     up_cmd::check_worktree_conflicts(&mut worktree_plans)?;
     let port_offsets = up_cmd::allocate_port_offsets(&port_refs, plan.port_base, port_is_free)?;
 
-    Ok(plan
-        .units
-        .iter()
-        .cloned()
+    Ok(units
+        .into_iter()
         .zip(commands.into_iter().zip(worktree_plans).zip(port_offsets))
         .map(|(unit, ((command, worktree), port_offset))| {
             UnitRun::new(substitute_unit_env(unit, port_offset), command, worktree)
@@ -349,7 +353,7 @@ impl<T: IpcTransport> Engine<'_, T> {
                 "focus": s.pane.focus,
                 "env": s.pane.env,
                 "name": s.name,
-                "managed_worktree": r.worktree.as_ref().map(|w| w.managed_json()),
+                "managed_worktree": r.worktree.as_ref().map(up_cmd::managed_json),
             }));
         }
 
@@ -669,7 +673,7 @@ impl<T: IpcTransport> Engine<'_, T> {
                     "prompt": if r.unit.submit { None } else { s.pane.prompt.clone() },
                     "env": s.pane.env,
                     "name": s.name,
-                    "managed_worktree": r.worktree.as_ref().map(|w| w.managed_json()),
+                    "managed_worktree": r.worktree.as_ref().map(up_cmd::managed_json),
                 });
                 match self.client.call("surface.split", params) {
                     Ok(result) => {

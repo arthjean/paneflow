@@ -1,19 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-pub(crate) fn run_bounded<T: Send + 'static>(
-    timeout: Duration,
-    work: impl FnOnce() -> T + Send + 'static,
-) -> Option<T> {
-    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
-    std::thread::Builder::new()
-        .name("paneflow-path-probe".to_owned())
-        .spawn(move || {
-            let _ = sender.send(work());
-        })
-        .ok()?;
-    receiver.recv_timeout(timeout).ok()
-}
+pub(crate) use paneflow_launch::cwd::run_bounded;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DirProbe {
@@ -91,17 +79,5 @@ mod tests {
                 (missing, DirProbe::Missing),
             ]
         );
-    }
-
-    #[test]
-    fn a_bounded_call_gives_up_on_work_that_never_returns() {
-        let started = Instant::now();
-        let stuck = run_bounded(Duration::from_millis(50), || {
-            std::thread::sleep(Duration::from_secs(30));
-            1
-        });
-        assert_eq!(stuck, None);
-        assert!(started.elapsed() < Duration::from_secs(2));
-        assert_eq!(run_bounded(Duration::from_secs(5), || 2), Some(2));
     }
 }

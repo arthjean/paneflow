@@ -92,7 +92,7 @@ impl PaneFlowApp {
         for pane in &panes {
             let pane = pane.read(cx);
             for terminal in pane.terminals() {
-                surfaces.insert(terminal.entity_id().as_u64());
+                surfaces.insert(terminal.read(cx).surface_id());
                 if let Some(agent) = terminal.read(cx).terminal.detected_agent {
                     tab_agents.insert(agent.binary().to_string());
                 }
@@ -210,11 +210,11 @@ impl PaneFlowApp {
             .when(!indent_guide && !grouped_by_status, |row| {
                 row.child(div().flex_none().w(px(SIDEBAR_FOLDER_SLOT_WIDTH)))
             })
-            .child(sidebar_title_with_trailing(
-                titled,
-                branch,
-                SIDEBAR_BRANCH_GAP,
-            ))
+            .child(if is_renaming {
+                titled
+            } else {
+                sidebar_title_with_trailing(titled, branch, SIDEBAR_BRANCH_GAP)
+            })
             .when(!detached_panes.is_empty(), |titled| {
                 titled.child(
                     sidebar_action_button(

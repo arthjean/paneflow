@@ -27,7 +27,12 @@ focused library crates:
 | `paneflow-ghostty-smoke` | `crates/paneflow-ghostty-smoke/` | Package-level native smoke binary for Ghostty, PTY I/O, resize, and shutdown verification |
 | `paneflow-config` | `crates/paneflow-config/` | Config schema, tolerant JSON loader, file watcher |
 | `paneflow-host` | `crates/paneflow-host/` | GPU-free local host library and executable: owns PTYs, child processes, canonical libghostty state and the durable session manifests under `~/.paneflow/host/` |
-| `paneflow-serve` | `crates/paneflow-serve/` | The per-home worker: owns the activity reducer, the session projection and the advertised-capability protocol Controllers speak |
+| `paneflow-serve` | `crates/paneflow-serve/` | The per-home worker: owns the layout model and `session.json`, the activity reducer, the session projection and the advertised-capability protocol Controllers speak |
+| `paneflow-layout` | `crates/paneflow-layout/` | The GPU-free layout model: workspaces, tabs, split trees, ops with their events and effects, undo records, revisions and id leases, shared by the worker and the window |
+| `paneflow-api` | `crates/paneflow-api/` | The method registry: each JSON-RPC method declared once with its owner (window, worker or host), audience, gate, parameter and result schemas and examples; dispatch, `authorize`, `paneflow api`, the CLI's routing and the Lua bindings derive from it |
+| `paneflow-script` | `crates/paneflow-script/` | The Lua 5.4 runtime (mlua, vendored): the `paneflow` table, events, timers, `paneflow.exec`, prompts and limits, on one thread; `paneflow do` runs it in the CLI process and the worker runs it for `init.lua` |
+| `paneflow-launch` | `crates/paneflow-launch/` | How a terminal session starts: the shell, its integration, its environment and the request sent to the host, shared by the window and the worker |
+| `paneflow-peer` | `crates/paneflow-peer/` | The process at the other end of an IPC connection, read from the kernel, and whether it runs inside a pane (pane leaders, Windows pane jobs, parent walks) |
 | `paneflow-shim` | `crates/paneflow-shim/` | PATH shim wrapping every agent CLI of the `runtimes/` catalog so Paneflow can observe its lifecycle |
 | `paneflow-ai-hook` | `crates/paneflow-ai-hook/` | The hook binary agent CLIs invoke to report session events back over IPC |
 | `paneflow-ipc-client` | `crates/paneflow-ipc-client/` | Blocking JSON-RPC client for the local IPC socket (shared by the MCP bridge and the CLI) |
@@ -57,8 +62,12 @@ Returning a pane restores its original logical position without spawning a PTY.
 Terminal and code-view focus subscriptions follow the current native window.
 The child observes ownership changes instead of reading the app during render,
 because native window creation can synchronously render while the app is borrowed.
-Window bounds are debounced before session snapshot construction. A detached
-pane restores only when the saved layout leaf count still matches its tab.
+A detached window's bounds belong to the window, not to the layout: they are
+saved in `window-state.json` keyed by the pane's layout id, beside each tab's
+dock, and `session.json` never carries them. A placement whose pane id is no
+longer in the layout is dropped silently at start; a placement read from a
+`session.json` of an earlier release restores once by its pane id, or by
+position when the saved leaf count still matches its tab.
 Closing a child returns its pane; closing the main window still quits the app.
 
 Detachment is exposed through pane controls, the pane context menu, and
@@ -94,6 +103,12 @@ implemented. It requires portable native drag support beyond the pinned GPUI API
   the Windows listener blocks in `accept`. Stateless methods reply in place;
   stateful methods go to the main thread through a bounded async channel, and
   `serve_ipc_requests` wakes on the first request and drains the queued batch.
+- **Layout client threads**: `paneflow-layout-client` sends the window's
+  layout ops, syncs and lease requests to the worker in order over one
+  connection and returns each answer through a channel the main thread drains
+  on its wake; `paneflow-layout-changes` follows the worker's layout events.
+  The main thread never makes a socket call for the layout
+  (`src-app/src/app/layout_bridge/client.rs`, `sync.rs`).
 - Blocking work (git subprocesses, filesystem walks, fleet-wide search) is
   pushed to background executors - registering a recursive file watcher or
   scanning a monorepo on the render thread is how you get a
@@ -684,6 +699,130 @@ the text with its provenance (`crates/paneflow-host/src/agent_write.rs`). The
 bridge binary ships embedded in the main binary and is extracted to a stable
 path at launch, so there is nothing extra to install.
 
+### Caller identity and authorization
+
+The window's socket, the worker's endpoint and the session host each give a
+connection one principal before its first request: `Window`, `Worker`,
+`Pane { session, workspace }`, `External` or `Unverified`. The peer is read
+from the OS (`crates/paneflow-peer`), bound to the process rather than a
+reusable PID. The host decides pane membership, since it spawned every pane
+and records their leaders; the window and the worker ask it with
+`peer.classify`, a query they make for themselves, and fall back to the
+session manifests in the home when it does not answer. On Linux and macOS the
+fallback walks the caller's parents to a recorded pane leader. On Windows,
+where a parent that exits leaves its children without a parent to walk, the
+host places each pane's leader in a Job Object named after its session
+(`Local\paneflow-pane-<session>`, `paneflow_peer::pane_job_name`), and the
+fallback opens each recorded session's job by name and asks the kernel whether
+the caller is in it (`IsProcessInJob`); the job grants no breakaway, so a
+pane's process stays in it unless a process of the same user rewrites the
+job's limits, which is outside what this layer defends. A
+session whose manifest may still hold a process but whose job cannot be
+opened, such as one started by a host that predates named jobs, leaves the
+caller `Unverified`; with no session recorded at all, no pane exists and the
+caller is outside every pane. A connection is never assumed to be outside
+every pane on an incomplete answer.
+
+Every request then goes through one pure function,
+`paneflow_api::authorize(principal, descriptor, params, policy)`
+(`crates/paneflow-api/src/authorize.rs`), which reads no file, socket or
+environment and returns `Allowed { scope, gates }` or `Refused { reason }`.
+Each descriptor declares an audience and a scope rule:
+
+| Family | Audience | Scope |
+| --- | --- | --- |
+| `system.*`, `session.list`, `session.text` and the other reads | `Anyone` | none |
+| `surface.list`, `surface.read`, `surface.search` | `Anyone` | the claimed session, if any |
+| `layout.attach`, `peer.classify` | `NotPane` | none |
+| `layout.launch`, `layout.sweep`, `approval.follow`, `approval.decide`, `session.runtime.bind`, `session.workspace`, `host.shutdown` | `PaneflowOnly` (window and worker) | none |
+| `session.input`, `stop`, `restart`, `remove`, `reset`, `clear_history`, `resize`, `appearance` | `Anyone` | the caller's workspace |
+| `surface.send_text`, `surface.send_keystroke`, `pane.write` | `Anyone` | the caller's workspace unless `scope: "all"` with orchestration |
+
+The policy comes from the `ipc` section of `paneflow.json`
+(`paneflow_host::policy::PolicySource`, re-read when the file's mtime or
+size changes) plus `ai_unrestricted`. `Window` and `Worker` pass every gate.
+The deprecated `PANEFLOW_IPC_*` variables, read only in
+`crates/paneflow-api/src/policy.rs`, still open the gates for `External`, and
+for `Pane` only while the section is absent. For a `Pane` caller,
+`authorize` rewrites `scope_session` to its own session; the host then
+checks the target session's workspace (`scope_refused`). The window runs
+`authorize` on the connection thread, before a request reaches the GPUI
+thread, and hands the resulting gates to the handler; the worker runs it in
+its registry before every handler, and an `init.lua` action acts as the
+window when started from a key or the palette and as its caller otherwise.
+A closed gate keeps the error each method returned before, so scripts see
+no new codes. `crates/paneflow-api/tests/decision_table.txt` pins every
+decision for every method and principal, and the host, the worker and the
+window each check their dispatch against the same table.
+
+Grants extend the policy per pane without a secret. The worker holds them
+(`crates/paneflow-serve/src/pane_grants.rs`, persisted to `serve/grants.json`)
+keyed by the holder's session and launch generation, with rights (`write`,
+`spawn`, `layout`), a scope (`workspace` or `instance`), an expiry and the
+grant they were delegated from. A grant comes from a `grant.request` prompt
+through the worker's prompt broker, an `agents.<name>.grants` profile the
+worker applies when the host's runtime observation sees that agent in a pane's
+foreground (a hook's self-declared `tool` is not enough), or `grant.delegate` toward
+a pane the holder split. The worker drops a grant whose holder ended or
+restarted on the next core frame, together with every grant delegated from
+it. `authorize_with` takes the caller's grants as a `GrantView`
+(`crates/paneflow-api/src/grants.rs`): a live grant of the caller at its
+current generation opens the gate of the right the method needs, and an
+`instance` grant widens the caller's scope. Only `write` and a `spawn` on
+`surface.split` can be held to one workspace: for the latter `pane_gates`
+sets `Gates::spawn_confined` and the worker's `surface_split` checks the
+anchor's workspace, while every other spawn or layout method needs an
+`instance` grant. The store holds at most `MAX_GRANTS` grants so that the
+full set fits one host control frame. After each change the worker
+writes the file, sends the full set to the host with `host.grants.set`
+(`PaneflowOnly`) and appends `grant.changed`; the window follows that event
+and reads `grant.list`. The host and the window hold the set in a
+`paneflow_host::pane_grants::GrantMirror`, which is stale while the announced
+revision or the one in `serve/grants.json` is newer than the one it holds; a
+stale mirror applies no grant and refuses what would need one with
+`grants_unsynced`.
+
+A sandboxed pane carries its identity in the endpoint it connects to, after
+Wayland's `security-context-v1`. An agent profile with `sandbox: "paneflow"`
+makes the window put `PANEFLOW_SANDBOX` in the launch env; `host.create`
+turns it into `CreateSession.sandbox` (and `sandbox_unix_scope`), strips it,
+refuses an unknown value, and persists both in `SessionLaunch`, so a restart
+re-sandboxes the pane and the window's `session.json` keeps the request for a
+restore. Before the spawn the host opens `panes/<session>/host.sock`
+(`crates/paneflow-host/src/pane_endpoint.rs`; a pipe with an SDDL granting the
+per-pane SID on Windows) and is the only process that creates that directory;
+the worker (`Worker::reconcile_pane_endpoints`) and the window
+(`src-app/src/ipc_panes.rs`) open `serve.sock` and `window.sock` there for every
+live sandboxed row the host lists, and all three close them when the row goes.
+Every connection on such an endpoint gets the fixed principal
+`Principal::Pane { session, workspace }` without `peer.classify`.
+`paneflow_home` honors `PANEFLOW_PANE_*_ENDPOINT` only for a path under the
+home's `panes/<session>/`. `crates/paneflow-host/src/sandbox.rs` wraps the shell:
+bubblewrap plus Landlock applied by `paneflow-host sandbox-exec` on Linux
+(the runtime directory comes back with only `linux::KEPT_ENTRIES`,
+`KEPT_ENTRY_PREFIXES` and the SSH agent, so the session bus and the systemd
+sockets, which would start a process outside the sandbox, stay out),
+`sandbox-exec` with a generated Seatbelt profile on macOS, and on Windows the
+same helper re-launching the shell with a write-restricted token whose
+restricting SIDs are the per-pane SID and the shared sandbox SID
+`S-1-9-1347-0`, which the host grants on the working directory, `%TEMP%` and
+the session data. A wrap that cannot start fails the launch; nothing falls back
+to an unsandboxed shell. The config offers the sandbox only on
+`SANDBOX_SUPPORTED_PLATFORMS` (Linux today): macOS and Windows join the list
+when their hardware reports exist, and until then only `paneflow-host session
+create --sandbox` reaches their wraps. A pane a sandboxed caller spawns inherits the request, never weakened, at
+each of the three servers: the worker for `surface.split`, `workspace.up`,
+`workspace.create` and `workspace.restore_layout`
+(`structural::inherit_sandbox`); the host for `session.create`
+(`SessionHost::confine_spawn`, after authorization); and the window for
+`surface.split` and `workspace.up` (`ipc_panes::confine_spawn`, which
+refuses `workspace.create`, `workspace.restore_layout` and
+`client.dispatch_action` from a sandboxed pane), while a `tmux.compat` split
+inherits the sandbox of its team anchor. The worker refuses `layout.apply`,
+`layout.adopt` and `action.invoke` to a sandboxed pane
+(`authority::REFUSED_IN_SANDBOX`): those either carry surface definitions it
+does not rewrite or run code that reaches the window under another identity.
+
 Ingress is treated as untrusted: session and config files are validated
 structurally (layout budgets, ratio clamps, id alphabets) before they touch
 app state.
@@ -693,8 +832,8 @@ app state.
 `paneflow-serve` is the per-home worker. It sits between the PTY core and
 every Controller (the GPUI app, the `paneflow` CLI, the MCP bridge) and owns
 the concerns that must survive a restart of the UI but not of the terminals:
-the activity reducer, the session projection, and the capability set it
-advertises at bootstrap.
+the layout model and `session.json`, the activity reducer, the session
+projection, and the capability set it advertises at bootstrap.
 
 The worker is the `paneflow` executable itself, started as
 `paneflow serve run --home <home>` and detached through the same
@@ -811,11 +950,170 @@ stale code.
   only when its recorded child pid with a matching kernel start time is
   absent. An unknown or recycled pid stays `non_resumable` and is never
   signaled.
-- **No front door.** The worker answers only `worker.*`, `host.hello`, the
-  `agent.*` methods and the `usage.*` methods of the next section, and forwards
-  nothing to the core. The CLI and MCP reach
+- **The method families it owns, nothing more.** The worker answers the
+  methods `crates/paneflow-api` declares with the worker as owner (`worker.*`,
+  `agent.*`, `usage.*`, `events.*`, `config.*`, `action.*`, `keymap.*`,
+  `prompt.*`, `layout.*`), plus `host.hello` as a greeting and
+  `system.describe`, which lists exactly those methods. Its dispatch is the
+  registry in `crates/paneflow-serve/src/registry.rs`: a worker method with no
+  handler, or a handler whose reply kind differs from its declaration, fails
+  the registry build, and every call is validated against its declared
+  parameter schema. It still forwards nothing to the core, because it is
+  replaced on every update and owns no terminal: a request relayed through it
+  would add a hop and fail whenever an update swaps it. The CLI and MCP reach
   `session.*` and `surface.*` on the host endpoint directly when no desktop is
-  running.
+  running, and a client routes each method to its owner from the descriptor.
+  A new method family also enters `protocol/host-capabilities-v1.json`, and
+  the Controller refuses a method its worker does not advertise before any
+  frame leaves.
+- **One numbered event log.** The worker keeps the log in
+  `crates/paneflow-serve/src/event_log.rs`: every event gets the next `seq`
+  (from 1 for each worker start, named by an `epoch`), a `ts`, a dotted
+  `type`, the ids that apply and a `data` object, and the last 1,024 stay in a
+  ring. `events.follow` sends a header with the current `seq` and `epoch`,
+  replays the events after `since` when they are all still in the ring, and
+  otherwise refuses with an `evicted` error (-32040) carrying where the log
+  stands, so a follower either sees every event once or knows it missed some.
+  A follower more than 8 MiB behind is closed alone. Terminal and agent events
+  are derived from the host's `agent.follow` frames by comparing each row with
+  the worker's last known values, so a reconnect or a worker start announces
+  only what moved; layout events are appended by the worker itself, in the
+  order the op that produced them was applied by `layout.apply` or
+  `layout.adopt`. `protocol/events-conformance-v1.json` lists the cases
+  `crates/paneflow-serve/tests/events_conformance.rs` runs against a real host
+  and worker. The window's legacy `events.subscribe` is a separate stream and
+  is unchanged.
+- **The layout authority.** `crates/paneflow-serve/src/layout_authority.rs`
+  holds the one `paneflow_layout::Model` of a home and is the only writer of
+  `session.json` while a worker runs. It loads the file at start, migrating an
+  older schema, and an unreadable file leaves an empty model and is renamed
+  aside on the first write so the window's recovery dialog still has it. The
+  model carries a `revision` that every accepted change raises by one, written
+  to the file as `layout_revision`. `layout.view` answers the model,
+  `layout.attach` records a window as the layout client, `layout.apply` applies
+  one op and answers its revision and events, and `layout.adopt` replaces the
+  model with a client's when the worker's revision is not greater than the
+  revision the client says it acknowledged, and otherwise answers the worker's
+  model. A connection that sends any `layout.*` method may send frames up to
+  16 MiB. The file is written 150 ms after the last change, staged and
+  renamed, and a clean stop flushes it before the endpoint closes; a failed
+  write keeps the model in memory and shows in `worker.status`. A
+  `session.json` another process rewrote since the worker last read or wrote
+  it is read again before the next `layout.attach` or `layout.adopt`. The worker
+  performs the effects ops return that need no window: it stops a closed
+  terminal through the host's `session.stop` when its undo hold expires (the
+  5 s hold is timed by the worker), rehomes a session through
+  `session.workspace`, and stops the sessions an accepted adopt removed.
+- **Id leases.** Ids are never chosen by the worker on a client's behalf.
+  `layout.lease_ids` grants a block of 1,024 ids and moves the persisted
+  counter past it before it answers, and a worker that starts from a file
+  advances that counter by one more block, so an id granted before a crash is
+  never granted again. A client creates panes, surfaces, tabs and workspaces
+  with ids from its blocks without waiting; `layout.apply` replays the op with
+  the client's next id (`ids_from`) so the worker allocates the same ids the
+  client did, and refuses an op whose ids fall outside the client's blocks
+  with `invalid`, or with `ids_exhausted` when the blocks are used up.
+- **The window is a layout client.** When the worker advertises
+  `layout.authority`, the window attaches, adopts its restored model with the
+  `layout_revision` of the file it read, and takes a lease. Every gesture is
+  applied to the window's own model at once and projected in the same frame,
+  then sent to the worker by `paneflow-layout-client`; a divider drag sends one
+  op when it ends. An answer whose revision differs from the window's, a
+  refused op, or a layout event the window did not cause makes it fetch the
+  view (`layout.view` with `unless_revision` answers nothing when nothing
+  moved) and reproject, keeping every pane whose id persists; a refused split
+  or undo shows the toast it shows when refused locally. While attached, the
+  window starts each new terminal through `layout.launch`: the worker builds
+  the request with `paneflow-launch` and creates the session under the id the
+  window chose. Detached, the window creates the session itself and binds it
+  with a `bind_session` op. A view fetched from the worker that names
+  surfaces the window has no terminal for (a workspace or a split another
+  client made) gets those terminals before it is projected. While attached
+  the window leaves stops to the worker and never writes `session.json`.
+- **The fallback write.** When no worker answers, or the worker predates
+  `layout.authority`, the window is the layout authority: it keeps applying
+  ops with the ids left in its lease and writes `session.json` on the 150 ms
+  debounce with its model's revision, but only while no worker holds
+  `serve/owner.lock`, or when the worker that holds it predates the layout
+  methods. A creating op that needs ids the lease no longer has is refused
+  with the split's pane-limit toast. When a worker returns, the window adopts
+  its model back with the last revision the worker acknowledged, or the
+  revision the window last wrote when the worker is a new start; a worker
+  whose revision is greater keeps its model, and the window shows it with one
+  "layout was refreshed" toast. A quit while attached waits up to 2 s for the
+  worker to acknowledge the last change. A window that quits without being
+  attached writes `session.json` itself whoever holds `serve/owner.lock`, so
+  its last model is on disk even when a worker holds the lock and does not
+  answer; the worker reads that file again before the next window attaches.
+- **Two homes for Lua.** Both run `paneflow-script`. `paneflow do` runs a
+  file, a chunk or a named action in the CLI process
+  (`src-app/src/cli/do_cmd.rs`), with no memory cap or deadline unless the
+  user passes one; each `paneflow.*` call is routed to the method's owner
+  from its descriptor, and Ctrl-C stops a busy loop through an
+  instruction-count hook. `init.lua` (`<home>/init.lua`) runs inside the
+  worker (`crates/paneflow-serve/src/config_runtime.rs`): it is loaded again
+  300 ms after a save settles, a failed load keeps the previous configuration
+  and reports its file and line, the state is capped at 256 MiB, and its
+  handlers and timers live as long as the worker, not the window. Its actions
+  are served by `action.invoke` with a 30 s limit, and its bindings by
+  `keymap.list`, which the window applies under its own Settings shortcuts.
+- **One prompt broker.** `crates/paneflow-serve/src/prompts.rs` holds the
+  questions an action, a script or later an agent asks the user, in memory
+  only. `prompt.request` queues one when a `prompt.follow` client can show its
+  kind (`no_client` with no follower, `unsupported` when none shows it, `busy`
+  at 16 pending) and waits at most `wait_ms` (25 s) before returning `pending`
+  with an id that `prompt.wait` resumes, so no call outlives a client's reply
+  deadline. Every follower receives a `requested` frame, the first
+  `prompt.reply` wins, and every follower then receives `ended`; a later reply
+  is refused with `not_pending` (-32060). A prompt ends with `timeout` after
+  its `timeout` (300 s by default, at most 3,600 s), with `no_client` when the
+  last follower able to show it leaves, with `failed` when its asker has not
+  waited on it for 15 s or the worker stops. The window follows the stream on
+  a background thread and shows one prompt at a time in the palette shell
+  (`src-app/src/app/prompts/`): a prompt activated from the attention queue
+  first, then the user's actions and scripts, then agents, oldest first, and
+  never while the command palette or the file finder is open. In Lua,
+  `paneflow.ui.input` and `paneflow.ui.pick` loop on `prompt.request` and
+  `prompt.wait` from an offloaded thread and pause the action's 30 s limit
+  while they wait. `protocol/prompt-conformance-v1.json` lists the
+  multi-client cases `crates/paneflow-serve/tests/prompt_conformance.rs` runs
+  with plain protocol clients against a real worker.
+- **Only the user answers an agent.** Each `requested` frame carries a
+  `token` of 128 bits from the operating system's generator, one per prompt
+  and per follower, held in the broker's memory and nowhere else. A prompt
+  raised by an agent, or by an action an agent runs, is never sent to a
+  follower in a pane, and `prompt.reply` takes it only from a client outside
+  every pane that sends back the token it was given; any other reply gets the
+  `not_pending` refusal an unknown id gets.
+  `paneflow_api::methods::prompt::prompt_access` holds that rule, and
+  `crates/paneflow-api/tests/decision_table.txt` lists it for each principal
+  against each asker. The worker also decides who is an agent from the
+  process that calls, not from what its hooks reported: when a pane
+  connection is classified, `paneflow_peer::LiveLineage` walks the caller's
+  parents up to the pane's shell named in its session manifest, and
+  `crates/paneflow-serve/src/agent_caller.rs` compares each one (name,
+  executable, argv) with the runtime catalog. A known agent among them, a
+  parent that cannot be read, a reused pid or a chain that never reaches the
+  shell makes every `action.invoke`, `prompt.request` and
+  `agent_prompt.resolve` on that connection the agent's, whatever origin it
+  claims. A run an agent starts answers `running` with an opaque `run_id` of
+  128 bits that only the agent's own pane session can wait on, and an agent's
+  prompt stays bound to its asker after it ends.
+- **A gesture grant lets an init.lua action type for the human.** The write
+  gate (`PANEFLOW_IPC_SCRIPTING=1` or `ai_unrestricted`) refuses
+  `surface.send_text` and `surface.send_keystroke` from every client but the
+  window, the worker included. When the window runs an action from a key or
+  the palette (`src-app/src/app/lua_config.rs`), it mints a random 128-bit
+  grant, keeps it in memory, and passes it in the `ctx.grant` of
+  `action.invoke`. The worker stores it in the run's task scope, never in the
+  Lua `ctx` table, and attaches it as a top-level `grant` member of the
+  JSON-RPC envelope of every window call that run makes, nested
+  `paneflow.invoke` calls included; timers and handlers the run schedules run
+  in their own tasks and carry none. The window admits a request whose grant
+  it minted and has not revoked, and revokes it when the `action.invoke` reply
+  arrives or after `ACTION_REPLY_DEADLINE`. The same action run from the CLI,
+  the MCP bridge, an agent or a timer has no grant and stays gated, and an
+  `origin` of `key` or `palette` sent by any other client grants nothing.
 
 ### Plan usage and the activity ledger
 
@@ -1046,7 +1344,7 @@ desktop and `paneflow host start` keep `HostLifetime::OutlivesCaller`.
 | Event | Host | Sessions | Records |
 |---|---|---|---|
 | Quit keeping sessions (the default of the quit dialog), crash or `taskkill /F` | keeps running | keep running | unchanged |
-| Quit with no live session, or "Stop everything and quit" | `host.shutdown` once the stops are done | stopped one by one | removed once every stop is confirmed and saved; `session.json` then drops each terminal's `session` and `agent`, so the layout reopens with a new shell per pane |
+| Quit with no live session, or "Stop everything and quit" | `host.shutdown` once the stops are done | stopped one by one | removed once every stop is confirmed and saved; the window unbinds each terminal's `session` and `agent` in the worker's layout, which the worker writes to `session.json`, so the layout reopens with a new shell per pane |
 | Controller pipe or CLI connection closes | keeps running | keep running | unchanged |
 | Explicit `session.stop` | keeps running | that session's owned process tree is terminated within a 5 s budget, exit recorded | `lifecycle: exited` |
 | `paneflow host stop` with live sessions | refused, lists them | untouched | unchanged |
@@ -1325,16 +1623,22 @@ stop for a session whose stop is still in flight is dropped.
 
 The sidebar lists no hosted session: a session is reachable only through the
 view that holds it. The desktop keeps a reduced listing of `session.list`
-(owned live sessions, for the quit dialog and worktree teardown) and runs an
-orphan sweep on every listing. Every ended record (`Exited`, `Failed` or
-`Lost`, owned or left by a previous host) whose id no attached view and no
-undo window holds is removed with `session.remove`; a record that may still
-own a process (`Starting`, `Unverified`, a pending launch) is never touched.
-The first listing after a successful restore, and the first one after the
-user starts a new session from a failed restore, also stops and removes every
-owned live session no view holds. Both sweeps are suspended while a failed
-restore is unresolved, because the preserved `session.json` may still
-reference those records. Worktree teardown asks the host for the live session
+(owned live sessions, for the quit dialog and worktree teardown) and, after
+every listing, asks the worker for an orphan sweep with `layout.sweep`,
+passing the sessions it holds outside the layout (dock terminals, stops in
+flight) as `keep`. The worker runs the sweep against the host itself
+(`paneflow_serve::sweep`). Every ended record (`Exited`, `Failed` or `Lost`,
+owned or left by a previous host) whose id no surface of the layout, no undo
+hold, no pending `layout.launch` and no kept session names is removed with
+`session.remove`; a record that may still own a process (`Starting`,
+`Unverified`) is never touched. The first sweep after a successful restore,
+and the first one after the user starts a new session from a failed restore,
+is sent with `live`, and also stops and removes every owned live session
+nothing holds; a live request the worker cannot serve stays pending for the
+next listing. The desktop sends no sweep while a failed restore is
+unresolved, and the worker refuses the live part while its own
+`session.json` was unreadable, because the preserved file may still reference
+those records. With no worker attached, no sweep runs. Worktree teardown asks the host for the live session
 cwds first: a worktree that still contains a live session, attached or not,
 is kept; an unreachable host proceeds with the current rules; any other host
 error skips the teardown.
@@ -1387,7 +1691,7 @@ client side is what covers the first upgrade.
 ## Git goes through the git CLI
 
 Paneflow has one git implementation: the user's `git` binary. Every read and
-every write spawns it through `src-app/src/git_command.rs`, off the GPUI main
+every write spawns it through `crates/paneflow-git/src/command.rs`, off the GPUI main
 thread, so a repository behaves in Paneflow as it does in the user's terminal,
 whatever its layout (reftable references, SHA-256 objects, sparse checkouts,
 submodules) and whatever git ships next.
@@ -1401,6 +1705,13 @@ submodules) and whatever git ships next.
   filter drivers that the repository's own config declares. A probe therefore
   runs no program the repository configures, while a system or global driver
   such as git-lfs runs as it does for the user.
+- **One crate for the three processes.** `paneflow-git` holds the command
+  builder, its spawn counters, the per-directory subprocess environment and the
+  worktree code, so the window, the worker and the CLI spawn git the same way.
+  A `workspace.up` or `surface.split` pane with a `worktree` request has its
+  worktree planned, created and, when the layout refuses the call, removed
+  again by the process that serves the call; a `setup` command in the request
+  needs the orchestration gate, like any other command.
 - **Known residual on Windows (#124).** Git for Windows memory-maps a worktree
   file while it hashes it, and Windows refuses a truncating write
   (`CREATE_ALWAYS`, `TRUNCATE_EXISTING`) to a mapped file with OS error 1224.

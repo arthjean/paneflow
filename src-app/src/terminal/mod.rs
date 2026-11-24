@@ -19,7 +19,6 @@ pub(crate) use path_picker::project_files;
 mod perf_bench;
 mod pty_session;
 pub(crate) use pty_session::INHERITED_AGENT_SESSION_ENV;
-pub(crate) use pty_session::PROTECTED_ENV_KEYS;
 mod scrollbar_reveal;
 mod search;
 mod service_detector;

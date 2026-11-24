@@ -31,6 +31,10 @@ pub struct SessionLaunch {
     pub env: BTreeMap<String, String>,
     pub cols: u16,
     pub rows: u16,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sandbox: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sandbox_unix_scope: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -119,6 +123,8 @@ pub struct SessionManifest {
     pub lifecycle: SessionLifecycle,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process: Option<ProcessIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_session: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -408,12 +414,15 @@ mod tests {
                 env: BTreeMap::new(),
                 cols: 80,
                 rows: 24,
+                sandbox: false,
+                sandbox_unix_scope: false,
             },
             lifecycle: SessionLifecycle::Running,
             process: Some(ProcessIdentity {
                 pid: 4242,
                 started_at: Some(99),
             }),
+            process_session: None,
             name: None,
             title: None,
             current_cwd: None,

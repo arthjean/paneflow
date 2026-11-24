@@ -1,0 +1,18 @@
+[package]
+name = "paneflow-layout"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "The plain-data layout model of Paneflow: workspaces, tabs, split trees, panes and surfaces with stable ids, changed only through operations"
+
+[dependencies]
+paneflow-config.workspace = true
+serde.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+tracing-test = "0.2"
+
+[lints]
+workspace = true

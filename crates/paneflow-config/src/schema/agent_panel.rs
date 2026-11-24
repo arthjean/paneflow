@@ -53,6 +53,8 @@ pub struct AgentsConfig {
     pub update_methods: std::collections::BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub default_accounts: std::collections::BTreeMap<String, String>,
+    #[serde(flatten)]
+    pub profiles: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 impl AgentsConfig {

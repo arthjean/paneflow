@@ -929,7 +929,7 @@ impl Element for CodeElement {
 
         let memo = self.resolve_gutter(window, digit_count(line_count));
         let gutter_w = memo.gutter_w;
-        let display = super::controls::editor_display();
+        let display = super::controls::editor_display(cx);
         let scrollbar_w = if display.scrollbar {
             SCROLLBAR_SIZE
         } else {

@@ -12,6 +12,11 @@
 | 1.4 | 2026-11-23 | Arthur Jean | EP-004 closed. The Linux sandbox report is measured on five distributions in KVM virtual machines (`scripts/sandbox-matrix.sh`): Ubuntu 24.04 is unsupported as installed. The runtime directory of a sandboxed pane is an allowlist (Wayland, PipeWire, PulseAudio, GnuPG, the SSH agent), replacing v1.2's list of refused entries. The config offers `sandbox: "paneflow"` on Linux only until EP-006 and EP-007 validate Windows and macOS, so US-028 no longer waits for them; US-032 and US-033 each gain the criterion that turns their platform on. The CLI now reaches the worker through the pane endpoint from a sandboxed pane (`paneflow split` failed there). |
 | 1.5 | 2026-11-23 | Arthur Jean | EP-005: the Linux kernel matrix report (US-031) is measured in KVM virtual machines (`scripts/sandbox-matrix.sh --suite identity`) on Ubuntu 22.04 (5.15, `SO_PEERCRED`) and 24.04 (6.8, `SO_PEERPIDFD`). It found that with `/proc` mounted `hidepid=2` every caller was `unverified`, because the parent chain reached a process the host cannot see (`sshd-session`, `init`); an ancestor that exists but is hidden now ends the chain, as `init` does. A8 and A12 are validated. |
 | 1.6 | 2026-11-24 | Arthur Jean | EP-006, measured on Windows 11 Pro (build 26300): the Windows layer-1 report (US-030) and the Windows sandbox report (US-033). A2 and A3 are validated. The restricted token's restricting SIDs are the per-pane SID, which the pane's own data grants, a shared sandbox SID that the working directory grants, the logon SID (the desktop refuses a process without it, `0xC0000142`) and Everyone (the `NUL` device grants nothing else); the pane gets its own `TEMP` instead of a grant on the user's, whose access list every launch rewrote in more than 9 s; pane pipes grant the user's SID instead of `OWNER RIGHTS`, which a restricted token never matches. Windows stays unsupported for the sandboxed profile: a named pipe made inside the sandbox without an access list cannot be opened for writing there, so Node and Bun (Claude Code's Bash tool and MCP servers) cannot start a piped child. |
+| 1.7 | 2026-11-24 | Arthur Jean | EP-007, measured on macOS 27.2.1 (build 26B131) on Apple Silicon (M4): the macOS layer-1 report (US-029) and the macOS sandbox report (US-032). A5 and A9 are validated, A7 is validated with a correction and A6 is disproved on macOS: Seatbelt refuses a second profile inside a sandboxed process (`sandbox_apply: Operation not permitted`), so neither Claude Code's nor Codex's own sandbox can start in a Paneflow pane, and macOS stays unsupported for the sandboxed profile. The Seatbelt profile now denies `signal` and `process-info*` to every process outside its own sandbox (`(target others)` skipped the processes of the caller's own session), and the host checks the profile with `sandbox-exec` before the pane starts, so a refused profile is the pane's launch failure. Not measured: an Intel Mac (US-029) and the previous macOS release (US-032). |
+| 1.8 | 2026-11-24 | Arthur Jean | US-029's Intel check is deferred until after the merge to `main`, and so were the test failures the EP-007 run found outside the epic (fixed in v1.10). |
+| 1.9 | 2026-11-24 | Arthur Jean | US-032 is measured on the previous macOS release as well, macOS 26.6.2 (build 25G83) in a Tart virtual machine on the same Mac: the same answers as on 27.2.1, every filter form included, and Seatbelt refuses a nested profile there too. A5 is validated on both releases. |
+| 1.10 | 2026-11-24 | Arthur Jean | The test failures EP-007's run found outside the epic are fixed instead of deferred: two races between tests that share a process (the worktrees root, the editor display preferences, now a GPUI global) one test left stale by EP-009 of the Lua scripting PRD, and one flaky pane client that exited before the test read its report. The macOS CI job does run the tests (`cargo nextest`), contrary to v1.8. |
+| 1.11 | 2026-11-24 | Arthur Jean | EP-007 review: a sandboxed macOS pane could rename a shared socket, or the runtime directory that holds it, and connect under the new path; the Seatbelt profile now denies `file-write*` on each shared endpoint, the home and every directory above them (macOS sandbox report). Measured on macOS 27.2.1. |
 
 ## Problem Statement
 
@@ -122,11 +127,11 @@ The conductor documentation tells users to set `PANEFLOW_IPC_SCRIPTING=1` for `s
 | A2 | A Job Object assigned right after ConPTY spawns the child contains the pane's tree, the console host aside. | Validated by US-030: the shell and its child are in the pane's job, ConPTY's `OpenConsole.exe` is not | US-030 |
 | A3 | `GetNamedPipeClientProcessId` cannot be set by an unprivileged client. | Validated by US-030: both pipe controls that would set it are refused from user mode; a handle passed to another process still names the process that opened it | US-030; US-003 also compares the impersonated token's user |
 | A4 | bubblewrap can create user namespaces on Ubuntu 24.04, where AppArmor restricts unprivileged user namespaces by default. | Disproved by US-023: it cannot as installed; it can with `kernel.apparmor_restrict_unprivileged_userns=0` | US-023 |
-| A5 | A Seatbelt `network-outbound` rule matches Paneflow's socket paths on every supported macOS release. | High (R9) | US-032 |
-| A6 | Claude Code and Codex still run their own sandbox inside a Paneflow sandbox. | Medium | US-023, US-032 |
-| A7 | A Seatbelt profile that allows by default can deny `process-info*` and `signal` toward processes outside the pane. | High (not researched) | US-032 |
+| A5 | A Seatbelt `network-outbound` rule matches Paneflow's socket paths on every supported macOS release. | Validated on macOS 26.6.2 and 27.2.1 by US-032: `path-literal`, `literal`, `path`, `subpath` and `regex` all match, on the canonical path only (`/private/var/...`, not `/var/...`) | US-032 |
+| A6 | Claude Code and Codex still run their own sandbox inside a Paneflow sandbox. | Validated on Linux by US-023; disproved on macOS by US-032: Seatbelt refuses a second profile in a sandboxed process, so both agents' sandboxed commands fail there | US-023, US-032 |
+| A7 | A Seatbelt profile that allows by default can deny `process-info*` and `signal` toward processes outside the pane. | Validated with a correction by US-032: `(deny signal (target others))` lets a signal through to a process of the caller's own session, so the profile denies both operations outright and allows them `(target same-sandbox)`; `ps` cannot run at all, because Seatbelt refuses to execute a setuid program | US-032 |
 | A8 | `/proc/<pid>/stat` of the user's own processes is readable by the host on Linux; a `hidepid=2` mount of `/proc` still lets a process read its own user's entries. | Validated with a correction by US-031: the user's dumpable processes stay readable, but a parent chain also crosses processes the host cannot see (other users' and non-dumpable ones), which made every caller `unverified` until the fix | US-031 |
-| A9 | On macOS, `sysctl KERN_PROC` returns the parent PID and session of any process of the same user. | Medium (memory) | US-029 |
+| A9 | On macOS, `sysctl KERN_PROC` returns the parent PID and session of any process of the same user. | Validated with a correction by US-029: `kinfo_proc` gives the parent PID and start time (it agreed with `proc_pidinfo` on 462 processes and was the only source for 278 that `proc_pidinfo` refuses), but it carries no session id, which `getsid(2)` gives | US-029 |
 | A10 | RHEL 9 has no `SO_PEERPIDFD` backport. | Low: the fallback path US-031 proves on 5.15 runs on any kernel without the option | Not validated separately |
 | A12 | A pane process that ignores `SIGHUP` can outlive the host, and the session manifests in the home still name its leader while the host is down. | Validated by US-031 on 5.15 and 6.8 | US-031 |
 | A11 | A `peer.classify` round trip per new connection does not measurably slow the CLI. No latency target is set because none is evidenced; the answer is kept for the connection's life. | Low | Debug log timing in US-007 |
@@ -616,11 +621,11 @@ Everything that needs a Mac is run there in one pass: the Seatbelt sandbox writt
 **Dependencies:** Blocked by US-022
 
 **Acceptance Criteria:**
-- [ ] Given a profile with `sandbox: "paneflow"` on macOS, when its pane launches, then the shell runs under a Seatbelt profile that allows by default and denies `network-outbound` to the shared window, worker and host socket paths
-- [ ] Given that profile, when a process in the pane connects to its pane endpoints, then the connection succeeds
-- [ ] Given that profile, when a process in the pane connects to the shared worker socket, then the sandbox refuses it
-- [ ] Given that profile, when a process in the pane sends a signal to a process outside the pane, then the sandbox refuses it
-- [ ] Given `sandbox-exec` missing or refusing the profile, when the pane launches, then it does not start and shows the launch-failure state with the error
+- [x] Given a profile with `sandbox: "paneflow"` on macOS, when its pane launches, then the shell runs under a Seatbelt profile that allows by default and denies `network-outbound` to the shared window, worker and host socket paths
+- [x] Given that profile, when a process in the pane connects to its pane endpoints, then the connection succeeds
+- [x] Given that profile, when a process in the pane connects to the shared worker socket, then the sandbox refuses it
+- [x] Given that profile, when a process in the pane sends a signal to a process outside the pane, then the sandbox refuses it
+- [x] Given `sandbox-exec` missing or refusing the profile, when the pane launches, then it does not start and shows the launch-failure state with the error
 
 #### US-029: Validate layer 1 on macOS hardware
 **Description:** As the maintainer, I want the macOS identity paths run on Intel and Apple Silicon, so that nothing ships on inspection alone.
@@ -629,11 +634,12 @@ Everything that needs a Mac is run there in one pass: the Seatbelt sandbox writt
 **Dependencies:** Blocked by US-007, US-013, US-014
 
 **Acceptance Criteria:**
-- [ ] Given macOS 13 or later on Apple Silicon, when `system.whoami` is sent to the host from a pane and from Terminal.app, then the answers are `pane` and `external`
-- [ ] Given the same machine, when `system.whoami` is sent to the worker from a pane and from Terminal.app, then the answers are `pane` and `external`
-- [ ] Given macOS on Intel, when both checks run, then the answers are the same
-- [ ] Given a raw client in a pane that claims an engine, when it calls `approval.decide`, then it is refused
-- [ ] Given `sysctl KERN_PROC` on a process of the same user, when the classification reads it, then the report confirms the parent PID and session are returned (assumption A9)
+- [x] Given macOS 13 or later on Apple Silicon, when `system.whoami` is sent to the host from a pane and from Terminal.app, then the answers are `pane` and `external`
+- [x] Given the same machine, when `system.whoami` is sent to the worker from a pane and from Terminal.app, then the answers are `pane` and `external`
+- [x] Given a raw client in a pane that claims an engine, when it calls `approval.decide`, then it is refused
+- [x] Given `sysctl KERN_PROC` on a process of the same user, when the classification reads it, then the report confirms the parent PID and session are returned (assumption A9)
+
+**Deferred (v1.8):** the Intel check ("Given macOS on Intel, when both checks run, then the answers are the same") moves out of this story's criteria. Arthur runs it on an Intel Mac after the branch merges to `main`; until then the macOS layer-1 report covers Apple Silicon only.
 
 #### US-032: Validate the macOS sandbox on hardware
 **Description:** As the maintainer, I want the Seatbelt profile checked on the current and previous macOS releases, so that the sandbox's socket rule is known to match.
@@ -642,13 +648,13 @@ Everything that needs a Mac is run there in one pass: the Seatbelt sandbox writt
 **Dependencies:** Blocked by US-026
 
 **Acceptance Criteria:**
-- [ ] Given a sandboxed pane on the current macOS release and the previous one, when it connects to the shared worker socket, then the report states whether the sandbox refused it (assumption A5)
-- [ ] Given that refusal, when the report is written, then it names the filter form (literal, subpath or regex) that matched
-- [ ] Given that pane, when it inspects a process outside the pane with `ps` and `kill -0`, then the report states whether the sandbox refused each (assumption A7)
-- [ ] Given Claude Code with its own sandbox in that pane, when it runs one sandboxed command, then the report states whether it ran (assumption A6)
-- [ ] Given Codex with its own sandbox in that pane, when it runs one sandboxed command, then the report states whether it ran (assumption A6)
-- [ ] Given a release where a check fails, when the report is written, then it lists that release as unsupported for the sandboxed profile
-- [ ] Given the report lists the platform as supported, when the story closes, then `SANDBOX_SUPPORTED_PLATFORMS` in `crates/paneflow-config/src/schema/agent_sandbox.rs` gains `macos` and `docs/user/scripting.md` says so; until then a profile with `sandbox: "paneflow"` is refused there
+- [x] Given a sandboxed pane on the current macOS release and the previous one, when it connects to the shared worker socket, then the report states whether the sandbox refused it (assumption A5)
+- [x] Given that refusal, when the report is written, then it names the filter form (literal, subpath or regex) that matched
+- [x] Given that pane, when it inspects a process outside the pane with `ps` and `kill -0`, then the report states whether the sandbox refused each (assumption A7)
+- [x] Given Claude Code with its own sandbox in that pane, when it runs one sandboxed command, then the report states whether it ran (assumption A6)
+- [x] Given Codex with its own sandbox in that pane, when it runs one sandboxed command, then the report states whether it ran (assumption A6)
+- [x] Given a release where a check fails, when the report is written, then it lists that release as unsupported for the sandboxed profile
+- [x] Given the report lists the platform as supported, when the story closes, then `SANDBOX_SUPPORTED_PLATFORMS` in `crates/paneflow-config/src/schema/agent_sandbox.rs` gains `macos` and `docs/user/scripting.md` says so; until then a profile with `sandbox: "paneflow"` is refused there
 
 ## Linux sandbox report (US-023)
 
@@ -748,6 +754,77 @@ The criterion asked for "the SIDs the pane's working directory grants". Those ar
 
 Two defects found and fixed on the way: a launch granted the shared sandbox SID on the user's whole `TEMP` (45 000 entries here), which rewrote that tree's access lists on every launch and took more than the 9 s launch budget (`LaunchPending`); and the pane endpoints granted `OWNER RIGHTS`, so even the pane's own endpoint refused it. The review of EP-006 found a third: the pane's data directory granted the shared sandbox SID, so any other sandboxed pane could write a file into it and into its `TEMP` (measured: both writes succeeded); it now grants the per-pane SID, and the same test refuses both writes. Because the working directory grants the shared SID, a sandboxed pane can still write the working directory of another sandboxed pane, which the sandbox does not confine (Non-Goals).
 
+## macOS layer 1 report (US-029)
+
+Measured on 2026-11-24 on macOS 27.2.1 (build 26B131), Apple Silicon (Apple M4), with the debug build of this branch. The `system.whoami` cases ran the real binaries in an isolated home (`~/.paneflow-dev-ep007`, removed afterwards), every inherited `PANEFLOW_*` variable cleared: `paneflow-host serve` with `RUST_LOG=debug`, the worker through `paneflow serve start`, a pane created with `paneflow-host session create --shell /bin/sh` whose shell called `paneflow api call system.whoami` itself, and a window of Terminal.app opened with `osascript` (Terminal, a child of `launchd`, then `login` and `zsh`).
+
+| Check | Result |
+|---|---|
+| `paneflow api call system.whoami --on host` from the pane / from Terminal.app | `pane` with its session / `external` |
+| `paneflow api call system.whoami --on worker` from the pane / from Terminal.app | `pane` with its session / `external` |
+| The same call from a child of the pane's shell (`sh -c` under the shell) | `pane` with its session |
+| A sandboxed pane (`session create --sandbox`) through its own endpoints, on the host and the worker | `pane` with its session |
+| A raw client in a pane whose hello claims an engine calls `approval.decide` | Refused, `principal_refused` (`pane_authorization.rs`, `a_pane_that_claims_an_engine_cannot_decide_a_write_approval`, run on this Mac) |
+| `sysctl` `KERN_PROC_PID` on a child of the user that called `setsid` | The parent PID and start time are returned; `getsid` returns the child's own PID as its session (`paneflow-peer`, `sysctl_kern_proc_names_the_parent_of_another_process_of_the_user_in_its_own_session`) |
+| `kinfo_proc` against `proc_pidinfo` on every listed process | The parent and start time agreed on all 462 processes both could read; 278 more were readable through `sysctl` only, where `proc_pidinfo` answers `EPERM` |
+
+A host log line reads `paneflow host: process 12727 (LOCAL_PEERTOKEN) classified pane through the host's pane leaders in 22 us`; classifications took 8 to 175 us.
+
+**A9 holds with a correction.** `sysctl KERN_PROC` returns the parent PID of any process of the user, but `kinfo_proc` carries the session only as a kernel pointer (`e_sess`), so the session id comes from `getsid(2)`, which answers for any process of the user. The classifier already reads it that way (`crates/paneflow-peer/src/macos.rs`).
+
+**Deferred: macOS on Intel.** No Intel Mac was available, and the criterion is deferred (v1.8): Arthur runs it after the merge to `main`. The code path is the same (`LOCAL_PEERTOKEN`, `proc_pidinfo`, the 648-byte `kinfo_proc` of LP64 macOS on both architectures), and the shipping targets name only `aarch64-apple-darwin`.
+
+**Test failures found outside this epic, fixed (v1.10).** The full suite run on this Mac with `cargo test --workspace --locked --no-fail-fast` (5568 passed, 5 failed) found failures that predate EP-007 and touch none of its code. Two of them were races between tests that share one process, which `cargo test` does and CI's `cargo nextest run --profile ci` (one process per test, also on the `macOS aarch64 smoke build` job) does not:
+- `paneflow-serve` `worker_worktrees` (4 tests): the worktrees root is process-wide state (`paneflow_git::worktree::set_worktrees_root`), which each test's worker sets to its own home, so a parallel test planned its worktree under another test's root and was refused as "outside Paneflow's worktree dirs". Each test of the file now holds one lock for its run (`crates/paneflow-serve/tests/worker_worktrees.rs`).
+- `paneflow-app` `wrap_tests::up_and_down_walk_the_visual_rows_of_a_wrapped_line`: the editor display preferences were process-wide atomics, and `the_setting_sets_the_initial_state_and_the_toggle_stays_with_its_tab` turned word wrap on while the other test built its view, so its toggle turned wrap off. The preferences are now a GPUI global of the window's `App` (`EditorDisplay` in `src-app/src/app/diff_dock/code/controls.rs`), so each test application has its own and the window keeps one; the tests no longer save and restore a process-wide value. Measured with `cargo test -p paneflow-app --bin paneflow diff_dock::code -- --test-threads=16`: the old code failed 5 runs of 8, the new one passed 15 of 15.
+
+The third was a stale test, failing on every platform and under nextest too: `paneflow-serve` `pane_authorization::an_action_runs_as_the_window_from_a_key_and_as_its_pane_from_a_pane` declared its actions without `agents = true`, so after EP-009 of `tasks/prd-lua-scripting.md` a `pane` caller got "no action named 'spawn'" (FR-15 of that PRD) instead of reaching the action whose principal the test checks. Its two actions are now marked `agents = true`; the refusal of an unmarked action keeps its own test (`crates/paneflow-serve/src/worker.rs`, "no action named 'secret'").
+
+The first run of the CI gate on this Mac (`cargo nextest run --workspace --locked --profile ci`) then reported `pane_authorization::a_pane_cannot_attach_to_the_layout_nor_launch_through_it` FLAKY (failed, then passed on the retry), which fails the job: the pane client printed its report and exited, and when the test read the pane after the session ended, `session.text` answered "the session is not running". The pane client now keeps its pane open after its report, reading its terminal until the host closes the pane when the test ends.
+
+## macOS sandbox report (US-032)
+
+Measured on 2026-11-24 on the same machine, macOS 27.2.1, by the integration tests of `crates/paneflow-host/tests/sandboxed_pane_macos.rs`: a real `SessionHost` launches a sandboxed pane, whose shell is `/usr/bin/sandbox-exec -p <profile>` and then the test binary itself, which records what it can reach. With `PANEFLOW_SANDBOX_TOOLS_REPORT=<file>` it also runs the tools below and writes the report. The filter forms were measured with `sandbox-exec` directly, against a listening socket.
+
+**The profile (US-026).** `(version 1)(allow default)`, then: `(deny network-outbound (remote unix-socket (path-literal ...)))` for each shared endpoint (host, worker, window) in both its spelling and its canonical form; a `subpath` deny on `panes/` in the home and a `subpath` allow on the pane's own `panes/<session>/`; a `file-write*` deny on the home except the pane's own data; a `file-write*` deny, as a `literal`, on each shared endpoint and on every directory above it and above the home (added by the review); and `(deny signal)`, `(deny process-info*)`, each followed by its allow `(target same-sandbox)`. The host runs `sandbox-exec -p <profile> /usr/bin/true` before the pane starts (about 6 ms), so a profile `sandbox-exec` refuses fails the launch with its error, as a missing `sandbox-exec` does.
+
+| Check | Result |
+|---|---|
+| Connect to the shared host, worker and window sockets | Refused, `EPERM`, for each |
+| Connect to another pane's endpoint under `panes/` | Refused, `EPERM` |
+| Connect to the pane's host endpoint and call `system.whoami` | `pane` with its session |
+| Connect to a socket outside Paneflow (in the working directory) | Connects (Non-Goals) |
+| Filter forms on a socket's canonical path: `path-literal`, `literal`, `path`, `subpath`, `regex` | Each refuses the connection (A5) |
+| A rule on the `/tmp/...` spelling of a socket under `/private/tmp` | Does not match; a rule on the canonical path matches both spellings |
+| `kill(pid, 0)` and `SIGCONT` to a process outside the pane, `kill -0` from `sh` | Refused, `EPERM` |
+| `proc_pidpath` of a process outside the pane | Refused, `EPERM` |
+| `kill(pid, 0)` and `proc_pidpath` on the pane's own child | Succeed |
+| `ps -p <pid>` | Cannot run: Seatbelt refuses to execute a setuid program (`/bin/ps` is setuid root) under any profile, `allow default` alone included |
+| Write in the home / in the working directory | `EPERM` / succeeds |
+| `git init`, then `git status` in the working directory | Succeed |
+| `cargo new`, then `cargo build --offline` with its target directory in the working directory | Succeed |
+| `bun -v` | Succeeds, `1.4.5` (Node is not installed on this Mac) |
+| A second `sandbox-exec` profile inside the pane | Fails: `sandbox-exec: sandbox_apply: Operation not permitted` |
+| Claude Code 2.1.331, `claude -p` with `sandbox.enabled` and `allowUnsandboxedCommands: false`, asked to run `echo` with its Bash tool | Did not run: its sandbox could not start, and Claude reported that macOS refuses a second sandbox in an already sandboxed process. The same command outside the pane ran and its sandbox refused the write to `$HOME` |
+| `codex sandbox -- /bin/sh -c 'echo codex-sandbox-ran'` (Codex 0.165.0) | Failed: `sandbox-exec: sandbox_apply: Operation not permitted`, exit 71. Outside the pane it ran and refused a write to `/usr` |
+
+**Signals (A7).** The profile written by inspection had `(deny signal (target others))`. Measured with `sandbox-exec`, that rule lets a signal through to a process of the caller's own session and refuses it only across sessions. A pane is its own session, so it held for the pane's shell, but only by that accident; the profile now denies `signal` and `process-info*` outright and allows them toward its own sandbox, which also refuses another pane running the same profile (measured: two `sandbox-exec` instances with one profile cannot signal each other). `process-info*` was not denied at all before, so `proc_pidpath` of any process of the user succeeded from the pane.
+
+**Defect found by the review and fixed: a pane could move a shared socket out of its rule.** The shared host, worker and window sockets live in the runtime directory (`$TMPDIR`, `/var/folders/.../T`), which the profile left writable, and Seatbelt matches a socket rule against the path the caller connects to. Measured with `sandbox-exec`: `mv` of the socket to another name in the same directory, or of `T` itself to `T2`, then `connect` to the new path, succeeded, so a process that left its pane with `setsid` and a double fork could reach the host as `external`, which is the gap the sandbox exists to close; `rm` of the socket was allowed too. The profile now denies `file-write*` as a `literal` on each spelling of each shared endpoint and of every directory above it, and of the home and every directory above it, which refuses moving, removing or `chmod` of those entries while files and sockets made inside the runtime directory stay writable. The regression test `a_pane_cannot_move_a_shared_socket_or_its_directory_to_reach_it_under_another_name` (`crates/paneflow-host/src/sandbox/macos.rs`) runs the generated profile under `sandbox-exec`: it fails without the rules (the socket moved) and passes with them. A hard link to a socket is refused by Seatbelt already, and a symlink, a `..` or `.` spelling and a relative path all match the rule. Measured on 27.2.1 only; the 26.6.2 machine was not available to the review.
+
+**Supported: no.** The sandbox holds on macOS 27.2.1: every shared endpoint and every other pane's endpoint is refused, the pane's own endpoints answer `pane`, and no process outside the pane can be signalled or inspected. But Seatbelt does not nest: once the pane's profile is applied, no process in it can apply another, so Claude Code's sandbox and Codex's sandbox both fail there, and an agent sandboxed by Paneflow would have to run without its own file and network policy, which the Non-Goals forbid. macOS 27.2.1 is listed unsupported for the sandboxed profile: `SANDBOX_SUPPORTED_PLATFORMS` stays `["linux"]` and a profile with `sandbox: "paneflow"` is refused on macOS. The test that proves the refusal (`a_pane_whose_seatbelt_profile_is_refused_fails_its_launch_with_the_error`) relies on the same limit: a host that itself runs under a profile cannot start a sandboxed pane, and the pane fails its launch with `sandbox_apply: Operation not permitted`. Lifting it needs a decision outside this epic: Paneflow could instead hand the agent a combined profile (its own rules plus the agent's, applied once), which means knowing each agent's sandbox, or keep a sandbox-less pane whose shared endpoints are refused by other means.
+
+**The previous release, macOS 26.6.2.** Measured on 2026-11-24 in a Tart 2.42.0 virtual machine on the same Mac, booted from `ghcr.io/cirruslabs/macos-tahoe-vanilla:26.6.2` (build 25G83, the release where R9 reported that literal and subpath filters stopped matching). The test binary and the `paneflow-host` binary built on 27.2.1 (minimum macOS 11) ran there unchanged, with the filter-form script and Codex 0.165.0.
+
+| Check on macOS 26.6.2 | Result |
+|---|---|
+| The four tests of `sandboxed_pane_macos.rs` | Pass: the shared host, worker and window sockets and another pane's endpoint are refused (`EPERM`), the pane's host endpoint answers `pane` with its session, `kill(pid, 0)`, `SIGCONT`, `kill -0` and `proc_pidpath` toward a process outside the pane are refused, `ps` cannot run, and a refused profile fails the launch with `sandbox_apply: Operation not permitted` |
+| Filter forms on a socket's canonical path: `path-literal`, `literal`, `path`, `subpath`, `regex` | Each refuses the connection, as on 27.2.1; a rule on the `/tmp/...` spelling does not match |
+| A second `sandbox-exec` profile inside the pane, and `codex sandbox` inside it | Fail: `sandbox-exec: sandbox_apply: Operation not permitted`. Outside the pane, `codex sandbox` ran and refused a write to `/usr` |
+| Claude Code, `git`, `cargo`, `bun` | Not run: the image has no developer tools and no Claude Code credentials; on 27.2.1 they are measured above |
+
+R9's report does not reproduce on 26.6.2 for the socket rule: every filter form matches the canonical path, so the profile's rules hold on both releases. Both releases are unsupported for the sandboxed profile for the same reason, the nesting limit.
+
 ## Edge Cases & Error States
 
 | Scenario | Trigger | Expected behavior | Message |
@@ -758,6 +835,7 @@ Two defects found and fixed on the way: a launch granted the shared sandbox SID 
 | Pane leader PID reused | Long-running instance | Start-time mismatch, `NotInPane` | None |
 | Agent escapes with `setsid` and a double fork (Unix) | Hostile process | Classified `External`; documented limit, closed by EP-004 | None |
 | An ancestor hidden by `hidepid=2` (Linux) | `/proc` mounted `hidepid=2` | The hidden ancestor ends the parent chain, as `init` does; a pane process still reads `pane` (US-031) | None |
+| An agent starts its own Seatbelt sandbox in a Seatbelt pane (macOS) | Claude Code or Codex sandboxed command | `sandbox_apply` refused; the reason macOS stays unsupported (US-032) | "sandbox-exec: sandbox_apply: Operation not permitted" |
 | Sandboxed profile on an unsupported platform | Config load | Config error naming the platform and profile | "Sandbox 'paneflow' is not available on <platform>" |
 
 ## Risks & Mitigations

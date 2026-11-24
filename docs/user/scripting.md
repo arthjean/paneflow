@@ -99,35 +99,297 @@ paneflow key backend ctrl-c
 ```
 
 Writing is guarded because any same-UID process that can write to a
-PTY can drive an agent or shell. There are two relevant controls:
+PTY can drive an agent or shell.
 
-| Control | Default | Effect |
+### Who is calling?
+
+Every connection to the window, the background process (`paneflow
+serve`) or the session host is given one principal before its first
+request is answered. `paneflow api call system.whoami` prints it.
+
+| Principal | Who it is |
+| --- | --- |
+| `window` | The Paneflow window |
+| `worker` | The background process, including `init.lua` timers and event handlers |
+| `pane` | A process the session host started in a pane, or one of its descendants |
+| `external` | A process of your user outside every pane, such as a script in another terminal |
+| `unverified` | A process Paneflow could not identify; it may only call `system.whoami`, `system.capabilities` and `system.describe` |
+
+The session host decides pane membership, because it started every
+pane; the window and the background process ask it with `peer.classify`.
+When the host is down, they read the session manifests in the home
+instead, so a pane process that survived the host still reads `pane`.
+
+On Linux, Paneflow identifies the caller with `SO_PEERPIDFD` on kernel
+6.5 and later, and with `SO_PEERCRED` plus a start-time check on older
+kernels such as Ubuntu 22.04's 5.15 or Debian 12; both give the same
+answers. With `/proc` mounted `hidepid=2`, a parent that Paneflow
+cannot see (`init`, `sshd`, the login manager) ends the parent chain,
+so a pane process still reads `pane` and a process outside every pane
+reads `external`. A process that leaves its pane's session with `setsid`
+and then double-forks reads `external`: these principals hold against a
+confused agent, not a hostile one, and the sandbox below closes that
+gap. Under `hidepid=2` the same holds for a new session started below a
+pane process Paneflow cannot see, such as a `sudo` that opens its own
+terminal.
+
+On Windows, the host puts each pane's shell in a Job Object made for
+that pane, which nothing in it can leave, so every process the shell
+starts reads `pane`; the console host ConPTY starts for the pane
+(`OpenConsole.exe`) stays outside it and never calls Paneflow. The host
+reads the caller with `GetNamedPipeClientProcessId` and checks that its
+token belongs to your user. Windows refuses a pipe client that tries to
+change the process ID the host reads, but a pipe handle opened by one
+process and handed to another still names the process that opened it.
+Measured on Windows 11 (build 26300).
+
+On macOS, the host reads the caller's audit token (`LOCAL_PEERTOKEN`),
+which names the process and its start time, and walks its parents with
+`proc_pidinfo`, or `sysctl` for a process `proc_pidinfo` refuses, and
+its session with `getsid`. A process that calls `setsid` and
+double-forks reads `external`, as on Linux. Measured on macOS 27.2.1
+on Apple Silicon; Intel Macs have not been measured.
+
+An `init.lua` action started from a key or the command palette acts as
+the window, and one started by `paneflow actions run` acts as its
+caller.
+
+A `pane` caller never reaches the methods reserved to Paneflow itself
+(`layout.launch`, `layout.sweep`, `approval.follow`, `approval.decide`,
+`session.runtime.bind`, `session.workspace`, `host.shutdown`) nor
+`layout.attach` and
+`peer.classify`, so an agent cannot approve its own writes or stop the
+host. A `scope_session` it sends is replaced by its own session, a
+`source_session` other than its own is refused, and a pane-scoped write
+or stop stays inside its own workspace unless the orchestration gate is
+open for it.
+
+### Which gates can I open?
+
+The gates live in `paneflow.json` and apply to the next request after
+you save the file:
+
+| Key | Default | Effect |
 | --- | --- | --- |
-| `PANEFLOW_IPC_SCRIPTING=1` | Off | Enables text and keystroke writes for the running Paneflow process |
-| `ai_unrestricted` | `false` | Allows trusted AI automation to submit text without the env gate |
+| `ipc.scripting` | `false` | Opens text and keystroke writes (`surface.send_text`, `surface.send_keystroke`, `session.input`); implies `ipc.orchestration` |
+| `ipc.orchestration` | `false` | Lets a request launch a command, a prompt or environment variables, and lets `--scope all` reach every workspace |
+| `ai_unrestricted` | `false` | Opens both gates for every caller |
 | `ai_injection_fence` | `true` | Wraps peer terminal output as untrusted text on the `read` path |
 
-The window and the detached host apply the same gates. A client that
-attaches a terminal engine, the Paneflow window itself, types for the
-human and is not gated. Every other control client, such as
-`paneflow send` with no window open, the MCP bridge, or a custom socket
-client, needs `PANEFLOW_IPC_SCRIPTING=1` for `session.input`.
-`session.create` needs `PANEFLOW_IPC_ORCHESTRATION=1` (or scripting,
-which includes it) when the request launches a command, a prompt, or
-environment variables, and scripting otherwise. The host logs each
+```json
+{
+  "ipc": {"scripting": true}
+}
+```
+
+The window and the background process always pass the gates, since they
+act for you. A malformed `ipc` section (a value that is not `true` or
+`false`) is logged with its key when the configuration loads, for
+example `invalid config key ipc.scripting: expected true or false`, and
+keeps both gates closed for every caller in a pane.
+
+`PANEFLOW_IPC_SCRIPTING=1` and `PANEFLOW_IPC_ORCHESTRATION=1` are
+deprecated. They still open the gates for an `external` caller. For a
+`pane` caller they apply only while `paneflow.json` has no `ipc`
+section, and the first such request logs a warning naming the key that
+replaces them; once the section exists, only the section decides. A
+refused request still answers with its former message, for example
+`surface.send_text disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable`:
+set `ipc.scripting` instead.
+
+### How does an agent get a grant?
+
+A grant lets one pane do what the closed gates refuse, for a scope and a
+time, without opening the gates for every pane. It names its holder (the
+pane's session and launch generation), its rights and its scope:
+
+| Right | Opens |
+| --- | --- |
+| `write` | The text and keystroke writes `ipc.scripting` gates |
+| `spawn` | A `surface.split`, `session.create` or `workspace.create` that launches a command, a prompt or environment variables |
+| `layout` | A `layout.apply`, `layout.adopt`, `workspace.up` or `workspace.restore_layout` that launches one |
+
+A `workspace` grant reaches the pane's own workspace; an `instance`
+grant reaches every workspace, as `ipc.orchestration` does for
+`--scope all`. With a `workspace` grant, `spawn` opens only a
+`surface.split` beside a surface of the pane's own workspace; a split in
+another workspace is refused with `scope_refused`. `session.create`,
+`workspace.create` and everything `layout` opens are not tied to one
+workspace, so they need an `instance` grant, and `grant.request`
+refuses `layout` with the `workspace` scope. A grant ends at its expiry,
+when its pane's session ends, or when the session restarts.
+
+Paneflow holds at most 128 grants, 16 per pane. Past that,
+`grant.request` and `grant.delegate` answer
+`{"granted": false, "reason": "grant_limit"}` and no prompt is shown.
+
+An agent asks for one with `grant.request`; Paneflow shows you a prompt
+that names the agent, its pane, the rights, the scope and the duration,
+and says so in the title when the scope is `instance` or there is no
+expiry:
+
+```bash
+paneflow api call grant.request --args '{"rights": ["write"], "scope": "workspace", "duration_secs": 600}'
+```
+
+The reply is `{"granted": true, "id": ..., "expires_at_ms": ...}`, or
+`{"granted": false, "reason": "denied"}` when you deny it, or
+`"unanswered"` when no window could show the prompt or nobody answered
+before it timed out. Only a process in a pane may ask.
+
+To grant a trusted agent without a prompt, list its grants under its
+name in `agents`. The pane receives them when Paneflow sees that agent
+run in its foreground, at launch or when it starts later in the pane,
+and keeps them until its session ends. An agent hook that only names an
+agent grants nothing, since any process in a pane can send one:
+
+```json
+{
+  "agents": {
+    "claude": {"grants": [{"rights": ["write"], "scope": "workspace"}]}
+  }
+}
+```
+
+A right Paneflow does not know is logged with the profile and the right
+when the configuration loads, for example
+`invalid config key agents.claude.grants: unknown right "root"`, and no
+grant of that profile is stored.
+
+An agent that split a pane with `surface.split` can pass it part of its
+own grant with `grant.delegate`: the rights and the scope must be within
+a grant it holds, and the expiry no later than that grant's
+(`grant_exceeds_holder` otherwise). A `workspace` grant passes only to a
+pane of the same workspace. A pane it did not spawn is refused
+with `not_spawned_by_caller`. Revoking a grant revokes everything
+delegated from it.
+
+`paneflow grants ls` lists the grants and `paneflow grants revoke <id>`
+revokes one. From outside every pane both reach every grant; from a
+pane, `ls` shows the grants it holds or delegated, and `revoke` reaches
+only a grant it delegated (`principal_refused` otherwise). Grants live
+in the background process, survive its restart while their sessions
+run, and reach the session host and the window within a moment of each
+change; a request that needs a grant during that moment is refused with
+`grants_unsynced` and the message `Grants are being synchronized; retry
+the call`.
+
+The host logs each
 accepted `session.input` from a control client at info level with the
 client name, the target session, and the byte count, never the content.
 Hook delivery (`agent.event`) stays ungated: the host accepts an event
 only for the live launch generation of its session. These gates protect
 a pane from a confused agent, not from a hostile process running as
-your user.
+your user: a process of your user outside a sandbox can leave its pane
+(for instance by starting a new session and detaching from its parent)
+and be classified `external`, or write to a PTY directly. Run untrusted
+agents in a sandbox or as another user when that matters.
+
+### How do I sandbox an agent's pane?
+
+Set `sandbox` on the agent's profile in `agents`:
+
+```json
+{
+  "agents": {
+    "claude": {"sandbox": "paneflow"},
+    "codex": {"sandbox": "paneflow", "sandbox_unix_scope": true}
+  }
+}
+```
+
+The pane then runs where Paneflow's shared window, background-process
+and host endpoints and the other panes' processes are out of reach. It
+talks to each of the three through an endpoint Paneflow opened for that
+pane alone, under `panes/<session>/` in Paneflow's home, and every
+connection there is that pane: `paneflow api call system.whoami --on
+host` from the pane answers `pane` with its session. The pane's tab
+shows a shield, `paneflow ls` reports `sandboxed: true`, and a pane the
+sandboxed one opens with `paneflow split`, `paneflow up`, a layout or an
+agent team is sandboxed the same way, never less strictly. A sandboxed
+pane is refused (`principal_refused`) what Paneflow cannot keep in the
+sandbox: `layout.apply`, `layout.adopt`, `action.invoke`,
+`client.dispatch_action`, and `workspace.create` or
+`workspace.restore_layout` sent straight to the window; `paneflow split`
+and `paneflow up` work.
+
+- **Linux** runs the shell under bubblewrap (`bwrap`) with its own user,
+  PID, mount and cgroup namespaces and `no_new_privs`. Paneflow's home
+  is read-only there except the pane's own data, and its working
+  directory when that lies inside the home. Landlock (ABI 6 or later)
+  also refuses abstract unix sockets made outside the pane.
+  The runtime directory (`XDG_RUNTIME_DIR`) comes back with only the
+  Wayland, PipeWire and PulseAudio sockets, the GnuPG directory and the
+  SSH agent that `SSH_AUTH_SOCK` names. Everything else there is
+  absent, the D-Bus session bus and the systemd user sockets first,
+  because they start or drive a process outside the pane:
+  `systemd-run --user`, `notify-send`, a keyring read over D-Bus,
+  `xdg-open` and a rootless container daemon socket fail there.
+  `sandbox_unix_scope: true` adds Landlock ABI 9 scoping, which refuses
+  every unix socket made outside the pane, but it forbids mounts, so the
+  agent can no longer start its own bubblewrap sandbox: leave it off for
+  Claude Code and Codex.
+  Measured on Fedora 45, Ubuntu 22.04, Debian 13, Arch and openSUSE
+  Leap 16. Ubuntu 24.04 refuses it as installed (`bwrap: setting up uid
+  map: Permission denied`): AppArmor keeps user namespaces from
+  `bwrap` until `sysctl kernel.apparmor_restrict_unprivileged_userns=0`
+  or an AppArmor profile grants them to `/usr/bin/bwrap`. Ubuntu 22.04
+  and 24.04 have Landlock below ABI 6, so abstract sockets are not
+  refused there.
+- **Windows** does not offer the sandbox yet: a profile that asks for
+  it logs `Sandbox 'paneflow' is not available on windows` and does not
+  start. Measured on Windows 11 (build 26300), the host's
+  write-restricted token keeps the pane off the shared window,
+  background-process and host pipes and lets it reach its own, and the
+  pane writes only its working directory (and that of any other
+  sandboxed pane), its own `TEMP` and `NUL`;
+  `git status`, `cargo build` with its target directory in the working
+  directory, and `node -v` run there. It is not offered because a
+  program built on libuv cannot start a child with piped output under
+  that token: Node and Bun fail with `EPERM: operation not permitted,
+  uv_spawn`, so Claude Code's Bash tool, hooks and MCP servers cannot
+  start. Codex cannot start its own Windows sandbox inside it, and a
+  write outside those directories fails, a shared `CARGO_TARGET_DIR` or
+  `build.target-dir` included.
+- **macOS** does not offer the sandbox yet: a profile that asks for it
+  logs `Sandbox 'paneflow' is not available on macos` and does not
+  start. Measured on macOS 26.6.2 and 27.2.1 (Apple Silicon), the host's Seatbelt
+  profile keeps the pane off the shared window, background-process and
+  host sockets and the other panes' endpoints, which it cannot move or
+  remove either, lets it reach its own,
+  refuses signals and process inspection (`kill -0`, `proc_pidpath`)
+  toward every process outside the pane, and keeps Paneflow's home
+  read-only but for the pane's own data; `git status` and `cargo build`
+  run in the working directory, and `ps` does not run at all, since
+  Seatbelt refuses a setuid program. It is not offered because Seatbelt
+  does not nest: no process in the pane can apply a sandbox of its own
+  (`sandbox-exec: sandbox_apply: Operation not permitted`), so Claude
+  Code's and Codex's sandboxed commands fail there.
+
+A sandboxed profile never runs unsandboxed: when `bwrap` cannot
+start, or `sandbox-exec` refuses the profile, the pane shows its
+launch failure with the error, and a restored pane starts sandboxed or
+not at all. A profile with an unknown `sandbox` value, or set on a
+platform without a Paneflow sandbox, logs an error naming the key and
+does not start.
+
+The sandbox confines access to Paneflow and to other panes only. File
+and network policy stay with the agent's own sandbox, which still runs
+inside it. A process of your user outside every sandbox can still
+connect to a pane's endpoints, and the agent's configuration
+directories and your shell's startup files stay writable from the pane.
+The rest of your files and the network stay reachable too, so a
+service of yours that runs commands on request still does so for the
+pane: an X11 display, a tmux or editor server socket, a container
+daemon socket, or an SSH server on this machine. On Linux,
+`sandbox_unix_scope: true` closes the socket ones.
 
 Inside a Paneflow pane, `send`, `key`, and the `send` steps of
 `flow run` that target a pane the flow did not spawn pass the pane's
 `PANEFLOW_SESSION_ID`, and the instance refuses a write into a pane of
 another workspace with a message that names that workspace. Pass
 `--scope all` to reach every workspace; it needs
-`PANEFLOW_IPC_ORCHESTRATION=1`. A caller session the instance does not
+`ipc.orchestration`. A caller session the instance does not
 know is refused. A script run from a terminal outside Paneflow keeps
 the instance scope.
 
@@ -277,7 +539,8 @@ or control a pane in any other way.
   open, the tool says that no window can approve the write.
 - An agent cannot write into its own pane. A write stays inside the
   workspace of the calling pane unless the bridge runs with
-  `PANEFLOW_MCP_SCOPE=all` and the host has `PANEFLOW_IPC_ORCHESTRATION=1`.
+  `PANEFLOW_MCP_SCOPE=all` and `ipc.orchestration` is `true` in
+  `paneflow.json`.
 - The host prefixes each message with
   `[Paneflow: message from <name>, surface <number>]`, strips every control
   character except newline and tab (bracketed paste markers included),

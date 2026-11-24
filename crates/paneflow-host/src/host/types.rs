@@ -72,6 +72,10 @@ pub struct CreateSession {
     pub appearance: Option<SessionAppearance>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cell: Option<CellSize>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sandbox: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sandbox_unix_scope: bool,
 }
 
 pub const APPEARANCE_PALETTE_LEN: usize = 256;
@@ -285,6 +289,10 @@ pub struct SessionRow {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
     pub shell: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sandboxed: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sandbox_unix_scope: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
     pub lifecycle: SessionLifecycle,
@@ -314,6 +322,8 @@ impl SessionRow {
             title: manifest.title,
             cwd: manifest.current_cwd.unwrap_or(manifest.cwd),
             agent: manifest.last_hook.map(|hook| hook.tool),
+            sandboxed: manifest.launch.sandbox,
+            sandbox_unix_scope: manifest.launch.sandbox && manifest.launch.sandbox_unix_scope,
             shell: manifest.launch.shell,
             pid: manifest.process.map(|process| process.pid),
             lifecycle: manifest.lifecycle,

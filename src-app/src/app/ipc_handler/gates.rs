@@ -1,24 +1,5 @@
 use super::*;
 
-pub(super) fn ipc_scripting_enabled() -> bool {
-    scripting_enabled_from(std::env::var("PANEFLOW_IPC_SCRIPTING").ok().as_deref())
-}
-
-fn scripting_enabled_from(value: Option<&str>) -> bool {
-    matches!(value, Some("1"))
-}
-
-pub(super) fn ipc_orchestration_enabled() -> bool {
-    orchestration_enabled_from(
-        std::env::var("PANEFLOW_IPC_ORCHESTRATION").ok().as_deref(),
-        std::env::var("PANEFLOW_IPC_SCRIPTING").ok().as_deref(),
-    )
-}
-
-fn orchestration_enabled_from(orchestration: Option<&str>, scripting: Option<&str>) -> bool {
-    matches!(orchestration, Some("1")) || scripting_enabled_from(scripting)
-}
-
 fn env_param_has_strings(value: Option<&serde_json::Value>) -> bool {
     value
         .and_then(|v| v.as_object())
@@ -60,10 +41,6 @@ pub(super) fn orchestration_disabled_error(method: &str) -> JsonRpcError {
     ))
 }
 
-pub(super) fn send_text_gate_open(scripting_enabled: bool, unrestricted: bool) -> bool {
-    scripting_enabled || unrestricted
-}
-
 pub(super) fn log_pane_write(
     method: &str,
     surface_id: u64,
@@ -90,31 +67,7 @@ pub(super) fn log_pane_write(
 }
 
 pub(super) fn capabilities_value(scripting: bool, orchestration: bool) -> serde_json::Value {
-    let methods = [
-        "system.ping",
-        "system.capabilities",
-        "system.identify",
-        "system.counters",
-        "workspace.list",
-        "workspace.create",
-        "workspace.select",
-        "workspace.close",
-        "workspace.current",
-        "workspace.restore_layout",
-        "workspace.up",
-        "surface.list",
-        "surface.read",
-        "surface.search",
-        "surface.rename",
-        "surface.send_text",
-        "surface.send_keystroke",
-        "surface.split",
-        "surface.focus",
-        "surface.status",
-        "fleet.list",
-        "events.subscribe",
-        crate::tmux_compat::METHOD,
-    ];
+    let methods = registry().capability_names();
     serde_json::json!({
         "scripting": scripting,
         "orchestration": orchestration,
@@ -158,31 +111,11 @@ mod tests {
 
     #[test]
     fn send_text_rejected_when_scripting_disabled() {
-        assert!(
-            !super::scripting_enabled_from(None),
-            "unset env must read as disabled"
-        );
-        assert!(
-            !super::scripting_enabled_from(Some("")),
-            "empty string must read as disabled"
-        );
-        assert!(
-            !super::scripting_enabled_from(Some("0")),
-            "explicit 0 must read as disabled"
-        );
-        assert!(
-            !super::scripting_enabled_from(Some("true")),
-            "truthy strings other than \"1\" must read as disabled"
-        );
-        assert!(
-            super::scripting_enabled_from(Some("1")),
-            "the documented opt-in value must enable"
-        );
-
         let err = JsonRpcError {
             code: -32601,
             message: "surface.send_text disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable"
                 .to_string(),
+            data: None,
         };
         let envelope = promote_response(err.into_value(), serde_json::json!(42));
         assert_eq!(envelope["error"]["code"], -32601);
@@ -192,36 +125,11 @@ mod tests {
 
     #[test]
     fn capabilities_report_scripting_opened_by_free_access() {
-        let caps = capabilities_value(send_text_gate_open(false, true), false);
+        let caps = capabilities_value(true, false);
         assert_eq!(caps["scripting"], true);
         assert_eq!(caps["orchestration"], false);
-        let closed = capabilities_value(send_text_gate_open(false, false), false);
+        let closed = capabilities_value(false, false);
         assert_eq!(closed["scripting"], false);
-    }
-
-    #[test]
-    fn send_text_gate_opens_for_env_or_free_access() {
-        assert!(
-            !super::send_text_gate_open(false, false),
-            "both off must stay closed (unchanged legacy behavior)"
-        );
-        assert!(
-            super::send_text_gate_open(true, false),
-            "the env gate alone still opens it"
-        );
-        assert!(
-            super::send_text_gate_open(false, true),
-            "free-access mode opens it without the env gate"
-        );
-        assert!(super::send_text_gate_open(true, true));
-    }
-
-    #[test]
-    fn orchestration_gate_accepts_specific_gate_or_scripting_superset() {
-        assert!(!super::orchestration_enabled_from(None, None));
-        assert!(!super::orchestration_enabled_from(Some("0"), Some("0")));
-        assert!(super::orchestration_enabled_from(Some("1"), None));
-        assert!(super::orchestration_enabled_from(None, Some("1")));
     }
 
     #[test]

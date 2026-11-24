@@ -38,41 +38,6 @@ pub(crate) fn find_first_terminal(
     }
 }
 
-pub(crate) fn find_terminal_by_surface_id(
-    workspaces: &[Workspace],
-    surface_id: u64,
-    cx: &App,
-) -> Option<gpui::Entity<TerminalView>> {
-    for ws in workspaces {
-        for tab in ws.tabs() {
-            for tree in [tab.root.as_ref(), tab.saved_layout.as_ref()]
-                .into_iter()
-                .flatten()
-            {
-                if let Some(t) = find_terminal_in_tree(tree, surface_id, cx) {
-                    return Some(t);
-                }
-            }
-        }
-    }
-    None
-}
-
-fn workspace_idx_holding_surface(
-    workspaces: &[Workspace],
-    surface_id: u64,
-    cx: &App,
-) -> Option<usize> {
-    workspaces.iter().position(|ws| {
-        ws.tabs().iter().any(|tab| {
-            [tab.root.as_ref(), tab.saved_layout.as_ref()]
-                .into_iter()
-                .flatten()
-                .any(|tree| find_terminal_in_tree(tree, surface_id, cx).is_some())
-        })
-    })
-}
-
 pub(crate) fn tab_for_surface(ws: &Workspace, surface_id: u64, cx: &App) -> Option<(usize, usize)> {
     ws.tabs().iter().enumerate().find_map(|(idx, tab)| {
         let panes = tab.collect_panes();
@@ -81,7 +46,7 @@ pub(crate) fn tab_for_surface(ws: &Workspace, surface_id: u64, cx: &App) -> Opti
         for pane in &panes {
             for terminal in pane.read(cx).terminals() {
                 surfaces += 1;
-                if terminal.entity_id().as_u64() == surface_id {
+                if terminal.read(cx).surface_id() == surface_id {
                     holds_surface = true;
                 }
             }
@@ -90,73 +55,10 @@ pub(crate) fn tab_for_surface(ws: &Workspace, surface_id: u64, cx: &App) -> Opti
     })
 }
 
-fn find_terminal_in_tree(
-    node: &LayoutTree,
-    surface_id: u64,
-    cx: &App,
-) -> Option<gpui::Entity<TerminalView>> {
-    match node {
-        LayoutTree::Leaf(pane) => {
-            let pane = pane.read(cx);
-            for terminal in pane.terminals() {
-                if terminal.entity_id().as_u64() == surface_id {
-                    return Some(terminal.clone());
-                }
-            }
-            None
-        }
-        LayoutTree::Container { children, .. } => {
-            for child in children {
-                if let Some(t) = find_terminal_in_tree(&child.node, surface_id, cx) {
-                    return Some(t);
-                }
-            }
-            None
-        }
-    }
-}
-
 pub(crate) struct SurfaceLocation {
     pub workspace_idx: usize,
     pub tab_idx: usize,
     pub pane: gpui::Entity<Pane>,
-}
-
-pub(crate) fn find_pane_by_surface_id(
-    workspaces: &[Workspace],
-    surface_id: u64,
-    cx: &App,
-) -> Option<SurfaceLocation> {
-    for (workspace_idx, ws) in workspaces.iter().enumerate() {
-        for (tab_idx, tab) in ws.tabs().iter().enumerate() {
-            for tree in [tab.root.as_ref(), tab.saved_layout.as_ref()]
-                .into_iter()
-                .flatten()
-            {
-                if let Some(pane) = find_pane_in_tree(tree, surface_id, cx) {
-                    return Some(SurfaceLocation {
-                        workspace_idx,
-                        tab_idx,
-                        pane,
-                    });
-                }
-            }
-        }
-    }
-    None
-}
-
-fn find_pane_in_tree(node: &LayoutTree, surface_id: u64, cx: &App) -> Option<gpui::Entity<Pane>> {
-    match node {
-        LayoutTree::Leaf(pane) => pane
-            .read(cx)
-            .active_terminal_opt()
-            .is_some_and(|t| t.entity_id().as_u64() == surface_id)
-            .then(|| pane.clone()),
-        LayoutTree::Container { children, .. } => children
-            .iter()
-            .find_map(|child| find_pane_in_tree(&child.node, surface_id, cx)),
-    }
 }
 
 pub(crate) struct SurfaceMeta {
@@ -171,6 +73,7 @@ pub(crate) struct SurfaceMeta {
     pub tab_id: Option<u64>,
     pub tab_title: Option<String>,
     pub space: serde_json::Value,
+    pub sandboxed: bool,
 }
 
 fn authorize_surface_workspace(
@@ -265,6 +168,7 @@ fn surface_meta_value(s: SurfaceMeta) -> serde_json::Value {
         "tab_id": s.tab_id,
         "tab_title": s.tab_title,
         "space": s.space,
+        "sandboxed": s.sandboxed,
     })
 }
 
@@ -297,14 +201,14 @@ fn scoped_workspace_id(
 
 fn authorize_write_scope(
     params: &serde_json::Value,
-    orchestration: bool,
+    reach: bool,
     caller_workspace: impl FnOnce(&str) -> Option<u64>,
     surface_id: u64,
     target: Option<(u64, &str)>,
 ) -> Result<(), JsonRpcError> {
     match params.get("scope").map(serde_json::Value::as_str) {
         None | Some(Some("workspace")) => {}
-        Some(Some("all")) if orchestration => return Ok(()),
+        Some(Some("all")) if reach => return Ok(()),
         Some(Some("all")) => {
             return Err(JsonRpcError::method_not_enabled(
                 "scope all needs orchestration; set PANEFLOW_IPC_ORCHESTRATION=1 or \
@@ -366,18 +270,6 @@ fn surface_list_scope(
             .ok_or_else(|| JsonRpcError::invalid_params(format!("workspace_id {id} not found")))?,
     };
     Ok((idx, workspaces.get(idx).map_or(0, Workspace::pane_count)))
-}
-
-pub(crate) fn reveal_surface(
-    workspaces: &mut [Workspace],
-    surface_id: u64,
-    cx: &mut App,
-) -> Option<SurfaceLocation> {
-    let loc = find_pane_by_surface_id(workspaces, surface_id, cx)?;
-    workspaces
-        .get_mut(loc.workspace_idx)?
-        .reveal_pane(&loc.pane, cx)
-        .then_some(loc)
 }
 
 pub(crate) use paneflow_ipc_client::scrollback::{
@@ -496,7 +388,7 @@ pub(super) fn surface_read_job(
     let state = &terminal.read(cx).terminal;
     let backend = state.session_backend();
     let request = SurfaceReadRequest {
-        surface_id: terminal.entity_id().as_u64(),
+        surface_id: terminal.read(cx).surface_id(),
         lines,
         offset,
         fenced,
@@ -519,6 +411,7 @@ fn input_rejected_error(reason: &str) -> JsonRpcError {
     JsonRpcError {
         code: JsonRpcError::RUNTIME_UNAVAILABLE,
         message: reason.to_owned(),
+        data: None,
     }
 }
 
@@ -677,7 +570,7 @@ impl PaneFlowApp {
         let mut metas: Vec<SurfaceMeta> = entries
             .iter()
             .map(|entry| SurfaceMeta {
-                surface_id: entry.entity.entity_id().as_u64(),
+                surface_id: entry.entity.read(cx).surface_id(),
                 name: String::new(),
                 title: entry.title.clone(),
                 cwd: entry.cwd.clone(),
@@ -687,6 +580,9 @@ impl PaneFlowApp {
                 scope: "workspace",
                 tab_id: entry.tab.as_ref().map(|(id, _)| *id),
                 tab_title: entry.tab.as_ref().map(|(_, title)| title.clone()),
+                sandboxed: crate::ipc_panes::is_sandboxed(
+                    entry.entity.read(cx).terminal.session_id.as_str(),
+                ),
                 space: crate::app::spaces::space_json(
                     &self.cached_config,
                     self.workspaces
@@ -729,7 +625,7 @@ impl PaneFlowApp {
         for ws in &self.workspaces {
             for pane in ws.collect_panes() {
                 for terminal in pane.read(cx).terminals() {
-                    let sid = terminal.entity_id().as_u64();
+                    let sid = terminal.read(cx).surface_id();
                     let generation = terminal.read(cx).terminal.output_generation;
                     current.push((sid, generation));
                 }
@@ -738,16 +634,13 @@ impl PaneFlowApp {
         current
     }
 
-    fn find_surface_terminal_by_id(
-        &self,
-        surface_id: u64,
-        cx: &App,
-    ) -> Option<Entity<TerminalView>> {
-        find_terminal_by_surface_id(&self.workspaces, surface_id, cx)
+    fn find_surface_terminal_by_id(&self, surface_id: u64) -> Option<Entity<TerminalView>> {
+        self.terminal_for_surface(surface_id)
     }
 
-    fn surface_workspace_idx(&self, surface_id: u64, cx: &App) -> Option<usize> {
-        workspace_idx_holding_surface(&self.workspaces, surface_id, cx)
+    fn surface_workspace_idx(&self, surface_id: u64) -> Option<usize> {
+        self.locate_surface(surface_id)
+            .map(|location| location.workspace_idx)
     }
 
     fn scope_workspace_id(
@@ -764,23 +657,22 @@ impl PaneFlowApp {
         &self,
         params: &serde_json::Value,
         surface_id: u64,
-        unrestricted: bool,
         cx: &App,
     ) -> Result<(), JsonRpcError> {
         let target = self
-            .surface_workspace_idx(surface_id, cx)
+            .surface_workspace_idx(surface_id)
             .and_then(|idx| self.workspaces.get(idx))
             .map(|workspace| (workspace.id, workspace.title.as_str()));
         authorize_write_scope(
             params,
-            ipc_orchestration_enabled() || unrestricted,
+            self.ipc_gates.reach,
             |session| session_workspace_id(&self.workspaces, session, cx),
             surface_id,
             target,
         )
     }
 
-    fn workspace_id_for_workspace_idx(&self, idx: usize) -> Option<u64> {
+    pub(crate) fn workspace_id_for_workspace_idx(&self, idx: usize) -> Option<u64> {
         self.workspaces.get(idx).map(|workspace| workspace.id)
     }
 
@@ -792,7 +684,7 @@ impl PaneFlowApp {
         let surface_id = opt_u64(params, "surface_id")?;
         let name = opt_str(params, "name")?;
         if let Some(sid) = surface_id {
-            return self.find_surface_terminal_by_id(sid, cx).ok_or_else(|| {
+            return self.find_surface_terminal_by_id(sid).ok_or_else(|| {
                 JsonRpcError::invalid_params(format!("surface_id {sid} not found"))
             });
         }
@@ -802,7 +694,7 @@ impl PaneFlowApp {
             match matches.as_slice() {
                 [one] => {
                     let sid = one.surface_id;
-                    return self.find_surface_terminal_by_id(sid, cx).ok_or_else(|| {
+                    return self.find_surface_terminal_by_id(sid).ok_or_else(|| {
                         JsonRpcError::invalid_params(format!("surface '{name}' vanished"))
                     });
                 }
@@ -839,9 +731,9 @@ impl PaneFlowApp {
     ) -> Result<gpui::Entity<TerminalView>, JsonRpcError> {
         let terminal = self.resolve_surface(params, cx)?;
         let expected_workspace_id = self.scope_workspace_id(params, cx)?;
-        let surface_id = terminal.entity_id().as_u64();
+        let surface_id = terminal.read(cx).surface_id();
         let actual_workspace_id = self
-            .surface_workspace_idx(surface_id, cx)
+            .surface_workspace_idx(surface_id)
             .and_then(|idx| self.workspace_id_for_workspace_idx(idx));
         authorize_surface_workspace(surface_id, expected_workspace_id, actual_workspace_id)?;
         Ok(terminal)
@@ -952,316 +844,306 @@ impl PaneFlowApp {
         .detach();
     }
 
-    pub(super) fn handle_surface_method(
+    pub(super) fn surface_list(
         &mut self,
-        method: &str,
-        params: &serde_json::Value,
-        caller_pid: Option<i64>,
+        call: Call<'_, paneflow_api::methods::surface::ListParams>,
         cx: &mut Context<Self>,
     ) -> serde_json::Value {
-        match method {
-            "surface.list" => {
-                let requested_workspace_id = match self.scope_workspace_id(params, cx) {
-                    Ok(workspace_id) => workspace_id,
-                    Err(error) => return error.into_value(),
-                };
-                let (workspace, count) = match surface_list_scope(
-                    &self.workspaces,
-                    self.active_idx,
-                    requested_workspace_id,
-                ) {
-                    Ok(scope) => scope,
-                    Err(error) => return error.into_value(),
-                };
-                let surfaces: Vec<_> = self
-                    .collect_surface_meta(cx)
-                    .into_iter()
-                    .filter(|surface| surface_matches_workspace(surface, requested_workspace_id))
-                    .map(surface_meta_value)
-                    .collect();
-                serde_json::json!({
-                    "pane_count": count,
-                    "workspace": workspace,
-                    "scope_workspace_id": requested_workspace_id,
-                    "surfaces": surfaces,
-                })
+        let params = call.raw;
+        let requested_workspace_id = match self.scope_workspace_id(params, cx) {
+            Ok(workspace_id) => workspace_id,
+            Err(error) => return error.into_value(),
+        };
+        let (workspace, count) =
+            match surface_list_scope(&self.workspaces, self.active_idx, requested_workspace_id) {
+                Ok(scope) => scope,
+                Err(error) => return error.into_value(),
+            };
+        let surfaces: Vec<_> = self
+            .collect_surface_meta(cx)
+            .into_iter()
+            .filter(|surface| surface_matches_workspace(surface, requested_workspace_id))
+            .map(surface_meta_value)
+            .collect();
+        serde_json::json!({
+            "pane_count": count,
+            "workspace": workspace,
+            "scope_workspace_id": requested_workspace_id,
+            "surfaces": surfaces,
+        })
+    }
+
+    pub(super) fn fleet_list(
+        &mut self,
+        _call: Call<'_, paneflow_api::methods::NoParams>,
+        cx: &mut Context<Self>,
+    ) -> serde_json::Value {
+        let name_by_sid: HashMap<u64, String> = self
+            .collect_surface_meta(cx)
+            .into_iter()
+            .map(|m| (m.surface_id, m.name))
+            .collect();
+        let fleets: Vec<WsFleet> = self
+            .workspaces
+            .iter()
+            .enumerate()
+            .map(|(idx, ws)| WsFleet {
+                idx,
+                sessions: &ws.agent_sessions,
+                detected: &ws.detected_agents,
+            })
+            .collect();
+        let agents = build_fleet_rows(&fleets, &name_by_sid, std::time::Instant::now());
+        serde_json::json!({ "agents": agents })
+    }
+
+    pub(super) fn surface_status(
+        &mut self,
+        call: Call<'_, paneflow_api::methods::surface::TargetParams>,
+        cx: &mut Context<Self>,
+    ) -> serde_json::Value {
+        let params = call.raw;
+        let terminal = match self.resolve_surface(params, cx) {
+            Ok(t) => t,
+            Err(e) => return e.into_value(),
+        };
+        let sid = terminal.read(cx).surface_id();
+        let output_generation = terminal.read(cx).terminal.output_generation;
+        let session_id = terminal.read(cx).terminal.session_id.to_string();
+        let projected_state_seq = self
+            .host_agent_row(&terminal.read(cx).terminal.session_id)
+            .map(|row| row.state_seq);
+        let session = self
+            .workspaces
+            .iter()
+            .flat_map(|ws| ws.agent_sessions.values())
+            .find(|s| s.surface_id == Some(sid));
+        let mut status = surface_status_value(
+            sid,
+            session,
+            output_generation,
+            std::time::Instant::now(),
+            projected_state_seq,
+        );
+        status["session"] = serde_json::json!(session_id);
+        status
+    }
+
+    pub(super) fn surface_rename(
+        &mut self,
+        call: Call<'_, paneflow_api::methods::surface::RenameParams>,
+        cx: &mut Context<Self>,
+    ) -> serde_json::Value {
+        let params = call.raw;
+        if let Err(error) = opt_str(params, "new_name") {
+            return error.into_value();
+        }
+        let terminal = match self.resolve_surface(params, cx) {
+            Ok(t) => t,
+            Err(e) => return e.into_value(),
+        };
+        let new_name = parse_rename_name(params);
+        self.rename_surface_through_model(terminal.entity_id(), new_name.clone(), cx);
+        terminal.update(cx, |view, _cx| {
+            view.terminal.custom_name = new_name.clone();
+        });
+        serde_json::json!({"renamed": true, "name": new_name})
+    }
+
+    pub(super) fn surface_focus(
+        &mut self,
+        call: Call<'_, paneflow_api::methods::surface::FocusParams>,
+        cx: &mut Context<Self>,
+    ) -> serde_json::Value {
+        let Some(sid) = call.params.surface_id else {
+            return JsonRpcError::invalid_params("missing 'surface_id' parameter").into_value();
+        };
+        let Some(loc) = self.reveal_surface_through_model(sid, cx) else {
+            return JsonRpcError::invalid_params(format!("surface_id {sid} not found"))
+                .into_value();
+        };
+        let ws_idx = loc.workspace_idx;
+        let pane = loc.pane;
+        self.activate_workspace_without_window(ws_idx, cx);
+        pane.update(cx, |_p, cx| cx.notify());
+        cx.defer(move |cx| {
+            if PaneFlowApp::focus_pane_window(pane.clone(), cx) {
+                return;
             }
-            "fleet.list" => {
-                let name_by_sid: HashMap<u64, String> = self
-                    .collect_surface_meta(cx)
-                    .into_iter()
-                    .map(|m| (m.surface_id, m.name))
-                    .collect();
-                let fleets: Vec<WsFleet> = self
-                    .workspaces
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, ws)| WsFleet {
-                        idx,
-                        sessions: &ws.agent_sessions,
-                        detected: &ws.detected_agents,
-                    })
-                    .collect();
-                let agents = build_fleet_rows(&fleets, &name_by_sid, std::time::Instant::now());
-                serde_json::json!({ "agents": agents })
+            for handle in cx.windows() {
+                if let Some(main) = handle.downcast::<PaneFlowApp>() {
+                    let _ = main.update(cx, |_, window, cx| {
+                        pane.read(cx).focus_handle(cx).focus(window, cx);
+                    });
+                }
             }
-            "surface.status" => {
-                let terminal = match self.resolve_surface(params, cx) {
-                    Ok(t) => t,
-                    Err(e) => return e.into_value(),
-                };
-                let sid = terminal.entity_id().as_u64();
-                let output_generation = terminal.read(cx).terminal.output_generation;
-                let session_id = terminal.read(cx).terminal.session_id.to_string();
-                let projected_state_seq = self
-                    .host_agent_row(&terminal.read(cx).terminal.session_id)
-                    .map(|row| row.state_seq);
-                let session = self
-                    .workspaces
-                    .iter()
-                    .flat_map(|ws| ws.agent_sessions.values())
-                    .find(|s| s.surface_id == Some(sid));
-                let mut status = surface_status_value(
-                    sid,
-                    session,
-                    output_generation,
-                    std::time::Instant::now(),
-                    projected_state_seq,
+        });
+        cx.notify();
+        serde_json::json!({
+            "focused": true,
+            "surface_id": sid,
+            "workspace": ws_idx,
+            "scope": "workspace",
+        })
+    }
+
+    pub(super) fn surface_send_text(
+        &mut self,
+        call: Call<'_, paneflow_api::methods::surface::SendTextParams>,
+        cx: &mut Context<Self>,
+    ) -> serde_json::Value {
+        let params = call.raw;
+        let caller_pid = call.caller_pid;
+        let SendTextRequest {
+            text,
+            submit,
+            paste: paste_param,
+            surface_id: requested_sid,
+        } = match send_text_request(params) {
+            Ok(request) => request,
+            Err(error) => return error.into_value(),
+        };
+        let unrestricted = self.cached_config.ai_unrestricted_enabled();
+        if text.is_empty() && !submit {
+            return JsonRpcError::invalid_params("Missing 'text' parameter").into_value();
+        }
+        const MAX_TEXT_LEN: usize = 64 * 1024;
+        if text.len() > MAX_TEXT_LEN {
+            return JsonRpcError::invalid_params("Text exceeds 64 KiB limit").into_value();
+        }
+        let target: Option<Entity<TerminalView>> = if let Some(sid) = requested_sid {
+            match self.find_surface_terminal_by_id(sid) {
+                Some(t) => Some(t),
+                None => {
+                    return JsonRpcError::invalid_params("Surface not found").into_value();
+                }
+            }
+        } else {
+            self.active_workspace()
+                .and_then(|ws| ws.active_tab().root.as_ref())
+                .and_then(|root| find_first_terminal(root, cx))
+        };
+        let Some(terminal) = target else {
+            return JsonRpcError::invalid_params("No active terminal").into_value();
+        };
+        let wrote_sid = terminal.read(cx).surface_id();
+        if let Err(error) = self.authorize_surface_write(params, wrote_sid, cx) {
+            return error.into_value();
+        }
+        let forced = matches!(opt_bool(params, "force"), Ok(Some(true)));
+        let agent_hint = self.surface_agent_hint(wrote_sid, cx);
+        let terminal_bracketed_paste = terminal.read(cx).bracketed_paste_enabled();
+        let paste = resolve_paste_mode(
+            paste_param,
+            submit,
+            agent_hint.is_some(),
+            terminal_bracketed_paste,
+        );
+        let paste =
+            match resolve_send_text_body_mode(text, paste_param, paste, terminal_bracketed_paste) {
+                Ok(paste) => paste,
+                Err(message) => return JsonRpcError::invalid_params(message).into_value(),
+            };
+        if !text.is_empty() {
+            let written = if paste {
+                terminal.read(cx).write_program_injected_text(text)
+            } else {
+                terminal.read(cx).write_program_text(text)
+            };
+            if let Err(reason) = written {
+                return input_rejected_error(reason).into_value();
+            }
+        }
+        if submit {
+            if paste && !text.is_empty() {
+                let floor = std::time::Duration::from_millis(
+                    self.cached_config.resolved_submit_paste_delay_ms(),
                 );
-                status["session"] = serde_json::json!(session_id);
-                status
+                Self::schedule_deferred_submit(&terminal, floor, cx);
+            } else if let Err(reason) = terminal.read(cx).write_program_text("\r") {
+                return input_rejected_error(reason).into_value();
             }
-            "surface.rename" => {
-                if let Err(error) = opt_str(params, "new_name") {
-                    return error.into_value();
-                }
-                let terminal = match self.resolve_surface(params, cx) {
-                    Ok(t) => t,
-                    Err(e) => return e.into_value(),
-                };
-                let new_name = parse_rename_name(params);
-                terminal.update(cx, |view, _cx| {
-                    view.terminal.custom_name = new_name.clone();
-                });
-                self.save_session(cx);
-                cx.notify();
-                serde_json::json!({"renamed": true, "name": new_name})
-            }
-            "surface.focus" => {
-                let sid = match opt_u64(params, "surface_id") {
-                    Ok(Some(sid)) => sid,
-                    Ok(None) => {
-                        return JsonRpcError::invalid_params("missing 'surface_id' parameter")
-                            .into_value();
-                    }
-                    Err(error) => return error.into_value(),
-                };
-                let Some(loc) = reveal_surface(&mut self.workspaces, sid, cx) else {
-                    return JsonRpcError::invalid_params(format!("surface_id {sid} not found"))
-                        .into_value();
-                };
-                let ws_idx = loc.workspace_idx;
-                let pane = loc.pane;
-                self.activate_workspace_without_window(ws_idx, cx);
-                pane.update(cx, |_p, cx| cx.notify());
-                cx.defer(move |cx| {
-                    if PaneFlowApp::focus_pane_window(pane.clone(), cx) {
-                        return;
-                    }
-                    for handle in cx.windows() {
-                        if let Some(main) = handle.downcast::<PaneFlowApp>() {
-                            let _ = main.update(cx, |_, window, cx| {
-                                pane.read(cx).focus_handle(cx).focus(window, cx);
-                            });
-                        }
-                    }
-                });
-                self.save_session(cx);
-                cx.notify();
-                serde_json::json!({
-                    "focused": true,
-                    "surface_id": sid,
-                    "workspace": ws_idx,
-                    "scope": "workspace",
-                })
-            }
-            "surface.send_text" => {
-                let SendTextRequest {
-                    text,
-                    submit,
-                    paste: paste_param,
-                    surface_id: requested_sid,
-                } = match send_text_request(params) {
-                    Ok(request) => request,
-                    Err(error) => return error.into_value(),
-                };
-                let unrestricted = self.cached_config.ai_unrestricted_enabled();
-                if !send_text_gate_open(ipc_scripting_enabled(), unrestricted) {
-                    return JsonRpcError {
-                        code: -32601,
-                        message:
-                            "surface.send_text disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable"
-                                .to_string(),
-                    }
-                    .into_value();
-                }
-                if text.is_empty() && !submit {
-                    return JsonRpcError::invalid_params("Missing 'text' parameter").into_value();
-                }
-                const MAX_TEXT_LEN: usize = 64 * 1024;
-                if text.len() > MAX_TEXT_LEN {
-                    return JsonRpcError::invalid_params("Text exceeds 64 KiB limit").into_value();
-                }
-                let target: Option<Entity<TerminalView>> = if let Some(sid) = requested_sid {
-                    match self.find_surface_terminal_by_id(sid, cx) {
-                        Some(t) => Some(t),
-                        None => {
-                            return JsonRpcError::invalid_params("Surface not found").into_value();
-                        }
-                    }
-                } else {
-                    self.active_workspace()
-                        .and_then(|ws| ws.active_tab().root.as_ref())
-                        .and_then(|root| find_first_terminal(root, cx))
-                };
-                let Some(terminal) = target else {
-                    return JsonRpcError::invalid_params("No active terminal").into_value();
-                };
-                let wrote_sid = terminal.entity_id().as_u64();
-                if let Err(error) =
-                    self.authorize_surface_write(params, wrote_sid, unrestricted, cx)
-                {
-                    return error.into_value();
-                }
-                let forced = matches!(opt_bool(params, "force"), Ok(Some(true)));
-                let agent_hint = self.surface_agent_hint(wrote_sid, cx);
-                let terminal_bracketed_paste = terminal.read(cx).bracketed_paste_enabled();
-                let paste = resolve_paste_mode(
-                    paste_param,
-                    submit,
-                    agent_hint.is_some(),
-                    terminal_bracketed_paste,
-                );
-                let paste = match resolve_send_text_body_mode(
-                    text,
-                    paste_param,
-                    paste,
-                    terminal_bracketed_paste,
-                ) {
-                    Ok(paste) => paste,
-                    Err(message) => return JsonRpcError::invalid_params(message).into_value(),
-                };
-                if !text.is_empty() {
-                    let written = if paste {
-                        terminal.read(cx).write_program_injected_text(text)
-                    } else {
-                        terminal.read(cx).write_program_text(text)
-                    };
-                    if let Err(reason) = written {
-                        return input_rejected_error(reason).into_value();
-                    }
-                }
-                if submit {
-                    if paste && !text.is_empty() {
-                        let floor = std::time::Duration::from_millis(
-                            self.cached_config.resolved_submit_paste_delay_ms(),
-                        );
-                        Self::schedule_deferred_submit(&terminal, floor, cx);
-                    } else if let Err(reason) = terminal.read(cx).write_program_text("\r") {
-                        return input_rejected_error(reason).into_value();
-                    }
-                }
-                log_pane_write(
-                    "surface.send_text",
-                    wrote_sid,
-                    caller_pid,
-                    text.len(),
-                    unrestricted,
-                    forced,
-                );
-                let submit_mode = if submit && paste && !text.is_empty() {
-                    serde_json::Value::String("deferred_paste_cr".to_string())
-                } else if submit {
-                    serde_json::Value::String("inline_cr".to_string())
-                } else {
-                    serde_json::Value::Null
-                };
-                serde_json::json!({
-                    "sent": true,
-                    "length": text.len(),
-                    "submitted": submit,
-                    "paste": paste,
-                    "submit_mode": submit_mode,
-                    "agent_target": agent_hint.is_some(),
-                    "agent_tool": agent_hint.map(|a| a.binary()),
-                    "terminal_bracketed_paste": terminal_bracketed_paste,
-                })
-            }
-            "surface.send_keystroke" => {
-                let (keystroke, requested_sid) =
-                    match (opt_str(params, "keystroke"), opt_u64(params, "surface_id")) {
-                        (Ok(keystroke), Ok(sid)) => (keystroke.unwrap_or(""), sid),
-                        (Err(error), _) | (_, Err(error)) => return error.into_value(),
-                    };
-                let unrestricted = self.cached_config.ai_unrestricted_enabled();
-                if !send_text_gate_open(ipc_scripting_enabled(), unrestricted) {
-                    return JsonRpcError {
-                        code: -32601,
-                        message: "surface.send_keystroke disabled; set PANEFLOW_IPC_SCRIPTING=1 or enable ai_unrestricted to use".to_string(),
-                    }
-                    .into_value();
-                }
-                if keystroke.is_empty() {
-                    return JsonRpcError::invalid_params("Missing 'keystroke' parameter")
-                        .into_value();
-                }
-                if keystroke.contains('\r') || keystroke.contains('\n') {
-                    return JsonRpcError::invalid_params(
-                        "keystroke must not contain CR or LF bytes",
-                    )
-                    .into_value();
-                }
-                let terminal = if let Some(sid) = requested_sid {
-                    self.find_surface_terminal_by_id(sid, cx)
-                } else if let Some(ws) = self.active_workspace()
-                    && let Some(root) = &ws.active_tab().root
-                {
-                    find_first_terminal(root, cx)
-                } else {
-                    None
-                };
-                if let Some(t) = &terminal
-                    && let Err(error) = self.authorize_surface_write(
-                        params,
-                        t.entity_id().as_u64(),
+        }
+        log_pane_write(
+            "surface.send_text",
+            wrote_sid,
+            caller_pid,
+            text.len(),
+            unrestricted,
+            forced,
+        );
+        let submit_mode = if submit && paste && !text.is_empty() {
+            serde_json::Value::String("deferred_paste_cr".to_string())
+        } else if submit {
+            serde_json::Value::String("inline_cr".to_string())
+        } else {
+            serde_json::Value::Null
+        };
+        serde_json::json!({
+            "sent": true,
+            "length": text.len(),
+            "submitted": submit,
+            "paste": paste,
+            "submit_mode": submit_mode,
+            "agent_target": agent_hint.is_some(),
+            "agent_tool": agent_hint.map(|a| a.binary()),
+            "terminal_bracketed_paste": terminal_bracketed_paste,
+        })
+    }
+
+    pub(super) fn surface_send_keystroke(
+        &mut self,
+        call: Call<'_, paneflow_api::methods::surface::SendKeystrokeParams>,
+        cx: &mut Context<Self>,
+    ) -> serde_json::Value {
+        let params = call.raw;
+        let caller_pid = call.caller_pid;
+        let (keystroke, requested_sid) =
+            match (opt_str(params, "keystroke"), opt_u64(params, "surface_id")) {
+                (Ok(keystroke), Ok(sid)) => (keystroke.unwrap_or(""), sid),
+                (Err(error), _) | (_, Err(error)) => return error.into_value(),
+            };
+        let unrestricted = self.cached_config.ai_unrestricted_enabled();
+        if keystroke.is_empty() {
+            return JsonRpcError::invalid_params("Missing 'keystroke' parameter").into_value();
+        }
+        if keystroke.contains('\r') || keystroke.contains('\n') {
+            return JsonRpcError::invalid_params("keystroke must not contain CR or LF bytes")
+                .into_value();
+        }
+        let terminal = if let Some(sid) = requested_sid {
+            self.find_surface_terminal_by_id(sid)
+        } else if let Some(ws) = self.active_workspace()
+            && let Some(root) = &ws.active_tab().root
+        {
+            find_first_terminal(root, cx)
+        } else {
+            None
+        };
+        if let Some(t) = &terminal
+            && let Err(error) = self.authorize_surface_write(params, t.read(cx).surface_id(), cx)
+        {
+            return error.into_value();
+        }
+        match terminal {
+            Some(t) => match t.read(cx).send_keystroke(keystroke) {
+                Ok(()) => {
+                    log_pane_write(
+                        "surface.send_keystroke",
+                        t.read(cx).surface_id(),
+                        caller_pid,
+                        keystroke.len(),
                         unrestricted,
-                        cx,
-                    )
-                {
-                    return error.into_value();
+                        false,
+                    );
+                    serde_json::json!({"sent": true})
                 }
-                match terminal {
-                    Some(t) => match t.read(cx).send_keystroke(keystroke) {
-                        Ok(()) => {
-                            log_pane_write(
-                                "surface.send_keystroke",
-                                t.entity_id().as_u64(),
-                                caller_pid,
-                                keystroke.len(),
-                                unrestricted,
-                                false,
-                            );
-                            serde_json::json!({"sent": true})
-                        }
-                        Err(e) if e == crate::terminal::view::INPUT_REJECTED => {
-                            input_rejected_error(crate::terminal::view::INPUT_REJECTED).into_value()
-                        }
-                        Err(e) => JsonRpcError::invalid_params(e).into_value(),
-                    },
-                    None => JsonRpcError::invalid_params("No active terminal").into_value(),
+                Err(e) if e == crate::terminal::view::INPUT_REJECTED => {
+                    input_rejected_error(crate::terminal::view::INPUT_REJECTED).into_value()
                 }
-            }
-            _ => JsonRpcError::method_not_found(format!("Method not found: {method}")).into_value(),
+                Err(e) => JsonRpcError::invalid_params(e).into_value(),
+            },
+            None => JsonRpcError::invalid_params("No active terminal").into_value(),
         }
     }
 }
@@ -1319,47 +1201,6 @@ mod tests {
         let scope = cx
             .update(|_, cx| scoped_workspace_id(&params, |s| session_workspace_id(&after, s, cx)));
         assert_eq!(scope.unwrap(), Some(2));
-    }
-
-    #[gpui::test]
-    fn a_stacked_terminal_that_is_not_active_still_belongs_to_its_workspace(
-        cx: &mut gpui::TestAppContext,
-    ) {
-        use gpui::AppContext as _;
-
-        let cx = cx.add_empty_window();
-        let behind = cx.new(|cx| TerminalView::display_only_for_test(1, cx));
-        let front = cx.new(|cx| TerminalView::display_only_for_test(1, cx));
-        let pane = cx.new(|cx| crate::pane::Pane::new(behind.clone(), 1, cx));
-        pane.update(cx, |pane, cx| {
-            pane.push_surface(crate::pane::PaneSurface::Terminal(front.clone()), cx);
-        });
-        let other = cx.new(|cx| TerminalView::display_only_for_test(1, cx));
-        let other_pane = cx.new(|cx| crate::pane::Pane::new(other, 1, cx));
-        let tab = |name: &str, pane| crate::workspace::Tab::new(name, Some(LayoutTree::Leaf(pane)));
-        let workspaces = vec![
-            Workspace::restored_with_id(1, "a", Default::default(), vec![tab("o", other_pane)], 0),
-            Workspace::restored_with_id(2, "b", Default::default(), vec![tab("t", pane)], 0),
-        ];
-        let behind_id = behind.entity_id().as_u64();
-        let front_id = front.entity_id().as_u64();
-
-        cx.update(|_, cx| {
-            assert_eq!(
-                workspace_idx_holding_surface(&workspaces, behind_id, cx),
-                Some(1),
-                "a listed terminal stays readable under its workspace scope when another \
-                 surface of its pane is in front"
-            );
-            assert_eq!(
-                workspace_idx_holding_surface(&workspaces, front_id, cx),
-                Some(1)
-            );
-            assert_eq!(
-                workspace_idx_holding_surface(&workspaces, u64::MAX, cx),
-                None
-            );
-        });
     }
 
     #[test]
@@ -1661,6 +1502,7 @@ mod tests {
             tab_id: Some(11),
             tab_title: Some("build".to_string()),
             space: serde_json::json!({ "id": "550e8400-e29b-41d4-a716-446655440001", "name": "Work" }),
+            sandboxed: false,
         });
         assert_eq!(workspace["workspace_id"], 42);
         assert_eq!(workspace["workspace"], 2);
@@ -1684,6 +1526,7 @@ mod tests {
             tab_id: Some(3),
             tab_title: None,
             space: serde_json::Value::Null,
+            sandboxed: false,
         };
 
         assert!(super::surface_matches_workspace(&surface, Some(42)));
@@ -1910,65 +1753,13 @@ mod tests {
     }
 
     #[gpui::test]
-    fn surface_in_a_background_tab_resolves_to_its_owning_tab(cx: &mut gpui::TestAppContext) {
-        use gpui::AppContext;
-
-        let cx = cx.add_empty_window();
-        let make_pane = |cx: &mut gpui::VisualTestContext| {
-            let terminal = cx.new(|cx| crate::terminal::TerminalView::display_only_for_test(1, cx));
-            let surface_id = terminal.entity_id().as_u64();
-            let pane = cx.new(|cx| Pane::new(terminal, 1, cx));
-            (pane, surface_id)
-        };
-        let (visible_pane, visible_sid) = make_pane(cx);
-        let (hidden_pane, hidden_sid) = make_pane(cx);
-
-        let mut ws = Workspace::with_layout_and_id(
-            1,
-            "ws",
-            std::path::PathBuf::new(),
-            crate::layout::LayoutTree::Leaf(visible_pane),
-        );
-        assert!(ws.open_tab(crate::workspace::Tab::new(
-            "background",
-            Some(crate::layout::LayoutTree::Leaf(hidden_pane)),
-        )));
-        ws.set_active_tab(0);
-        let workspaces = vec![ws];
-
-        let found = cx
-            .update(|_, cx| find_pane_by_surface_id(&workspaces, hidden_sid, cx))
-            .expect("a surface in a background tab must still resolve");
-        assert_eq!(found.workspace_idx, 0);
-        assert_eq!(
-            found.tab_idx, 1,
-            "resolves to the owning tab, not the visible one"
-        );
-
-        let visible = cx
-            .update(|_, cx| find_pane_by_surface_id(&workspaces, visible_sid, cx))
-            .expect("the visible surface resolves too");
-        assert_eq!(visible.tab_idx, 0);
-
-        assert!(
-            cx.update(|_, cx| find_terminal_by_surface_id(&workspaces, hidden_sid, cx))
-                .is_some(),
-            "a surface in a background tab must resolve to its terminal"
-        );
-        assert!(
-            cx.update(|_, cx| find_terminal_by_surface_id(&workspaces, visible_sid, cx))
-                .is_some()
-        );
-    }
-
-    #[gpui::test]
     fn tab_for_surface_counts_the_terminals_that_share_the_tab(cx: &mut gpui::TestAppContext) {
         use gpui::AppContext;
 
         let cx = cx.add_empty_window();
         let make_pane = |cx: &mut gpui::VisualTestContext| {
             let terminal = cx.new(|cx| crate::terminal::TerminalView::display_only_for_test(1, cx));
-            let surface_id = terminal.entity_id().as_u64();
+            let surface_id = terminal.read_with(cx, |view, _| view.surface_id());
             let pane = cx.new(|cx| Pane::new(terminal, 1, cx));
             (pane, surface_id)
         };
@@ -1982,8 +1773,11 @@ mod tests {
             std::path::PathBuf::new(),
             crate::layout::LayoutTree::Leaf(solo_pane),
         );
-        let mut shared_tree = crate::layout::LayoutTree::Leaf(shared_pane);
-        shared_tree.split_first_leaf(crate::layout::SplitDirection::Horizontal, neighbor_pane);
+        let shared_tree = crate::layout::LayoutTree::new_split(
+            crate::layout::SplitDirection::Horizontal,
+            crate::layout::LayoutTree::Leaf(shared_pane),
+            crate::layout::LayoutTree::Leaf(neighbor_pane),
+        );
         assert!(ws.open_tab(crate::workspace::Tab::new("shared", Some(shared_tree))));
 
         assert_eq!(
@@ -2006,61 +1800,6 @@ mod tests {
     }
 
     #[gpui::test]
-    fn focusing_a_pane_hidden_by_zoom_leaves_zoom_first(cx: &mut gpui::TestAppContext) {
-        use gpui::AppContext;
-
-        let cx = cx.add_empty_window();
-        let make_pane = |cx: &mut gpui::VisualTestContext| {
-            let terminal = cx.new(|cx| crate::terminal::TerminalView::display_only_for_test(1, cx));
-            let surface_id = terminal.entity_id().as_u64();
-            let pane = cx.new(|cx| Pane::new(terminal, 1, cx));
-            (pane, surface_id)
-        };
-        let (zoomed_pane, zoomed_sid) = make_pane(cx);
-        let (hidden_pane, hidden_sid) = make_pane(cx);
-        let zoomed_tab = || {
-            let mut tab = crate::workspace::Tab::new(
-                "zoomed",
-                Some(crate::layout::LayoutTree::Leaf(zoomed_pane.clone())),
-            );
-            let mut saved = crate::layout::LayoutTree::Leaf(zoomed_pane.clone());
-            saved.split_first_leaf(
-                crate::layout::SplitDirection::Horizontal,
-                hidden_pane.clone(),
-            );
-            tab.saved_layout = Some(saved);
-            tab
-        };
-
-        let mut workspaces = vec![Workspace::restored_with_id(
-            1,
-            "ws",
-            std::path::PathBuf::new(),
-            vec![zoomed_tab()],
-            0,
-        )];
-        cx.update(|_, cx| reveal_surface(&mut workspaces, zoomed_sid, cx))
-            .expect("the zoomed pane is found");
-        assert!(
-            workspaces[0].active_tab().is_zoomed(),
-            "the visible zoomed pane keeps the zoom"
-        );
-
-        let loc = cx
-            .update(|_, cx| reveal_surface(&mut workspaces, hidden_sid, cx))
-            .expect("the hidden pane is found");
-        assert_eq!(loc.pane, hidden_pane);
-        let tab = workspaces[0].active_tab();
-        assert!(!tab.is_zoomed(), "focusing a hidden pane leaves zoom");
-        assert!(
-            tab.root
-                .as_ref()
-                .is_some_and(|root| root.contains_leaf(&hidden_pane)),
-            "the focused pane is back in the rendered tree"
-        );
-    }
-
-    #[gpui::test]
     fn a_filtered_surface_list_reports_that_workspace(cx: &mut gpui::TestAppContext) {
         use gpui::AppContext;
 
@@ -2070,8 +1809,11 @@ mod tests {
             cx.new(|cx| Pane::new(terminal, 1, cx))
         };
         let single = make_pane(cx);
-        let mut pair = crate::layout::LayoutTree::Leaf(make_pane(cx));
-        pair.split_first_leaf(crate::layout::SplitDirection::Horizontal, make_pane(cx));
+        let pair = crate::layout::LayoutTree::new_split(
+            crate::layout::SplitDirection::Horizontal,
+            crate::layout::LayoutTree::Leaf(make_pane(cx)),
+            crate::layout::LayoutTree::Leaf(make_pane(cx)),
+        );
         let workspaces = vec![
             Workspace::with_layout_and_id(
                 11,
@@ -2103,20 +1845,22 @@ mod tests {
         let cx = cx.add_empty_window();
         let make_pane = |cx: &mut gpui::VisualTestContext| {
             let terminal = cx.new(|cx| crate::terminal::TerminalView::display_only_for_test(1, cx));
-            let surface_id = terminal.entity_id().as_u64();
+            let surface_id = terminal.read_with(cx, |view, _| view.surface_id());
             let pane = cx.new(|cx| Pane::new(terminal, 1, cx));
             (pane, surface_id)
         };
         let (zoomed_pane, zoomed_sid) = make_pane(cx);
         let (hidden_pane, _) = make_pane(cx);
 
-        let mut tab = crate::workspace::Tab::new(
+        let tab = crate::workspace::Tab::zoomed_for_test(
             "zoomed",
-            Some(crate::layout::LayoutTree::Leaf(zoomed_pane.clone())),
+            zoomed_pane.clone(),
+            crate::layout::LayoutTree::new_split(
+                crate::layout::SplitDirection::Horizontal,
+                crate::layout::LayoutTree::Leaf(zoomed_pane),
+                crate::layout::LayoutTree::Leaf(hidden_pane),
+            ),
         );
-        let mut saved = crate::layout::LayoutTree::Leaf(zoomed_pane);
-        saved.split_first_leaf(crate::layout::SplitDirection::Horizontal, hidden_pane);
-        tab.saved_layout = Some(saved);
         let ws = Workspace::restored_with_id(1, "ws", std::path::PathBuf::new(), vec![tab], 0);
 
         assert_eq!(
@@ -2133,7 +1877,7 @@ mod tests {
         let cx = cx.add_empty_window();
         let make_pane = |cx: &mut gpui::VisualTestContext| {
             let terminal = cx.new(|cx| crate::terminal::TerminalView::display_only_for_test(1, cx));
-            let surface_id = terminal.entity_id().as_u64();
+            let surface_id = terminal.read_with(cx, |view, _| view.surface_id());
             let pane = cx.new(|cx| Pane::new(terminal, 1, cx));
             (pane, surface_id)
         };
@@ -2159,7 +1903,7 @@ mod tests {
         let tab_of = |sid: u64| {
             entries
                 .iter()
-                .find(|e| e.entity.entity_id().as_u64() == sid)
+                .find(|e| e.entity.read_with(cx, |view, _| view.surface_id()) == sid)
                 .and_then(|e| e.tab.clone())
                 .expect("every CLI surface belongs to a tab")
         };
@@ -2188,6 +1932,7 @@ mod tests {
             tab_id: Some(tab_of(hidden_sid).0),
             tab_title: Some(tab_of(hidden_sid).1),
             space: serde_json::Value::Null,
+            sandboxed: false,
         });
         assert_eq!(value["tab_id"], back_tab_id);
         assert_eq!(value["tab_title"], "background");
@@ -2203,11 +1948,9 @@ mod tests {
             cx.new(|cx| Pane::new(terminal, 1, cx))
         };
 
-        let mut full = crate::layout::LayoutTree::Leaf(new_pane(cx));
-        for _ in 1..MAX_PANES {
-            let anchor = full.collect_leaves()[0].clone();
-            assert!(full.split_at_pane(&anchor, SplitDirection::Vertical, new_pane(cx)));
-        }
+        let panes = (0..MAX_PANES).map(|_| new_pane(cx)).collect();
+        let full = crate::layout::LayoutTree::from_panes_equal(SplitDirection::Vertical, panes)
+            .expect("a full layout");
         assert_eq!(full.leaf_count(), MAX_PANES);
 
         let mut ws = Workspace::with_layout_and_id(1, "ws", std::path::PathBuf::new(), full);
@@ -2227,24 +1970,6 @@ mod tests {
         let before = leaf_ids(&ws, 0);
 
         assert!(!ws.tabs()[0].can_add_pane(), "the saturated tab refuses");
-        let extra = new_pane(cx);
-        if ws.tabs()[0].can_add_pane() {
-            let anchor = before[0];
-            let tab = ws.tab_mut(0).expect("tab 0 exists");
-            let target = tab
-                .root
-                .as_ref()
-                .expect("tab has a layout")
-                .collect_leaves()
-                .into_iter()
-                .find(|p| p.entity_id() == anchor)
-                .expect("anchor still present");
-            tab.root.as_mut().expect("tab has a layout").split_at_pane(
-                &target,
-                SplitDirection::Vertical,
-                extra,
-            );
-        }
         assert_eq!(
             leaf_ids(&ws, 0),
             before,

@@ -1,0 +1,43 @@
+{
+  "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+  },
+  "description": "Ask the user a question in Paneflow's own prompt, shown in whichever pane they are in, with your agent and pane named under it. Give options for a choice (set multiple to allow several) or none for a free-text answer. Waits up to 20 s: the result is {status: \"answered\", answer}, or {status: \"pending\", prompt_id} - call again with only that prompt_id to keep waiting for the same question. Other statuses end the question: cancelled, timeout, no_window (no Paneflow window can show it), busy, rate_limited (more than 3 questions in a burst or 1 per second after it) and failed.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "multiple": {
+        "default": false,
+        "description": "Let the user choose several options.",
+        "type": "boolean"
+      },
+      "options": {
+        "description": "The choices to pick from (at most 2000); the answer is the chosen option, or the list of them with multiple.",
+        "items": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "maxItems": 2000,
+        "type": "array",
+        "uniqueItems": true
+      },
+      "prompt_id": {
+        "description": "The prompt_id of a pending answer, to keep waiting for that question instead of asking a new one.",
+        "maximum": 9007199254740991,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "question": {
+        "description": "The question, as plain text (at most 16 KiB).",
+        "maxLength": 16384,
+        "minLength": 1,
+        "type": "string"
+      }
+    },
+    "type": "object"
+  },
+  "name": "ask_human"
+}

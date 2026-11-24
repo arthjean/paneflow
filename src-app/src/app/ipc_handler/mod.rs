@@ -1,8 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui::{App, AppContext, BackgroundExecutor, Context, Entity, Focusable};
+use paneflow_api::Method;
 use paneflow_config::schema::{LayoutNode, PaneFlowConfig, TabTitleSource, TerminalSurfaceProfile};
 use paneflow_ipc_client::ai_hook::{
     AiToolName, LifecycleEventSource, METHOD_PROMPT_SUBMIT, METHOD_SESSION_START, METHOD_STOP,
@@ -23,19 +24,27 @@ use crate::workspace::{Tab, Workspace, next_workspace_id_in};
 use crate::{PaneFlowApp, ai_types};
 
 mod agent_frames;
+#[cfg(test)]
+mod conformance;
 mod gates;
 mod jsonrpc;
 mod params;
+mod registry;
 mod split;
 use split::{PATH_PROBE_TIMEOUT, probe_off_thread, unresolved_path_error};
 mod surface_methods;
 mod tmux_compat;
 mod transcript;
 mod workspace_methods;
+mod worktree_requests;
 
 use gates::*;
 pub(crate) use jsonrpc::*;
 use params::*;
+#[cfg(all(test, unix))]
+pub(crate) use registry::gate_refusal;
+pub(crate) use registry::{Admission, Call, Route, admit_with, registry};
+use registry::{RegistryBuilder, spawn_gate_open, spawn_gate_refusal};
 pub(crate) use surface_methods::*;
 use transcript::*;
 pub(crate) use workspace_methods::*;
@@ -120,7 +129,16 @@ impl PaneFlowApp {
             if !req.state.try_start() {
                 continue;
             }
-            let result = match self.handle_ipc(&req.method, &req.params, req.caller_pid, cx) {
+            let granted = req
+                .grant
+                .as_deref()
+                .is_some_and(|grant| self.lua_config.grants.admits(grant, Instant::now()));
+            let gates = paneflow_api::Gates {
+                scripting: req.gates.scripting || granted,
+                ..req.gates
+            };
+            let result = match self.handle_ipc(&req.method, &req.params, req.caller_pid, gates, cx)
+            {
                 IpcReply::Ready(result) => result,
                 IpcReply::Deferred(job) => {
                     answer_off_thread(job, req.response_tx).detach();
@@ -167,32 +185,93 @@ impl PaneFlowApp {
         method: &str,
         params: &serde_json::Value,
         caller_pid: Option<i64>,
+        gates: paneflow_api::Gates,
         cx: &mut Context<Self>,
     ) -> IpcReply {
-        match method {
-            "system.capabilities" => IpcReply::Ready(capabilities_value(
-                send_text_gate_open(
-                    ipc_scripting_enabled(),
-                    self.cached_config.ai_unrestricted_enabled(),
-                ),
-                ipc_orchestration_enabled(),
-            )),
-            "surface.read" => self.surface_read_reply(params, cx),
-            "surface.search" => self.surface_search_reply(params, cx),
-            "surface.split" => self.surface_split_reply(params, cx),
-            crate::tmux_compat::METHOD => self.tmux_compat_reply(params, caller_pid, cx),
-            "workspace.create" => self.workspace_create_reply(params, cx),
-            "workspace.up" => self.workspace_up_reply(params, cx),
-            m if m.starts_with("workspace.") => {
-                IpcReply::Ready(self.handle_workspace_method(method, params, cx))
-            }
-            m if m.starts_with("surface.") || m == "fleet.list" => {
-                IpcReply::Ready(self.handle_surface_method(method, params, caller_pid, cx))
-            }
-            _ => IpcReply::Ready(
-                JsonRpcError::method_not_found(format!("Method not found: {method}")).into_value(),
-            ),
+        registry().serve(self, method, params, caller_pid, gates, cx)
+    }
+}
+
+fn identity() -> serde_json::Value {
+    serde_json::json!({
+        "name": "PaneFlow",
+        "version": env!("CARGO_PKG_VERSION"),
+        "protocol": "jsonrpc-2.0"
+    })
+}
+
+fn register_methods(builder: RegistryBuilder) -> RegistryBuilder {
+    use paneflow_api::methods::{config, events, surface, system, tmux, workspace};
+
+    builder
+        .inline::<system::Ping>(|_| serde_json::json!({"pong": true}))
+        .inline::<system::Identify>(|_| identity())
+        .inline::<system::Counters>(|_| crate::work_counters::counters())
+        .ready::<system::Capabilities>(|app, _, _| {
+            capabilities_value(app.ipc_gates.scripting, app.ipc_gates.orchestration)
+        })
+        .ready::<workspace::List>(PaneFlowApp::workspace_list)
+        .asynchronous::<workspace::Create>(|app, call, cx| app.workspace_create_reply(call.raw, cx))
+        .ready::<workspace::Select>(PaneFlowApp::workspace_select)
+        .ready::<workspace::Close>(PaneFlowApp::workspace_close)
+        .ready::<workspace::Current>(PaneFlowApp::workspace_current)
+        .ready::<workspace::RestoreLayout>(PaneFlowApp::workspace_restore_layout)
+        .asynchronous::<workspace::Up>(|app, call, cx| app.workspace_up_reply(call.raw, cx))
+        .ready::<surface::List>(PaneFlowApp::surface_list)
+        .deferred::<surface::Read>(|app, call, cx| app.surface_read_reply(call.raw, cx))
+        .deferred::<surface::Search>(|app, call, cx| app.surface_search_reply(call.raw, cx))
+        .ready::<surface::Rename>(PaneFlowApp::surface_rename)
+        .ready::<surface::SendText>(PaneFlowApp::surface_send_text)
+        .ready::<surface::SendKeystroke>(PaneFlowApp::surface_send_keystroke)
+        .asynchronous::<surface::Split>(|app, call, cx| app.surface_split_reply(call.raw, cx))
+        .ready::<surface::Focus>(PaneFlowApp::surface_focus)
+        .ready::<surface::Status>(PaneFlowApp::surface_status)
+        .ready::<surface::FleetList>(PaneFlowApp::fleet_list)
+        .stream::<events::Subscribe>()
+        .asynchronous::<tmux::Compat>(|app, call, cx| {
+            app.tmux_compat_reply(call.raw, call.caller_pid, cx)
+        })
+        .inline::<config::ListBuiltinActions>(
+            |_| serde_json::json!({"actions": crate::keybindings::builtin_actions()}),
+        )
+        .asynchronous::<config::DispatchAction>(|app, call, cx| {
+            app.client_dispatch_action_reply(call.params.name, cx)
+        })
+        .inline::<system::Describe>(|call| registry().describe(call.params.method.as_deref()))
+        .inline_for_caller::<system::WhoAmI>(paneflow_api::Principal::whoami_value)
+}
+
+impl PaneFlowApp {
+    fn client_dispatch_action_reply(&mut self, name: String, cx: &mut Context<Self>) -> IpcReply {
+        if !crate::keybindings::is_builtin_action(&name) {
+            return IpcReply::Ready(
+                JsonRpcError::invalid_params(format!(
+                    "no built-in action named '{name}'; client.list_actions lists them"
+                ))
+                .into_value(),
+            );
         }
+        IpcReply::Async(cx.spawn(async move |_, cx: &mut gpui::AsyncApp| {
+            let dispatched = cx.update(|cx| {
+                let mut dispatched = false;
+                for handle in cx.windows() {
+                    let Some(main) = handle.downcast::<PaneFlowApp>() else {
+                        continue;
+                    };
+                    let Some(action) = crate::keybindings::action_for_name(&name) else {
+                        continue;
+                    };
+                    dispatched |= main
+                        .update(cx, |_, window, cx| window.dispatch_action(action, cx))
+                        .is_ok();
+                    if dispatched {
+                        break;
+                    }
+                }
+                dispatched
+            });
+            serde_json::json!({"dispatched": dispatched, "name": name})
+        }))
     }
 }
 
@@ -216,6 +295,8 @@ mod tests {
                 state
             },
             caller_pid: None,
+            grant: None,
+            gates: paneflow_api::Gates::CLOSED,
         }
     }
 

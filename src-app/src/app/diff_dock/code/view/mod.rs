@@ -372,7 +372,7 @@ impl CodeView {
             highlight_budget: HIGHLIGHT_FRAME_BUDGET,
             load_deferred: false,
             pending_scroll_line: None,
-            word_wrap: super::controls::editor_display().word_wrap,
+            word_wrap: super::controls::editor_display(cx).word_wrap,
             visual_goal: None,
             find: None,
             pending_reveal: None,
@@ -384,9 +384,10 @@ impl CodeView {
             comment_drag: None,
             editor_menu: None,
             kind: crate::app::diff_dock::preview::preview_kind(&path_kind),
-            rendered: preview::rendered_by_default(crate::app::diff_dock::preview::preview_kind(
-                &path_kind,
-            )),
+            rendered: preview::rendered_by_default(
+                crate::app::diff_dock::preview::preview_kind(&path_kind),
+                cx,
+            ),
             rendered_views: preview::RenderedViews::none(),
             workspace_root: None,
             language_server: super::language_server::LanguageServerLink::Off,
@@ -459,7 +460,7 @@ impl CodeView {
             highlight_budget: HIGHLIGHT_FRAME_BUDGET,
             load_deferred: false,
             pending_scroll_line: None,
-            word_wrap: super::controls::editor_display().word_wrap,
+            word_wrap: super::controls::editor_display(cx).word_wrap,
             visual_goal: None,
             find: None,
             pending_reveal: None,
@@ -471,9 +472,10 @@ impl CodeView {
             comment_drag: None,
             editor_menu: None,
             kind: crate::app::diff_dock::preview::preview_kind(&path_kind),
-            rendered: preview::rendered_by_default(crate::app::diff_dock::preview::preview_kind(
-                &path_kind,
-            )),
+            rendered: preview::rendered_by_default(
+                crate::app::diff_dock::preview::preview_kind(&path_kind),
+                cx,
+            ),
             rendered_views: preview::RenderedViews::none(),
             workspace_root: None,
             language_server: super::language_server::LanguageServerLink::Off,
@@ -821,7 +823,7 @@ impl CodeView {
         self._watcher = None;
         self._watch_bridge = None;
         self.kind = crate::app::diff_dock::preview::preview_kind(&self.path);
-        self.rendered = preview::rendered_by_default(self.kind);
+        self.rendered = preview::rendered_by_default(self.kind, cx);
         self.rendered_views = preview::RenderedViews::none();
         self.start_load(cx);
         cx.notify();

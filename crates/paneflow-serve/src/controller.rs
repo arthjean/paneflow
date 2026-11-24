@@ -7,9 +7,10 @@ use paneflow_ipc_client::host_control::{ControlConnectError, HostControl};
 use serde_json::{Value, json};
 
 use crate::protocol::{
-    CAPABILITY_AGENT_FOLLOW, METHOD_AGENT_ACKNOWLEDGE, METHOD_AGENT_ACTIVITY_LOG,
-    METHOD_AGENT_FOLLOW, METHOD_AGENT_SNAPSHOT, METHOD_USAGE_IMPORT, METHOD_USAGE_REFRESH,
-    METHOD_USAGE_SNAPSHOT, REQUEST_DEADLINE, WorkerIdentity,
+    CAPABILITY_AGENT_FOLLOW, CAPABILITY_EVENTS_FOLLOW, ERR_EVICTED, METHOD_AGENT_ACKNOWLEDGE,
+    METHOD_AGENT_ACTIVITY_LOG, METHOD_AGENT_FOLLOW, METHOD_AGENT_SNAPSHOT, METHOD_EVENTS_FOLLOW,
+    METHOD_USAGE_IMPORT, METHOD_USAGE_REFRESH, METHOD_USAGE_SNAPSHOT, REQUEST_DEADLINE,
+    WorkerIdentity,
 };
 
 pub const CLIENT_NAME: &str = "paneflow-controller";
@@ -182,6 +183,12 @@ impl Controller {
             .map_err(ControllerError::Protocol)
     }
 
+    pub fn call(&mut self, method: &str, params: Value) -> Result<Value, ControllerError> {
+        self.control
+            .request(method, params)
+            .map_err(ControllerError::Protocol)
+    }
+
     pub fn usage_snapshot(&mut self) -> Result<Value, ControllerError> {
         self.control
             .request(METHOD_USAGE_SNAPSHOT, json!({}))
@@ -222,6 +229,270 @@ impl Controller {
 
     pub fn follow(self) -> Result<FollowSession, ControllerError> {
         FollowSession::start(self)
+    }
+
+    fn open_events(&mut self, request: &EventRequest) -> Result<EventOpen, ControllerError> {
+        self.require(CAPABILITY_EVENTS_FOLLOW)?;
+        let id = self
+            .control
+            .write_request(METHOD_EVENTS_FOLLOW, request.params())
+            .map_err(|error| ControllerError::Protocol(error.to_string()))?;
+        let deadline = Instant::now() + REQUEST_DEADLINE;
+        loop {
+            let slice = deadline.saturating_duration_since(Instant::now());
+            if slice.is_zero() {
+                return Err(ControllerError::Protocol(format!(
+                    "{METHOD_EVENTS_FOLLOW} was not answered within {} ms",
+                    REQUEST_DEADLINE.as_millis()
+                )));
+            }
+            let line = self
+                .control
+                .read_stream_line(slice)
+                .map_err(|error| ControllerError::Protocol(error.to_string()))?
+                .ok_or_else(|| {
+                    ControllerError::Protocol(format!(
+                        "the worker closed the connection during {METHOD_EVENTS_FOLLOW}"
+                    ))
+                })?;
+            let Ok(envelope) = serde_json::from_str::<Value>(line.trim()) else {
+                continue;
+            };
+            if envelope["id"].as_u64() != Some(id) {
+                continue;
+            }
+            let error = &envelope["error"];
+            if error.is_object() {
+                if error["code"].as_i64() == Some(ERR_EVICTED) {
+                    return Ok(EventOpen::Evicted {
+                        seq: error["data"]["seq"].as_u64().unwrap_or_default(),
+                        epoch: error["data"]["epoch"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_owned(),
+                    });
+                }
+                return Err(ControllerError::Protocol(
+                    error["message"]
+                        .as_str()
+                        .unwrap_or("the worker refused events.follow")
+                        .to_owned(),
+                ));
+            }
+            let header = &envelope["result"];
+            return Ok(EventOpen::Following {
+                seq: header["seq"].as_u64().unwrap_or_default(),
+                epoch: header["epoch"].as_str().unwrap_or_default().to_owned(),
+            });
+        }
+    }
+
+    pub fn follow_events(self, request: EventRequest) -> Result<EventStream, ControllerError> {
+        EventStream::start(self, request)
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EventRequest {
+    pub types: Vec<String>,
+    pub workspace_id: Option<u64>,
+    pub since: Option<u64>,
+    pub epoch: Option<String>,
+}
+
+impl EventRequest {
+    fn params(&self) -> Value {
+        let mut params = serde_json::Map::new();
+        if !self.types.is_empty() {
+            params.insert("types".to_string(), json!(self.types));
+        }
+        if let Some(workspace_id) = self.workspace_id {
+            params.insert("workspace_id".to_string(), json!(workspace_id));
+        }
+        if let Some(since) = self.since {
+            params.insert("since".to_string(), json!(since));
+        }
+        if let Some(epoch) = &self.epoch {
+            params.insert("epoch".to_string(), json!(epoch));
+        }
+        Value::Object(params)
+    }
+}
+
+enum EventOpen {
+    Following { seq: u64, epoch: String },
+    Evicted { seq: u64, epoch: String },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum EventFrame {
+    Following {
+        seq: u64,
+        epoch: String,
+        restarted: bool,
+    },
+    Event(Box<Value>),
+    Idle,
+    Disconnected(String),
+}
+
+pub struct EventStream {
+    endpoint: PathBuf,
+    controller: Option<Controller>,
+    request: EventRequest,
+    position: Option<(String, u64)>,
+    pending: Option<EventFrame>,
+}
+
+impl EventStream {
+    pub fn open(endpoint: &Path, request: EventRequest) -> Result<Self, ControllerError> {
+        Controller::connect(endpoint)?.follow_events(request)
+    }
+
+    fn start(mut controller: Controller, request: EventRequest) -> Result<Self, ControllerError> {
+        let opened = controller.open_events(&request)?;
+        let mut stream = Self {
+            endpoint: controller.endpoint.clone(),
+            controller: Some(controller),
+            request,
+            position: None,
+            pending: None,
+        };
+        let frame = match opened {
+            EventOpen::Following { seq, epoch } => {
+                if let Some(since) = stream.request.since {
+                    stream.position = Some((epoch.clone(), since));
+                }
+                stream.followed(seq, epoch, false)
+            }
+            EventOpen::Evicted { seq, epoch } => {
+                return Err(ControllerError::Protocol(format!(
+                    "evicted: the requested events are no longer in the log; the worker is at seq {seq} of epoch {epoch}"
+                )));
+            }
+        };
+        stream.pending = Some(frame);
+        Ok(stream)
+    }
+
+    fn followed(&mut self, seq: u64, epoch: String, restarted: bool) -> EventFrame {
+        let since = self
+            .position
+            .as_ref()
+            .filter(|(held, _)| *held == epoch)
+            .map(|(_, since)| *since);
+        self.position = Some((epoch.clone(), since.unwrap_or(seq)));
+        EventFrame::Following {
+            seq,
+            epoch,
+            restarted,
+        }
+    }
+
+    pub fn position(&self) -> Option<(&str, u64)> {
+        self.position
+            .as_ref()
+            .map(|(epoch, seq)| (epoch.as_str(), *seq))
+    }
+
+    pub fn next(&mut self, timeout: Duration) -> EventFrame {
+        if let Some(frame) = self.pending.take() {
+            return frame;
+        }
+        let deadline = Instant::now() + timeout;
+        loop {
+            if self.controller.is_none() {
+                match self.reconnect() {
+                    Some(frame) => return frame,
+                    None if Instant::now() >= deadline => return EventFrame::Idle,
+                    None => {
+                        std::thread::sleep(RECONNECT_POLL);
+                        continue;
+                    }
+                }
+            }
+            let slice = READ_SLICE.min(deadline.saturating_duration_since(Instant::now()));
+            let read = self
+                .controller
+                .as_mut()
+                .map(|controller| controller.control.read_stream_line(slice));
+            match read {
+                Some(Ok(Some(line))) => {
+                    if let Some(frame) = self.classify(&line) {
+                        return frame;
+                    }
+                }
+                Some(Ok(None)) => return self.drop_link("the worker closed the event stream"),
+                Some(Err(error)) if error.kind() == io::ErrorKind::TimedOut => {}
+                Some(Err(error)) if error.kind() == io::ErrorKind::WouldBlock => {}
+                Some(Err(error)) => return self.drop_link(&error.to_string()),
+                None => {}
+            }
+            if Instant::now() >= deadline {
+                return EventFrame::Idle;
+            }
+        }
+    }
+
+    fn classify(&mut self, line: &str) -> Option<EventFrame> {
+        let value: Value = serde_json::from_str(line.trim()).ok()?;
+        if let Some(seq) = value["seq"].as_u64() {
+            if let Some((_, held)) = self.position.as_mut() {
+                *held = seq;
+            }
+            return Some(EventFrame::Event(Box::new(value)));
+        }
+        match value["type"].as_str() {
+            Some("end") => {
+                let reason = value["reason"]
+                    .as_str()
+                    .unwrap_or("the worker ended the event stream")
+                    .to_owned();
+                Some(self.drop_link(&reason))
+            }
+            _ => None,
+        }
+    }
+
+    fn drop_link(&mut self, reason: &str) -> EventFrame {
+        self.controller = None;
+        EventFrame::Disconnected(reason.to_owned())
+    }
+
+    fn reconnect(&mut self) -> Option<EventFrame> {
+        let mut controller = match Controller::connect(&self.endpoint) {
+            Ok(controller) => controller,
+            Err(ControllerError::PermissionDenied(path)) => {
+                return Some(EventFrame::Disconnected(
+                    ControllerError::PermissionDenied(path).to_string(),
+                ));
+            }
+            Err(_) => return None,
+        };
+        let mut request = self.request.clone();
+        if let Some((epoch, seq)) = &self.position {
+            request.since = Some(*seq);
+            request.epoch = Some(epoch.clone());
+        }
+        let frame = match controller.open_events(&request).ok()? {
+            EventOpen::Following { seq, epoch } => {
+                self.controller = Some(controller);
+                self.followed(seq, epoch, false)
+            }
+            EventOpen::Evicted { .. } => {
+                request.since = None;
+                request.epoch = None;
+                match controller.open_events(&request).ok()? {
+                    EventOpen::Following { seq, epoch } => {
+                        self.position = None;
+                        self.controller = Some(controller);
+                        self.followed(seq, epoch, true)
+                    }
+                    EventOpen::Evicted { .. } => return None,
+                }
+            }
+        };
+        Some(frame)
     }
 }
 
@@ -480,6 +751,27 @@ mod tests {
         assert_eq!(
             refused.to_string(),
             "capability not advertised: session.runtime.resume"
+        );
+    }
+
+    #[test]
+    fn a_worker_whose_capability_set_predates_the_event_log_refuses_it_before_any_frame() {
+        let mut older = identity();
+        older
+            .capabilities
+            .retain(|capability| capability != CAPABILITY_EVENTS_FOLLOW);
+        let controller = Controller {
+            endpoint: PathBuf::from("endpoint"),
+            control: unreachable_control(),
+            identity: older,
+        };
+        let followed = controller
+            .follow_events(EventRequest::default())
+            .err()
+            .expect("an older worker set does not carry events.follow");
+        assert_eq!(
+            followed.to_string(),
+            "capability not advertised: events.follow"
         );
     }
 

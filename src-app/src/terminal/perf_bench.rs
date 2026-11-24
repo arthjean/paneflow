@@ -752,6 +752,7 @@ fn terminal_pipeline_benchmark() {
     gate_scenario(&mut metrics);
     pipeline_scenario(&mut metrics);
     path_scenarios(&mut metrics);
+    metrics.push(crate::app::split_probe::split_latency_metric());
     let cpu_share = (process_cpu_time() - cpu_before).as_secs_f64()
         / timed_started.elapsed().as_secs_f64().max(f64::EPSILON);
     println!("{acc_delta}");

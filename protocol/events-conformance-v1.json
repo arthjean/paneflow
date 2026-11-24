@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "protocol": "paneflow-worker",
+  "version": 1,
+  "description": "Cases the worker's event log must pass over its real endpoint. crates/paneflow-serve/tests/events_conformance.rs runs every case against a real paneflow serve worker, with a real host where the case names one; a case listed here with no runner is a failure, not a skip.",
+  "cases": [
+    {
+      "id": "header_then_consecutive_seq_to_two_followers",
+      "summary": "events.follow answers with a following header carrying the current seq and the worker's epoch, then two concurrent followers receive every later event in order with strictly consecutive seq values, each carrying seq, ts, type, the ids that apply and a data object.",
+      "method": "events.follow"
+    },
+    {
+      "id": "since_replays_exactly_the_missed_events",
+      "summary": "A follower that reconnects with since and the same epoch receives the events after since first, with no gap and no duplicate, then the live ones.",
+      "method": "events.follow"
+    },
+    {
+      "id": "evicted_when_since_left_the_ring_or_the_epoch_differs",
+      "summary": "Once more than 1,024 events exist the oldest leave the ring and seq keeps increasing; a since older than the ring, or an epoch from another worker start, is refused with -32040 and data carrying reason evicted, the current seq and the epoch.",
+      "method": "events.follow"
+    },
+    {
+      "id": "filters_keep_the_log_seq",
+      "summary": "types (exact names or a family such as terminal.*) and workspace_id send only matching events, and each sent event keeps the seq the log gave it.",
+      "method": "events.follow"
+    },
+    {
+      "id": "a_follower_over_eight_mebibytes_behind_is_closed_alone",
+      "summary": "A follower whose unsent backlog exceeds 8 MiB is closed with an end frame, and a follower that keeps reading receives every event.",
+      "method": "events.follow"
+    },
+    {
+      "id": "keepalive_when_quiet",
+      "summary": "A follower that receives no event for the 2 s agent.follow keepalive interval receives a keepalive frame.",
+      "method": "events.follow"
+    },
+    {
+      "id": "terminal_events_from_the_host_stream",
+      "summary": "A plain shell started on a real host that changes directory and exits appends terminal.cwd_changed with the new cwd and terminal.exited with the exit_code the host recorded, each carrying the session id.",
+      "method": "events.follow"
+    },
+    {
+      "id": "agent_state_changed_from_the_reducer",
+      "summary": "A program that declares working then done through OSC 7501 appends agent.state_changed events carrying the tool, the previous state and the new state.",
+      "method": "events.follow"
+    },
+    {
+      "id": "layout_events_appended_by_the_worker",
+      "summary": "An op that layout.apply accepts appends the layout events it returns, in that order with consecutive seq values and their ids; a refused op appends nothing.",
+      "method": "layout.apply"
+    }
+  ]
+}

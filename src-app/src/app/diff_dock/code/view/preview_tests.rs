@@ -12,6 +12,10 @@ use crate::app::diff_dock::preview::large_text::{
 };
 use crate::app::diff_dock::preview::table::{SHOW_SOURCE, SHOW_TABLE};
 
+fn display(cx: &mut VisualTestContext) -> super::super::controls::EditorDisplay {
+    cx.update(|_, cx| super::super::controls::editor_display(cx))
+}
+
 struct Opened<'a> {
     _dir: tempfile::TempDir,
     path: PathBuf,
@@ -443,7 +447,6 @@ fn a_text_file_past_the_viewer_limit_lands_on_the_no_preview_screen(cx: &mut Tes
 
 #[gpui::test]
 fn markdown_opens_as_source_and_renders_the_unsaved_text_on_toggle(cx: &mut TestAppContext) {
-    let saved = super::super::controls::editor_display();
     let mut opened = open_file(cx, "PLAN.md", b"# Plan\n\nFirst step.\n");
     opened.view.read_with(opened.cx, |view, _| {
         assert!(view.document().is_some());
@@ -476,7 +479,7 @@ fn markdown_opens_as_source_and_renders_the_unsaved_text_on_toggle(cx: &mut Test
         .read_with(opened.cx, |markdown, _| markdown.rendered_text())
         .expect("parsed");
     assert!(text.contains("Unsaved line."), "{text}");
-    assert!(super::super::controls::editor_display().markdown_rendered);
+    assert!(display(opened.cx).markdown_rendered);
     assert!(
         opened
             .events
@@ -491,10 +494,9 @@ fn markdown_opens_as_source_and_renders_the_unsaved_text_on_toggle(cx: &mut Test
         assert!(!view.shows_rendered(), "a requested line shows the source");
     });
     assert!(
-        super::super::controls::editor_display().markdown_rendered,
+        display(opened.cx).markdown_rendered,
         "without changing the preference"
     );
-    super::super::controls::set_editor_display(saved);
     stop_watching(&mut opened);
 }
 
@@ -518,7 +520,6 @@ fn a_markdown_past_the_render_limit_keeps_its_source_and_says_so(cx: &mut TestAp
 
 #[gpui::test]
 fn a_csv_opens_as_a_table_and_toggles_to_its_source(cx: &mut TestAppContext) {
-    let saved = super::super::controls::editor_display();
     let mut opened = open_file(cx, "data.csv", b"name;age\nada;36\nlin;41\n");
     settle(&mut opened);
     let table = opened.view.read_with(opened.cx, |view, _| {
@@ -542,29 +543,26 @@ fn a_csv_opens_as_a_table_and_toggles_to_its_source(cx: &mut TestAppContext) {
         assert_eq!(view.mode_toggle_label(), Some(SHOW_TABLE));
         assert!(view.shows_text_position());
     });
-    assert!(!super::super::controls::editor_display().csv_table);
-    super::super::controls::set_editor_display(saved);
+    assert!(!display(opened.cx).csv_table);
     stop_watching(&mut opened);
 }
 
 #[gpui::test]
 fn a_csv_past_ten_megabytes_opens_as_large_text(cx: &mut TestAppContext) {
-    let saved = super::super::controls::editor_display();
-    assert!(saved.csv_table, "the table is the default");
     let mut opened = open_file(cx, "big.csv", &large_text(200_000, 63));
+    assert!(display(opened.cx).csv_table, "the table is the default");
     opened.view.update(opened.cx, |view, cx| {
         assert!(matches!(view.preview(), Some(FilePreview::LargeText(_))));
         assert_eq!(view.mode_toggle_label(), Some(SHOW_TABLE));
         view.toggle_rendered(cx);
     });
     assert!(
-        super::super::controls::editor_display().csv_table,
+        display(opened.cx).csv_table,
         "a toggle that cannot show the table leaves the preference alone"
     );
     assert!(opened.events.borrow().contains(&CodeViewEvent::Toast(
         "File too large to show as a table".into()
     )));
-    super::super::controls::set_editor_display(saved);
     stop_watching(&mut opened);
 }
 

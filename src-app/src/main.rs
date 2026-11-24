@@ -32,23 +32,29 @@ mod config_snapshot;
 mod config_writer;
 mod diff;
 mod editor;
-mod env_expand;
+use paneflow_launch::env_expand;
 mod external_open;
 mod file_icons;
 mod fonts;
 mod frame_policy;
 mod fs_probe;
-mod git_command;
+use paneflow_git::command as git_command;
 #[cfg(test)]
-mod git_fixture;
+#[path = "git_command_tests.rs"]
+mod git_command_tests;
+#[cfg(test)]
+use paneflow_git::fixture as git_fixture;
 mod host_bootstrap;
 mod ipc;
 mod ipc_events;
+mod ipc_grants;
+mod ipc_panes;
 mod keybindings;
 mod keys;
 mod launch;
 mod launch_cwd;
 mod layout;
+mod layout_ids;
 mod limits;
 mod login_shell_env;
 mod markdown;
@@ -91,9 +97,8 @@ mod workspace;
 use crate::window_chrome::title_bar;
 
 use gpui::{
-    App, Context, CursorStyle, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    Pixels, Point, Render, Styled, Window, WindowBounds, WindowDecorations, WindowOptions, div,
-    prelude::*, px,
+    App, Context, CursorStyle, Entity, FocusHandle, InteractiveElement, IntoElement, Pixels, Point,
+    Render, Styled, Window, WindowBounds, WindowDecorations, WindowOptions, div, prelude::*, px,
 };
 use gpui_platform::application;
 
@@ -106,7 +111,7 @@ use window_chrome::{PanelCorner, panel_corner_mask};
 pub use app::actions::*;
 pub(crate) use app::bootstrap::warn_if_legacy_run_install;
 pub(crate) use app::constants::{
-    CLOSED_SESSION_GRACE_MS, MAX_CLOSED_PANES, RESIZE_BORDER, SIDEBAR_WIDTH, TOAST_HOLD_MS,
+    CLOSED_SESSION_GRACE_MS, RESIZE_BORDER, SIDEBAR_WIDTH, TOAST_HOLD_MS,
 };
 pub(crate) use app::drag::{TabDrag, WorkspaceDrag, WorkspaceDragPreview};
 #[cfg(target_os = "macos")]
@@ -199,7 +204,7 @@ struct DiffDockState {
 }
 
 struct PaneFlowApp {
-    pending_detached_panes: Vec<paneflow_config::schema::DetachedPaneSession>,
+    pending_detached_panes: Vec<crate::app::detached_panes::persistence::PendingPlacement>,
     workspaces: Vec<Workspace>,
     active_idx: usize,
     active_space: Option<paneflow_config::schema::SpaceId>,
@@ -222,6 +227,7 @@ struct PaneFlowApp {
     session_exit_pending: bool,
     session_save_error_shown: bool,
     cached_config: paneflow_config::schema::PaneFlowConfig,
+    ipc_gates: paneflow_api::Gates,
     app_wake: app::wake::AppWake,
     ipc_status: ipc::IpcStatus,
     event_bus: std::sync::Arc<ipc_events::EventBus>,
@@ -353,7 +359,7 @@ struct PaneFlowApp {
     #[cfg(target_os = "macos")]
     macos_appearance: window_chrome::system_blur::AppliedAppearance,
     jump_cursor: Option<u64>,
-    closed_panes: Vec<crate::app::workspace_ops::ClosedRecord>,
+    layout: crate::app::layout_bridge::LayoutBridge,
     owned_sessions: crate::app::hosted_sessions::OwnedSessions,
     resume_batch: Option<crate::app::hosted_sessions::ResumeBatch>,
     conversation_restore: crate::app::conversation_restore::ConversationRestoreQueue,
@@ -362,6 +368,9 @@ struct PaneFlowApp {
     worktree_remove_dialog: Option<crate::app::worktree_remove::WorktreeRemoveDialog>,
     worktree_remove_focus: FocusHandle,
     host_agents: crate::app::host_agents::HostAgentView,
+    lua_config: crate::app::lua_config::LuaConfigView,
+    prompts: crate::app::prompts::PromptsView,
+    prompt_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     usage: crate::app::usage::UsagePanel,
     write_approvals: crate::app::write_approvals::WriteApprovalView,
     about_dialog: Option<crate::app::about_dialog::AboutDialog>,
@@ -387,6 +396,7 @@ struct PaneFlowApp {
     command_palette_scroll: gpui::UniformListScrollHandle,
     command_palette_scope: Option<crate::app::command_palette::Scope>,
     command_palette_section: Option<crate::app::command_palette::Section>,
+    command_palette_lua_category: Option<String>,
     command_palette_context: crate::app::command_palette::PaletteContext,
     command_palette_restore_focus: Option<FocusHandle>,
     pane_palette: Option<app::pane_palette::PanePaletteState>,

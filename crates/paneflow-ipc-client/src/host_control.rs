@@ -13,6 +13,8 @@ pub const HOST_PROTOCOL_VERSION: u32 = 1;
 
 pub const MAX_CONTROL_FRAME_BYTES: usize = 64 * 1024;
 
+pub const MAX_REPLY_FRAME_BYTES: usize = 1024 * 1024;
+
 pub const REQUEST_DEADLINE: Duration = Duration::from_secs(10);
 
 pub const ENV_HOST_ENDPOINT: &str = "PANEFLOW_HOST_ENDPOINT";
@@ -188,8 +190,9 @@ impl HostControl {
         deadline: Duration,
     ) -> Result<Self, ControlConnectError> {
         let started = std::time::Instant::now();
-        let wire = Wire::connect_with_timeout(endpoint, MAX_CONTROL_FRAME_BYTES, deadline)
+        let mut wire = Wire::connect_with_timeout(endpoint, MAX_CONTROL_FRAME_BYTES, deadline)
             .map_err(ControlConnectError::Transport)?;
+        wire.set_max_frame(MAX_REPLY_FRAME_BYTES);
         let mut control = Self {
             wire,
             next_id: 1,
@@ -211,14 +214,14 @@ impl HostControl {
         window: Duration,
     ) -> Result<Self, ControlProbeError> {
         let started = std::time::Instant::now();
-        let wire = Wire::connect_with_timeout(endpoint, MAX_CONTROL_FRAME_BYTES, window).map_err(
-            |error| match error.kind() {
+        let mut wire = Wire::connect_with_timeout(endpoint, MAX_CONTROL_FRAME_BYTES, window)
+            .map_err(|error| match error.kind() {
                 io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused => {
                     ControlProbeError::Absent(error)
                 }
                 _ => probe_io_failure(&format!("connecting to {}", endpoint.display()), error),
-            },
-        )?;
+            })?;
+        wire.set_max_frame(MAX_REPLY_FRAME_BYTES);
         let mut control = Self {
             wire,
             next_id: 1,
@@ -274,6 +277,10 @@ impl HostControl {
 
     pub fn identity(&self) -> &Value {
         &self.identity
+    }
+
+    pub fn set_max_frame(&mut self, max_frame: usize) {
+        self.wire.set_max_frame(max_frame);
     }
 
     pub fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {

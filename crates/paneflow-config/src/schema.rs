@@ -1,15 +1,21 @@
+mod agent_grants;
 mod agent_panel;
+mod agent_sandbox;
 mod config;
 mod identity;
+mod ipc;
 mod language_servers;
 mod layout;
 mod session;
 mod space;
 mod terminal;
 
+pub use agent_grants::*;
 pub use agent_panel::*;
+pub use agent_sandbox::*;
 pub use config::*;
 pub use identity::*;
+pub use ipc::*;
 pub use language_servers::*;
 pub use layout::*;
 pub use session::*;
@@ -129,7 +135,9 @@ mod tests {
             claude_code_bypass_permissions: Some(false),
             ai_unrestricted: Some(true),
             ai_injection_fence: Some(false),
+            ipc: None,
             on_quit: Some(OnQuit::Stop),
+            agent_prompts: Some(AgentPrompts::Paneflow),
             agent_button_visibility: [
                 "claude_code_button_visible",
                 "codex_button_visible",
@@ -179,6 +187,7 @@ mod tests {
                     "claude-code".to_string(),
                     "~/.claude-work".to_string(),
                 )]),
+                profiles: BTreeMap::new(),
             }),
             usage: Some(UsageConfig {
                 plan_limits: Some(true),

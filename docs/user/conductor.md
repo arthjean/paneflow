@@ -75,7 +75,7 @@ paneflow send reviewer "Run the focused test and report only failures." --submit
 paneflow send reviewer "Write the final report to this path." --report-file /tmp/paneflow-review.md --submit
 ```
 
-Use plain `send` when a human should review the prompt before submission. Use `--submit` only when the Paneflow process was started with `PANEFLOW_IPC_SCRIPTING=1` or when AI free access mode explicitly permits it.
+Use plain `send` when a human should review the prompt before submission. Use `--submit` only when `paneflow.json` sets `"ipc": {"scripting": true}` or when AI free access mode explicitly permits it.
 
 `--report-file` appends report instructions to the prompt and gives full-screen agents a reliable out-of-band path for long results. It is intentionally unavailable with broadcast sends.
 

@@ -1,4 +1,4 @@
-mod persistence;
+pub(crate) mod persistence;
 mod window;
 
 use gpui::{
@@ -34,12 +34,12 @@ impl PaneFlowApp {
                     pane.detached = None;
                     cx.notify();
                 });
+                self.set_detached_through_model(&pane, false, cx);
                 changed = true;
             }
         }
         if changed {
-            self.cancel_pane_layout_resize();
-            self.save_session(cx);
+            self.cancel_divider_drags(cx);
             cx.notify();
         }
     }
@@ -81,30 +81,10 @@ impl PaneFlowApp {
             .any(|ws| ws.tab_for_pane(pane).is_some())
     }
 
-    fn cancel_pane_layout_resize(&self) {
-        for ws in &self.workspaces {
-            for tab in ws.tabs() {
-                for root in [tab.root.as_ref(), tab.saved_layout.as_ref()]
-                    .into_iter()
-                    .flatten()
-                {
-                    root.cancel_resize();
-                }
-            }
-        }
-    }
-
     fn prepare_pane_transfer(&mut self, pane: &Entity<Pane>, cx: &mut Context<Self>) {
-        self.cancel_pane_layout_resize();
+        self.cancel_divider_drags(cx);
         self.dismiss_transient_surfaces();
-        for ws in &mut self.workspaces {
-            if let Some(tab_idx) = ws.tab_index_containing_pane(pane)
-                && let Some(tab) = ws.tab_mut(tab_idx)
-            {
-                tab.exit_zoom(cx);
-                break;
-            }
-        }
+        self.exit_pane_zoom_through_model(pane, cx);
         pane.update(cx, |pane, cx| {
             pane.zoomed = false;
             pane.reveal_active_surface();
@@ -124,6 +104,7 @@ impl PaneFlowApp {
             pane.detached = None;
             cx.notify();
         });
+        self.set_detached_through_model(pane, false, cx);
         if self.owns_pane(pane) {
             self.settings_section = None;
             if let Some((ws_idx, tab_idx)) = self
@@ -133,7 +114,7 @@ impl PaneFlowApp {
                 .find_map(|(idx, ws)| ws.tab_index_containing_pane(pane).map(|tab| (idx, tab)))
             {
                 self.activate_workspace_without_window(ws_idx, cx);
-                self.workspaces[ws_idx].set_active_tab(tab_idx);
+                self.select_tab_through_model(ws_idx, tab_idx, cx);
             }
             self.pending_pane_focus = Some(pane.clone());
         }
@@ -153,7 +134,6 @@ impl PaneFlowApp {
                 }
             }
         });
-        self.save_session(cx);
         cx.notify();
     }
 

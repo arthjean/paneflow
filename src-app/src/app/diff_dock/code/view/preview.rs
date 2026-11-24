@@ -48,8 +48,8 @@ impl RenderedViews {
     }
 }
 
-pub(super) fn rendered_by_default(kind: PreviewKind) -> bool {
-    let display = super::super::controls::editor_display();
+pub(super) fn rendered_by_default(kind: PreviewKind, cx: &gpui::App) -> bool {
+    let display = super::super::controls::editor_display(cx);
     match kind {
         PreviewKind::Markdown => display.markdown_rendered,
         PreviewKind::Table(_) => display.csv_table,
@@ -265,13 +265,13 @@ impl CodeView {
             return;
         }
         self.rendered = want;
-        let mut display = super::super::controls::editor_display();
+        let mut display = super::super::controls::editor_display(cx);
         match self.kind {
             PreviewKind::Markdown => display.markdown_rendered = want,
             PreviewKind::Table(_) => display.csv_table = want,
             _ => return,
         }
-        super::super::controls::set_editor_display(display);
+        super::super::controls::set_editor_display(display, cx);
         cx.emit(CodeViewEvent::DisplayChanged(display));
         cx.notify();
     }

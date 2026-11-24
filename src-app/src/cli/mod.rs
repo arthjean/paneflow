@@ -3,11 +3,18 @@ use paneflow_ipc_client::host_control::{ControlTarget, HostTransport, resolve_co
 use paneflow_ipc_client::{IpcClient, IpcTransport};
 use serde_json::Value;
 
+pub(crate) mod api_cmd;
+mod config_cmd;
 mod control_cmds;
+mod do_cmd;
+mod events_cmd;
 mod flow_cmd;
 mod flow_spec;
+mod grants_cmd;
+mod headless;
 mod host_cmd;
 mod read_cmds;
+pub(crate) mod router;
 mod selector;
 mod send_cmd;
 mod serve_cmd;
@@ -25,6 +32,11 @@ pub const EXIT_TARGET: i32 = 3;
 pub const EXIT_TIMEOUT: i32 = 4;
 
 const VERBS: &[&str] = &[
+    "api",
+    "do",
+    "actions",
+    "config",
+    "grants",
     "ls",
     "read",
     "search",
@@ -43,6 +55,7 @@ const VERBS: &[&str] = &[
     "host",
     "serve",
     "sessions",
+    "events",
     "agent",
     "list_panes",
     "read_pane",
@@ -181,6 +194,34 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    #[command(
+        subcommand,
+        about = "List, describe and call every Paneflow method on the process that owns it"
+    )]
+    Api(api_cmd::ApiCommand),
+    #[command(
+        about = "Run a Lua script against Paneflow: a file, -e '<chunk>' or - for stdin",
+        long_about = "Run a Lua 5.4 script in this process against Paneflow. The script reaches every method as paneflow.<namespace>.<method>{...}, reacts to events with paneflow.on and paneflow.wait, sets timers with paneflow.after and paneflow.every, and runs programs with paneflow.exec.\n\nkey=value pairs after the script fill paneflow.args, typed by spelling (n=2 is a number, on=true a boolean). A returned value is printed as one line of JSON. An error prints `Error: <message>` and exits 1; paneflow.stop(n) exits n; Ctrl-C exits 130.\n\nExamples:\n  paneflow do ./split.lua\n  paneflow do -e 'return paneflow.surface.list()'\n  echo 'return paneflow.args.n * 2' | paneflow do - n=21"
+    )]
+    Do(do_cmd::DoArgs),
+    #[command(
+        about = "List the actions init.lua declares, as the worker loaded them",
+        long_about = "List the actions init.lua declares, as the worker loaded them: name, title, category and where each is declared. Run one with `paneflow do <name> key=value`.\n\nExamples:\n  paneflow actions\n  paneflow actions --json"
+    )]
+    Actions {
+        #[arg(long, help = "Print the action.list result as JSON")]
+        json: bool,
+    },
+    #[command(
+        subcommand,
+        about = "Reload or check init.lua, the Lua configuration the worker runs"
+    )]
+    Config(config_cmd::ConfigCommand),
+    #[command(
+        subcommand,
+        about = "List or revoke the grants agents in panes hold over Paneflow"
+    )]
+    Grants(grants_cmd::GrantsCommand),
     #[command(alias = "list_panes", about = "List terminal surfaces")]
     Ls {
         #[arg(long, help = "Human-readable table instead of the default JSON")]
@@ -414,6 +455,31 @@ enum Commands {
         #[arg(long, help = "Emit JSON lines instead of a human table")]
         json: bool,
     },
+    #[command(
+        about = "Follow the worker's numbered event log: one line per event with its seq, type and ids, reconnecting across a worker restart"
+    )]
+    Events {
+        #[arg(long, help = "Print one JSON object per event instead of a line")]
+        json: bool,
+        #[arg(
+            long,
+            value_name = "TYPES",
+            help = "Only these event types, comma-separated: exact names or a family such as terminal.*"
+        )]
+        types: Vec<String>,
+        #[arg(
+            long,
+            value_name = "SEQ",
+            help = "Replay the events after this seq first"
+        )]
+        since: Option<u64>,
+        #[arg(
+            long,
+            value_name = "ID",
+            help = "Only events about this layout workspace id"
+        )]
+        workspace_id: Option<u64>,
+    },
     #[command(about = "Stream lifecycle events from the running instance as JSONL (EP-002)")]
     Watch {
         #[arg(
@@ -515,6 +581,50 @@ pub fn run() -> i32 {
         return EXIT_OK;
     };
 
+    if let Commands::Api(command) = command {
+        return match api_cmd::run(command) {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("paneflow: {}", e.message);
+                e.code
+            }
+        };
+    }
+
+    if let Commands::Do(args) = command {
+        return do_cmd::run(args);
+    }
+
+    if let Commands::Actions { json } = command {
+        return match config_cmd::actions(json) {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("paneflow: {}", e.message);
+                e.code
+            }
+        };
+    }
+
+    if let Commands::Config(command) = command {
+        return match config_cmd::run(command) {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("paneflow: {}", e.message);
+                e.code
+            }
+        };
+    }
+
+    if let Commands::Grants(command) = command {
+        return match grants_cmd::run(command) {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("paneflow: {}", e.message);
+                e.code
+            }
+        };
+    }
+
     if let Commands::Host(command) = command {
         return match host_cmd::run(command) {
             Ok(code) => code,
@@ -527,6 +637,22 @@ pub fn run() -> i32 {
 
     if let Commands::Serve(command) = command {
         return match serve_cmd::run(command) {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("paneflow: {}", e.message);
+                e.code
+            }
+        };
+    }
+
+    if let Commands::Events {
+        json,
+        types,
+        since,
+        workspace_id,
+    } = command
+    {
+        return match events_cmd::run(&types, since, workspace_id, json) {
             Ok(code) => code,
             Err(e) => {
                 eprintln!("paneflow: {}", e.message);
@@ -588,15 +714,99 @@ impl CliTransport {
     }
 }
 
+fn worker_owned(method: &str) -> bool {
+    paneflow_api::catalog().ok().is_some_and(|catalog| {
+        catalog
+            .get(method)
+            .is_some_and(|descriptor| descriptor.spec.owner == paneflow_api::Owner::Worker)
+    })
+}
+
+fn worker_lacks(error: &str, method: &str) -> bool {
+    error.ends_with(&format!("method not handled by the worker: {method}"))
+}
+
+const PANE_ENDPOINT_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+fn worker_endpoint_for(
+    home: &std::path::Path,
+    pane_endpoint: Option<&std::ffi::OsStr>,
+) -> (std::path::PathBuf, bool) {
+    match paneflow_home::pane_endpoint_from(home, paneflow_home::PaneServer::Worker, pane_endpoint)
+    {
+        Some(endpoint) => (endpoint, true),
+        None => (paneflow_home::serve_endpoint_path(home), false),
+    }
+}
+
+fn wait_for_pane_endpoint(endpoint: &std::path::Path) {
+    use paneflow_ipc_client::host_control::{HostControl, REQUEST_DEADLINE};
+    let deadline = std::time::Instant::now() + PANE_ENDPOINT_WAIT;
+    while std::time::Instant::now() < deadline
+        && HostControl::open(endpoint, CLIENT_NAME, REQUEST_DEADLINE).is_err()
+    {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+fn worker_call(method: &str, params: Value) -> Result<Value, String> {
+    use paneflow_ipc_client::host_control::{HostControl, REQUEST_DEADLINE};
+    let home = paneflow_home::paneflow_home()
+        .ok_or("cannot resolve the Paneflow state home; set PANEFLOW_HOME")?;
+    let (endpoint, sandboxed) = worker_endpoint_for(
+        &home,
+        std::env::var_os(paneflow_home::PANE_SERVE_ENDPOINT_ENV).as_deref(),
+    );
+    let unreachable = |reason: String| {
+        format!("{method} is served by the Paneflow worker, which is not reachable: {reason}")
+    };
+    if sandboxed {
+        wait_for_pane_endpoint(&endpoint);
+    } else if HostControl::open(&endpoint, CLIENT_NAME, REQUEST_DEADLINE).is_err() {
+        let controller = std::env::current_exe().map_err(|error| {
+            unreachable(format!("cannot locate the paneflow executable: {error}"))
+        })?;
+        paneflow_serve::ensure_worker_running(&home, &controller)
+            .map_err(|error| unreachable(error.to_string()))?;
+    }
+    let mut control = HostControl::open(&endpoint, CLIENT_NAME, REQUEST_DEADLINE)
+        .map_err(|error| unreachable(format!("{} ({error:?})", endpoint.display())))?;
+    control.request_with_deadline(
+        method,
+        params,
+        paneflow_api::methods::config::reply_deadline(method, REQUEST_DEADLINE),
+    )
+}
+
 impl IpcTransport for CliTransport {
     fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+        if worker_owned(method) {
+            let answer = match (worker_call(method, params.clone()), self) {
+                (Err(error), Self::Controller(client)) if worker_lacks(&error, method) => {
+                    client.call(method, params)
+                }
+                (answer, _) => answer,
+            };
+            return answer.map(|result| worker_state::with_worker_state(method, result));
+        }
         match self {
             Self::Controller(client) => client
                 .call(method, params)
                 .map(|result| worker_state::with_worker_state(method, result)),
-            Self::Host(transport) => transport
-                .call(method, params)
-                .map(|result| worker_state::with_worker_state(method, result)),
+            Self::Host(transport) => {
+                let layout = headless::current_worker_layout();
+                let params = match &layout {
+                    Some(layout) => headless::name_sessions(params, layout),
+                    None => params,
+                };
+                transport
+                    .call(method, params)
+                    .map(|result| match (&layout, method) {
+                        (Some(layout), "surface.list") => headless::with_layout_ids(result, layout),
+                        _ => result,
+                    })
+                    .map(|result| worker_state::with_worker_state(method, result))
+            }
         }
     }
 }
@@ -727,6 +937,11 @@ fn dispatch(command: Commands, client: &CliTransport) -> Result<i32, CliError> {
             }
             None => Err(CliTransport::no_controller("paneflow watch")),
         },
+        Commands::Api(command) => api_cmd::run(command),
+        Commands::Do(args) => Ok(do_cmd::run(args)),
+        Commands::Actions { json } => config_cmd::actions(json),
+        Commands::Config(command) => config_cmd::run(command),
+        Commands::Grants(command) => grants_cmd::run(command),
         Commands::Host(command) => host_cmd::run(command),
         Commands::Serve(command) => serve_cmd::run(command),
         Commands::Sessions {
@@ -734,6 +949,12 @@ fn dispatch(command: Commands, client: &CliTransport) -> Result<i32, CliError> {
             follow,
             json,
         } => sessions_cmd::run(command, follow, json),
+        Commands::Events {
+            json,
+            types,
+            since,
+            workspace_id,
+        } => events_cmd::run(&types, since, workspace_id, json),
     }
 }
 
@@ -754,6 +975,45 @@ pub(super) fn reject_legacy_error(result: Value) -> Result<Value, CliError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_worker_owned_call_from_a_sandboxed_pane_goes_to_the_pane_endpoint() {
+        let home = std::path::Path::new("/home/someone/.paneflow-dev");
+        let pane = paneflow_home::pane_endpoint_path(
+            home,
+            "0b5f3c1e-7d1a-4f0e-9a4b-2c8d6e1f3a5b",
+            paneflow_home::PaneServer::Worker,
+        );
+        assert_eq!(
+            worker_endpoint_for(home, Some(pane.as_os_str())),
+            (pane, true)
+        );
+        let shared = paneflow_home::serve_endpoint_path(home);
+        assert_eq!(worker_endpoint_for(home, None), (shared.clone(), false));
+        assert_eq!(
+            worker_endpoint_for(home, Some("/run/user/1000/elsewhere.sock".as_ref())),
+            (shared, false),
+            "a path outside the home's panes directory is not a pane endpoint"
+        );
+    }
+
+    #[test]
+    fn only_a_worker_that_lacks_the_method_sends_the_call_to_the_window() {
+        assert!(worker_lacks(
+            "paneflow error -32601: method not handled by the worker: surface.split",
+            "surface.split"
+        ));
+        assert!(!worker_lacks(
+            "paneflow error -32601: method not handled by the worker: surface.split",
+            "workspace.up"
+        ));
+        assert!(!worker_lacks(
+            "paneflow error -32601: surface.split orchestration disabled; set PANEFLOW_IPC_ORCHESTRATION=1 \
+             or PANEFLOW_IPC_SCRIPTING=1 to enable command, prompt, or env",
+            "surface.split"
+        ));
+    }
 
     #[test]
     fn global_help_lists_every_verb() {

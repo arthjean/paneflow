@@ -179,13 +179,8 @@ impl PaneFlowApp {
         if let Some(session) = self.workspaces[ws_idx].agent_sessions.get_mut(&session_key) {
             session.pending_tab_title = None;
         }
-        let named = surfaces == 1
-            && self.workspaces[ws_idx]
-                .tab_mut(tab_idx)
-                .is_some_and(|tab| tab.set_title(&title, TabTitleSource::Prompt));
-        if named {
-            self.save_session(cx);
-            cx.notify();
+        if surfaces == 1 {
+            self.retitle_tab_through_model(ws_idx, tab_idx, &title, TabTitleSource::Prompt, cx);
         }
     }
 
@@ -214,9 +209,7 @@ impl PaneFlowApp {
         };
         match method {
             METHOD_SESSION_START => {
-                if let Some(terminal) =
-                    find_terminal_by_surface_id(&self.workspaces, surface_id, cx)
-                {
+                if let Some(terminal) = self.terminal_for_surface(surface_id) {
                     terminal.update(cx, |view, cx| {
                         view.declare_agent(tool);
                         cx.notify();
@@ -324,13 +317,8 @@ impl PaneFlowApp {
         else {
             return;
         };
-        if surfaces == 1
-            && self.workspaces[ws_idx]
-                .tab_mut(tab_idx)
-                .is_some_and(|tab| tab.set_title(title, TabTitleSource::Generated))
-        {
-            self.save_session(cx);
-            cx.notify();
+        if surfaces == 1 {
+            self.retitle_tab_through_model(ws_idx, tab_idx, title, TabTitleSource::Generated, cx);
         }
     }
 
@@ -362,7 +350,7 @@ impl PaneFlowApp {
                 let sid = pane
                     .read(cx)
                     .active_terminal_opt()
-                    .map(|t| t.entity_id().as_u64());
+                    .map(|t| t.read(cx).surface_id());
                 let attention = sid.is_some_and(|sid| waiting.contains(&sid));
                 let is_errored = sid.is_some_and(|sid| errored.contains(&sid));
                 pane.update(cx, |p, cx| {

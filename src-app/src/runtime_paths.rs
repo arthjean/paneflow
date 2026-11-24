@@ -200,14 +200,7 @@ fn check_sun_path_fits(path: &std::path::Path) -> bool {
     }
 }
 
-pub fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
-    let stripped = path.to_str().and_then(|s| {
-        s.strip_prefix(r"\\?\UNC\")
-            .map(|rest| PathBuf::from(format!(r"\\{rest}")))
-            .or_else(|| s.strip_prefix(r"\\?\").map(PathBuf::from))
-    });
-    stripped.unwrap_or(path)
-}
+pub use paneflow_launch::cwd::strip_verbatim_prefix;
 
 #[cfg(unix)]
 pub fn path_to_raw(path: &Path) -> Vec<u8> {

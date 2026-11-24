@@ -2,7 +2,7 @@ pub(crate) mod git;
 mod ports;
 pub mod surface_naming;
 mod tab;
-pub mod worktree;
+pub use paneflow_git::worktree;
 
 pub use git::{
     GitDiffStats, GitLocation, detect_branch, find_git_dir, resolve_repo_root,
@@ -23,10 +23,13 @@ use crate::launch_cwd;
 use crate::layout::LayoutTree;
 use crate::pane::Pane;
 
-static NEXT_WORKSPACE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-
 fn next_workspace_id() -> u64 {
-    NEXT_WORKSPACE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    crate::layout_ids::allocate()
+}
+
+pub fn restored_workspace_id_in(id: u64, space: Option<&paneflow_config::schema::SpaceId>) -> u64 {
+    record_workspace_space(id, space);
+    id
 }
 
 pub fn next_workspace_id_in(space: Option<&paneflow_config::schema::SpaceId>) -> u64 {
@@ -299,6 +302,18 @@ impl Workspace {
         &mut self.tabs
     }
 
+    pub(crate) fn take_tabs(&mut self) -> Vec<Tab> {
+        std::mem::take(&mut self.tabs)
+    }
+
+    pub(crate) fn project_tabs(&mut self, tabs: Vec<Tab>, active: usize) {
+        self.tabs = tabs;
+        if self.tabs.is_empty() {
+            self.tabs.push(Tab::empty());
+        }
+        self.active_tab_idx = active.min(self.tabs.len() - 1);
+    }
+
     pub fn tab_count(&self) -> usize {
         self.tabs.len()
     }
@@ -319,10 +334,7 @@ impl Workspace {
         &mut self.tabs[idx]
     }
 
-    pub fn tab_mut(&mut self, idx: usize) -> Option<&mut Tab> {
-        self.tabs.get_mut(idx)
-    }
-
+    #[cfg(test)]
     pub fn set_active_tab(&mut self, idx: usize) {
         if idx < self.tabs.len() {
             self.active_tab_idx = idx;
@@ -340,6 +352,7 @@ impl Workspace {
         }
     }
 
+    #[cfg(test)]
     pub fn open_tab(&mut self, tab: Tab) -> bool {
         if self.is_empty_shell() {
             self.tabs[0] = tab;
@@ -362,6 +375,7 @@ impl Workspace {
         self.tabs.len() < MAX_TABS_PER_WORKSPACE
     }
 
+    #[cfg(test)]
     pub fn reorder_tab(&mut self, from: usize, to: usize) {
         if from >= self.tabs.len() || to > self.tabs.len() || from == to {
             return;
@@ -375,6 +389,7 @@ impl Workspace {
         }
     }
 
+    #[cfg(test)]
     pub fn close_tab(&mut self, idx: usize) -> Option<Tab> {
         if idx >= self.tabs.len() {
             return None;
@@ -395,10 +410,6 @@ impl Workspace {
         self.active_tab().is_zoomed()
     }
 
-    pub fn exit_zoom(&mut self, cx: &mut App) -> Option<Entity<Pane>> {
-        self.active_tab_mut().exit_zoom(cx)
-    }
-
     pub fn pane_count(&self) -> usize {
         self.tabs.iter().map(Tab::pane_count).sum()
     }
@@ -417,15 +428,6 @@ impl Workspace {
             }
         }
         panes
-    }
-
-    pub fn reveal_pane(&mut self, pane: &Entity<Pane>, cx: &mut App) -> bool {
-        let Some(tab_idx) = self.tab_index_containing_pane(pane) else {
-            return false;
-        };
-        self.set_active_tab(tab_idx);
-        self.active_tab_mut().reveal_pane(pane, cx);
-        true
     }
 
     pub fn focus_first(&self, window: &mut Window, cx: &mut App) {
@@ -452,6 +454,7 @@ impl Workspace {
         self.tabs
             .iter()
             .map(|tab| TabSession {
+                layout_ids: None,
                 title: tab.title().to_string(),
                 title_source: Some(tab.title_source()),
                 layout: tab.serialize_without_scrollback(cx),
@@ -553,11 +556,15 @@ mod tests {
         zoomed: &gpui::Entity<crate::pane::Pane>,
         hidden: &gpui::Entity<crate::pane::Pane>,
     ) -> Tab {
-        let mut tab = Tab::new("zoomed", Some(LayoutTree::Leaf(zoomed.clone())));
-        let mut saved = LayoutTree::Leaf(zoomed.clone());
-        saved.split_first_leaf(crate::layout::SplitDirection::Horizontal, hidden.clone());
-        tab.saved_layout = Some(saved);
-        tab
+        Tab::zoomed_for_test(
+            "zoomed",
+            zoomed.clone(),
+            LayoutTree::new_split(
+                crate::layout::SplitDirection::Horizontal,
+                LayoutTree::Leaf(zoomed.clone()),
+                LayoutTree::Leaf(hidden.clone()),
+            ),
+        )
     }
 
     #[gpui::test]
@@ -586,43 +593,6 @@ mod tests {
         assert_eq!(
             super::panes_across(&[first, second]),
             vec![active, zoomed, hidden, other]
-        );
-    }
-
-    #[gpui::test]
-    fn revealing_a_pane_activates_its_tab_and_leaves_zoom_only_when_hidden(
-        cx: &mut TestAppContext,
-    ) {
-        let cx = cx.add_empty_window();
-        let (active, zoomed, hidden, stranger) =
-            (test_pane(cx), test_pane(cx), test_pane(cx), test_pane(cx));
-        let mut ws = Workspace::restored_with_id(
-            1,
-            "ws",
-            std::path::PathBuf::new(),
-            vec![
-                Tab::new("active", Some(LayoutTree::Leaf(active.clone()))),
-                zoomed_tab(&zoomed, &hidden),
-            ],
-            0,
-        );
-
-        assert!(!cx.update(|_, cx| ws.reveal_pane(&stranger, cx)));
-        assert_eq!(ws.active_tab_idx(), 0);
-
-        assert!(cx.update(|_, cx| ws.reveal_pane(&zoomed, cx)));
-        assert_eq!(ws.active_tab_idx(), 1);
-        assert!(ws.is_zoomed(), "the visible zoomed pane keeps the zoom");
-
-        ws.set_active_tab(0);
-        assert!(cx.update(|_, cx| ws.reveal_pane(&hidden, cx)));
-        assert_eq!(ws.active_tab_idx(), 1);
-        assert!(!ws.is_zoomed());
-        assert!(
-            ws.active_tab()
-                .root
-                .as_ref()
-                .is_some_and(|root| root.contains_leaf(&hidden))
         );
     }
 
@@ -746,9 +716,7 @@ mod tests {
         let pane = ws.active_tab().root.as_ref().unwrap().first_leaf().unwrap();
         let first_tab = ws.active_tab_idx();
 
-        let full = ws.active_tab_mut().root.take().unwrap();
-        ws.active_tab_mut().saved_layout = Some(full);
-        ws.active_tab_mut().root = Some(LayoutTree::Leaf(pane));
+        *ws.active_tab_mut() = Tab::zoomed_for_test("", pane.clone(), LayoutTree::Leaf(pane));
         assert!(ws.is_zoomed());
 
         assert!(ws.open_tab(Tab::new("second", None)));

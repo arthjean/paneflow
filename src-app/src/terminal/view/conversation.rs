@@ -752,6 +752,19 @@ impl TerminalView {
             return;
         };
         let config = crate::config_snapshot::current(cx);
+        let wants_sandbox = crate::agent_launcher::AgentLaunch::Builtin(agent).sandbox(&config);
+        let sandboxed = crate::ipc_panes::is_sandboxed(self.terminal.session_id.as_str());
+        if !matches!(wants_sandbox, Ok(None)) && !sandboxed {
+            let reason = match wants_sandbox {
+                Err(reason) => reason,
+                _ => format!(
+                    "{} runs only in a sandboxed pane; open it from the new pane menu",
+                    agent.display_name()
+                ),
+            };
+            cx.emit(TerminalEvent::Notice(reason));
+            return;
+        }
         let command = agent.launch_command(&config);
         self.terminal
             .write_to_pty(resume_input(self.terminal.shell_quoting, &command));

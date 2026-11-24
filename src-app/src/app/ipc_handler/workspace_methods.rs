@@ -50,9 +50,26 @@ pub(crate) struct WorkspaceUpRequest {
     planned: Vec<PlannedPane>,
     managed_worktrees: Vec<crate::workspace::worktree::ManagedWorktree>,
     pane_worktrees: Vec<Option<String>>,
+    worktree_requests: Vec<Option<paneflow_git::worktree_plan::Request>>,
 }
 
 impl WorkspaceUpRequest {
+    fn prepare_worktrees(
+        mut self,
+    ) -> Result<(Self, super::worktree_requests::Prepared), JsonRpcError> {
+        let requests = std::mem::take(&mut self.worktree_requests);
+        let mut prepared = super::worktree_requests::prepare(requests)?;
+        for (i, slot) in prepared.worktrees.iter_mut().enumerate() {
+            let Some((plan, managed)) = slot.take() else {
+                continue;
+            };
+            self.planned[i].cwd = Some(plan.path.clone());
+            self.pane_worktrees[i] = Some(plan.path.to_string_lossy().into_owned());
+            self.managed_worktrees.push(managed);
+        }
+        Ok((self, prepared))
+    }
+
     fn resolve_cwds(mut self) -> Result<Self, JsonRpcError> {
         for (i, pane) in self.planned.iter_mut().enumerate() {
             if let Some(raw) = pane.cwd.take() {
@@ -69,6 +86,7 @@ impl WorkspaceUpRequest {
 
 pub(crate) fn workspace_up_request(
     params: &serde_json::Value,
+    gates: paneflow_api::Gates,
 ) -> Result<WorkspaceUpRequest, JsonRpcError> {
     let name = opt_str(params, "name")?.unwrap_or("Workspace").to_string();
     let space = opt_str(params, "space")?.map(str::to_string);
@@ -89,7 +107,19 @@ pub(crate) fn workspace_up_request(
     let mut managed_worktrees: Vec<crate::workspace::worktree::ManagedWorktree> = Vec::new();
     let mut pane_worktrees: Vec<Option<String>> = Vec::with_capacity(pane_specs.len());
     let mut planned: Vec<PlannedPane> = Vec::with_capacity(pane_specs.len());
+    let mut worktree_requests = Vec::with_capacity(pane_specs.len());
     for (i, spec) in pane_specs.iter().enumerate() {
+        let request = super::worktree_requests::parse(
+            spec.get("worktree"),
+            spec.get("cwd").and_then(serde_json::Value::as_str),
+        )
+        .map_err(|err| JsonRpcError::invalid_params(format!("pane {i}: {}", err.message)))?;
+        if request.is_some() && spec.get("managed_worktree").is_some_and(|v| !v.is_null()) {
+            return Err(JsonRpcError::invalid_params(format!(
+                "pane {i}: worktree and managed_worktree are exclusive"
+            )));
+        }
+        worktree_requests.push(request);
         match parse_managed_worktree(spec.get("managed_worktree")) {
             Some(mw) => {
                 pane_worktrees.push(Some(mw.path.to_string_lossy().into_owned()));
@@ -97,12 +127,22 @@ pub(crate) fn workspace_up_request(
             }
             None => pane_worktrees.push(None),
         }
-        let plan = parse_workspace_pane_plan(spec)
+        let mut plan = parse_workspace_pane_plan(spec)
             .map_err(|err| JsonRpcError::invalid_params(format!("pane {i}: {}", err.message)))?;
+        if worktree_requests[i].is_some() {
+            plan.cwd = None;
+        }
         planned.push(plan);
     }
-    if pane_specs.iter().any(pane_spec_requires_orchestration) && !ipc_orchestration_enabled() {
-        return Err(orchestration_disabled_error("workspace.up"));
+    let spec = paneflow_api::methods::workspace::Up::SPEC;
+    let setup_runs = worktree_requests
+        .iter()
+        .flatten()
+        .any(super::worktree_requests::runs_setup);
+    if (setup_runs || pane_specs.iter().any(pane_spec_requires_orchestration))
+        && !spawn_gate_open(&spec, gates)
+    {
+        return Err(spawn_gate_refusal(&spec, gates));
     }
     dedupe_planned_pane_labels(&mut planned);
     Ok(WorkspaceUpRequest {
@@ -112,6 +152,7 @@ pub(crate) fn workspace_up_request(
         planned,
         managed_worktrees,
         pane_worktrees,
+        worktree_requests,
     })
 }
 
@@ -124,13 +165,16 @@ pub(crate) struct WorkspaceCreateRequest {
 
 pub(crate) fn workspace_create_request(
     params: &serde_json::Value,
+    gates: paneflow_api::Gates,
 ) -> Result<WorkspaceCreateRequest, JsonRpcError> {
     let name = opt_str(params, "name")?.unwrap_or("Terminal").to_string();
     let space = opt_str(params, "space")?.map(str::to_string);
     let cwd = opt_str(params, "cwd")?.map(str::to_string);
     let layout = parse_layout_param(params)?;
-    if layout.as_ref().is_some_and(layout_requires_orchestration) && !ipc_orchestration_enabled() {
-        return Err(orchestration_disabled_error("workspace.create"));
+    let spec = paneflow_api::methods::workspace::Create::SPEC;
+    if layout.as_ref().is_some_and(layout_requires_orchestration) && !spawn_gate_open(&spec, gates)
+    {
+        return Err(spawn_gate_refusal(&spec, gates));
     }
     Ok(WorkspaceCreateRequest {
         name,
@@ -321,19 +365,38 @@ impl PaneFlowApp {
         params: &serde_json::Value,
         cx: &mut Context<Self>,
     ) -> IpcReply {
-        let request = match workspace_up_request(params) {
+        let request = match workspace_up_request(params, self.ipc_gates) {
             Ok(request) => request,
             Err(error) => return IpcReply::Ready(error.into_value()),
         };
         IpcReply::Async(cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
+            let (request, prepared) = match smol::unblock(move || request.prepare_worktrees()).await
+            {
+                Ok(prepared) => prepared,
+                Err(error) => return error.into_value(),
+            };
+            let created = prepared.created;
             let request =
                 match probe_off_thread(PATH_PROBE_TIMEOUT, move || request.resolve_cwds()).await {
-                    None => return unresolved_path_error("a pane cwd").into_value(),
-                    Some(Err(error)) => return error.into_value(),
+                    None => {
+                        smol::unblock(move || super::worktree_requests::rollback(created)).await;
+                        return unresolved_path_error("a pane cwd").into_value();
+                    }
+                    Some(Err(error)) => {
+                        smol::unblock(move || super::worktree_requests::rollback(created)).await;
+                        return error.into_value();
+                    }
                     Some(Ok(request)) => request,
                 };
-            this.update(cx, |app, cx| app.finish_workspace_up(request, cx))
-                .unwrap_or_else(|_| app_shutting_down())
+            let mut reply = this
+                .update(cx, |app, cx| app.finish_workspace_up(request, cx))
+                .unwrap_or_else(|_| app_shutting_down());
+            if super::worktree_requests::failed(&reply) {
+                smol::unblock(move || super::worktree_requests::rollback(created)).await;
+            } else if !prepared.notices.is_empty() {
+                reply["notices"] = serde_json::json!(prepared.notices);
+            }
+            reply
         }))
     }
 
@@ -347,7 +410,7 @@ impl PaneFlowApp {
             space,
             cwd,
             layout,
-        } = match workspace_create_request(params) {
+        } = match workspace_create_request(params, self.ipc_gates) {
             Ok(request) => request,
             Err(error) => return IpcReply::Ready(error.into_value()),
         };
@@ -407,31 +470,19 @@ impl PaneFlowApp {
             Workspace::with_id(ws_id, &name, pane)
         };
         Self::spawn_initial_git_stats(ws_id, ws.cwd.clone(), cx);
-        let idx = self.add_workspace_in(ws, space);
+        let idx = self.add_workspace_in(ws, space, cx);
 
         let panes = if let Some(ref mut layout) = layout {
-            let previous_idx = self.active_idx;
-            let previous_space =
-                std::mem::replace(&mut self.active_space, self.workspaces[idx].space.clone());
-            self.active_idx = idx;
-            let applied = self.apply_layout_from_json(layout, cx);
-            let panes = self.workspaces[idx].pane_count();
-            if self.active_space != previous_space {
-                self.active_space = previous_space;
-                self.active_idx = previous_idx;
-            }
-            if let Err(e) = applied {
-                self.workspaces.remove(idx);
-                self.active_idx = previous_idx.min(self.workspaces.len().saturating_sub(1));
+            if let Err(e) = self.apply_layout_to(idx, layout, cx) {
+                self.close_workspace_through_model(idx, false, cx);
                 return JsonRpcError::invalid_params(format!("layout could not be applied: {e}"))
                     .into_value();
             }
-            panes
+            self.workspaces[idx].pane_count()
         } else {
             1
         };
 
-        self.save_session(cx);
         cx.notify();
         serde_json::json!({"index": idx, "title": name, "panes": panes})
     }
@@ -448,6 +499,7 @@ impl PaneFlowApp {
             planned,
             managed_worktrees,
             pane_worktrees,
+            worktree_requests: _,
         } = request;
         let preset = preset.as_str();
         let space = match self.target_space(space.as_deref()) {
@@ -533,7 +585,7 @@ impl PaneFlowApp {
         let mut ws = Workspace::restored_with_id(ws_id, &name, ws_cwd, tabs, active_tab);
         ws.managed_worktrees = managed_worktrees;
         Self::spawn_initial_git_stats(ws_id, ws.cwd.clone(), cx);
-        let idx = self.add_workspace_in(ws, space);
+        let idx = self.add_workspace_in(ws, space, cx);
         self.activate_workspace_without_window(idx, cx);
         if let Some(pane) = requested_focus.and_then(|i| panes.get(i)) {
             self.pending_pane_focus = Some(pane.clone());
@@ -541,7 +593,7 @@ impl PaneFlowApp {
 
         let mut surface_ids: Vec<u64> = Vec::with_capacity(launches.len());
         for (i, (terminal, command, prompt)) in launches.into_iter().enumerate() {
-            surface_ids.push(terminal.entity_id().as_u64());
+            surface_ids.push(terminal.read(cx).surface_id());
             if let Some(cmd) = command.filter(|c| !c.is_empty()) {
                 Self::schedule_launch_command(&terminal, cmd, prompt, i, cx);
             } else if let Some(prompt) = prompt.filter(|p| !p.is_empty()) {
@@ -684,112 +736,114 @@ impl PaneFlowApp {
         Some(false)
     }
 
-    pub(super) fn handle_workspace_method(
+    pub(super) fn workspace_list(
         &mut self,
-        method: &str,
-        params: &serde_json::Value,
+        _call: Call<'_, paneflow_api::methods::NoParams>,
+        _cx: &mut Context<Self>,
+    ) -> serde_json::Value {
+        workspace_list_value(
+            &self.workspaces,
+            self.shown_workspace_idx(),
+            &self.cached_config,
+        )
+    }
+
+    pub(super) fn workspace_current(
+        &mut self,
+        _call: Call<'_, paneflow_api::methods::NoParams>,
         cx: &mut Context<Self>,
     ) -> serde_json::Value {
-        match method {
-            "workspace.list" => workspace_list_value(
-                &self.workspaces,
-                self.shown_workspace_idx(),
-                &self.cached_config,
-            ),
-            "workspace.current" => {
-                if let Some(ws) = self.active_workspace() {
-                    let layout = ws.serialize_layout_without_scrollback(cx);
-                    serde_json::json!({
-                        "index": self.active_idx,
-                        "title": ws.title,
-                        "cwd": ws.cwd,
-                        "panes": ws.pane_count(),
-                        "space": crate::app::spaces::space_json(&self.cached_config, ws.space.as_ref()),
-                        "layout": layout.and_then(|l| serde_json::to_value(l).ok()),
-                    })
-                } else {
-                    serde_json::json!(null)
-                }
+        if let Some(ws) = self.active_workspace() {
+            let layout = ws.serialize_layout_without_scrollback(cx);
+            serde_json::json!({
+                "index": self.active_idx,
+                "title": ws.title,
+                "cwd": ws.cwd,
+                "panes": ws.pane_count(),
+                "space": crate::app::spaces::space_json(&self.cached_config, ws.space.as_ref()),
+                "layout": layout.and_then(|l| serde_json::to_value(l).ok()),
+            })
+        } else {
+            serde_json::json!(null)
+        }
+    }
+
+    pub(super) fn workspace_select(
+        &mut self,
+        call: Call<'_, paneflow_api::methods::workspace::IndexParams>,
+        cx: &mut Context<Self>,
+    ) -> serde_json::Value {
+        let Some(idx) = call.params.index else {
+            return JsonRpcError::invalid_params("missing 'index' parameter").into_value();
+        };
+        if idx < self.workspaces.len() {
+            self.activate_workspace_without_window(idx, cx);
+            serde_json::json!({"selected": idx})
+        } else {
+            index_out_of_bounds(idx, self.workspaces.len()).into_value()
+        }
+    }
+
+    pub(super) fn workspace_close(
+        &mut self,
+        call: Call<'_, paneflow_api::methods::workspace::IndexParams>,
+        cx: &mut Context<Self>,
+    ) -> serde_json::Value {
+        let Some(idx) = call.params.index else {
+            return JsonRpcError::invalid_params("missing 'index' parameter").into_value();
+        };
+        if self.workspaces.len() <= 1 {
+            return JsonRpcError::invalid_params("Cannot close the last workspace").into_value();
+        }
+        if idx >= self.workspaces.len() {
+            return index_out_of_bounds(idx, self.workspaces.len()).into_value();
+        }
+        match self.close_without_prompt(crate::app::close_policy::CloseTarget::Workspace(idx), cx) {
+            Ok(()) => serde_json::json!({"closed": idx}),
+            Err(refusal) => JsonRpcError::confirmation_required(refusal.message()).into_value(),
+        }
+    }
+
+    pub(super) fn workspace_restore_layout(
+        &mut self,
+        call: Call<'_, paneflow_api::methods::workspace::RestoreLayoutParams>,
+        cx: &mut Context<Self>,
+    ) -> serde_json::Value {
+        let params = call.raw;
+        let mut layout = match parse_layout_param(params) {
+            Ok(Some(layout)) => layout,
+            Ok(None) => {
+                return JsonRpcError::invalid_params("missing 'layout' parameter").into_value();
             }
-            "workspace.select" => {
-                let idx = match required_index(params) {
-                    Ok(idx) => idx,
-                    Err(error) => return error.into_value(),
-                };
-                if idx < self.workspaces.len() {
-                    self.activate_workspace_without_window(idx, cx);
-                    serde_json::json!({"selected": idx})
-                } else {
-                    index_out_of_bounds(idx, self.workspaces.len()).into_value()
-                }
+            Err(error) => return error.into_value(),
+        };
+        let spec = paneflow_api::methods::workspace::RestoreLayout::SPEC;
+        if layout_requires_orchestration(&layout) && !spawn_gate_open(&spec, self.ipc_gates) {
+            return spawn_gate_refusal(&spec, self.ipc_gates).into_value();
+        }
+        let needed = layout.leaf_count();
+        if needed == 0 || needed > MAX_PANES {
+            return JsonRpcError::invalid_params(format!(
+                "layout must hold between 1 and {MAX_PANES} panes"
+            ))
+            .into_value();
+        }
+        let surplus = self
+            .active_workspace()
+            .map(|ws| surplus_panes(ws.active_tab(), needed))
+            .unwrap_or_default();
+        for pane in &surplus {
+            let target = crate::app::close_policy::CloseTarget::Pane(pane.clone());
+            if let Some(refusal) = self.close_refusal(&target, cx) {
+                return JsonRpcError::confirmation_required(refusal.message()).into_value();
             }
-            "workspace.close" => {
-                let idx = match required_index(params) {
-                    Ok(idx) => idx,
-                    Err(error) => return error.into_value(),
-                };
-                if self.workspaces.len() <= 1 {
-                    return JsonRpcError::invalid_params("Cannot close the last workspace")
-                        .into_value();
-                }
-                if idx >= self.workspaces.len() {
-                    return index_out_of_bounds(idx, self.workspaces.len()).into_value();
-                }
-                match self
-                    .close_without_prompt(crate::app::close_policy::CloseTarget::Workspace(idx), cx)
-                {
-                    Ok(()) => serde_json::json!({"closed": idx}),
-                    Err(refusal) => {
-                        JsonRpcError::confirmation_required(refusal.message()).into_value()
-                    }
-                }
+        }
+        match self.apply_layout_from_json(&mut layout, cx) {
+            Ok(()) => {
+                let panes = self.active_workspace().map_or(0, |ws| ws.pane_count());
+                serde_json::json!({"restored": true, "panes": panes})
             }
-            "workspace.restore_layout" => {
-                let mut layout = match parse_layout_param(params) {
-                    Ok(Some(layout)) => layout,
-                    Ok(None) => {
-                        return JsonRpcError::invalid_params("missing 'layout' parameter")
-                            .into_value();
-                    }
-                    Err(error) => return error.into_value(),
-                };
-                if layout_requires_orchestration(&layout) && !ipc_orchestration_enabled() {
-                    return orchestration_disabled_error("workspace.restore_layout").into_value();
-                }
-                let needed = layout.leaf_count();
-                if needed == 0 || needed > MAX_PANES {
-                    return JsonRpcError::invalid_params(format!(
-                        "layout must hold between 1 and {MAX_PANES} panes"
-                    ))
-                    .into_value();
-                }
-                let surplus = self
-                    .active_workspace()
-                    .map(|ws| surplus_panes(ws.active_tab(), needed))
-                    .unwrap_or_default();
-                for pane in &surplus {
-                    let target = crate::app::close_policy::CloseTarget::Pane(pane.clone());
-                    if let Some(refusal) = self.close_refusal(&target, cx) {
-                        return JsonRpcError::confirmation_required(refusal.message()).into_value();
-                    }
-                }
-                for pane in surplus {
-                    self.perform_close(
-                        crate::app::close_policy::CloseTarget::Pane(pane),
-                        crate::app::close_policy::CloseIntent::Hold,
-                        None,
-                        cx,
-                    );
-                }
-                match self.apply_layout_from_json(&mut layout, cx) {
-                    Ok(()) => {
-                        let panes = self.active_workspace().map_or(0, |ws| ws.pane_count());
-                        serde_json::json!({"restored": true, "panes": panes})
-                    }
-                    Err(e) => JsonRpcError::invalid_params(e).into_value(),
-                }
-            }
-            _ => JsonRpcError::method_not_found(format!("Method not found: {method}")).into_value(),
+            Err(e) => JsonRpcError::invalid_params(e).into_value(),
         }
     }
 }
@@ -871,9 +925,12 @@ mod tests {
         } else {
             "/paneflow-nonexistent-9d1f/sub"
         };
-        let request = workspace_up_request(&serde_json::json!({
-            "panes": [{}, {"cwd": bogus}]
-        }))
+        let request = workspace_up_request(
+            &serde_json::json!({
+                "panes": [{}, {"cwd": bogus}]
+            }),
+            paneflow_api::Gates::OPEN,
+        )
         .expect("parsing never touches the filesystem");
         let error = request
             .resolve_cwds()
@@ -883,9 +940,12 @@ mod tests {
         assert!(error.message.starts_with("pane 1:"), "{}", error.message);
 
         let tmp = tempfile::tempdir().unwrap();
-        let resolved = workspace_up_request(&serde_json::json!({
-            "panes": [{"cwd": tmp.path().to_str().unwrap()}]
-        }))
+        let resolved = workspace_up_request(
+            &serde_json::json!({
+                "panes": [{"cwd": tmp.path().to_str().unwrap()}]
+            }),
+            paneflow_api::Gates::OPEN,
+        )
         .unwrap()
         .resolve_cwds()
         .expect("an existing folder resolves");
@@ -899,10 +959,13 @@ mod tests {
 
     #[test]
     fn a_workspace_create_request_defers_its_cwd() {
-        let request = workspace_create_request(&serde_json::json!({
-            "name": "api",
-            "cwd": "/paneflow-nonexistent-9d1f"
-        }))
+        let request = workspace_create_request(
+            &serde_json::json!({
+                "name": "api",
+                "cwd": "/paneflow-nonexistent-9d1f"
+            }),
+            paneflow_api::Gates::OPEN,
+        )
         .expect("parsing never touches the filesystem");
         assert_eq!(request.cwd.as_deref(), Some("/paneflow-nonexistent-9d1f"));
         assert_eq!(request.name, "api");
@@ -914,7 +977,7 @@ mod tests {
             serde_json::json!({"name": 5, "layout": {"type": "pane", "surfaces": [{"env": {"A": "1"}}]}}),
             serde_json::json!({"cwd": ["/tmp"], "layout": {"type": "pane", "surfaces": [{"command": "make"}]}}),
         ] {
-            let error = workspace_create_request(&params)
+            let error = workspace_create_request(&params, paneflow_api::Gates::OPEN)
                 .err()
                 .unwrap_or_else(|| panic!("{params} must be refused"));
             assert_eq!(error.code, JsonRpcError::INVALID_PARAMS, "{params}");
@@ -1081,6 +1144,75 @@ mod tests {
     }
 
     #[test]
+    fn a_window_workspace_up_with_a_worktree_creates_it_off_the_ui_thread_and_starts_the_pane_in_it()
+     {
+        let tmp = tempfile::tempdir().unwrap();
+        let _root = crate::workspace::worktree::test_support::scoped_root(tmp.path().join("trees"));
+        let repo = tmp.path().join("repo");
+        crate::git_fixture::committed_repo(&repo, &[("README.md", "init\n")]);
+
+        let request = workspace_up_request(
+            &serde_json::json!({"panes": [
+                {"cwd": repo, "worktree": {"branch": "feat/window", "copy_env": false}},
+                {"cwd": repo}
+            ]}),
+            paneflow_api::Gates::OPEN,
+        )
+        .expect("a worktree request parses");
+        let (request, prepared) = request
+            .prepare_worktrees()
+            .expect("the worktree is created");
+
+        assert_eq!(prepared.created.len(), 1);
+        let path = prepared.created[0].path.clone();
+        assert!(path.join("README.md").is_file());
+        assert_eq!(request.planned[0].cwd.as_deref(), Some(path.as_path()));
+        assert_eq!(request.planned[1].cwd.as_deref(), Some(repo.as_path()));
+        assert_eq!(request.managed_worktrees.len(), 1);
+        assert_eq!(request.managed_worktrees[0].branch, "feat/window");
+        assert_eq!(
+            request.pane_worktrees[0].as_deref(),
+            Some(path.to_string_lossy().as_ref())
+        );
+
+        super::super::worktree_requests::rollback(prepared.created);
+        assert!(
+            !path.exists(),
+            "a rejected layout removes the worktree it created"
+        );
+    }
+
+    #[test]
+    fn a_window_workspace_up_refuses_a_worktree_setup_without_orchestration() {
+        let refused = workspace_up_request(
+            &serde_json::json!({"panes": [
+                {"cwd": "/tmp", "worktree": {"branch": "feat/x", "setup": "make"}}
+            ]}),
+            paneflow_api::Gates::CLOSED,
+        )
+        .err()
+        .expect("a setup runs a command");
+        assert!(
+            refused.message.contains("orchestration"),
+            "{}",
+            refused.message
+        );
+        let exclusive = workspace_up_request(
+            &serde_json::json!({"panes": [
+                {"worktree": {"branch": "feat/x"}, "managed_worktree": {"path": "/tmp"}}
+            ]}),
+            paneflow_api::Gates::OPEN,
+        )
+        .err()
+        .expect("the two forms are exclusive");
+        assert!(
+            exclusive.message.contains("exclusive"),
+            "{}",
+            exclusive.message
+        );
+    }
+
+    #[test]
     fn workspace_up_dedups_duplicate_labels_in_batch() {
         use crate::workspace::surface_naming::claim_unique;
         use std::collections::HashSet;
@@ -1144,46 +1276,28 @@ mod tests {
     }
 
     #[test]
-    fn selecting_a_workspace_in_a_hidden_space_switches_to_that_space() {
-        let workspaces = vec![
-            spaced_workspace(1, None),
-            spaced_workspace(2, Some(space(1))),
-        ];
-        let mut active_idx = 0;
-        let mut active_space = None;
-        let mut memory = crate::app::spaces::SpaceMemory::new();
-
-        let changed = crate::app::spaces::point_at(
-            &workspaces,
-            &mut active_idx,
-            &mut active_space,
-            &mut memory,
-            1,
-        );
-
-        assert!(changed);
-        assert_eq!(active_space, Some(space(1)));
-        assert_eq!(
-            crate::app::spaces::shown_index(&workspaces, active_idx, active_space.as_ref()),
-            Some(1)
-        );
-    }
-
-    #[test]
     fn a_created_workspace_lands_in_the_requested_space_or_the_active_one() {
         let config = spaced_config();
-        let request = workspace_create_request(&serde_json::json!({ "space": "WORK" })).unwrap();
+        let request = workspace_create_request(
+            &serde_json::json!({ "space": "WORK" }),
+            paneflow_api::Gates::OPEN,
+        )
+        .unwrap();
         assert_eq!(
             resolve_target_space(&config, None, request.space.as_deref()),
             Ok(Some(space(1)))
         );
-        let up = workspace_up_request(&serde_json::json!({ "space": "Default", "panes": [{}] }))
-            .unwrap();
+        let up = workspace_up_request(
+            &serde_json::json!({ "space": "Default", "panes": [{}] }),
+            paneflow_api::Gates::OPEN,
+        )
+        .unwrap();
         assert_eq!(
             resolve_target_space(&config, Some(&space(1)), up.space.as_deref()),
             Ok(None)
         );
-        let absent = workspace_create_request(&serde_json::json!({})).unwrap();
+        let absent =
+            workspace_create_request(&serde_json::json!({}), paneflow_api::Gates::OPEN).unwrap();
         assert_eq!(
             resolve_target_space(&config, Some(&space(1)), absent.space.as_deref()),
             Ok(Some(space(1)))
@@ -1196,9 +1310,12 @@ mod tests {
             .expect_err("no space is named Client");
         assert_eq!(error.code, JsonRpcError::INVALID_PARAMS);
         assert_eq!(error.message, "unknown space: Client");
-        let error = workspace_create_request(&serde_json::json!({ "space": 3 }))
-            .err()
-            .expect("a space is named by a string");
+        let error = workspace_create_request(
+            &serde_json::json!({ "space": 3 }),
+            paneflow_api::Gates::OPEN,
+        )
+        .err()
+        .expect("a space is named by a string");
         assert_eq!(error.message, "'space' must be a string");
     }
 }

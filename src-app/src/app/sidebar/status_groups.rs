@@ -70,7 +70,7 @@ fn tab_surfaces(tab: &Tab, cx: &App) -> std::collections::HashSet<u64> {
         .flat_map(|pane| {
             pane.read(cx)
                 .terminals()
-                .map(|terminal| terminal.entity_id().as_u64())
+                .map(|terminal| terminal.read(cx).surface_id())
                 .collect::<Vec<_>>()
         })
         .collect()

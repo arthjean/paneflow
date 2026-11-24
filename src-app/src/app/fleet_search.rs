@@ -4,7 +4,6 @@ use gpui::{
 };
 
 use crate::PaneFlowApp;
-use crate::app::ipc_handler::find_pane_by_surface_id;
 use crate::app::workspace_ops::WorkspaceFocusTarget;
 use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
@@ -60,7 +59,7 @@ impl PaneFlowApp {
                     let name =
                         crate::markdown::strip_bidi_zero_width(raw_name.chars().take(64).collect());
                     targets.push((
-                        t.entity_id().as_u64(),
+                        t.read(cx).surface_id(),
                         name,
                         ws.title.clone(),
                         r.terminal.session_backend(),
@@ -176,7 +175,7 @@ impl PaneFlowApp {
             let hits = pane
                 .read(cx)
                 .active_terminal_opt()
-                .and_then(|t| counts.get(&t.entity_id().as_u64()).copied());
+                .and_then(|t| counts.get(&t.read(cx).surface_id()).copied());
             pane.update(cx, |p, cx| p.set_search_hits(hits, cx));
         }
     }
@@ -211,7 +210,7 @@ impl PaneFlowApp {
         else {
             return;
         };
-        let Some(loc) = find_pane_by_surface_id(&self.workspaces, surface_id, cx) else {
+        let Some(loc) = self.locate_surface(surface_id) else {
             if let Some(state) = &mut self.fleet_search {
                 state.results.retain(|h| h.surface_id != surface_id);
             }

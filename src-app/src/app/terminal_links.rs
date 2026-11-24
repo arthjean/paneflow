@@ -161,7 +161,7 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let surface_id = terminal.entity_id().as_u64();
+        let surface_id = terminal.read(cx).surface_id();
         let agent = self
             .workspaces
             .iter()

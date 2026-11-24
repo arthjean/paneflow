@@ -519,6 +519,12 @@
       "description": "What quitting the desktop does when hosted sessions are still running. ask (default) opens the quit dialog. keep exits and leaves every session running on the host. stop stops every session, then shuts the host down. With no live session the app always exits and shuts the idle host down.",
       "default": "ask"
     },
+    "agent_prompts": {
+      "type": ["string", "null"],
+      "enum": ["native", "paneflow", null],
+      "description": "Where a coding agent's own questions and permission requests are answered. native (default) leaves them in the agent's terminal. paneflow shows Claude Code's AskUserQuestion and the permission requests of Claude Code and Codex as a Paneflow prompt, with a way back to the terminal; Codex questions are never intercepted.",
+      "default": "native"
+    },
     "claude_code_button_visible": {
       "type": ["boolean", "null"],
       "description": "Show the built-in 'Claude Code' command button. Null/omitted auto-detects the CLI binary.",

@@ -764,7 +764,7 @@ mod tests {
     }
 
     fn spawned(subcommand: &str) -> u64 {
-        crate::work_counters::counted_on_this_thread(crate::work_counters::git_subcommand_counter(
+        paneflow_git::counters::counted_on_this_thread(paneflow_git::counters::subcommand_counter(
             Some(subcommand),
         ))
     }

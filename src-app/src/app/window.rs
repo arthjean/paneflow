@@ -191,37 +191,6 @@ pub(crate) enum FilesMenuScope {
     OpenWith,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SessionHold {
-    UndoWindow { until: std::time::Instant },
-    Detached,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct HeldSession {
-    pub(crate) target: crate::app::hosted_sessions::StopTarget,
-    pub(crate) hold: SessionHold,
-}
-
-pub(crate) enum ClosedSurfaceRecord {
-    Terminal {
-        cwd: Option<std::path::PathBuf>,
-        session: Option<HeldSession>,
-        custom_name: Option<String>,
-        font_size: Option<f32>,
-    },
-    Markdown {
-        path: std::path::PathBuf,
-    },
-}
-
-pub(crate) struct ClosedPaneRecord {
-    pub(crate) surface: ClosedSurfaceRecord,
-    pub(crate) workspace_id: u64,
-    pub(crate) tab_id: u64,
-    pub(crate) worktree: Option<std::path::PathBuf>,
-}
-
 impl PaneFlowApp {
     pub(crate) fn create_pane(
         &mut self,
@@ -232,6 +201,18 @@ impl PaneFlowApp {
         cx.subscribe(&terminal, Self::handle_terminal_event)
             .detach();
         let pane = cx.new(|cx| Pane::new(terminal, workspace_id, cx));
+        cx.subscribe(&pane, Self::handle_pane_event).detach();
+        pane
+    }
+
+    pub(crate) fn create_pane_with_surfaces(
+        &mut self,
+        surfaces: Vec<PaneSurface>,
+        active: usize,
+        workspace_id: u64,
+        cx: &mut Context<Self>,
+    ) -> Entity<Pane> {
+        let pane = cx.new(|cx| Pane::new_with_surfaces(surfaces, active, workspace_id, cx));
         cx.subscribe(&pane, Self::handle_pane_event).detach();
         pane
     }

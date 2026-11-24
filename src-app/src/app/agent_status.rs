@@ -53,7 +53,7 @@ impl PaneFlowApp {
                     .is_some_and(|root| root.contains_leaf(&pane)),
             );
             if shown && let Some(terminal) = state.active_terminal_opt() {
-                visible.insert(terminal.entity_id().as_u64());
+                visible.insert(terminal.read(cx).surface_id());
             }
         }
         (!visible.is_empty()).then_some(visible)
@@ -66,7 +66,7 @@ impl PaneFlowApp {
                 ws.collect_panes().iter().any(|pane| {
                     pane.read(cx)
                         .terminals()
-                        .any(|terminal| terminal.entity_id().as_u64() == surface_id)
+                        .any(|terminal| terminal.read(cx).surface_id() == surface_id)
                 })
             })
             .map(|ws| ws.id)

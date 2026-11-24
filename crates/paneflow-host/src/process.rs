@@ -128,89 +128,7 @@ fn process_is_running(pid: u32) -> Option<bool> {
     (written == size).then_some(info.pbi_status != libc::SZOMB)
 }
 
-#[cfg(windows)]
-pub fn process_start_time(pid: u32) -> Option<u64> {
-    use windows_sys::Win32::Foundation::{CloseHandle, FILETIME};
-    use windows_sys::Win32::System::Threading::{
-        GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-    };
-
-    if pid == 0 {
-        return None;
-    }
-    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
-    if handle.is_null() {
-        return None;
-    }
-    let mut creation: FILETIME = unsafe { std::mem::zeroed() };
-    let mut exit: FILETIME = unsafe { std::mem::zeroed() };
-    let mut kernel: FILETIME = unsafe { std::mem::zeroed() };
-    let mut user: FILETIME = unsafe { std::mem::zeroed() };
-    let ok = unsafe { GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user) };
-    unsafe { CloseHandle(handle) };
-    (ok != 0)
-        .then(|| (u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime))
-}
-
-#[cfg(target_os = "linux")]
-pub fn process_start_time(pid: u32) -> Option<u64> {
-    parse_proc_stat_starttime(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
-}
-
-#[cfg(any(target_os = "linux", test))]
-fn parse_proc_stat_starttime(stat: &str) -> Option<u64> {
-    let after_comm = stat.rsplit_once(')')?.1;
-    after_comm.split_whitespace().nth(19)?.parse().ok()
-}
-
-#[cfg(target_os = "macos")]
-pub fn process_start_time(pid: u32) -> Option<u64> {
-    let pid = i32::try_from(pid).ok().filter(|pid| *pid > 0)?;
-    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
-    let size = std::mem::size_of::<libc::proc_bsdinfo>() as i32;
-    let written = unsafe {
-        libc::proc_pidinfo(
-            pid,
-            libc::PROC_PIDTBSDINFO,
-            0,
-            (&raw mut info).cast::<libc::c_void>(),
-            size,
-        )
-    };
-    if written != size {
-        return unreaped_start_time(pid);
-    }
-    Some(info.pbi_start_tvsec.saturating_mul(1_000_000) + info.pbi_start_tvusec)
-}
-
-#[cfg(target_os = "macos")]
-fn unreaped_start_time(pid: i32) -> Option<u64> {
-    const KINFO_PROC_BYTES: usize = 648;
-    const P_PID_OFFSET: usize = 40;
-    let mut name = [libc::CTL_KERN, libc::KERN_PROC, libc::KERN_PROC_PID, pid];
-    let mut buffer = [0u8; KINFO_PROC_BYTES];
-    let mut length = buffer.len();
-    let status = unsafe {
-        libc::sysctl(
-            name.as_mut_ptr(),
-            name.len() as libc::c_uint,
-            buffer.as_mut_ptr().cast(),
-            &mut length,
-            std::ptr::null_mut(),
-            0,
-        )
-    };
-    if status != 0 || length != KINFO_PROC_BYTES {
-        return None;
-    }
-    let recorded_pid = i32::from_ne_bytes(buffer[P_PID_OFFSET..P_PID_OFFSET + 4].try_into().ok()?);
-    if recorded_pid != pid {
-        return None;
-    }
-    let seconds = u64::try_from(i64::from_ne_bytes(buffer[0..8].try_into().ok()?)).ok()?;
-    let micros = u64::try_from(i32::from_ne_bytes(buffer[8..12].try_into().ok()?)).ok()?;
-    Some(seconds.saturating_mul(1_000_000) + micros)
-}
+pub use paneflow_peer::process_start_time;
 
 #[cfg(unix)]
 pub fn verified_process_group(child_pid: u32) -> Option<i32> {
@@ -1528,34 +1446,6 @@ mod tests {
             started_at: identity.started_at.map(|t| t.wrapping_add(1)),
         };
         assert!(!stale.is_provably_live());
-    }
-
-    #[test]
-    fn proc_stat_starttime_survives_hostile_comm_names() {
-        let plain = "1234 (zsh) S 1 1234 1234 0 -1 4194304 0 0 0 0 5 3 0 0 20 0 11 0 9876543 123 456 18446744073709551615";
-        assert_eq!(parse_proc_stat_starttime(plain), Some(9876543));
-        let hostile = "1234 (next-server (v15)) S 1 1234 1234 0 -1 4194304 0 0 0 0 5 3 0 0 20 0 11 0 424242 123 456";
-        assert_eq!(parse_proc_stat_starttime(hostile), Some(424242));
-        let split_comm =
-            "4321 (evil) (x) S 1 4321 4321 0 -1 4194304 0 0 0 0 5 3 0 0 20 0 11 0 777777 123 456";
-        assert_eq!(parse_proc_stat_starttime(split_comm), Some(777777));
-        assert_eq!(parse_proc_stat_starttime("1234 (zsh) S 1 1234"), None);
-        assert_eq!(parse_proc_stat_starttime(""), None);
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn the_linux_start_time_matches_field_22_of_proc_stat() {
-        let pid = std::process::id();
-        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
-        let field_22 = stat
-            .rsplit_once(')')
-            .unwrap()
-            .1
-            .split_whitespace()
-            .nth(19)
-            .unwrap();
-        assert_eq!(process_start_time(pid), Some(field_22.parse().unwrap()));
     }
 
     #[test]

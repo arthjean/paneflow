@@ -136,22 +136,18 @@ impl PaneFlowApp {
         let focus_pane = panes.get(focus_idx).cloned();
         let tree = build_up_layout(preset, panes, focus_idx)
             .ok_or_else(|| "could not build layout from panes".to_string())?;
-        if let Some(workspace) = self.workspaces.get_mut(target_idx) {
-            workspace.active_tab_mut().root = Some(tree);
-            workspace.active_tab_mut().saved_layout = None;
-            if let Some(first_cwd) = launches
-                .iter()
-                .find_map(|(terminal, _, _)| terminal.read(cx).terminal.cwd_now())
-            {
-                workspace.cwd = first_cwd.display().to_string();
-            }
-        }
-
-        if self.shown_workspace_idx() != Some(target_idx) {
+        let cwd = launches
+            .iter()
+            .find_map(|(terminal, _, _)| terminal.read(cx).terminal.cwd_now())
+            .map(|cwd| cwd.display().to_string());
+        let shown = self.shown_workspace_idx() == Some(target_idx);
+        self.launch_template_through_model(target_idx, &tree, focus_pane.as_ref(), cwd, cx)
+            .map_err(|_| "open project workspace no longer exists".to_string())?;
+        if !shown {
             self.activate_workspace_without_window(target_idx, cx);
-        }
-        if let Some(pane) = focus_pane {
-            self.pending_pane_focus = Some(pane);
+            if let Some(pane) = focus_pane {
+                self.pending_pane_focus = Some(pane);
+            }
         }
         for (pane_idx, (terminal, command, prompt)) in launches.into_iter().enumerate() {
             if let Some(command) = command {
@@ -160,7 +156,6 @@ impl PaneFlowApp {
                 Self::schedule_prompt_prefill(&terminal, prompt, pane_idx, cx);
             }
         }
-        self.save_session(cx);
         cx.notify();
         Ok(())
     }
@@ -216,7 +211,19 @@ impl PaneFlowApp {
             if let Some(true) = pane.focus {
                 spec.insert("focus".to_string(), Value::Bool(true));
             }
-            if let Some(env) = pane.env.as_ref().filter(|env| !env.is_empty()) {
+            let agent_launch = pane
+                .agent
+                .as_deref()
+                .filter(|tag| !tag.trim().is_empty())
+                .and_then(TerminalAgent::from_tag)
+                .map(crate::agent_launcher::AgentLaunch::Builtin);
+            let env = match &agent_launch {
+                Some(launch) => {
+                    launch.with_sandbox_request(&self.cached_config, pane.env.clone())?
+                }
+                None => pane.env.clone(),
+            };
+            if let Some(env) = env.as_ref().filter(|env| !env.is_empty()) {
                 spec.insert("env".to_string(), json!(env));
             }
             if let Some(agent_tag) = pane.agent.as_deref().filter(|tag| !tag.trim().is_empty()) {

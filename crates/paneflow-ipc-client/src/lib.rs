@@ -88,7 +88,20 @@ impl IpcTransport for IpcClient {
 
     fn try_call(&self, method: &str, params: Value) -> Result<Value, IpcCallError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let request = build_request(id, method, params);
+        self.exchange_request(&build_request(id, method, params))
+    }
+}
+
+impl IpcClient {
+    pub fn call_granted(&self, method: &str, params: Value, grant: &str) -> Result<Value, String> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let mut request = build_request(id, method, params);
+        request[GRANT_FIELD] = Value::from(grant);
+        self.exchange_request(&request)
+            .map_err(|error| error.to_string())
+    }
+
+    fn exchange_request(&self, request: &Value) -> Result<Value, IpcCallError> {
         let unreachable = |e: io::Error| {
             IpcCallError::Unreachable(format!(
                 "paneflow IPC unreachable at {} ({e}); is Paneflow running?",
@@ -96,7 +109,7 @@ impl IpcTransport for IpcClient {
             ))
         };
         let stream = connect_request_stream(&self.socket).map_err(unreachable)?;
-        let line = exchange(stream, &request).map_err(|e| {
+        let line = exchange(stream, request).map_err(|e| {
             if e.kind() == io::ErrorKind::TimedOut {
                 IpcCallError::TimedOut(format!(
                     "paneflow did not respond within {}s",
@@ -109,6 +122,8 @@ impl IpcTransport for IpcClient {
         parse_call_response(&line)
     }
 }
+
+pub const GRANT_FIELD: &str = "grant";
 
 pub(crate) fn build_request(id: u64, method: &str, params: Value) -> Value {
     json!({
