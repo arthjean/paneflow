@@ -17,6 +17,7 @@ use crate::settings::components::{MENU_RADIUS, menu_padding, menu_surface_filled
 use crate::settings::kit::{self, Ink, MeterTone, Text};
 use crate::settings::private_text;
 use crate::theme::UiColors;
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::TooltipDelayExt;
 use crate::ui_primitives::ring::{RingSize, level_color, ring};
 use crate::ui_primitives::squircle::squircle_border;
@@ -91,7 +92,7 @@ impl PaneFlowApp {
         .delayed_tooltip(text_tooltip(view.capsule.tooltip()))
         .cursor_pointer()
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+        .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
             cx.stop_propagation();
             if open {
                 this.close_usage_bubble(window, cx);
@@ -189,7 +190,7 @@ impl PaneFlowApp {
             )
             .role(Role::Button)
             .aria_label(OPEN_SETTINGS_LABEL)
-            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+            .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
                 cx.stop_propagation();
                 this.open_usage_settings(window, cx);
             }))
@@ -313,7 +314,7 @@ impl PaneFlowApp {
                 ink.primary,
                 ink.accent,
             )
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+            .on_activate(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 cx.stop_propagation();
                 this.private_reveals.toggle(&key);
                 cx.notify();

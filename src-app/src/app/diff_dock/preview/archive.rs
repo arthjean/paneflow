@@ -7,13 +7,14 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     AnyElement, AppContext, ClickEvent, Context, CursorStyle, EventEmitter, FocusHandle,
-    InteractiveElement, IntoElement, ParentElement, Render, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px, svg, uniform_list,
+    InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Window, div,
+    prelude::FluentBuilder, px, svg, uniform_list,
 };
 
 use super::large_text::PreviewEvent;
 use super::{ArchiveFormat, NoPreview, OpenedFile, format_size};
 use crate::app::diff_dock::code::load::io_error;
+use crate::ui_primitives::AccessibleControlExt as _;
 
 pub(crate) const ARCHIVE_MAX_BYTES: u64 = 50 * 1024 * 1024;
 pub(crate) const ARCHIVE_MAX_ENTRIES: usize = 2048;
@@ -628,7 +629,7 @@ impl ArchiveView {
                         crumb
                             .cursor(CursorStyle::PointingHand)
                             .hover(|style| style.bg(ui.subtle))
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            .on_activate(cx.listener(move |this, _: &ClickEvent, _, cx| {
                                 this.go_to(depth, cx);
                             }))
                     })
@@ -707,7 +708,7 @@ impl Render for ArchiveView {
                             .px(px(8.))
                             .cursor(CursorStyle::PointingHand)
                             .hover(move |style| style.bg(hover))
-                            .on_click(move |_, _, cx| {
+                            .on_activate(move |_, _, cx| {
                                 entity.update(cx, |view, cx| view.back(cx));
                             })
                             .child(
@@ -733,7 +734,7 @@ impl Render for ArchiveView {
                         .when(is_dir, |el| {
                             el.cursor(CursorStyle::PointingHand)
                                 .hover(move |style| style.bg(hover))
-                                .on_click(move |_, _, cx| {
+                                .on_activate(move |_, _, cx| {
                                     let name = name.clone();
                                     entity.update(cx, |view, cx| view.enter(name, cx));
                                 })

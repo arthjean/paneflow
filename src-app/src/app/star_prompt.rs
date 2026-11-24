@@ -7,6 +7,7 @@ use gpui::{
 
 use crate::PaneFlowApp;
 use crate::settings::components::with_alpha;
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::squircle::squircle_background_fill;
 use crate::ui_primitives::{ROW_RADIUS, TooltipDelayExt, dismiss_button};
 
@@ -104,7 +105,7 @@ impl PaneFlowApp {
             ui.text,
             with_alpha(ui.text, 0.08),
         )
-        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+        .on_activate(cx.listener(|this, _: &ClickEvent, _, cx| {
             cx.stop_propagation();
             this.dismiss_star_prompt(cx);
         }));
@@ -130,7 +131,7 @@ impl PaneFlowApp {
             .delayed_tooltip(crate::ui_primitives::text_tooltip(display_url(
                 REPOSITORY_URL,
             )))
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+            .on_activate(cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.open_external_url(REPOSITORY_URL.to_string(), cx);
                 this.dismiss_star_prompt(cx);
             }))

@@ -12,6 +12,7 @@ use super::lane::{mark_shimmer_drawn, render_lane, render_status_badge};
 use super::*;
 use crate::agent_launcher::TerminalAgent;
 use crate::app::workspace_ops::WorkspaceFocusTarget;
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::action_menu::ActionMenu;
 use crate::ui_primitives::scroll_edge_fade::{
     EdgeFadeLine, EdgeFadeSurface, edge_faded, scroll_edge_fades,
@@ -710,7 +711,7 @@ fn render_agents_header(
                 .role(Role::Button)
                 .aria_label("Agents")
                 .aria_expanded(!collapsed)
-                .on_click(move |_, window, cx| on_toggle(window, cx))
+                .on_activate(move |_, window, cx| on_toggle(window, cx))
                 .child(chevron)
                 .child("Agents"),
         )
@@ -943,7 +944,7 @@ fn render_agent_row(
         .when_some(title_tooltip, |shell, title| {
             shell.delayed_tooltip(crate::ui_primitives::text_tooltip(title))
         })
-        .on_click(move |_, window, cx| {
+        .on_activate(move |_, window, cx| {
             cx.stop_propagation();
             on_pick(surface_id, window, cx);
         })
@@ -1509,7 +1510,7 @@ impl PaneFlowApp {
         .aria_expanded(open)
         .delayed_tooltip(crate::ui_primitives::text_tooltip("Customize agent rows"))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
+        .on_activate(cx.listener(move |this, _: &gpui::ClickEvent, _, cx| {
             this.agents_display_menu_open = !open;
             cx.notify();
         }))

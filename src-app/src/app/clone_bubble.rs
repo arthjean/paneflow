@@ -12,6 +12,7 @@ use gpui::{
 use crate::PaneFlowApp;
 use crate::app::clone_repo::{CloneFailure, CloneProgress, run_clone};
 use crate::settings::components::{select_menu_surface, with_alpha};
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::quick_pick::{PANEL_RADIUS, ROW_RADIUS};
 use crate::ui_primitives::squircle::{
     squircle_border, squircle_fill, squircle_fill_beneath_border,
@@ -670,7 +671,7 @@ impl PaneFlowApp {
                 .role(gpui::accesskit::Role::Button)
                 .aria_label("Cancel clone")
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                .on_activate(cx.listener(|this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
                     this.cancel_clone_job(cx);
                 }))
@@ -753,7 +754,7 @@ impl PaneFlowApp {
             .role(gpui::accesskit::Role::Button)
             .aria_label("Show clone details")
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+            .on_activate(cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.set_clone_bubble_expanded(true, cx);
             }))
             .child(self.render_bubble_badge(job, ui, window, cx))
@@ -839,7 +840,7 @@ impl PaneFlowApp {
                     .role(gpui::accesskit::Role::Button)
                     .aria_label("Minimize")
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    .on_activate(cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.set_clone_bubble_expanded(false, cx);
                     }))
                     .child(
@@ -933,7 +934,7 @@ impl PaneFlowApp {
         match &job.status {
             CloneStatus::Running(_) => {
                 actions = actions.child(
-                    capsule_button("clone-bubble-cancel", "Cancel", false, true, ui).on_click(
+                    capsule_button("clone-bubble-cancel", "Cancel", false, true, ui).on_activate(
                         cx.listener(|this, _: &ClickEvent, _, cx| this.cancel_clone_job(cx)),
                     ),
                 );
@@ -948,18 +949,19 @@ impl PaneFlowApp {
             CloneStatus::Done => {
                 actions = actions
                     .child(
-                        capsule_button("clone-bubble-close", "Close", false, false, ui).on_click(
-                            cx.listener(|this, _: &ClickEvent, _, cx| this.dismiss_clone_job(cx)),
-                        ),
+                        capsule_button("clone-bubble-close", "Close", false, false, ui)
+                            .on_activate(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.dismiss_clone_job(cx)
+                            })),
                     )
                     .child(
                         capsule_button("clone-bubble-reveal", "Show in Folder", false, false, ui)
-                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            .on_activate(cx.listener(|this, _: &ClickEvent, _, cx| {
                                 this.reveal_cloned_destination(cx)
                             })),
                     )
                     .child(
-                        capsule_button("clone-bubble-open", "Open", true, false, ui).on_click(
+                        capsule_button("clone-bubble-open", "Open", true, false, ui).on_activate(
                             cx.listener(|this, _: &ClickEvent, window, cx| {
                                 this.open_cloned_workspace(window, cx)
                             }),
@@ -969,12 +971,13 @@ impl PaneFlowApp {
             CloneStatus::Failed(_) => {
                 actions = actions
                     .child(
-                        capsule_button("clone-bubble-close", "Close", false, false, ui).on_click(
-                            cx.listener(|this, _: &ClickEvent, _, cx| this.dismiss_clone_job(cx)),
-                        ),
+                        capsule_button("clone-bubble-close", "Close", false, false, ui)
+                            .on_activate(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.dismiss_clone_job(cx)
+                            })),
                     )
                     .child(
-                        capsule_button("clone-bubble-retry", "Retry", true, false, ui).on_click(
+                        capsule_button("clone-bubble-retry", "Retry", true, false, ui).on_activate(
                             cx.listener(|this, _: &ClickEvent, _, cx| this.retry_clone_job(cx)),
                         ),
                     );

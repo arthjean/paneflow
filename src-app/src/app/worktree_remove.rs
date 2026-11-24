@@ -13,6 +13,7 @@ use crate::settings::components::{
     modal_card, modal_footer, modal_header, modal_key, secondary_button,
 };
 use crate::terminal::host_link::{LiveSession, LiveSessionProbe};
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::LABEL_SM;
 use crate::workspace::worktree::Snapshot;
 
@@ -571,7 +572,7 @@ impl PaneFlowApp {
                 }),
             ))
             .child(
-                destructive_button("worktree-remove-confirm", "Remove").on_click(cx.listener(
+                destructive_button("worktree-remove-confirm", "Remove").on_activate(cx.listener(
                     |this, _: &ClickEvent, window, cx| {
                         this.confirm_worktree_removal(window, cx);
                         cx.stop_propagation();

@@ -1301,7 +1301,7 @@ impl Pane {
                     }
                 }),
             )
-            .on_click(move |e, w, cx| handler(e, w, cx))
+            .on_activate(move |e, w, cx| handler(e, w, cx))
             .active(|style| style.opacity(0.82));
 
         let visual = div()
@@ -1856,7 +1856,7 @@ impl Pane {
                         })
                     },
                 )
-                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.activate_surface(index, cx);
                     this.focus_handle(cx).focus(window, cx);
                     cx.stop_propagation();
@@ -1895,7 +1895,7 @@ impl Pane {
                     )
                     .invisible()
                     .group_hover(group, |style| style.visible())
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                    .on_activate(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                         this.close_surface(index, cx);
                         cx.stop_propagation();
                     }))
@@ -1962,7 +1962,7 @@ impl Pane {
                 )
                 .delayed_tooltip(crate::ui_primitives::text_tooltip("Return to workspace"))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
                     this.toggle_detached(window, cx);
                     cx.stop_propagation();
                 }))
@@ -2025,7 +2025,7 @@ impl Pane {
             .when(unified, |button| {
                 button.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             })
-            .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+            .on_activate(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                 if menu_open {
                     this.new_tab_menu = None;
                     cx.notify();

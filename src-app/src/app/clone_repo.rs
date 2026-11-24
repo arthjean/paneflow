@@ -9,6 +9,7 @@ use gpui::{
 
 use crate::PaneFlowApp;
 use crate::settings::components::{MENU_MAX_HEIGHT, select_item_shaped, with_alpha};
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::interface_style::with_rounded_shape;
 use crate::ui_primitives::quick_pick::{
     self, FIELD_GAP, FIELD_INSET, ICON_GAP, ICON_SIZE, LABEL_SIZE, ROW_GAP, ROW_HEIGHT, ROW_RADIUS,
@@ -679,7 +680,7 @@ impl PaneFlowApp {
         .gap(px(ROW_GAP))
         .text_size(px(LABEL_SIZE))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+        .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
             this.clone_repo_activate(idx, window, cx);
             cx.stop_propagation();
         }))

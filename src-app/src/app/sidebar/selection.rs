@@ -12,6 +12,7 @@ use crate::settings::components::{
     ModalKey, confirmation_list, confirmation_warning, destructive_button, modal_backdrop,
     modal_card, modal_footer, modal_header, modal_key, secondary_button,
 };
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::action_menu::{ActionMenu, MenuItem};
 use crate::ui_primitives::squircle::{squircle_corners_border, squircle_corners_fill};
 use crate::ui_primitives::{ease_out_cubic, lerp_color};
@@ -964,7 +965,7 @@ impl PaneFlowApp {
                 }),
             ))
             .child(
-                destructive_button("selection-close-confirm", "Close selection").on_click(
+                destructive_button("selection-close-confirm", "Close selection").on_activate(
                     cx.listener(|this, _: &ClickEvent, window, cx| {
                         this.confirm_selection_close(window, cx);
                         cx.stop_propagation();

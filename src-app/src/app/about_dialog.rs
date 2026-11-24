@@ -10,6 +10,7 @@ use crate::settings::components::{
     modal_key, secondary_button,
 };
 use crate::theme::UiColors;
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::{BODY, LABEL_SM};
 
 const DIALOG_WIDTH: Pixels = px(400.);
@@ -188,7 +189,7 @@ impl PaneFlowApp {
             .child(
                 menu_panel(div(), ui).children(ABOUT_LINKS.iter().enumerate().map(
                     |(index, &link)| {
-                        about_link_row(ui, index, link, dialog.selected == Some(index)).on_click(
+                        about_link_row(ui, index, link, dialog.selected == Some(index)).on_activate(
                             cx.listener(move |this, _: &ClickEvent, _, cx| {
                                 this.open_about_link(link, cx);
                                 cx.stop_propagation();

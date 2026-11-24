@@ -172,7 +172,7 @@ impl TitleBar {
             | UpdatePill::SystemManaged(_) => element
                 .role(gpui::accesskit::Role::Button)
                 .aria_label(label)
-                .on_click(move |_, window, cx| {
+                .on_activate(move |_, window, cx| {
                     cx.stop_propagation();
                     window.dispatch_action(Box::new(crate::StartSelfUpdate), cx);
                 })
@@ -180,7 +180,7 @@ impl TitleBar {
             UpdatePill::CheckFailed => element
                 .role(gpui::accesskit::Role::Button)
                 .aria_label(label)
-                .on_click(move |_, window, cx| {
+                .on_activate(move |_, window, cx| {
                     cx.stop_propagation();
                     window.dispatch_action(Box::new(crate::CheckForUpdates), cx);
                 })

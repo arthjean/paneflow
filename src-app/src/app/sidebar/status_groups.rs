@@ -3,6 +3,7 @@ use paneflow_config::schema::SidebarGroupBy;
 
 use super::agents_section::{AgentGroupStatus, StatusGroupKind, render_status_group_header};
 use super::*;
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::action_menu::{ActionMenu, MenuItem};
 
 const NEW_TAB_DIGIT_MNEMONICS: &[char] = &['1', '2', '3', '4', '5', '6', '7', '8', '9'];
@@ -251,7 +252,7 @@ impl PaneFlowApp {
         .aria_expanded(open)
         .delayed_tooltip(crate::ui_primitives::text_tooltip("New tab"))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+        .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
             this.press_sidebar_new_tab(open, window, cx);
         }))
         .child(

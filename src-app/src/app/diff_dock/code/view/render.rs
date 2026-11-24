@@ -1,4 +1,5 @@
 use super::*;
+use crate::ui_primitives::AccessibleControlExt as _;
 
 pub(crate) const RETRY_LABEL: &str = "Retry";
 
@@ -37,7 +38,7 @@ impl CodeView {
                     .hover(|style| style.bg(ui.subtle))
                     .text_size(crate::ui_primitives::BODY)
                     .text_color(ui.text)
-                    .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                    .on_activate(cx.listener(|this, _: &ClickEvent, _window, cx| {
                         let path = this.path.clone();
                         this.open(path, cx);
                     }))

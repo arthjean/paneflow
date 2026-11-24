@@ -383,7 +383,7 @@ fn render_diff_branch_item(
             gpui::Toggled::False
         })
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+        .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
             this.close_diff_branch_menu(window, cx);
             this.spawn_switch_diff_branch(cwd.clone(), item_branch.clone(), cx);
         }))

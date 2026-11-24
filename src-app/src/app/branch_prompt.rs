@@ -4,6 +4,7 @@ use gpui::{
 };
 
 use crate::PaneFlowApp;
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::widgets::text_input::TextInput;
 
 pub(crate) struct BranchPromptState {
@@ -191,7 +192,7 @@ impl PaneFlowApp {
                     .text_color(if running { ui.muted } else { ui.accent })
                     .when(!running, |d| d.cursor_pointer())
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+                    .on_activate(cx.listener(|this, _: &ClickEvent, _w, cx| {
                         this.branch_prompt_confirm(cx);
                         cx.stop_propagation();
                     }))

@@ -14,6 +14,7 @@ use crate::ui_primitives::AnimatedHoverExt;
 use crate::ui_primitives::action_menu::{ActionMenu, MenuElement, MenuGlyph, MenuItem};
 
 use super::lane::lane_visual;
+use crate::ui_primitives::AccessibleControlExt as _;
 
 const SPACE_CONTROL_RADIUS: f32 = 7.0;
 const SPACE_MARK_SIZE: f32 = 16.0;
@@ -274,7 +275,7 @@ impl PaneFlowApp {
             .aria_expanded(open)
             .delayed_tooltip(crate::ui_primitives::text_tooltip("Switch space"))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+            .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 this.sidebar_space_menu_open = !open;
                 cx.notify();
             }))
@@ -350,7 +351,7 @@ impl PaneFlowApp {
             .aria_label(label.clone())
             .delayed_tooltip(crate::ui_primitives::text_tooltip(label))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.go_to_space_attention(target.clone(), level, window, cx);
             }))
             .child(mark)

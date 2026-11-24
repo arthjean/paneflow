@@ -9,6 +9,7 @@ use gpui::{
 use crate::PaneFlowApp;
 use crate::app::self_update_flow::ManualUpdateCheck;
 use crate::settings::components::with_alpha;
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::{DISMISS_BUTTON_SIZE, ROW_RADIUS, dismiss_button};
 
 impl PaneFlowApp {
@@ -45,7 +46,7 @@ impl PaneFlowApp {
         .aria_label("Retry update check")
         .child("Retry")
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+        .on_activate(cx.listener(|this, _: &ClickEvent, _, cx| {
             cx.stop_propagation();
             this.request_update_check(cx);
         }));
@@ -57,7 +58,7 @@ impl PaneFlowApp {
             ui.text,
             with_alpha(ui.text, 0.08),
         )
-        .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+        .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
             cx.stop_propagation();
             this.handle_dismiss_update(&crate::DismissUpdate, window, cx);
         }));
@@ -222,7 +223,7 @@ impl PaneFlowApp {
         )
         .cursor_pointer()
         .delayed_tooltip(crate::ui_primitives::text_tooltip("Settings"))
-        .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+        .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
             this.open_settings_window(window, cx);
         }))
         .child(

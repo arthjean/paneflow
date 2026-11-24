@@ -8,6 +8,7 @@ use gpui::{
 
 use super::view::CodeView;
 use crate::app::menu_icons as icon;
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::action_menu::{ActionMenu, MenuHandlers, MenuItem};
 use crate::ui_primitives::{AnimatedHoverExt, TooltipDelayExt, text_tooltip};
 
@@ -217,7 +218,7 @@ impl Render for EditorControls {
             )
             .delayed_tooltip(text_tooltip("Editor Controls"))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(move |this, _, window, cx| {
+            .on_activate(cx.listener(move |this, _, window, cx| {
                 if open {
                     this.close(window, cx);
                 } else {

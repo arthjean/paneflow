@@ -2,8 +2,7 @@ use std::path::Path;
 
 use gpui::{
     AnyElement, App, ClickEvent, CursorStyle, FontWeight, InteractiveElement, IntoElement,
-    ParentElement, SharedString, StatefulInteractiveElement, Styled, Window, div, img,
-    prelude::FluentBuilder, px,
+    ParentElement, SharedString, Styled, Window, div, img, prelude::FluentBuilder, px,
 };
 
 use super::{NoPreview, format_size};
@@ -68,7 +67,7 @@ fn action_button(
         Some(on_click) => button
             .cursor(CursorStyle::PointingHand)
             .hover(|style| style.bg(ui.subtle))
-            .on_click(move |event, window, cx| on_click(event, window, cx))
+            .on_activate(move |event, window, cx| on_click(event, window, cx))
             .into_any_element(),
         None => button.into_any_element(),
     }

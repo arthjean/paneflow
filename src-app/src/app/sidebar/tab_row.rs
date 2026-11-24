@@ -1,5 +1,6 @@
 use super::*;
 
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::AnimatedHoverExt;
 
 pub(super) fn checkout_diffstat_visible(
@@ -227,7 +228,7 @@ impl PaneFlowApp {
                     .my(px(
                         (SIDEBAR_ROW_LINE_HEIGHT - SIDEBAR_ACTION_BUTTON_SIZE) / 2.
                     ))
-                    .on_click(move |_, _, cx| {
+                    .on_activate(move |_, _, cx| {
                         let current = detached_panes.iter().position(|pane| {
                             pane.read(cx).detached.is_some_and(|placement| {
                                 crate::agents::notifications::is_window_active(
@@ -276,7 +277,7 @@ impl PaneFlowApp {
                     })
                 },
             )
-            .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
+            .on_activate(cx.listener(move |this, e: &ClickEvent, window, cx| {
                 cx.stop_propagation();
                 if this.sidebar_selection_click(
                     SidebarRow::Tab(ws_idx, tab_idx),
@@ -350,7 +351,7 @@ impl PaneFlowApp {
                     close_trailing_space,
                     ui,
                 )
-                .on_click(close_tab);
+                .on_activate(close_tab);
                 let title_row = sidebar_title_row(
                     content_width,
                     title_main,

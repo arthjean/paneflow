@@ -11,6 +11,7 @@ use crate::PaneFlowApp;
 use crate::app::menu_icons as icon;
 use crate::diff::FileChange;
 use crate::settings::components::select_item;
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::{BODY, LABEL_SM};
 
 const TREE_WIDTH_FRACTION: f32 = 0.4;
@@ -287,7 +288,7 @@ impl PaneFlowApp {
                     TreeRowKind::Folder { folded } => base
                         .role(gpui::accesskit::Role::Button)
                         .aria_label(format!("Folder {}", row.label))
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                        .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                             this.toggle_diff_changes_tree_folder(path.clone(), cx);
                         }))
                         .child(
@@ -313,7 +314,7 @@ impl PaneFlowApp {
                         let (mark, mark_color) = change_mark(change, ui);
                         base.role(gpui::accesskit::Role::Button)
                             .aria_label(format!("{}, {}", row.label, change_name(change)))
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                            .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                                 this.reveal_diff_file(path.clone(), cx);
                             }))
                             .child(file_icon_element(

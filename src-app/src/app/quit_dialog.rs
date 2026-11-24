@@ -16,6 +16,7 @@ use crate::settings::components::{
     with_alpha,
 };
 use crate::terminal::host_link::{self, HostLinkState, StopAllOutcome};
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::{BODY, LABEL_SM};
 use crate::update;
 
@@ -756,7 +757,7 @@ impl PaneFlowApp {
             .rounded(px(QUIT_REMEMBER_RADIUS))
             .bg(with_alpha(ui.subtle, 0.5))
             .cursor(CursorStyle::PointingHand)
-            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+            .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
                 this.activate_quit_action(QuitAction::ToggleRemember, window, cx);
                 cx.stop_propagation();
             }))
@@ -790,7 +791,7 @@ impl PaneFlowApp {
                     .cursor(CursorStyle::PointingHand)
                     .text_size(LABEL_SM)
                     .text_color(ui.muted)
-                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                    .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
                         this.activate_quit_action(QuitAction::ToggleDetails, window, cx);
                         cx.stop_propagation();
                     }))
@@ -851,11 +852,11 @@ impl PaneFlowApp {
             });
             let control = if action == footer_actions.default && action != QuitAction::Cancel {
                 solid_button(id, label, switch_blue())
-                    .on_click(on_click)
+                    .on_activate(on_click)
                     .into_any_element()
             } else if matches!(action, QuitAction::StopEverything | QuitAction::QuitUnsaved) {
                 destructive_button(id, label)
-                    .on_click(on_click)
+                    .on_activate(on_click)
                     .into_any_element()
             } else {
                 secondary_button(id, label, ui, on_click).into_any_element()

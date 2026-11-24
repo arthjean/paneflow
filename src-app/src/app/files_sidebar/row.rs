@@ -7,6 +7,7 @@ use super::panel::{FilesEvent, FilesSidebar};
 use super::projection::{DirState, FileRow};
 use super::{DIMMED_OPACITY, INDENT_STEP, ROW_GAP, ROW_HEIGHT, ROW_SLOT};
 use crate::app::files_git;
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::{LABEL_SM, squircle_skin};
 
 const SIDEBAR_ROW_PADDING_X: f32 = 8.0;
@@ -154,7 +155,7 @@ impl FilesSidebar {
         el = el.on_drag(drag, |drag, _offset, _window, cx| cx.new(|_| drag.clone()));
 
         let click_path = path.clone();
-        el = el.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+        el = el.on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
             this.focus.focus(window, cx);
             this.activate_path(&click_path, is_dir, window, cx);
             cx.stop_propagation();

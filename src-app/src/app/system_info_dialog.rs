@@ -12,6 +12,7 @@ use crate::settings::components::{
 };
 use crate::system_info::{ReportRow, ReportSection, SystemInfo, SystemInfoProbe};
 use crate::theme::UiColors;
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::{BODY, LABEL_SM};
 
 const DIALOG_WIDTH: Pixels = px(560.);
@@ -194,7 +195,7 @@ impl PaneFlowApp {
                     .child(
                         solid_button("system-info-copy", "Copy", switch_blue())
                             .when(!is_ready, |button| button.opacity(0.5))
-                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            .on_activate(cx.listener(|this, _: &ClickEvent, _, cx| {
                                 this.copy_system_info(cx);
                                 cx.stop_propagation();
                             })),

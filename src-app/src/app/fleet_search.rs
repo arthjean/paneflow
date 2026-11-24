@@ -5,6 +5,7 @@ use gpui::{
 
 use crate::PaneFlowApp;
 use crate::app::workspace_ops::WorkspaceFocusTarget;
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
 const BADGE_HOLD_SECS: u64 = 4;
@@ -388,7 +389,7 @@ impl PaneFlowApp {
                         style.bg(lerp_color(resting_background, ui.subtle, delta));
                     })
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         this.fleet_search_activate(sid, window, cx);
                         cx.stop_propagation();
                     }))

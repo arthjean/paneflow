@@ -5,6 +5,7 @@ use gpui::{
 
 use crate::PaneFlowApp;
 use crate::settings::components::{keycap, keycap_tones, select_item};
+use crate::ui_primitives::AccessibleControlExt as _;
 
 const LIST_MAX_WIDTH: f32 = 320.0;
 const LIST_PADDING: f32 = 24.0;
@@ -191,7 +192,7 @@ pub(super) fn render_diff_surface_picker(
                 .role(gpui::accesskit::Role::Button)
                 .aria_label(surface.label())
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.choose_diff_dock_surface(surface, window, cx);
                 }))
                 .child(

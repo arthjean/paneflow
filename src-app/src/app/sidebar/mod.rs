@@ -42,6 +42,7 @@ use status_groups::tab_row_workspace_suffix;
 pub(crate) use style::*;
 pub(crate) use tab_row::*;
 
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::{
     PaneFlowApp, SIDEBAR_WIDTH, TabDrag, TabKey, WorkspaceDrag, WorkspaceDragPreview, ai_types,
     app::pull_request::PullRequest,
@@ -420,7 +421,7 @@ impl PaneFlowApp {
                             .delayed_tooltip(crate::ui_primitives::text_tooltip(
                                 new_workspace_tooltip,
                             ))
-                            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                            .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
                                 this.create_workspace_with_picker(window, cx);
                             }))
                             .child(
@@ -537,7 +538,7 @@ impl PaneFlowApp {
                 Some(hover_bg),
             )
             .cursor_pointer()
-            .on_click(cx.listener(|_this, _: &ClickEvent, _window, cx| {
+            .on_activate(cx.listener(|_this, _: &ClickEvent, _window, cx| {
                 crate::worker_bootstrap::retry();
                 cx.notify();
             }))
@@ -580,7 +581,7 @@ impl PaneFlowApp {
                     )
                     .child(
                         sidebar_empty_state_button("sidebar-empty-open-folder", ui)
-                            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                            .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
                                 this.create_workspace_with_picker(window, cx);
                             }))
                             .child(div().text_color(ui.text).child("Open folder"))
@@ -613,7 +614,7 @@ impl PaneFlowApp {
                     )
                     .child(
                         sidebar_empty_state_button("sidebar-empty-clone-repo", ui)
-                            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                            .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
                                 this.open_clone_repo(window, cx);
                             }))
                             .child(div().text_color(ui.text).child("Clone repository")),

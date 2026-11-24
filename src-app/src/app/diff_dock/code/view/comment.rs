@@ -4,6 +4,7 @@ use super::*;
 use crate::app::agent_send::{RangeComment, range_label};
 use crate::app::diff_dock::code::edit::TrackerWindow;
 use crate::app::diff_dock::code::rows::RowSpan;
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::TooltipDelayExt;
 use crate::ui_primitives::action_menu::{ActionMenu, MenuHandlers, MenuItem};
 use crate::widgets::text_area::{TextArea, TextAreaEvent};
@@ -748,7 +749,7 @@ impl CodeView {
                     .text_color(palette.on_primary)
                     .cursor(CursorStyle::PointingHand)
                     .hover(|style| style.opacity(0.9))
-                    .on_click(cx.listener(|view, _: &ClickEvent, window, cx| {
+                    .on_activate(cx.listener(|view, _: &ClickEvent, window, cx| {
                         view.request_send_comment(window, cx);
                     }))
             })
@@ -769,7 +770,7 @@ impl CodeView {
             .text_color(palette.placeholder)
             .cursor(CursorStyle::PointingHand)
             .hover(|style| style.bg(palette.ghost_hover).text_color(ui.text))
-            .on_click(cx.listener(|view, _: &ClickEvent, window, cx| {
+            .on_activate(cx.listener(|view, _: &ClickEvent, window, cx| {
                 view.cancel_comment(window, cx);
             }))
             .child(CANCEL_COMMENT);

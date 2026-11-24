@@ -11,6 +11,7 @@ use crate::app::diff_dock::preview::{
 };
 use crate::app::files_sidebar::open_with;
 use crate::markdown::{MAX_INPUT_BYTES, MarkdownView};
+use crate::ui_primitives::AccessibleControlExt as _;
 
 pub(crate) const SHOW_RENDERED_MARKDOWN: &str = "Show rendered markdown";
 pub(crate) const SHOW_MARKDOWN_SOURCE: &str = "Show markdown source";
@@ -303,7 +304,7 @@ impl CodeView {
                 .hover(move |style| style.bg(hover))
                 .tooltip(crate::ui_primitives::text_tooltip(label))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                .on_activate(cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.toggle_rendered(cx);
                     cx.stop_propagation();
                 }))

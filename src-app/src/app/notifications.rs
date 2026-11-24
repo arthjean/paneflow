@@ -13,6 +13,7 @@ use crate::settings::components::{
     floating_shadow, inverse_fill, raised_button, select_menu_surface, surface_edge, with_alpha,
 };
 use crate::theme::UiColors;
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::interface_style::{circular, frame_corner};
 use crate::ui_primitives::squircle::squircle_fill;
 use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
@@ -314,7 +315,7 @@ impl PaneFlowApp {
             return raised_button(button_id, label, fill, ink)
                 .flex_none()
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(on_click)
+                .on_activate(on_click)
                 .into_any_element();
         }
         let group = SharedString::from(format!("{button_id}-squircle"));
@@ -337,7 +338,7 @@ impl PaneFlowApp {
         .aria_label(label)
         .child(label)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(on_click)
+        .on_activate(on_click)
         .into_any_element()
     }
 

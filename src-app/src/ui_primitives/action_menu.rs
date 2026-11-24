@@ -11,6 +11,7 @@ use gpui::{
 
 use crate::settings::components::{select_menu_surface, with_alpha};
 use crate::theme::UiColors;
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::TooltipDelayExt;
 
 pub(crate) const PANEL_RADIUS: Pixels = px(8.);
@@ -795,7 +796,7 @@ fn wire_row<A: Clone + 'static>(
     };
     if has_submenu {
         let click_state = state.clone();
-        return row.on_click(move |_: &ClickEvent, _, cx| {
+        return row.on_activate(move |_: &ClickEvent, _, cx| {
             cx.stop_propagation();
             click_state.update(cx, |state, cx| {
                 state.submenu = Some(index);
@@ -809,7 +810,7 @@ fn wire_row<A: Clone + 'static>(
     let root = root.clone();
     let state = state.clone();
     let handlers = handlers.clone();
-    row.on_click(move |_: &ClickEvent, window, cx| {
+    row.on_activate(move |_: &ClickEvent, window, cx| {
         cx.stop_propagation();
         let menu: &ActionMenu<A> = submenu_of
             .and_then(|parent| root.submenu_at(parent))

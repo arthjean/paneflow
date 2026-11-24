@@ -1,6 +1,6 @@
 use gpui::{
     AnyElement, ClickEvent, Context, Entity, InteractiveElement, IntoElement, KeyDownEvent,
-    ParentElement, Pixels, SharedString, Window, div, prelude::*, px,
+    ParentElement, Pixels, SharedString, Window, div, px,
 };
 
 use crate::PaneFlowApp;
@@ -10,6 +10,7 @@ use crate::settings::components::{
     ModalKey, confirmation_list, confirmation_warning, modal_backdrop, modal_card, modal_footer,
     modal_header, modal_key, secondary_button, solid_button, switch_blue,
 };
+use crate::ui_primitives::AccessibleControlExt as _;
 
 const DIALOG_WIDTH: Pixels = px(460.);
 const CARD_RADIUS: Pixels = crate::app::constants::PANE_CARD_RADIUS;
@@ -300,7 +301,7 @@ impl PaneFlowApp {
                     if dialog.saving { "Saving…" } else { "Save" },
                     switch_blue(),
                 )
-                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
                     this.save_unsaved_and_continue(window, cx);
                     cx.stop_propagation();
                 })),

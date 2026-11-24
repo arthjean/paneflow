@@ -2095,6 +2095,17 @@ from 4.3, and the drag
 ghost is a 6 px chip with 13 px Medium text, a 12 px icon, and the one
 allowed large shadow.
 
+A control that acts on a click registers it with `on_activate`
+(`AccessibleControlExt` in `ui_primitives`), and one that acts on mouse down
+with `on_pointer_press`: each also answers an accessibility press directly,
+where a bare `on_click` gets GPUI's synthetic click at the control's center,
+which misses a control scrolled out of view. Only pure pointer gestures (a
+double click that zooms the window, a hit test against the pointer, a menu
+anchored at the pointer) keep a bare `on_click`, each listed with its reason
+in `CLICK_ONLY_HANDLERS`, which
+`production_code_answers_an_accessibility_press_without_hit_testing` enforces
+and which may only shrink.
+
 ### 6.3 Focus and attention
 
 Shared text inputs use a `text` colored insertion caret, 1 px wide and

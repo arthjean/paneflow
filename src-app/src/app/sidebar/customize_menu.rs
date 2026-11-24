@@ -11,6 +11,7 @@ use crate::ui_primitives::TooltipDelayExt;
 use crate::ui_primitives::action_menu::{ActionMenu, MenuHandlers, MenuItem};
 use crate::ui_primitives::squircle_skin;
 
+use crate::ui_primitives::AccessibleControlExt as _;
 use paneflow_config::schema::{SidebarGroupBy, SidebarShow};
 
 #[derive(Clone, Copy)]
@@ -250,7 +251,7 @@ pub(super) fn render_customize_sidebar_button(
     .aria_label("Customize sidebar")
     .delayed_tooltip(crate::ui_primitives::text_tooltip("Customize sidebar"))
     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-    .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+    .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
         this.sidebar_customize_menu_open = !open;
         cx.notify();
     }))

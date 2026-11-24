@@ -131,7 +131,7 @@ pub(super) fn render_tree_toggle(
             hover,
         )
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+        .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
             this.handle_toggle_files_sidebar(&crate::ToggleFilesSidebar, window, cx);
             cx.stop_propagation();
         }))
@@ -236,7 +236,7 @@ pub(super) fn render_file_breadcrumbs(
                     crate::app::constants::sidebar_tab_hover_background(),
                 )
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.reveal_folder_in_tree(path.clone(), window, cx);
                     cx.stop_propagation();
                 }))

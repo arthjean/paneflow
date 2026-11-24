@@ -342,7 +342,7 @@ impl PaneFlowApp {
                     .animated_hover(move |style, delta| {
                         style.bg(lerp_color(ui.subtle.opacity(0.0), ui.subtle, delta));
                     })
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    .on_activate(cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.close_custom_buttons_modal(cx);
                         cx.stop_propagation();
                     }))
@@ -523,7 +523,7 @@ impl PaneFlowApp {
                     .animated_hover(move |style, delta| {
                         style.bg(lerp_color(ui.surface.opacity(0.0), ui.surface, delta));
                     })
-                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         this.begin_edit_button(&edit_id, window, cx);
                         cx.stop_propagation();
                     }))
@@ -547,7 +547,7 @@ impl PaneFlowApp {
                     .animated_hover(move |style, delta| {
                         style.bg(lerp_color(ui.surface.opacity(0.0), ui.surface, delta));
                     })
-                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         this.delete_button(&del_id, cx);
                         this.custom_buttons_modal_focus.focus(window, cx);
                         cx.stop_propagation();
@@ -658,7 +658,7 @@ impl PaneFlowApp {
             .text_size(px(12.))
             .font_weight(FontWeight::MEDIUM)
             .text_color(ui.muted)
-            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+            .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
                 this.begin_new_button(window, cx);
                 cx.stop_propagation();
             }))
@@ -756,7 +756,7 @@ impl PaneFlowApp {
                 .w(px(32.))
                 .h(px(32.))
                 .rounded(px(6.))
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                .on_activate(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     if let Some(modal) = this.custom_buttons_modal.as_mut()
                         && let ModalView::Form {
                             icon: ref mut cur_icon,
@@ -803,7 +803,7 @@ impl PaneFlowApp {
             .rounded(px(6.))
             .text_size(px(12.))
             .font_weight(FontWeight::SEMIBOLD)
-            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+            .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
                 this.save_form(window, cx);
                 cx.stop_propagation();
             }))
@@ -856,7 +856,7 @@ impl PaneFlowApp {
                                     .bg(lerp_color(ui.subtle.opacity(0.0), ui.subtle, delta))
                                     .text_color(lerp_color(ui.muted, ui.text, delta));
                             })
-                            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                            .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
                                 this.cancel_form(window, cx);
                                 cx.stop_propagation();
                             }))

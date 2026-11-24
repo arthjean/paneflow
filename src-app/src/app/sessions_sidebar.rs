@@ -8,6 +8,7 @@ use gpui::{
 use crate::PaneFlowApp;
 use crate::agent_sessions::{SessionAgent, SessionMeta, format_relative_time};
 use crate::pane_drag::{DragPreview, SessionDrag};
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
 pub(crate) const SESSIONS_SIDEBAR_WIDTH: f32 = 300.;
@@ -223,7 +224,7 @@ impl PaneFlowApp {
                             ))
                             .text_color(lerp_color(ui.muted, ui.text, delta));
                     })
-                    .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                    .on_activate(cx.listener(|this, _: &ClickEvent, _window, cx| {
                         this.close_sessions_sidebar(cx);
                         cx.stop_propagation();
                     }))
@@ -339,7 +340,7 @@ impl PaneFlowApp {
             .px(px(14.))
             .pt(px(12.))
             .pb(px(4.))
-            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.agent_sessions.sessions_focus.focus(window, cx);
                 this.agent_sessions.sessions_group_collapsed[idx] =
                     !this.agent_sessions.sessions_group_collapsed[idx];
@@ -424,7 +425,7 @@ impl PaneFlowApp {
                                 ))
                                 .text_color(lerp_color(ui.muted, ui.text, delta));
                         })
-                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
                             this.agent_sessions.sessions_focus.focus(window, cx);
                             this.agent_sessions.sessions_group_show_all[idx] =
                                 !this.agent_sessions.sessions_group_show_all[idx];
@@ -515,7 +516,7 @@ impl PaneFlowApp {
             .animated_hover(move |style, delta| {
                 style.bg(lerp_color(resting_background, hover_background, delta));
             })
-            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.agent_sessions.sessions_focus.focus(window, cx);
                 this.select_session_row(agent, &session_id);
                 this.resume_session_from_sidebar(agent, &session_id, cx);

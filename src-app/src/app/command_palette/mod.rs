@@ -7,8 +7,8 @@ use std::rc::Rc;
 use gpui::prelude::FluentBuilder;
 use gpui::{
     AnyElement, App, ClickEvent, Context, InteractiveElement, IntoElement, KeyDownEvent,
-    MouseButton, ParentElement, Pixels, ScrollStrategy, SharedString, StatefulInteractiveElement,
-    Styled, UniformListScrollHandle, Window, deferred, div, px, svg, uniform_list,
+    MouseButton, ParentElement, Pixels, ScrollStrategy, SharedString, Styled,
+    UniformListScrollHandle, Window, deferred, div, px, svg, uniform_list,
 };
 
 use crate::PaneFlowApp;
@@ -22,6 +22,7 @@ use crate::ui_primitives::quick_pick::{
 use crate::ui_primitives::squircle::squircle_fill;
 use crate::ui_primitives::{FilterFieldStyle, filter_field};
 
+use crate::ui_primitives::AccessibleControlExt as _;
 use catalog::{Apply, COMMANDS, Command, Kind, Needs, ScopeValue};
 pub(crate) use catalog::{Scope, Section};
 
@@ -810,7 +811,7 @@ impl PaneFlowApp {
         .gap(px(ROW_GAP))
         .text_size(px(LABEL_SIZE))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+        .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
             this.command_palette_run(idx, window, cx);
             cx.stop_propagation();
         }))

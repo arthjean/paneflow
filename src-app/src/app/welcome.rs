@@ -8,6 +8,7 @@ use crate::PaneFlowApp;
 use crate::SettingsSection;
 use crate::agent_launcher::AgentLaunch;
 use crate::settings::components::select_item;
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::squircle::squircle_fill;
 
 const WELCOME_COLUMN_WIDTH: f32 = 460.0;
@@ -165,7 +166,7 @@ impl PaneFlowApp {
                     open_key,
                     ui,
                 )
-                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
                     this.create_workspace_with_picker(window, cx);
                     cx.stop_propagation();
                 })),
@@ -178,7 +179,7 @@ impl PaneFlowApp {
                     None,
                     ui,
                 )
-                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
                     this.open_clone_repo(window, cx);
                     cx.stop_propagation();
                 })),
@@ -191,7 +192,7 @@ impl PaneFlowApp {
                     palette_key,
                     ui,
                 )
-                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
                     this.open_command_palette(window, cx);
                     cx.stop_propagation();
                 })),
@@ -217,10 +218,12 @@ impl PaneFlowApp {
                     shortcut,
                     ui,
                 )
-                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    this.open_recent_workspace(idx, window, cx);
-                    cx.stop_propagation();
-                })),
+                .on_activate(cx.listener(
+                    move |this, _: &ClickEvent, window, cx| {
+                        this.open_recent_workspace(idx, window, cx);
+                        cx.stop_propagation();
+                    },
+                )),
             );
         }
         section.into_any_element()
@@ -240,7 +243,7 @@ impl PaneFlowApp {
                     None,
                     ui,
                 )
-                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
                     this.open_settings_at(SettingsSection::Agents, window, cx);
                     cx.stop_propagation();
                 })),
@@ -253,7 +256,7 @@ impl PaneFlowApp {
                     None,
                     ui,
                 )
-                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
                     this.open_settings_at(SettingsSection::Shortcuts, window, cx);
                     cx.stop_propagation();
                 })),
@@ -266,7 +269,7 @@ impl PaneFlowApp {
                     None,
                     ui,
                 )
-                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
                     this.open_settings_at(SettingsSection::Appearance, window, cx);
                     cx.stop_propagation();
                 })),

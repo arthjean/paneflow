@@ -843,7 +843,7 @@ pub(crate) fn filter_pill(
                         .text_color(icon_color)
                         .into_any_element()]);
                 })
-                .on_click(on_clear),
+                .on_activate(on_clear),
         );
     }
     field
@@ -1003,7 +1003,7 @@ pub(crate) fn filter_field(
                     .cursor_pointer()
                     .accessible_control(gpui::accesskit::Role::Button, clear_label)
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(on_clear)
+                    .on_activate(on_clear)
                     .child(
                         svg()
                             .size(px(12.))
@@ -1340,37 +1340,122 @@ mod tests {
         }
     }
 
+    const CLICK_ONLY_HANDLERS: &[(&str, usize, &str)] = &[
+        (
+            "ui_primitives.rs",
+            2,
+            "on_activate registers the click it pairs with an accessibility press, and on_press takes only keyboard clicks there because on_pointer_press already answers the press",
+        ),
+        (
+            "window_chrome/title_bar.rs",
+            1,
+            "a double click on the empty title bar zooms the window",
+        ),
+        (
+            "app/detached_panes/window.rs",
+            1,
+            "a double click on the detached window's title strip zooms it",
+        ),
+        (
+            "app/diff_dock/mod.rs",
+            1,
+            "the diff body hit-tests the pointer against the scrollbar, the revert gutter and the row under it",
+        ),
+        (
+            "widgets/editor_scrollbar.rs",
+            1,
+            "the scrollbar track only stops a click from reaching the editor below",
+        ),
+        (
+            "app/diff_dock/file_chrome.rs",
+            1,
+            "the breadcrumb chevron anchors its folder menu at the pointer",
+        ),
+        (
+            "pane.rs",
+            1,
+            "a click anywhere on the pane header focuses the pane; the header is a drag surface, not a control",
+        ),
+    ];
+
+    fn production_lines(text: &str) -> impl Iterator<Item = (usize, &str)> {
+        let lines: Vec<&str> = text.lines().collect();
+        let end = lines
+            .windows(2)
+            .position(|pair| {
+                let module = pair[1].trim();
+                pair[0].trim() == "#[cfg(test)]"
+                    && module.ends_with('{')
+                    && module.split_whitespace().any(|word| word == "mod")
+            })
+            .unwrap_or(lines.len());
+        lines.into_iter().take(end).enumerate()
+    }
+
     #[test]
-    fn settings_and_palette_controls_answer_a_press_without_hit_testing() {
+    fn production_code_answers_an_accessibility_press_without_hit_testing() {
+        use std::collections::BTreeMap;
         use std::path::{Path, PathBuf};
 
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let mut files: Vec<PathBuf> = vec![root.join("app/pane_palette.rs")];
-        let mut stack = vec![root.join("settings")];
+        let mut files: Vec<PathBuf> = Vec::new();
+        let mut stack = vec![root.clone()];
         while let Some(dir) = stack.pop() {
             for entry in std::fs::read_dir(&dir).unwrap() {
                 let path = entry.unwrap().path();
                 if path.is_dir() {
-                    stack.push(path);
-                } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+                    if path.file_name().and_then(|n| n.to_str()) != Some("tests") {
+                        stack.push(path);
+                    }
+                } else if path.extension().and_then(|e| e.to_str()) == Some("rs")
+                    && path.file_stem().and_then(|s| s.to_str()) != Some("tests")
+                {
                     files.push(path);
                 }
             }
         }
-        let mut violations = Vec::new();
+        let mut found: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         for path in files {
-            let rel = path.strip_prefix(&root).unwrap().display().to_string();
+            let rel = path
+                .strip_prefix(&root)
+                .unwrap()
+                .components()
+                .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("/");
             let text = std::fs::read_to_string(&path).unwrap();
-            for (i, line) in text.lines().enumerate() {
+            for (index, line) in production_lines(&text) {
                 if line.contains(".on_click(") {
-                    violations.push(format!("{rel}:{}", i + 1));
+                    found.entry(rel.clone()).or_default().push(index + 1);
                 }
             }
         }
+        let allowed: BTreeMap<&str, usize> = CLICK_ONLY_HANDLERS
+            .iter()
+            .map(|(file, count, _)| (*file, *count))
+            .collect();
+        let mut problems = Vec::new();
+        for (file, lines) in &found {
+            let budget = allowed.get(file.as_str()).copied().unwrap_or(0);
+            if lines.len() > budget {
+                problems.push(format!(
+                    "{file}: {} click-only handlers, {budget} allowed, at lines {lines:?}",
+                    lines.len()
+                ));
+            }
+        }
+        for (file, budget) in &allowed {
+            let count = found.get(*file).map_or(0, Vec::len);
+            if count < *budget {
+                problems.push(format!(
+                    "{file}: {count} click-only handlers left, lower its CLICK_ONLY_HANDLERS entry from {budget}"
+                ));
+            }
+        }
         assert!(
-            violations.is_empty(),
-            "GPUI answers an accessibility press on a bare on_click with a synthetic mouse click at the control's center, which misses a control scrolled out of view; use on_activate:\n{}",
-            violations.join("\n")
+            problems.is_empty(),
+            "GPUI answers an accessibility press on a bare on_click with a synthetic mouse click at the control's center, which misses a control scrolled out of view; register the handler with on_activate, or for a pure pointer gesture add it to CLICK_ONLY_HANDLERS with the reason (the list may only shrink):\n{}",
+            problems.join("\n")
         );
     }
 

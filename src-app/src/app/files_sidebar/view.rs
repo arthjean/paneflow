@@ -1,7 +1,6 @@
 use gpui::{
     AnyElement, ClickEvent, Context, CursorStyle, InteractiveElement, IntoElement, KeyDownEvent,
-    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window, div,
-    prelude::FluentBuilder, px, svg,
+    ParentElement, Render, SharedString, Styled, Window, div, prelude::FluentBuilder, px, svg,
 };
 
 use crate::ui_primitives::{AccessibleControlExt, ROW_RADIUS, squircle_skin};
@@ -168,7 +167,7 @@ impl FilesSidebar {
             .text_size(crate::ui_primitives::BODY)
             .text_color(ui.text)
             .accessible_control(gpui::accesskit::Role::Button, "Retry")
-            .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+            .on_activate(cx.listener(|this, _: &ClickEvent, _window, cx| {
                 this.retry(cx);
             }))
             .child("Retry");

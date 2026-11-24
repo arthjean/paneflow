@@ -174,7 +174,7 @@ pub(super) fn render_diff_tab_strip(
                 Some(rail_hover),
             )
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+            .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 this.toggle_diff_new_tab_menu(!open, cx);
             }))
             .child(
@@ -316,7 +316,7 @@ fn render_diff_tab(
     )
     .min_w(px(64.))
     .max_w(px(208.))
-    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+    .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
         this.select_diff_tab(index, cx);
         this.focus_diff_tab(index, window, cx);
     }))
@@ -349,7 +349,7 @@ fn render_diff_tab(
                 .group_hover(group.clone(), |style| style.visible())
         })
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+        .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
             this.request_close_diff_tab(index, window, cx);
             cx.stop_propagation();
         }))
@@ -438,7 +438,7 @@ pub(crate) fn render_diff_header_icon_button(
     squircle_skin(button, group, ROW_RADIUS, None, Some(hover))
         .accessible_control(gpui::accesskit::Role::Button, label)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(on_click)
+        .on_activate(on_click)
         .child(svg().size(px(14.)).flex_none().path(icon).text_color(color))
 }
 
@@ -478,7 +478,7 @@ fn toolbar_toggle(
     )
     .accessible_control(gpui::accesskit::Role::Button, label)
     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-    .on_click(on_click)
+    .on_activate(on_click)
     .child(
         svg()
             .size(px(TOOLBAR_ICON))

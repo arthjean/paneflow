@@ -1,5 +1,6 @@
 use super::*;
 
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::AnimatedHoverExt;
 
 impl PaneFlowApp {
@@ -58,7 +59,7 @@ impl PaneFlowApp {
                     })
                 },
             )
-            .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
+            .on_activate(cx.listener(move |this, e: &ClickEvent, window, cx| {
                 if this.sidebar_selection_click(SidebarRow::Folder(idx), e.modifiers(), window, cx)
                 {
                     return;
@@ -170,7 +171,7 @@ impl PaneFlowApp {
                     new_tab_trailing_space,
                     ui,
                 )
-                .on_click(open_new_tab);
+                .on_activate(open_new_tab);
                 row.extend([sidebar_title_row(
                     row_content_width,
                     title_main,

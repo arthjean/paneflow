@@ -22,6 +22,7 @@ use crate::settings::components::{select_menu_surface, with_alpha};
 use crate::settings::kit::{self, Ink, Text};
 use crate::settings::search::{self, Block, SearchCard, SettingCopy};
 use crate::theme::UiColors;
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::ring::{RingSize, concentric_rings, level_color, ring};
 use crate::ui_primitives::{TooltipDelayExt, lerp_color, text_tooltip};
 use crate::{PaneFlowApp, SettingsSection};
@@ -563,7 +564,7 @@ impl PaneFlowApp {
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 this.handle_usage_button_key(UsageButton::Refresh, event, window, cx);
             }))
-            .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+            .on_activate(cx.listener(|this, _: &ClickEvent, _window, cx| {
                 this.refresh_usage_page(cx);
             }))
             .when(focused, |button| {
@@ -701,7 +702,7 @@ impl PaneFlowApp {
             .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
                 this.handle_usage_button_key(UsageButton::SidebarAgent(agent), event, window, cx);
             }))
-            .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+            .on_activate(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                 this.toggle_sidebar_usage_agent(agent, cx);
             }))
             .when(handle.is_focused(window), |switch| {
@@ -761,7 +762,7 @@ impl PaneFlowApp {
                 .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                     this.handle_usage_button_key(UsageButton::OpenAgents, event, window, cx);
                 }))
-                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                .on_activate(cx.listener(|this, _: &ClickEvent, window, cx| {
                     this.select_settings_section(SettingsSection::Agents, window, cx);
                 })),
             )
@@ -814,7 +815,7 @@ impl PaneFlowApp {
                         .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                             this.handle_usage_button_key(UsageButton::Import, event, window, cx);
                         }))
-                        .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                        .on_activate(cx.listener(|this, _: &ClickEvent, _window, cx| {
                             this.import_past_activity(cx);
                         }))
                         .when(focused, |button| {
@@ -841,7 +842,7 @@ impl PaneFlowApp {
             .on_key_down(cx.listener(Self::handle_metric_key));
         for metric in Metric::ALL {
             let selected = metric == self.usage.metric;
-            control = control.child(metric_pill(metric, selected, focused, ui).on_click(
+            control = control.child(metric_pill(metric, selected, focused, ui).on_activate(
                 cx.listener(move |this, _: &ClickEvent, _window, cx| {
                     this.usage.metric = metric;
                     cx.notify();

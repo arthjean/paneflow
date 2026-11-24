@@ -2,13 +2,14 @@ use std::rc::Rc;
 
 use gpui::{
     AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, MouseButton, ParentElement,
-    StatefulInteractiveElement, Styled, deferred, div, prelude::FluentBuilder, px, svg,
+    Styled, deferred, div, prelude::FluentBuilder, px, svg,
 };
 
 use super::model::DiffChrome;
 use crate::PaneFlowApp;
 use crate::app::menu_icons as icon;
 use crate::diff::{ComparisonPolicy, DiffOptions, HighlightPolicy};
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::action_menu::{ActionMenu, MenuHandlers, MenuItem};
 use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
 
@@ -55,7 +56,7 @@ pub(super) fn render_diff_options_button(
         Some(hover),
     )
     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-    .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+    .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
         this.set_diff_options_menu(!open, cx);
     }))
     .child(

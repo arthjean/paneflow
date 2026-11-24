@@ -4,14 +4,14 @@ use std::rc::Rc;
 use gpui::prelude::FluentBuilder;
 use gpui::{
     Anchor, AnyElement, Bounds, ClickEvent, Context, Focusable, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, Pixels, Point, Render, ScrollStrategy, SharedString, Size,
-    StatefulInteractiveElement, Styled, Window, anchored, deferred, div, img, point, px, svg,
-    uniform_list,
+    MouseButton, ParentElement, Pixels, Point, Render, ScrollStrategy, SharedString, Size, Styled,
+    Window, anchored, deferred, div, img, point, px, svg, uniform_list,
 };
 
 use super::listing::{Listing, Row};
 use super::{PathPicker, PathPickerEvent};
 use crate::settings::components::{select_item_shaped, select_menu_surface, with_alpha};
+use crate::ui_primitives::AccessibleControlExt as _;
 use crate::ui_primitives::quick_pick::{
     FIELD_GAP, FIELD_INSET, ICON_GAP, ICON_SIZE, LABEL_SIZE, PANEL_PADDING, ROW_GAP,
     ROW_TEXT_INSET, highlighted_label, panel_radius, row_colors, row_height, row_radius,
@@ -139,7 +139,7 @@ impl PathPicker {
         .gap(px(ROW_GAP))
         .text_size(px(LABEL_SIZE))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(cx.listener(move |picker, _: &ClickEvent, _, cx| {
+        .on_activate(cx.listener(move |picker, _: &ClickEvent, _, cx| {
             picker.pick(index, cx);
             cx.stop_propagation();
         }))

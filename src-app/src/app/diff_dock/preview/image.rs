@@ -9,7 +9,7 @@ use gpui::{
     AnyElement, AppContext, Bounds, ClickEvent, Context, EventEmitter, FocusHandle,
     InteractiveElement, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     ParentElement, Pixels, Point, Render, RenderImage, ScrollDelta, ScrollEvent, SharedString,
-    StatefulInteractiveElement, Styled, Window, canvas, div, img, prelude::FluentBuilder, px, svg,
+    Styled, Window, canvas, div, img, prelude::FluentBuilder, px, svg,
 };
 
 use super::large_text::PreviewEvent;
@@ -482,7 +482,7 @@ impl ImageView {
             .when(enabled, |button| {
                 button
                     .hover(move |style| style.bg(hover))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| on_click(this, cx)))
+                    .on_activate(cx.listener(move |this, _: &ClickEvent, _, cx| on_click(this, cx)))
             })
             .child(svg().size(px(14.)).path(icon).text_color(if enabled {
                 ui.text

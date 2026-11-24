@@ -482,7 +482,7 @@ pub(crate) fn render_window_button(
         .w(button_width)
         .h(button_height)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(move |_: &ClickEvent, window, cx| {
+        .on_activate(move |_: &ClickEvent, window, cx| {
             cx.stop_propagation();
             match button {
                 WindowButton::Minimize => window.minimize_window(),
