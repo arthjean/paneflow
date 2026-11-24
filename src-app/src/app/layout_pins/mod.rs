@@ -252,9 +252,16 @@ impl<'a> Rig<'a> {
     }
 
     pub(super) fn ipc(&mut self, method: &str, params: Value) -> Value {
-        let reply = self.act(|app, _, cx| {
-            app.handle_ipc(method, &params, None, paneflow_api::Gates::CLOSED, cx)
-        });
+        self.ipc_with(method, params, paneflow_api::Gates::CLOSED)
+    }
+
+    pub(super) fn ipc_with(
+        &mut self,
+        method: &str,
+        params: Value,
+        gates: paneflow_api::Gates,
+    ) -> Value {
+        let reply = self.act(|app, _, cx| app.handle_ipc(method, &params, None, gates, cx));
         let slot: Rc<RefCell<Option<Value>>> = Rc::default();
         match reply {
             IpcReply::Ready(value) => *slot.borrow_mut() = Some(value),

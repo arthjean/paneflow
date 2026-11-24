@@ -6,6 +6,35 @@ use crate::PaneFlowApp;
 use crate::layout::{LayoutTree, MAX_PANES};
 use crate::pane::Pane;
 
+type LaunchInput = (u64, Option<String>, Option<String>);
+
+fn launch_inputs_of(node: &NewNode, found: &mut Vec<LaunchInput>) {
+    match node {
+        NewNode::Pane(pane) => {
+            for surface in &pane.surfaces {
+                let definition = &surface.definition;
+                if definition
+                    .surface_type
+                    .as_deref()
+                    .is_some_and(|kind| kind != "terminal")
+                {
+                    continue;
+                }
+                let command = definition.command.clone().filter(|text| !text.is_empty());
+                let prompt = definition.prompt.clone().filter(|text| !text.is_empty());
+                if command.is_some() || prompt.is_some() {
+                    found.push((surface.id.0, command, prompt));
+                }
+            }
+        }
+        NewNode::Split { children, .. } => {
+            for child in children {
+                launch_inputs_of(child, found);
+            }
+        }
+    }
+}
+
 impl PaneFlowApp {
     fn model_active_tab(&mut self, ws_idx: usize, cx: &mut Context<Self>) -> Option<TabId> {
         self.adopt_layout(cx);
@@ -206,12 +235,28 @@ impl PaneFlowApp {
         let fallback = std::path::PathBuf::from(&self.workspaces[ws_idx].cwd);
         let node = self.layout.model.reserve_node(layout);
         self.stage_restored_surfaces(&node, &fallback);
+        let mut launches = Vec::new();
+        launch_inputs_of(&node, &mut launches);
         self.apply_layout_op(Op::RestoreLayout { tab, layout: node }, cx)
-            .map(|_| ())
             .map_err(|error| match error {
                 OpError::PaneLimit => format!("Layout exceeds maximum pane count ({MAX_PANES})"),
                 _ => "No active workspace".into(),
-            })
+            })?;
+        for (surface, command, prompt) in launches {
+            let Some(terminal) = self.terminal_for_surface(surface) else {
+                continue;
+            };
+            match (command, prompt) {
+                (Some(command), prompt) => {
+                    Self::schedule_launch_command(&terminal, command, prompt, usize::MAX, cx);
+                }
+                (None, Some(prompt)) => {
+                    Self::schedule_prompt_prefill(&terminal, prompt, usize::MAX, cx);
+                }
+                (None, None) => {}
+            }
+        }
+        Ok(())
     }
 
     fn stage_restored_surfaces(&mut self, node: &NewNode, fallback: &std::path::Path) {

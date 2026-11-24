@@ -864,6 +864,24 @@ impl TerminalState {
         self.buffer_input(input.into(), InputOrigin::Program)
     }
 
+    #[cfg(test)]
+    pub(crate) fn queued_input_text(&self) -> String {
+        let queued = self
+            .pending_input
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        queued
+            .iter()
+            .filter_map(|input| match input {
+                PendingTerminalInput::Raw(bytes, _) => {
+                    Some(String::from_utf8_lossy(bytes).into_owned())
+                }
+                PendingTerminalInput::Paste { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
     pub(super) fn set_terminal_focused(&mut self, focused: bool) {
         self.terminal_focused = focused;
         self.clipboard_gate.set_focused(focused);

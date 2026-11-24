@@ -352,6 +352,82 @@ fn a_command_of_workspace_up_is_typed_into_its_terminal_once_the_shell_settles()
     core_server.stop().unwrap();
 }
 
+#[cfg(unix)]
+#[test]
+fn a_command_of_a_layout_is_typed_into_its_terminal_by_create_and_restore_layout() {
+    unsafe { std::env::set_var("PANEFLOW_IPC_ORCHESTRATION", "1") };
+    let home = tempfile::tempdir().unwrap();
+    std::fs::write(
+        home.path().join("paneflow.json"),
+        serde_json::to_vec(&json!({"default_shell": "/bin/sh", "shell_integration": false}))
+            .unwrap(),
+    )
+    .unwrap();
+    let core_endpoint = paneflow_home::host_endpoint_path(home.path());
+    let core = paneflow_host::SessionHost::open(home.path(), &core_endpoint).expect("a host opens");
+    let core_server =
+        paneflow_host::ServerHandle::spawn(std::sync::Arc::clone(&core), core_endpoint.clone())
+            .expect("the host serves its endpoint");
+    let worker = paneflow_serve::open(home.path()).expect("the worker opens");
+    let mut cli = Client::connect(home.path());
+
+    cli.ok(
+        "workspace.create",
+        json!({"name": "made", "layout": {"type": "pane", "surfaces": [
+            {"type": "terminal", "command": "echo created-by-layout"}
+        ]}}),
+    );
+    cli.ok(
+        "workspace.restore_layout",
+        json!({"layout": {"type": "split", "direction": "vertical", "children": [
+            {"type": "pane", "surfaces": [{"type": "terminal"}]},
+            {"type": "pane", "surfaces": [{"type": "terminal", "command": "echo restored-by-layout"}]}
+        ]}}),
+    );
+    let view = cli.ok("layout.view", json!({}));
+    let session_running = |command: &str| -> paneflow_config::schema::SessionId {
+        surfaces(&view)
+            .into_iter()
+            .find(|known| known["definition"]["command"] == command)
+            .unwrap_or_else(|| panic!("a surface carries {command}"))["definition"]["session"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the surface of {command} has its session"))
+            .parse()
+            .unwrap()
+    };
+    let mut host = paneflow_host::HostClient::connect(
+        &core_endpoint,
+        &paneflow_host::protocol::ClientHello::control("worker-structural-test"),
+    )
+    .unwrap();
+    for (command, expected) in [
+        ("echo created-by-layout", "created-by-layout"),
+        ("echo restored-by-layout", "restored-by-layout"),
+    ] {
+        let session = session_running(command);
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            let text = host
+                .text(&session)
+                .map(|reply| reply.text)
+                .unwrap_or_default();
+            if text.lines().any(|line| line.trim() == expected) {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{command} never ran: {text:?}"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let generation = host.inspect(&session).unwrap().manifest.generation;
+        let _ = host.stop(&session, Some(generation));
+    }
+    drop(host);
+    worker.stop();
+    core_server.stop().unwrap();
+}
+
 fn worktree_of(repo: &Path, name: &str, marked: bool) -> std::path::PathBuf {
     let admin = repo.join(".git").join("worktrees").join(name);
     std::fs::create_dir_all(&admin).unwrap();

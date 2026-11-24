@@ -13,7 +13,7 @@ use crate::{
     SplitHorizontally, SplitVertically, ToggleZoom,
 };
 
-pub(super) const PINS: usize = 26;
+pub(super) const PINS: usize = 27;
 
 fn split_v(rig: &mut Rig<'_>) {
     rig.act(|app, window, cx| app.handle_split_v(&SplitVertically, window, cx));
@@ -448,6 +448,56 @@ fn pin_restore_layout_with_more_leaves_spawns_the_missing_ones(cx: &mut TestAppC
     assert_eq!(reply["result"]["restored"], json!(true), "{reply}");
     assert_eq!(rig.shape(0, 0), "V(0.500 a, 0.500 b)");
     assert_eq!(rig.requests(), ["create b"]);
+}
+
+fn wait_for_typed(rig: &mut Rig<'_>, name: &str, expected: &str) {
+    let terminal = rig.terminal(name);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let queued = rig
+            .cx
+            .read(|cx| terminal.read(cx).terminal.queued_input_text());
+        if queued.contains(expected) {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{expected:?} was never typed into {name}: {queued:?}"
+        );
+        rig.cx.run_until_parked();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_a_command_and_a_prompt_of_a_layout_are_typed_into_the_panes_it_opens(
+    cx: &mut TestAppContext,
+) {
+    let mut rig = Rig::mount(cx);
+    rig.workspace("alpha");
+    rig.requests();
+    let reply = rig.ipc_with(
+        "workspace.restore_layout",
+        json!({"layout": {"type": "split", "direction": "vertical", "children": [
+            {"type": "pane", "surfaces": [{}]},
+            {"type": "pane", "surfaces": [{"command": "echo restored-by-layout"}]},
+            {"type": "pane", "surfaces": [{"prompt": "prefilled-by-layout"}]}]}}),
+        paneflow_api::Gates::OPEN,
+    );
+    assert_eq!(reply["result"]["restored"], json!(true), "{reply}");
+    assert_eq!(rig.requests(), ["create b", "create c"]);
+    wait_for_typed(&mut rig, "b", "echo restored-by-layout\r");
+    wait_for_typed(&mut rig, "c", "prefilled-by-layout");
+    let created = rig.ipc_with(
+        "workspace.create",
+        json!({"name": "made", "layout": {"type": "pane",
+            "surfaces": [{"command": "echo created-by-layout"}]}}),
+        paneflow_api::Gates::OPEN,
+    );
+    assert!(created["result"]["index"].is_u64(), "{created}");
+    assert_eq!(rig.requests(), ["create d"]);
+    wait_for_typed(&mut rig, "d", "echo created-by-layout\r");
 }
 
 #[gpui::test]
