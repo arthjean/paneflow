@@ -1446,7 +1446,12 @@ impl Pane {
         self.surface().as_terminal()
     }
 
-    fn render_header(&self, show_actions: bool, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_header(
+        &self,
+        show_actions: bool,
+        content_group: &SharedString,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let ui = pane_colors();
 
         let has_attention = self.attention;
@@ -1610,6 +1615,9 @@ impl Pane {
                     .justify_end()
                     .gap(px(HEADER_GAP))
                     .h_full()
+                    .when(self.dimmed(), |element| {
+                        hide_until_hover(element, content_group)
+                    })
                     .child(self.render_end_section(cx))
                     .child(width_probe(self.tab_bar_actions_width.clone()))
             }))
@@ -2058,15 +2066,11 @@ impl Pane {
                         })
                         .bg(ui.border)
                 }))
-                .child(
-                    div()
-                        .h_full()
-                        .flex_none()
-                        .when(self.dimmed(), |element| {
-                            hide_until_hover(element, &content_group)
-                        })
-                        .child(self.render_header(fit.actions, cx)),
-                );
+                .child(div().h_full().flex_none().child(self.render_header(
+                    fit.actions,
+                    &content_group,
+                    cx,
+                )));
         }
         Some(bar.into_any_element())
     }

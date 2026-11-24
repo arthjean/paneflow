@@ -1122,6 +1122,9 @@ pane. Zoomed layouts and detached windows do not accept these tab transfers.
 In docked panes, New tab uses the same 22 px button and 14 px icon dimensions
 as the actions. New tab, the divider, and the actions hide on unfocused panes
 while retaining their layout space so tabs do not shift when focus changes.
+The status cluster before them (attention dot, declared status or progress
+chip, search hits) stays visible on every pane: it is what an unfocused pane
+must still say.
 The chips sit in a strip that scrolls horizontally with the wheel,
 without a scrollbar; the active chip scrolls into view when it changes.
 Where chips are hidden past an edge, a 28 px fade to the card background
