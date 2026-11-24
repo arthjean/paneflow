@@ -680,4 +680,125 @@ mod tests {
             "the title ends at {right:?}, expected {expected:?}"
         );
     }
+
+    #[cfg(target_os = "linux")]
+    const TRUNCATED_TITLE: &str = "A workspace title long enough to be cut";
+
+    #[cfg(target_os = "linux")]
+    #[derive(Default)]
+    struct PaintedTitleRow {
+        title: Option<gpui::TextLayout>,
+        branch: Option<gpui::TextLayout>,
+    }
+
+    #[cfg(target_os = "linux")]
+    struct ResizedTitleRow {
+        width: f32,
+        painted: std::rc::Rc<std::cell::RefCell<PaintedTitleRow>>,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl gpui::Render for ResizedTitleRow {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            let title_text = gpui::StyledText::new(TRUNCATED_TITLE);
+            let branch_text = gpui::StyledText::new("main");
+            *self.painted.borrow_mut() = PaintedTitleRow {
+                title: Some(title_text.layout().clone()),
+                branch: Some(branch_text.layout().clone()),
+            };
+            let title = div()
+                .flex_initial()
+                .max_w_full()
+                .min_w_0()
+                .overflow_x_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .child(title_text);
+            let branch = div().flex_none().whitespace_nowrap().child(branch_text);
+            div()
+                .font_family("Geist")
+                .text_size(px(14.))
+                .child(sidebar_title_row(
+                    self.width,
+                    div().child(sidebar_title_with_trailing(
+                        title,
+                        Some(branch),
+                        SIDEBAR_BRANCH_GAP,
+                    )),
+                    div(),
+                ))
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_title_truncated_by_a_narrow_row_regains_its_text_once_the_row_widens() {
+        let mut cx = gpui::HeadlessAppContext::with_asset_source(
+            std::sync::Arc::new(gpui_wgpu::CosmicTextSystem::new("Geist")),
+            std::sync::Arc::new(crate::assets::Assets),
+        );
+        cx.update(|cx| crate::assets::Assets.load_fonts(cx))
+            .expect("the embedded fonts load");
+        let painted = std::rc::Rc::new(std::cell::RefCell::new(PaintedTitleRow::default()));
+        let shared = painted.clone();
+        let window = gpui::HeadlessAppContext::open_window(
+            &mut cx,
+            size(px(800.), px(100.)),
+            move |_, cx| {
+                cx.new(|_| ResizedTitleRow {
+                    width: 60.,
+                    painted: shared,
+                })
+            },
+        )
+        .expect("a headless window");
+        let mut frames = Vec::new();
+        for width in [60., 600., 600., 60., 60., 600., 60., 600., 120., 600.] {
+            cx.update_window(window.into(), |root, window, cx| {
+                let root = root.downcast::<ResizedTitleRow>().expect("the row root");
+                root.update(cx, |row, cx| {
+                    row.width = width;
+                    cx.notify();
+                });
+                window.draw(cx).clear(cx);
+            })
+            .expect("an open window");
+            let painted = painted.borrow();
+            let title = painted.title.as_ref().expect("the title was laid out");
+            let branch = painted.branch.as_ref().expect("the branch was laid out");
+            frames.push((
+                width,
+                title.wrapped_text(),
+                title.bounds().size.width,
+                branch.bounds().size.width,
+            ));
+        }
+        let (_, _, natural_title, natural_branch) = frames
+            .iter()
+            .find(|(_, text, _, _)| text == TRUNCATED_TITLE)
+            .cloned()
+            .expect("some frame paints the whole title");
+        let natural = natural_title.as_f32() + SIDEBAR_BRANCH_GAP + natural_branch.as_f32();
+        assert!(
+            natural > 120. && natural < 600.,
+            "the row widths must straddle the title's natural width {natural}: {frames:?}"
+        );
+        for (width, text, _, _) in &frames {
+            if *width < natural {
+                assert!(
+                    text != TRUNCATED_TITLE && text.ends_with('\u{2026}'),
+                    "a {width} px row narrower than {natural} px painted {text:?}: {frames:?}"
+                );
+            } else {
+                assert_eq!(
+                    text, TRUNCATED_TITLE,
+                    "a {width} px row wider than {natural} px painted {text:?}: {frames:?}"
+                );
+            }
+        }
+    }
 }
