@@ -246,10 +246,22 @@ printf '%s\
 | `surface.status` | `surface_id` | Agent state for one pane |
 | `surface.send_text` | `surface_id`, `text`, `submit?`, `paste?` | Gated PTY text write |
 | `surface.send_keystroke` | `surface_id`, `keystroke` | Env-gated non-submitting keystroke |
-| `surface.split` | `direction`, `surface_id?`, `cwd?`, `command?`, `prompt?`, `env?`, `name?`, `managed_worktree?` | Split a pane |
+| `surface.split` | `direction`, `surface_id?`, `cwd?`, `command?`, `prompt?`, `env?`, `profile?`, `name?`, `managed_worktree?`, `worktree?` | Split a pane; `{split, new_tab, tab_id, direction, panes, surface_id, notices?}` |
 | `tmux.compat` | `team`, `surface_id`, `argv`, `scope_session?` | tmux command from a Claude Code team pane; `team` is the token Paneflow gave that team's panes, and the reply is `{stdout, stderr, exit}` |
 | `fleet.list` | - | Read-only fleet snapshot |
 | `events.subscribe` | `surfaces?`, `types?` | Persistent newline-delimited event stream |
+
+A `surface.split` with `worktree` creates or reuses a Paneflow worktree
+for the new pane, which then starts in it: `{branch, from?, copy_env?,
+setup?, setup_timeout_secs?, teardown?}`, exclusive with
+`managed_worktree`. `branch` is created when it does not exist, from
+`from` when given, and `setup` needs the orchestration gate. Without
+`cwd`, the request plans from the anchor tab's bound worktree, else from
+the workspace folder, as a plain split does. A pane bound to another
+worktree than the anchor's tab opens a tab of its own: the answer then
+has `split: false` and `new_tab: true`, and `tab_id` names the tab that
+holds the new pane. `notices` lists what the worktree setup reported,
+such as the files copied from `.worktreeinclude` or a failed `setup`.
 
 The `ai.*` lifecycle methods are no longer accepted on the app socket;
 lifecycle events come from the `paneflow-ai-hook` reporter, and

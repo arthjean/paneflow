@@ -218,6 +218,6 @@ or use the installed binary's full path. For a macOS DMG install, use
 Reproduce the problem and copy the relevant terminal output into the report.
 Remove tokens, private paths, or project content before posting it.
 
-The [read-only MCP bridge](/docs/scripting) reads pane output. Use the
+The [MCP bridge](/docs/scripting) reads pane output. Use the
 commands above to collect application logs for launch, configuration,
 or rendering problems.
