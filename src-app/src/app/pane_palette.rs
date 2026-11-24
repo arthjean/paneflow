@@ -261,6 +261,17 @@ impl PaneFlowApp {
         cx.notify();
     }
 
+    pub(crate) fn pane_palette_fills_active_tab(&self, ws_idx: usize) -> bool {
+        let Some(ws) = self.workspaces.get(ws_idx) else {
+            return false;
+        };
+        let tab = ws.active_tab();
+        tab.root.is_none() && self.pane_palette.as_ref().is_some_and(|palette| {
+            palette.ws_id == ws.id
+                && matches!(palette.placement, PalettePlacement::Tab { tab_id } if tab_id == tab.id)
+        })
+    }
+
     fn pane_palette_holds_last_surface(&self) -> bool {
         let Some(palette) = self.pane_palette.as_ref() else {
             return false;

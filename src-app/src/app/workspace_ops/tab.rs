@@ -182,6 +182,9 @@ impl PaneFlowApp {
                 cx,
             );
         }
+        if self.pane_palette_fills_active_tab(ws_idx) {
+            window.focus(&self.pane_palette_focus, cx);
+        }
         self.acknowledge_visible_completions(cx);
     }
 

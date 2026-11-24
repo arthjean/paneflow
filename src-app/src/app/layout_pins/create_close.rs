@@ -7,10 +7,11 @@ use crate::app::workspace_ops::SurfaceLaunch;
 use crate::layout::MAX_PANES;
 use crate::pane::PaneEvent;
 use crate::{
-    ClosePane, FocusLeft, FocusRight, SplitHorizontally, SplitVertically, ToggleZoom, UndoClosePane,
+    ClosePane, FocusLeft, FocusRight, NewTab, NextTab, PreviousTab, SplitHorizontally,
+    SplitVertically, ToggleZoom, UndoClosePane,
 };
 
-pub(super) const PINS: usize = 22;
+pub(super) const PINS: usize = 23;
 
 fn split_v(rig: &mut Rig<'_>) {
     rig.act(|app, window, cx| app.handle_split_v(&SplitVertically, window, cx));
@@ -493,4 +494,27 @@ fn pin_focus_select_and_rename_move_no_session(cx: &mut TestAppContext) {
         });
     assert_eq!(custom.as_deref(), Some("custom"));
     assert_eq!(rig.requests(), Vec::<String>::new());
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_returning_to_a_new_pane_tab_gives_its_launcher_the_keyboard(cx: &mut TestAppContext) {
+    let mut rig = Rig::mount(cx);
+    rig.workspace("alpha");
+    rig.focus("a");
+    rig.act(|app, window, cx| app.handle_new_tab(&NewTab, window, cx));
+    let launcher_focused = |rig: &mut Rig| {
+        let app = rig.app.clone();
+        rig.cx
+            .update(|window, cx| app.read(cx).pane_palette_focus.is_focused(window))
+    };
+    assert!(launcher_focused(&mut rig));
+    rig.act(|app, window, cx| app.handle_previous_tab(&PreviousTab, window, cx));
+    assert_eq!(rig.focused().as_deref(), Some("a"));
+    rig.act(|app, window, cx| app.handle_next_tab(&NextTab, window, cx));
+    rig.cx.run_until_parked();
+    assert!(
+        launcher_focused(&mut rig),
+        "the New pane launcher of the shown tab holds the keyboard"
+    );
 }
