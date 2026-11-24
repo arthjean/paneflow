@@ -149,7 +149,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
-          toolchain: "1.98.0"
+          toolchain: "1.100.0"
           targets: ${{ matrix.target }}
 
       - uses: ./.github/actions/linux-build-deps
@@ -278,7 +278,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
-          toolchain: "1.98.0"
+          toolchain: "1.100.0"
       - name: Install pinned bindgen and native tools
         run: |
           for attempt in 1 2 3; do

@@ -1559,10 +1559,10 @@ mod tests {
             Ok(BranchCheckout::Existing(repo.to_path_buf()))
         );
         assert_eq!(
-            plan_branch_checkout(&entries, repo, "chore/rust-1.98"),
+            plan_branch_checkout(&entries, repo, "chore/rust-1.100"),
             Ok(BranchCheckout::Create(worktree_dir(
                 repo,
-                "chore/rust-1.98"
+                "chore/rust-1.100"
             )))
         );
     }
