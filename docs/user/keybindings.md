@@ -146,7 +146,10 @@ most recent first within each group. It covers every workspace, the active
 space first, whether the Agents section is shown, collapsed, or hidden, and
 wraps around at the end. After `focus_workspaces_sidebar`, the arrow keys,
 `Home`, and `End` move through the workspace tree and on into the Agents
-section, and `Enter` opens the selected agent's pane.
+section, and `Enter` opens the selected agent's pane. `Shift+F10`, or the
+Menu key on keyboards that have one, opens the context menu of the selected
+workspace or tab, the same menu as a right click, and the arrow keys,
+`Enter`, and `Escape` work inside it.
 
 `open_file_finder` applies outside terminal panes and text fields. It
 lists the files you opened recently and searches the whole project, then
