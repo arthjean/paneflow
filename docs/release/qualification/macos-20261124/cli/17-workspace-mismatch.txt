@@ -1,0 +1,91 @@
+
+$ paneflow api list | grep -E '^surface.split|^workspace.create|^workspace.up'
+workspace.create          worker  Open a workspace with one terminal, or with a layout document.
+workspace.up              worker  Open a workspace from pane specs, each with its own directory, command or prompt.
+surface.split             worker  Split the pane holding a surface and start a terminal in the new pane.
+[exit=0]
+
+$ paneflow sessions --json | head -1 | python3 -c 'import sys,json; d=json.loads(sys.stdin.readline()); [print(s["session"], s["workspace"], s["cwd"]) for s in d["sessions"]]'
+0129b837-451b-480d-bf96-3a710a3e5767 3aa65132-57e5-4734-a15b-1e3df91f9ccb /Users/m1/pfq-cli-up
+1114accd-913f-47b4-a343-28ba5c9d5bcd 4e456370-6dda-4da6-8f5b-98e09b98eb7c /Users/m1/pfq-cli-flow
+21bac720-30ae-4549-9d00-a459e87ed441 3134f733-6aca-4870-b605-cef3baec89d8 /Users/m1/pfq-cli-flow
+244af9e4-b3fb-4e0d-8f1f-ab70c84681eb d9f6a1aa-1295-4f33-b53e-7d577d09dfc3 /Users/m1/pfq-cli-work
+293ee640-fb86-4a10-b3d2-8aaf4674e99a 95c3f146-7f56-4141-a7b5-d626f2f09233 /Users/m1/pfq-cli-flow
+2a3c6fd8-82c3-4cc7-82b0-aa935f77af80 6334902d-838c-4a65-8545-e6eab4cb7e26 /Users/m1/pfq-cli-up
+3352dd7e-71bd-46bf-8ca0-273989fbd9a9 None /Users/m1/pfq-cli-flow
+3c08088d-5704-4012-a942-ce099f52e6a8 2ce94a96-ccc2-423b-94ed-2f990781d36a /Users/m1/pfq-cli-work
+490fa6c8-8d31-458e-b39a-967f979a2b52 6ca37b6f-3d07-4b1d-8f36-c6ad28e1ad31 /Users/m1/pfq-demo
+4dd7268b-4644-4b52-8240-c999b3236394 6ca37b6f-3d07-4b1d-8f36-c6ad28e1ad31 /Users/m1/pfq-cli-a
+52521ef1-26ec-4766-a57e-e7bb47cc7191 9b4a978a-1dcc-46b4-8117-5cd37e60329e /Users/m1/pfq-cli-b
+6616ccec-e23c-4f49-9ad3-f260b55c32dc ed1c4aef-f709-4080-80f2-8388908339f1 /Users/m1/pfq-cli-flow
+6e8eb746-879a-4266-8f01-8deb0e551349 6334902d-838c-4a65-8545-e6eab4cb7e26 /Users/m1/pfq-cli-up
+80927214-490c-487a-aef8-ad9f7f05dc40 a1223bf8-660a-4d2b-afcc-4f7c6ac3ace6 /Users/m1/pfq-cli-work
+84718104-dbe1-4260-ab7e-7f95db038576 3aa65132-57e5-4734-a15b-1e3df91f9ccb /Users/m1/.paneflow-dev-qual-cli/worktrees/pfq-cli-repo-e61c35f1/qual-up-wt
+92ad6ef6-216e-4757-b115-77ccf97da114 ffef8aa0-44b6-4ac7-a661-cc0b9fb7b655 /Users/m1/pfq-cli-work
+a2c7ad9e-5109-4d73-9fa0-afdd58581e89 4e456370-6dda-4da6-8f5b-98e09b98eb7c /Users/m1/pfq-cli-flow
+a5a9dad8-b215-415c-a93b-9d130acc0029 3aa65132-57e5-4734-a15b-1e3df91f9ccb /Users/m1/pfq-cli-up
+b00dafe7-04fa-4e6f-a942-984c3483579c 790a8352-9f34-45e7-9124-b5968a347870 /Users/m1/pfq-cli-flow
+b7ebaa7a-214e-40ac-a73a-1bfe342309e7 bdf606c3-64dc-49de-bcde-f75afe5f578a /Users/m1/pfq-demo
+bdb30813-fd2a-44fa-be11-169b3039f62b 345787b1-c52e-428c-9cbe-825793f2cf1a /Users/m1/pfq-cli-up
+c3014fac-a51f-41f0-8809-1014f17d122f None /Users/m1/pfq-cli-flow
+e5703552-6b63-4d1b-a86f-638622bd9400 dbbfd306-2d75-424b-a3db-717c4a898329 /Users/m1/pfq-cli-flow
+eff7e545-7991-45e9-a352-c93c710572eb d0e70a57-cc3e-4be3-9b36-585a921e04e3 /Users/m1/pfq-cli-flow
+fa987023-57c1-4ef3-9da2-09f0604137e0 1440df94-677e-4c08-be40-5ddf8a54cced /Users/m1/pfq-cli-flow
+[exit=0]
+
+$ paneflow api call workspace.current | grep -E 'session|title'
+  "title": "race-probe-4",
+        "session": "fa987023-57c1-4ef3-9da2-09f0604137e0"
+[exit=0]
+PANEFLOW_WORKSPACE_ID=1027
+PANEFLOW_WORKSPACE_UUID=bdf606c3-64dc-49de-bcde-f75afe5f578a
+
+$ paneflow new --name split-probe --cwd ~/pfq-cli-split
+{
+  "index": 19,
+  "title": "split-probe",
+  "panes": 1
+}
+[exit=0]
+
+$ paneflow select 19 >/dev/null; paneflow api call workspace.current | grep -E 'title|session'
+  "title": "split-probe",
+        "session": "97df69aa-644d-44ae-865e-5bd006ee5b3b"
+[exit=0]
+
+$ paneflow split v --target 21601
+{
+  "split": true,
+  "direction": "vertical",
+  "panes": 2,
+  "surface_id": 22628
+}
+[exit=0]
+
+$ paneflow api call workspace.current | grep -E 'title|session'
+  "title": "split-probe",
+            "session": "97df69aa-644d-44ae-865e-5bd006ee5b3b"
+            "session": "21dbaaf6-1d24-4df7-bc08-e49ea41c931c"
+[exit=0]
+
+$ paneflow sessions --json | head -1 | python3 -c 'import sys,json; d=json.loads(sys.stdin.readline()); [print(s["session"], s["workspace"], s["cwd"]) for s in d["sessions"] if s["cwd"].endswith("pfq-cli-split")]'
+21dbaaf6-1d24-4df7-bc08-e49ea41c931c c9eef939-0714-41f5-b8b1-0e3c3e3ba4d0 /Users/m1/pfq-cli-split
+97df69aa-644d-44ae-865e-5bd006ee5b3b bd932e8a-7fac-481f-8731-4dea949bbbb8 /Users/m1/pfq-cli-split
+[exit=0]
+
+# write_pane from reviewer (session 4dd7268b, created by `paneflow split`) to target-agent
+# (session b7ebaa7a, first pane of the same window workspace ws-a, id 1027), at 18:13:25.
+# Copied verbatim from ~/pfq-cli-fake/mcp-from-pane.out before it was overwritten:
+== write_pane {"target": "target-agent", "text": "hello from reviewer via mcp"}
+  "text": "Paneflow IPC pane.write failed: paneflow error -32602: session b7ebaa7a-214e-40ac-a73a-1bfe342309e7 belongs to workspace bdf606c3-64dc-49de-bcde-f75afe5f578a, outside the workspace of the calling pane; rerun with --scope all (needs PANEFLOW_IPC_ORCHESTRATION=1) to write across workspaces"
+== write_pane {"target": "reviewer", "text": "self write"}
+  "text": "Paneflow IPC pane.write failed: paneflow error -32602: an agent cannot write into its own pane"
+# The pane's own environment (captured at 17:59, ~/pfq-cli-a/pane-env.txt) says PANEFLOW_WORKSPACE_UUID=bdf606c3...,
+# while host/worker record the same session under workspace 6ca37b6f... (see `sessions --json` above).
+
+# write_pane approval flow in an `up`-made workspace (orch-up), upagent -> tests:
+# 18:20:10 approval_pending request 1; Allow clicked via AX at 18:20:46 (host.log line 19-20);
+# 18:20:52 every write then failed: "text contains CR or LF; multiline surface.send_text requires active bracketed paste"
+#   (target fake agent had no bracketed paste) and the 4th/5th calls were "rate limited: at most one write per second between two agents"
+# 18:21:22 after relaunching the target agent: approval_pending request 2 (approval ended on relaunch)
+# 18:23:22 host.log: "write request 2 expired unanswered" (120 s)

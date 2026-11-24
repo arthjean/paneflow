@@ -1,0 +1,41 @@
+== env
+PANEFLOW_WORKSPACE_UUID=bdf606c3-64dc-49de-bcde-f75afe5f578a
+PANEFLOW_SURFACE_ID=2053
+PANEFLOW_WORKSPACE_ID=1027
+PANEFLOW_SESSION_ID=490fa6c8-8d31-458e-b39a-967f979a2b52
+== ls
+  "workspace": 0,
+  "scope_workspace_id": null,
+      "surface_id": 1026,
+      "workspace_id": 1027,
+      "workspace": 0,
+      "scope": "workspace",
+      "surface_id": 3081,
+      "workspace_id": 1027,
+      "workspace": 0,
+      "scope": "workspace",
+      "surface_id": 2053,
+      "workspace_id": 1027,
+      "workspace": 0,
+      "scope": "workspace",
+== send 1026
+{
+  "sent": true,
+  "length": 19,
+[exit=0]
+== send 3081
+{
+  "sent": true,
+  "length": 19,
+[exit=0]
+== send 1026 --scope all
+{
+  "sent": true,
+  "length": 23,
+[exit=0]
+== send 3081 --scope all
+{
+  "sent": true,
+  "length": 23,
+[exit=0]
+== DONE

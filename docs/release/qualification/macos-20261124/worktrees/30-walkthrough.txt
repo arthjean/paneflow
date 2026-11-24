@@ -1,0 +1,68 @@
+## base commit 0ec08ac; project checkout has uncommitted wip.txt and an api.py edit
+ M api.py
+?? wip.txt
+{"index":2,"title":"pfq-walk","panes":1}
+anchor surface 26766
+$ surface.split worktree.branch=feat/api-validation from=main
+{  "split": true,  "direction": "vertical",  "panes": 2,  "surface_id": 27793}
+$ surface.split worktree.branch=test/api-validation from=main
+{  "split": true,  "direction": "vertical",  "panes": 3,  "surface_id": 28820}
+## step 1: confirm each tab checkout path and branch
+26766 '' /Users/m1/pfq-wt-walk
+27793 'feat/api-validation' /Users/m1/pfq-wt-root/pfq-wt-walk-dd276281/feat-api-validation
+28820 'test/api-validation' /Users/m1/pfq-wt-root/pfq-wt-walk-dd276281/test-api-validation
+--- /Users/m1/pfq-wt-root/pfq-wt-walk-dd276281/feat-api-validation
+feat/api-validation
+0ec08ac
+--- /Users/m1/pfq-wt-root/pfq-wt-walk-dd276281/test-api-validation
+test/api-validation
+0ec08ac
+## step 2: project-checkout uncommitted changes are NOT in the worktrees
+ls: /Users/m1/pfq-wt-root/pfq-wt-walk-dd276281/feat-api-validation/wip.txt: No such file or directory
+0
+ls: /Users/m1/pfq-wt-root/pfq-wt-walk-dd276281/test-api-validation/wip.txt: No such file or directory
+0
+$ paneflow api call surface.split cwd=~/pfq-wt-nogit worktree.branch=x (non-git project)
+paneflow: paneflow error -32602: pane 0: cwd '/Users/m1/pfq-wt-nogit' is not inside a git repository (required by `worktree`)
+## step 3: commit in each worktree, review full branch diff with git
+$ git diff main...feat/api-validation
+diff --git a/api.py b/api.py
+index cfc5310..768fbc1 100644
+--- a/api.py
++++ b/api.py
+@@ -1,2 +1,2 @@
+ def validate(x):
+-    return True
++    return isinstance(x, int) and x > 0
+$ git diff main...test/api-validation
+diff --git a/test_api.py b/test_api.py
+index f101711..986d0ed 100644
+--- a/test_api.py
++++ b/test_api.py
+@@ -1,3 +1,5 @@
+ import api
+ assert api.validate(1)
++assert not api.validate(-1)
++assert not api.validate("a")
+ print("ok")
+## step 4: integrate in the project checkout (stash the local WIP first), run tests together
+*   89e7cd5 Merge branch 'test/api-validation' into integrate
+|\  
+| * cfd036a test: negative cases
+* | 24d571b feat: validate ints
+|/  
+* 0ec08ac base
+$ python3 test_api.py
+Traceback (most recent call last):
+  File "/Users/m1/pfq-wt-walk/test_api.py", line 1, in <module>
+    import api
+ModuleNotFoundError: No module named 'api'
+exit=1
+## both worktrees still present after integration
+/Users/m1/pfq-wt-walk                                          89e7cd5 [integrate]
+/Users/m1/pfq-wt-root/pfq-wt-walk-dd276281/feat-api-validation 24d571b [feat/api-validation]
+/Users/m1/pfq-wt-root/pfq-wt-walk-dd276281/test-api-validation cfd036a [test/api-validation]
+$ python3 test_api.py (without -I, so the script dir is on sys.path)
+ok
+exit=0
+## project checkout switched to 'integrate' through the Paneflow-visible project checkout; worktrees untouched

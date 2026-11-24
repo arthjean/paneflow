@@ -1,0 +1,47 @@
+24694 1 24700 'lim/a' /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/lim-a
+$ surface.split surface_id=24694 cwd=~/pfq-wt-main (second tab in pfq-lim)
+paneflow: paneflow error -32602: cwd /Users/m1/pfq-wt-main is outside the worktree /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/lim-a bound to this tab
+24694 1 24700 'lim/a' /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/lim-a
+$ cat paneflow.json
+{
+  "worktrees": { "dir": "~/pfq-wt-root", "keep_limit": 0, "auto_remove": false }
+}
+$ surface.split surface_id=24694 worktree.branch=lim/d (keeps pfq-lim open with another tab)
+{  "split": true,  "direction": "vertical",  "panes": 2,  "surface_id": 35003,  "notices": [    "pane 0: copied .env, .env.local, AGENTS.override.md into /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/lim-d"  ]}
+$ dispatch close_tab (lim/a)
+{"dispatched":true,"name":"close_tab"}
+## 40 s later (one git poll at least), auto_remove=false, keep_limit=0
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/lim-a                          064eabd [lim/a]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/lim-d                          064eabd [lim/d]
+(no lim-a snapshot)
+$ set auto_remove=true
+## 40 s after auto_remove=true
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/lim-a                          064eabd [lim/a]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/lim-d                          064eabd [lim/d]
+(no lim-a snapshot)
+## app log
+## waiting 60 s more, then touching a file in lim-d (a git change in the shown workspace)
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/lim-a                          064eabd [lim/a]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/lim-d                          064eabd [lim/d]
+(no lim-a snapshot)
+## finding: keep-limit trim only runs in the git poll, which plan_git_poll skips while the window is inactive (git_watch.rs:23); the window was unfocused during the previous 2 min, so the runs below restart it (a launch activates it) and record focus
+$ auto_remove=false keep_limit=0, restart
+pid 89340 focused: [True]
+pid 89340 focused: [True]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/lim-a                          064eabd [lim/a]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/lim-d                          064eabd [lim/d]
+$ auto_remove=true keep_limit=0, restart
+pid 90075 focused: [True]
+pid 90075 focused: [True]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/lim-a                          064eabd [lim/a]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/lim-d                          064eabd [lim/d]
+## the auto_remove=true restart did not trim lim-a either, so the poll did not run (window not active for GPUI even though AX reports it focused); switching to the close path, which does not depend on window activity
+$ auto_remove=false
+session.json 0 pfq-main []
+session.json 1 pfq-lim ['/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/lim-a']
+session.json 2 pfq-walk []
+$ dispatch close_workspace (pfq-lim, lim-a managed + dirty, no live session)
+{"dispatched":true,"name":"close_workspace"}
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/lim-a                          064eabd [lim/a]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/lim-d                          064eabd [lim/d]
+(no lim-a snapshot)

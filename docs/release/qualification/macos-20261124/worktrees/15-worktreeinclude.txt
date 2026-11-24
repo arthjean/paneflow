@@ -1,0 +1,47 @@
+$ cat ~/pfq-wt-inc/.worktreeinclude
+# test include
+config/secrets.json
+local-only/
+cachedir
+## branch inc-new
+$ surface.split cwd=~/pfq-wt-inc worktree.branch=inc-new
+{
+  "split": true,
+  "direction": "vertical",
+  "panes": 5,
+  "surface_id": 5135,
+  "notices": [
+    "pane 0: copied cachedir, config/secrets.json, local-only/ into /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-inc-4f4348c5/inc-new"
+  ]
+}
+## branch with-secret
+$ surface.split cwd=~/pfq-wt-inc worktree.branch=with-secret
+{
+  "split": true,
+  "direction": "vertical",
+  "panes": 6,
+  "surface_id": 6162,
+  "notices": [
+    "pane 0: copied cachedir, local-only/ into /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-inc-4f4348c5/with-secret"
+  ]
+}
+## /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-inc-4f4348c5/inc-new
+./.gitignore
+./.worktreeinclude
+./a.txt
+./cachedir/sub/c.txt
+./config/secrets.json
+./local-only/x.txt
+./README.md
+config/secrets.json content: {"fake":true}
+git status:
+## /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-inc-4f4348c5/with-secret
+./.gitignore
+./.worktreeinclude
+./a.txt
+./cachedir/sub/c.txt
+./config/secrets.json
+./local-only/x.txt
+./README.md
+config/secrets.json content: {"tracked":"branch-version"}
+git status:

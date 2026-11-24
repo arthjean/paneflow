@@ -1,0 +1,64 @@
+## Settings > Managed worktrees > lim/b (dirty) > Remove
+"ok":true
+snapshot s1e4hce40ax2kq
+window | 'Paneflow' |  | states=['focused']
+  group | '' | 
+    button | 'Back to the app' | @s1e4hce40ax2kq:e1
+    search | 'Search settings' | 
+      textfield | 'Search settings…' | @s1e4hce40ax2kq:e2
+    button | 'Change…' | @s1e4hce40ax2kq:e3
+    button | 'Use default' | @s1e4hce40ax2kq:e4
+    switch | 'Remove old worktrees automatically' | @s1e4hce40ax2kq:e5 | value=true | states=['checked']
+    button | 'Keep one fewer worktree' | @s1e4hce40ax2kq:e6
+    button | 'Keep one more worktree' | @s1e4hce40ax2kq:e7
+    button | 'Remove' | @s1e4hce40ax2kq:e8
+    button | 'Restore' | @s1e4hce40ax2kq:e9
+    button | 'Delete' | @s1e4hce40ax2kq:e10
+    button | 'Restore' | @s1e4hce40ax2kq:e11
+    button | 'Delete' | @s1e4hce40ax2kq:e12
+    button | 'Hide sidebar' | @s1e4hce40ax2kq:e13
+  button | 'Close' | @s1e4hce40ax2kq:e14
+  button | 'Full Screen' | @s1e4hce40ax2kq:e15
+  button | 'Minimize' | @s1e4hce40ax2kq:e16
+$ after one press on Remove
+lim-b removed
+3b7f5e2f9486e566fe2cbdf579c05253770ce037 commit	refs/paneflow/snapshots/lim-b-1795541158
+ac9aabc0acfe0c472747f3fcf1453788f4153a43 commit	refs/paneflow/snapshots/up5-dirty-1795540084
+  lim/b      064eabd add a
+## set/a (open tab, live shell) > Remove
+"ok":true
+snapshot s1ac7s5vy39dlo
+window | 'Paneflow' |  | states=['focused']
+  group | '' | 
+    button | 'Back to the app' | @s1ac7s5vy39dlo:e1
+    search | 'Search settings' | 
+      textfield | 'Search settings…' | @s1ac7s5vy39dlo:e2
+    button | 'Change…' | @s1ac7s5vy39dlo:e3
+    button | 'Use default' | @s1ac7s5vy39dlo:e4
+    switch | 'Remove old worktrees automatically' | @s1ac7s5vy39dlo:e5 | value=true | states=['checked']
+    button | 'Keep one fewer worktree' | @s1ac7s5vy39dlo:e6
+    button | 'Keep one more worktree' | @s1ac7s5vy39dlo:e7
+    button | 'Remove' | @s1ac7s5vy39dlo:e8
+    button | 'Restore' | @s1ac7s5vy39dlo:e9
+    button | 'Delete' | @s1ac7s5vy39dlo:e10
+    button | 'Restore' | @s1ac7s5vy39dlo:e11
+    button | 'Delete' | @s1ac7s5vy39dlo:e12
+    button | 'Hide sidebar' | @s1ac7s5vy39dlo:e13
+    button | 'Cancel' | @s1ac7s5vy39dlo:e14
+    button | 'Remove' | @s1ac7s5vy39dlo:e15
+  button | 'Close' | @s1ac7s5vy39dlo:e16
+  button | 'Full Screen' | @s1ac7s5vy39dlo:e17
+  button | 'Minimize' | @s1ac7s5vy39dlo:e18
+## confirm Remove in the dialog
+"ok":true
+set-a removed
+3b7f5e2f9486e566fe2cbdf579c05253770ce037 commit	refs/paneflow/snapshots/lim-b-1795541158
+cb3bf13df4b2c1f2f29bcea0d8356b932c1a1597 commit	refs/paneflow/snapshots/set-a-1795541185
+ac9aabc0acfe0c472747f3fcf1453788f4153a43 commit	refs/paneflow/snapshots/up5-dirty-1795540084
+$ snapshot content
+
+ wip.txt | 1 +
+ 1 file changed, 1 insertion(+)
+  set/a      064eabd add a
+0 pfq-main
+1 pfq-walk

@@ -1,0 +1,18 @@
+name = "two-pane-prefill"
+layout = "even_h"
+
+[defaults]
+timeout_secs = 30
+
+[[step]]
+id = "producer"
+pane = { cwd = "/Users/m1/pfq-cli-flow", name = "fproducer" }
+
+[[step]]
+id = "reviewer"
+pane = { cwd = "/Users/m1/pfq-cli-flow", name = "freviewer" }
+
+[[step]]
+id = "prefill"
+needs = ["producer", "reviewer"]
+send = { target = "reviewer", text = "echo REVIEW_DONE", submit = false }

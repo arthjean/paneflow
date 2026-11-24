@@ -1,0 +1,168 @@
+
+$ time paneflow wait --match reviewer --idle --timeout 30
+{
+  "surface_id": 3081,
+  "idle": true,
+  "matched": false,
+  "state": "idle",
+  "signal": "agent_state"
+}
+
+real	0m8.156s
+user	0m0.030s
+sys	0m0.011s
+[exit=0]
+
+$ time paneflow wait --match reviewer --idle --timeout 30
+{
+  "surface_id": 3081,
+  "idle": true,
+  "matched": false,
+  "state": "idle",
+  "signal": "agent_state"
+}
+
+real	0m0.028s
+user	0m0.010s
+sys	0m0.008s
+[exit=0]
+
+$ paneflow wait --help
+Block until a pane goes idle, or a regex appears in its output (orchestration)
+
+Usage: paneflow wait [OPTIONS] --match <SELECTOR>
+
+Options:
+      --match <SELECTOR>   Target: surface id, name, `cmdline:<substr>`, or `cwd:<path>`. Note: `cmdline:` matches the full argv on Linux but only the executable basename on macOS/Windows; prefer `cwd:` or a name for a portable selector
+      --pattern <PATTERN>  Regex to wait for in the pane's recent scrollback. Required unless `--idle` is set. With `--idle` it is an optional sentinel: it is checked on each new output and EITHER signal (pattern match OR going idle) returns first (EP-003 US-008)
+      --idle               Wait until the pane's agent ends its turn: for an agent that declares its state through OSC 7501, return on its next idle or attention state (at once if it already waits). Other panes wait for their output to go quiet (no `output_generation` change for `--for` ms) on the push stream. Single-target
+      --for <MS>           With `--idle`: the quiescence window in milliseconds (default 1000). The pane must produce no new output for this long to count as idle
+      --timeout <TIMEOUT>  Max seconds to wait before giving up (default 300)
+      --any                Succeed as soon as ANY matching pane matches (selector may hit several). `--pattern` mode only; ignored with `--idle`
+      --all                Require ALL matching panes to match the pattern. `--pattern` mode only
+  -h, --help               Print help
+[exit=0]
+
+$ time paneflow wait --match reviewer --idle --pattern '^NEVER_PRINTED_SENTINEL' --timeout 10
+{
+  "surface_id": 3081,
+  "idle": true,
+  "matched": false,
+  "state": "idle",
+  "signal": "agent_state"
+}
+
+real	0m0.019s
+user	0m0.007s
+sys	0m0.005s
+[exit=0]
+
+$ time paneflow wait --match reviewer --pattern '^NEVER_PRINTED_SENTINEL' --timeout 3
+paneflow: timeout after 3s waiting for /^NEVER_PRINTED_SENTINEL/
+
+real	0m3.071s
+user	0m0.010s
+sys	0m0.006s
+[exit=4]
+
+$ paneflow wait --match shell --idle --timeout 10 --for 500
+{
+  "surface_id": 1026,
+  "idle": true,
+  "matched": false
+}
+[exit=0]
+
+$ paneflow key producer ctrl-c; paneflow send producer 'echo REPORT_DONE' --submit >/dev/null & paneflow wait --match producer --pattern '(?m)^REPORT_DONE$' --timeout 30
+{
+  "sent": true
+}
+{
+  "matched": true,
+  "panes": [
+    2053
+  ],
+  "matches": [
+    {
+      "surface_id": 2053,
+      "lines": [
+        "REPORT_DONE"
+      ]
+    }
+  ]
+}
+[exit=0]
+
+$ paneflow wait --match producer --pattern '(?m)^REPORT_DONE$' --timeout 3
+paneflow: timeout after 3s waiting for /(?m)^REPORT_DONE$/
+[exit=4]
+
+$ paneflow wait --match cwd:$HOME/pfq-demo --pattern 'REPORT_DONE' --any --timeout 3
+paneflow: timeout after 3s waiting for /REPORT_DONE/
+[exit=4]
+
+$ paneflow wait --match cwd:$HOME/pfq-demo --pattern 'REPORT_DONE' --all --timeout 3
+paneflow: timeout after 3s waiting for /REPORT_DONE/
+[exit=4]
+
+$ paneflow wait --match cwd:$HOME/pfq-demo --pattern 'REPORT_DONE' --timeout 3
+paneflow: ambiguous target 'cwd:/Users/m1/pfq-demo'; matches: 1026(shell), 2053(producer)
+[exit=3]
+
+$ ( sleep 1; paneflow send producer 'echo ANYALL_ONE' --submit >/dev/null ) & paneflow wait --match cwd:$HOME/pfq-demo --pattern 'ANYALL_ONE$' --any --timeout 10
+paneflow: timeout after 10s waiting for /ANYALL_ONE$/
+[exit=4]
+
+$ ( sleep 1; paneflow send producer 'echo ANYALL_TWO' --submit >/dev/null ) & paneflow wait --match cwd:$HOME/pfq-demo --pattern 'ANYALL_TWO$' --all --timeout 4
+paneflow: timeout after 4s waiting for /ANYALL_TWO$/
+[exit=4]
+
+$ ( sleep 1; paneflow send producer 'echo ANYALL_3' --submit >/dev/null; paneflow send shell 'echo ANYALL_3' --submit >/dev/null ) & paneflow wait --match cwd:$HOME/pfq-demo --pattern '^ANYALL_3$' --all --timeout 10
+paneflow: timeout after 10s waiting for /^ANYALL_3$/
+[exit=4]
+# NOTE: the three runs above used ^/$ without (?m), so $ anchors at end of buffer; re-run with (?m) below
+
+$ ( sleep 1; paneflow send producer 'echo ANYALL_A1' --submit >/dev/null ) & paneflow wait --match cwd:$HOME/pfq-demo --pattern '(?m)^ANYALL_A1$' --any --timeout 10
+{
+  "matched": true,
+  "panes": [
+    2053
+  ],
+  "matches": [
+    {
+      "surface_id": 2053,
+      "lines": [
+        "ANYALL_A1"
+      ]
+    }
+  ]
+}
+[exit=0]
+
+$ ( sleep 1; paneflow send producer 'echo ANYALL_B1' --submit >/dev/null ) & paneflow wait --match cwd:$HOME/pfq-demo --pattern '(?m)^ANYALL_B1$' --all --timeout 4
+paneflow: timeout after 4s waiting for /(?m)^ANYALL_B1$/
+[exit=4]
+
+$ ( sleep 1; paneflow send producer 'echo ANYALL_C1' --submit >/dev/null; paneflow send shell 'echo ANYALL_C1' --submit >/dev/null ) & paneflow wait --match cwd:$HOME/pfq-demo --pattern '(?m)^ANYALL_C1$' --all --timeout 10
+{
+  "matched": true,
+  "panes": [
+    1026,
+    2053
+  ],
+  "matches": [
+    {
+      "surface_id": 1026,
+      "lines": [
+        "ANYALL_C1"
+      ]
+    },
+    {
+      "surface_id": 2053,
+      "lines": [
+        "ANYALL_C1"
+      ]
+    }
+  ]
+}
+[exit=0]

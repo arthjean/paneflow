@@ -1,0 +1,89 @@
+$ paneflow api call surface.split --args {"surface_id":1026,"direction":"vertical","worktree":{"branch":"feat/one","from":"main"}}
+paneflow: paneflow error -32602: pane 0: cwd '' is not inside a git repository (required by `worktree`)
+$ git -C ~/pfq-wt-main worktree list --porcelain
+worktree /Users/m1/pfq-wt-main
+HEAD 064eabd9e0030aa095010db4548312690506c985
+branch refs/heads/main
+
+$ ls -la ~/.paneflow-dev-qual-wt/worktrees/*
+$ paneflow ls
+{
+  "pane_count": 1,
+  "workspace": 0,
+  "scope_workspace_id": null,
+  "surfaces": [
+    {
+      "surface_id": 1026,
+      "name": "shell",
+      "title": "Terminal",
+      "cwd": "/Users/m1/pfq-wt-main",
+      "cmd": "zsh",
+      "workspace_id": 1027,
+      "workspace": 0,
+      "scope": "workspace",
+      "tab_id": 1028,
+      "tab_title": "",
+      "space": null,
+      "sandboxed": false
+    }
+  ]
+}
+$ paneflow api call surface.split --args {"surface_id":1026,"direction":"vertical","cwd":"/Users/m1/pfq-wt-main","worktree":{"branch":"feat/one","from":"main"}}
+{
+  "split": true,
+  "direction": "vertical",
+  "panes": 2,
+  "surface_id": 2053,
+  "notices": [
+    "pane 0: copied .env, .env.local, AGENTS.override.md into /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/feat-one"
+  ]
+}
+$ git -C ~/pfq-wt-main worktree list --porcelain
+worktree /Users/m1/pfq-wt-main
+HEAD 064eabd9e0030aa095010db4548312690506c985
+branch refs/heads/main
+
+worktree /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/feat-one
+HEAD 064eabd9e0030aa095010db4548312690506c985
+branch refs/heads/feat/one
+
+$ find ~/.paneflow-dev-qual-wt/worktrees -maxdepth 2
+/Users/m1/.paneflow-dev-qual-wt/worktrees
+/Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1
+/Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/feat-one
+$ paneflow ls
+{
+  "pane_count": 2,
+  "workspace": 0,
+  "scope_workspace_id": null,
+  "surfaces": [
+    {
+      "surface_id": 1026,
+      "name": "shell@pfq-wt-main",
+      "title": "Terminal",
+      "cwd": "/Users/m1/pfq-wt-main",
+      "cmd": "zsh",
+      "workspace_id": 1027,
+      "workspace": 0,
+      "scope": "workspace",
+      "tab_id": 1028,
+      "tab_title": "",
+      "space": null,
+      "sandboxed": false
+    },
+    {
+      "surface_id": 2053,
+      "name": "shell@feat-one",
+      "title": "Terminal",
+      "cwd": "/Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/feat-one",
+      "cmd": "zsh",
+      "workspace_id": 1027,
+      "workspace": 0,
+      "scope": "workspace",
+      "tab_id": 2055,
+      "tab_title": "feat/one",
+      "space": null,
+      "sandboxed": false
+    }
+  ]
+}

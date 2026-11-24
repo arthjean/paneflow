@@ -1,0 +1,376 @@
+
+$ cd ~/pfq-cli-up && paneflow up two-panes.toml --dry-run
+{
+  "name": "two-panes",
+  "space": null,
+  "layout": "even_h",
+  "panes": [
+    {
+      "cwd": "/Users/m1/pfq-cli-up",
+      "command": null,
+      "prompt": null,
+      "focus": null,
+      "env": null,
+      "name": "producer2",
+      "profile": "normal"
+    },
+    {
+      "cwd": "/Users/m1/pfq-cli-up",
+      "command": null,
+      "prompt": null,
+      "focus": null,
+      "env": null,
+      "name": "reviewer2",
+      "profile": "normal"
+    }
+  ]
+}
+[exit=0]
+
+$ cd ~/pfq-cli-up && paneflow up badspace.toml
+paneflow: unknown space: Nope
+[exit=1]
+
+$ cd ~/pfq-cli-up && paneflow up unknownkey.toml
+paneflow: TOML parse error at line 2, column 1
+  |
+2 | colour = "red"
+  | ^^^^^^
+unknown field `colour`, expected one of `name`, `space`, `layout`, `port_base`, `panes`
+
+[exit=1]
+
+$ cd ~/pfq-cli-up && paneflow up badcwd.toml
+paneflow: paneflow error -32602: pane 0: cwd does not exist or is unreadable: /Users/m1/pfq-cli-up/does-not-exist (No such file or directory (os error 2))
+[exit=1]
+
+$ cd ~/pfq-cli-up && paneflow up full.toml --dry-run
+{
+  "name": "feat-x",
+  "space": null,
+  "layout": "main_vertical",
+  "panes": [
+    {
+      "cwd": "~/pfq-cli-up",
+      "command": "echo UP_CMD_RAN port=$PORT; exec zsh",
+      "prompt": null,
+      "focus": null,
+      "env": {
+        "PORT": "4100"
+      },
+      "name": "tests",
+      "profile": "normal"
+    },
+    {
+      "cwd": "~/pfq-cli-up",
+      "command": "clear && amp",
+      "prompt": "review the diff on this branch",
+      "focus": true,
+      "env": null,
+      "name": "upagent",
+      "profile": "agent"
+    }
+  ]
+}
+[exit=0]
+
+$ cd ~/pfq-cli-up && paneflow up full.toml
+paneflow: workspace up requires pane orchestration: relaunch Paneflow with PANEFLOW_IPC_ORCHESTRATION=1
+[exit=1]
+
+$ cd ~/pfq-cli-up && paneflow up badcwd.toml --dry-run
+{
+  "name": "up-badcwd",
+  "space": null,
+  "layout": "even_h",
+  "panes": [
+    {
+      "cwd": "/Users/m1/pfq-cli-up/does-not-exist",
+      "command": null,
+      "prompt": null,
+      "focus": null,
+      "env": null,
+      "name": null,
+      "profile": "normal"
+    }
+  ]
+}
+[exit=0]
+
+$ cd ~/pfq-cli-up && paneflow up space.toml --dry-run
+{
+  "name": "up-in-work",
+  "space": "WORK",
+  "layout": "even_v",
+  "panes": [
+    {
+      "cwd": "/Users/m1/pfq-cli-up",
+      "command": null,
+      "prompt": null,
+      "focus": null,
+      "env": null,
+      "name": "upw1",
+      "profile": "normal"
+    }
+  ]
+}
+[exit=0]
+
+$ cd ~/pfq-cli-up && paneflow up badspace.toml --dry-run
+paneflow: unknown space: Nope
+[exit=1]
+
+$ cd ~/pfq-cli-up && paneflow up space.toml
+{
+  "index": 6,
+  "title": "up-in-work",
+  "panes": 1,
+  "surface_ids": [
+    10276
+  ],
+  "labels": [
+    "upw1"
+  ]
+}
+[exit=0]
+
+$ paneflow api call workspace.current | head -10
+{
+  "index": 6,
+  "title": "up-in-work",
+  "cwd": "/Users/m1/pfq-cli-up",
+  "panes": 1,
+  "space": {
+    "id": "550e8400-e29b-41d4-a716-446655440001",
+    "name": "Work"
+  },
+  "layout": {
+[exit=0]
+
+$ cd ~/pfq-cli-up && paneflow up two-panes.toml
+{
+  "index": 7,
+  "title": "two-panes",
+  "panes": 2,
+  "surface_ids": [
+    11304,
+    11305
+  ],
+  "labels": [
+    "producer2",
+    "reviewer2"
+  ]
+}
+[exit=0]
+
+$ paneflow api call workspace.current | head -7
+{
+  "index": 7,
+  "title": "two-panes",
+  "cwd": "/Users/m1/pfq-cli-up",
+  "panes": 2,
+  "space": {
+    "id": "550e8400-e29b-41d4-a716-446655440001",
+[exit=0]
+
+$ paneflow ls --human
+  ID  NAME                  SPACE             CMD                       CWD
+1026  shell@pfq-demo        Default           zsh                       /Users/m1/pfq-demo
+3081  reviewer              Default           amp                       /Users/m1/pfq-cli-a
+2053  producer              Default           bash                      /Users/m1/pfq-demo
+5137  shell@pfq-cli-b       Default           zsh                       /Users/m1/pfq-cli-b
+6165  shell@pfq-cli-work    Work              zsh                       /Users/m1/pfq-cli-work
+7193  shell@pfq-cli-work-2  Work              zsh                       /Users/m1/pfq-cli-work
+8221  shell@pfq-cli-work-3  Default           zsh                       /Users/m1/pfq-cli-work
+9249  shell@pfq-cli-work-4  Work              zsh                       /Users/m1/pfq-cli-work
+10276  upw1                  Work                                        /Users/m1/pfq-cli-up
+11304  producer2             Work                                        /Users/m1/pfq-cli-up
+11305  reviewer2             Work                                        /Users/m1/pfq-cli-up
+[exit=0]
+
+$ cat ~/.paneflow-dev-qual-cli/paneflow.json
+{"ipc": {"scripting": false, "orchestration": true},
+ "spaces": [{"id": "550e8400-e29b-41d4-a716-446655440001", "name": "Work"}]}
+[exit=0]
+
+$ paneflow api call system.capabilities | head -3
+{
+  "scripting": false,
+  "orchestration": true,
+[exit=0]
+
+$ cd ~/pfq-cli-up && paneflow up orch.toml --dry-run
+{
+  "name": "orch-up",
+  "space": null,
+  "layout": "tiled",
+  "panes": [
+    {
+      "cwd": "~/pfq-cli-up",
+      "command": "echo UP_CMD_RAN port=$PORT",
+      "prompt": null,
+      "focus": null,
+      "env": {
+        "PORT": "4100"
+      },
+      "name": "tests",
+      "profile": "normal"
+    },
+    {
+      "cwd": "~/pfq-cli-up",
+      "command": "/Users/m1/pfq-cli-fake/bin3/amp",
+      "prompt": "prefilled prompt not submitted",
+      "focus": true,
+      "env": null,
+      "name": "upagent",
+      "profile": "normal"
+    },
+    {
+      "cwd": "~/pfq-cli-repo",
+      "command": "git status --short --branch; git rev-parse --show-toplevel; ls -a",
+      "prompt": null,
+      "focus": null,
+      "env": {
+        "PORT": "4110"
+      },
+      "name": "wt",
+      "profile": "normal",
+      "worktree": {
+        "branch": "qual-up-wt",
+        "from": "HEAD",
+        "copy_env": null,
+        "setup": "echo SETUP_RAN > setup-marker.txt",
+        "setup_timeout_secs": null,
+        "teardown": null
+      },
+      "worktree_plan": {
+        "path": "/Users/m1/.paneflow-dev-qual-cli/worktrees/pfq-cli-repo-e61c35f1/qual-up-wt",
+        "repo_root": "/Users/m1/pfq-cli-repo",
+        "branch": "qual-up-wt",
+        "teardown": "auto",
+        "action": "create"
+      }
+    }
+  ]
+}
+[exit=0]
+
+$ cd ~/pfq-cli-up && paneflow up orch.toml
+pane 2: copied AGENTS.override.md into /Users/m1/.paneflow-dev-qual-cli/worktrees/pfq-cli-repo-e61c35f1/qual-up-wt
+{
+  "index": 8,
+  "title": "orch-up",
+  "panes": 3,
+  "surface_ids": [
+    12336,
+    12337,
+    12338
+  ],
+  "labels": [
+    "tests",
+    "upagent",
+    "wt"
+  ],
+  "notices": [
+    "pane 2: copied AGENTS.override.md into /Users/m1/.paneflow-dev-qual-cli/worktrees/pfq-cli-repo-e61c35f1/qual-up-wt"
+  ]
+}
+[exit=0]
+
+$ paneflow read tests --raw --lines 5
+m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-c
+li-up % echo UP_CMD_RAN port=$PORT
+UP_CMD_RAN port=4100
+m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-c
+li-up %[exit=0]
+
+$ paneflow read upagent --raw --lines 5
+m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-c
+li-up % /Users/m1/pfq-cli-fake/bin3/amp
+FAKE_AGENT_READY
+prefilled prompt not submitted[exit=0]
+
+$ paneflow status upagent --json
+{
+  "surface_id": 12337,
+  "state": "finished",
+  "state_seq": 0,
+  "hooked": false,
+  "tool": "amp",
+  "active_tool_name": null,
+  "message": null,
+  "last_result": null,
+  "waiting_ms": null,
+  "idle_ms": 1428,
+  "output_generation": 6,
+  "session": "0129b837-451b-480d-bf96-3a710a3e5767",
+  "outcome": null,
+  "activity_source": "declared",
+  "agent_runtime": "com.sourcegraph.amp",
+  "reduced_by": "worker"
+}
+[exit=0]
+
+$ paneflow read wt --raw --lines 30
+m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 qual-up-wt % git status --short --branch; git rev-parse --show-toplevel; ls -a
+## qual-up-wt
+?? AGENTS.override.md
+?? setup-marker.txt
+/Users/m1/.paneflow-dev-qual-cli/worktrees/pfq-cli-repo-e61c35f1/qual-up-wt
+.                       .git                    README.md               src
+..                      AGENTS.override.md      setup-marker.txt
+m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 qual-up-wt %[exit=0]
+
+$ paneflow ls --human | tail -4
+11305  reviewer2             Work              zsh                       /Users/m1/pfq-cli-up
+12336  tests                 Work              zsh                       /Users/m1/pfq-cli-up
+12337  upagent               Work              amp                       /Users/m1/pfq-cli-up
+12338  wt                    Work              zsh                       /Users/m1/.paneflow-dev-qual-cli/worktrees/pfq-cli-repo-e61c35f1/qual-up-wt
+[exit=0]
+
+$ cd ~/pfq-cli-up && paneflow up wt-clean.toml
+{
+  "index": 23,
+  "title": "wt-clean",
+  "panes": 2,
+  "surface_ids": [
+    29850,
+    29851
+  ],
+  "labels": [
+    "wtclean",
+    "wtkeep"
+  ]
+}
+[exit=0]
+
+$ cd ~/pfq-cli-repo && git worktree list
+/Users/m1/pfq-cli-repo                                                         c64ed51 [main]
+/Users/m1/.paneflow-dev-qual-cli/worktrees/pfq-cli-repo-e61c35f1/qual-clean-wt c64ed51 [qual-clean-wt]
+/Users/m1/.paneflow-dev-qual-cli/worktrees/pfq-cli-repo-e61c35f1/qual-keep-wt  c64ed51 [qual-keep-wt]
+/Users/m1/.paneflow-dev-qual-cli/worktrees/pfq-cli-repo-e61c35f1/qual-up-wt    c64ed51 [qual-up-wt]
+[exit=0]
+
+$ paneflow api call workspace.close --args '{"index":23}'
+{
+  "closed": 23
+}
+[exit=0]
+
+$ cd ~/pfq-cli-repo && git worktree list; ls ~/.paneflow-dev-qual-cli/worktrees/pfq-cli-repo-e61c35f1/
+/Users/m1/pfq-cli-repo                                                         c64ed51 [main]
+/Users/m1/.paneflow-dev-qual-cli/worktrees/pfq-cli-repo-e61c35f1/qual-clean-wt c64ed51 [qual-clean-wt]
+/Users/m1/.paneflow-dev-qual-cli/worktrees/pfq-cli-repo-e61c35f1/qual-keep-wt  c64ed51 [qual-keep-wt]
+/Users/m1/.paneflow-dev-qual-cli/worktrees/pfq-cli-repo-e61c35f1/qual-up-wt    c64ed51 [qual-up-wt]
+qual-clean-wt
+qual-keep-wt
+qual-up-wt
+[exit=0]
+
+$ paneflow sessions --json | head -1 | python3 -c 'import sys,json; d=json.loads(sys.stdin.readline()); [print(s["session"][:8], s["lifecycle"], s["live"], s["cwd"]) for s in d["sessions"] if "qual-" in (s["cwd"] or "")]'; cd ~/pfq-cli-repo && git worktree list
+84718104 {'state': 'running'} True /Users/m1/.paneflow-dev-qual-cli/worktrees/pfq-cli-repo-e61c35f1/qual-up-wt
+/Users/m1/pfq-cli-repo                                                         c64ed51 [main]
+/Users/m1/.paneflow-dev-qual-cli/worktrees/pfq-cli-repo-e61c35f1/qual-clean-wt c64ed51 [qual-clean-wt]
+/Users/m1/.paneflow-dev-qual-cli/worktrees/pfq-cli-repo-e61c35f1/qual-keep-wt  c64ed51 [qual-keep-wt]
+/Users/m1/.paneflow-dev-qual-cli/worktrees/pfq-cli-repo-e61c35f1/qual-up-wt    c64ed51 [qual-up-wt]
+[exit=0]

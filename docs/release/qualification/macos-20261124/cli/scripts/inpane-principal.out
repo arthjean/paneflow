@@ -1,0 +1,56 @@
+== env
+PANEFLOW_SURFACE_ID=2053
+PANEFLOW_HOME=/Users/m1/.paneflow-dev-qual-cli
+PANEFLOW_SOCKET_PATH=/var/folders/jz/rpbxwt2d4wjgct6stdnkzd9w0000gn/T/paneflow-ipc-0e043cd22a083973.sock
+PANEFLOW_SESSION_ID=490fa6c8-8d31-458e-b39a-967f979a2b52
+== whoami --on window
+{
+  "principal": "pane",
+  "session": "490fa6c8-8d31-458e-b39a-967f979a2b52",
+  "workspace": "6ca37b6f-3d07-4b1d-8f36-c6ad28e1ad31"
+}
+[exit=0]
+== whoami --on worker
+{
+  "principal": "pane",
+  "session": "490fa6c8-8d31-458e-b39a-967f979a2b52",
+  "workspace": "6ca37b6f-3d07-4b1d-8f36-c6ad28e1ad31"
+}
+[exit=0]
+== whoami --on host
+{
+  "principal": "pane",
+  "session": "490fa6c8-8d31-458e-b39a-967f979a2b52",
+  "workspace": "6ca37b6f-3d07-4b1d-8f36-c6ad28e1ad31"
+}
+[exit=0]
+== layout.sweep
+paneflow: paneflow error -32070: layout.sweep does not answer a caller identified as pane
+[exit=1]
+== approval.decide
+paneflow: Method not found: approval.decide
+[exit=1]
+== approval.follow
+paneflow: Method not found: approval.follow
+[exit=1]
+== session.runtime.bind
+paneflow: Method not found: session.runtime.bind
+[exit=1]
+== session.workspace
+paneflow: Method not found: session.workspace
+[exit=1]
+== peer.classify
+paneflow: missing 'pid' parameter
+[exit=1]
+== layout.attach
+paneflow: paneflow error -32070: layout.attach does not answer a caller identified as pane
+[exit=1]
+== layout.launch
+paneflow: missing 'surface_id' parameter
+[exit=1]
+== setsid double-fork whoami
+{
+  "principal": "external"
+}
+
+== DONE

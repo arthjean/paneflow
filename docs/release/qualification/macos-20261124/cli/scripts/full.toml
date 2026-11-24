@@ -1,0 +1,16 @@
+name = "feat-x"
+layout = "main_vertical"
+port_base = 4100
+
+[[panes]]
+cwd = "~/pfq-cli-up"
+command = "echo UP_CMD_RAN port=$PORT; exec zsh"
+name = "tests"
+env = { PORT = "${port_offset}" }
+
+[[panes]]
+cwd = "~/pfq-cli-up"
+agent = "amp"
+prompt = "review the diff on this branch"
+name = "upagent"
+focus = true

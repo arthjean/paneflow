@@ -1,0 +1,62 @@
+
+$ paneflow new --name ws-b --cwd ~/pfq-cli-b
+{
+  "index": 1,
+  "title": "ws-b",
+  "panes": 1
+}
+[exit=0]
+
+$ paneflow ls --human
+  ID  NAME                  SPACE             CMD                       CWD
+1026  shell                 Default           zsh                       /Users/m1/pfq-demo
+3081  reviewer              Default           amp                       /Users/m1/pfq-cli-a
+2053  producer              Default           zsh                       /Users/m1/pfq-demo
+5137  terminal              Default                                     /Users/m1/pfq-cli-b
+[exit=0]
+
+$ paneflow api call workspace.list
+{
+  "workspaces": [
+    {
+      "index": 0,
+      "title": "ws-a",
+      "cwd": "/Users/m1/pfq-demo",
+      "panes": 3,
+      "active": true,
+      "space": null
+    },
+    {
+      "index": 1,
+      "title": "ws-b",
+      "cwd": "/Users/m1/pfq-cli-b",
+      "panes": 1,
+      "active": false,
+      "space": null
+    }
+  ]
+}
+[exit=0]
+
+$ paneflow ls --help
+List terminal surfaces
+
+Usage: paneflow ls [OPTIONS]
+
+Options:
+      --human  Human-readable table instead of the default JSON
+  -h, --help   Print help
+[exit=0]
+
+$ paneflow ls | head -6
+{
+  "pane_count": 3,
+  "workspace": 0,
+  "scope_workspace_id": null,
+  "surfaces": [
+    {
+[exit=0]
+
+$ paneflow ls | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["pane_count"], [(s["surface_id"], s["workspace"]) for s in d["surfaces"]])'
+3 [(1026, 0), (3081, 0), (2053, 0), (5137, 1)]
+[exit=0]

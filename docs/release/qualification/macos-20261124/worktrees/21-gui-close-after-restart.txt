@@ -1,0 +1,21 @@
+## restart with RUST_LOG=info (new PID 74639); session restored
+name = "pfq-up3"
+[[panes]]
+cwd = "~/pfq-wt-main"
+worktree = "up3/dirty"
+from = "main"
+[[panes]]
+cwd = "~/pfq-wt-main"
+worktree = "up3/clean"
+  ]
+}
+ M README.md
+?? new3.txt
+$ dispatch close_workspace (window action) on pfq-up3
+{
+  "dispatched": true,
+  "name": "close_workspace"
+}
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/up3-clean                      064eabd [up3/clean]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/up3-dirty                      064eabd [up3/dirty]
+## app log (worktree lines)

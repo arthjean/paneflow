@@ -1,0 +1,8 @@
+== 18:23:29 caps
+{
+  "scripting": false,
+  "orchestration": false,
+== send 1026 from pane
+paneflow: send is disabled on the running Paneflow instance; relaunch it with PANEFLOW_IPC_SCRIPTING=1 to enable text injection (server said: paneflow error -32601: surface.send_text disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable)
+[exit=1]
+== DONE

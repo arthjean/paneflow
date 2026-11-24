@@ -1,0 +1,10 @@
+name = "two-panes"
+layout = "even_h"
+
+[[panes]]
+name = "producer2"
+cwd = "/Users/m1/pfq-cli-up"
+
+[[panes]]
+name = "reviewer2"
+cwd = "/Users/m1/pfq-cli-up"

@@ -1,0 +1,9 @@
+{"type":"subscribed","id":3}
+{"type":"ai.stop","workspace_id":5138,"pid":96839,"tool":"claude","state":"thinking","surface_id":5137,"message":null,"active_tool_name":null,"ts":1795540718809}
+{"type":"heartbeat"}
+{"type":"ai.stop","workspace_id":5138,"pid":96839,"tool":"claude","state":"thinking","surface_id":5137,"message":null,"active_tool_name":null,"ts":1795540770282}
+{"type":"heartbeat"}
+{"type":"heartbeat"}
+{"type":"heartbeat"}
+{"type":"heartbeat"}
+{"type":"heartbeat"}

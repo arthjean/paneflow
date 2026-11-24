@@ -1,0 +1,39 @@
+$ cat ~/.paneflow-dev-qual-wt/paneflow.json
+{
+  "worktrees": { "dir": "~/pfq-wt-root" }
+}
+$ surface.split cwd=~/pfq-wt-main worktree.branch=feat/two
+{
+  "split": true,
+  "direction": "vertical",
+  "panes": 7,
+  "surface_id": 7189,
+  "notices": [
+    "pane 0: copied .env, .env.local, AGENTS.override.md into /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/feat-two"
+  ]
+}
+$ git worktree list
+/Users/m1/pfq-wt-main                                                     064eabd [main]
+/Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/existing-b 064eabd [existing-b]
+/Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/feat-one   064eabd [feat/one]
+/Users/m1/pfq-wt-foreign                                                  064eabd [foreign-br]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/feat-two                       064eabd [feat/two]
+$ ls ~/pfq-wt-root
+/Users/m1/pfq-wt-root
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/feat-two
+## old-root worktree feat/one still usable (reuse by branch)
+{
+  "split": true,
+  "direction": "vertical",
+  "panes": 8,
+  "surface_id": 8216
+}
+1026 1028 '' /Users/m1/pfq-wt-main
+2053 2055 'feat/one' /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/feat-one
+8216 2055 'feat/one' /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/feat-one
+4107 2055 'feat/one' /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/feat-one
+3080 3082 'existing-b' /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/existing-b
+5135 5137 'inc-new' /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-inc-4f4348c5/inc-new
+6162 6164 'with-secret' /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-inc-4f4348c5/with-secret
+7189 7191 'feat/two' /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/feat-two

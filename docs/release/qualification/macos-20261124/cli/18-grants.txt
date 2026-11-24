@@ -1,0 +1,191 @@
+
+$ cat ~/.paneflow-dev-qual-cli/paneflow.json
+{"ipc": {"scripting": false, "orchestration": false},
+ "agents": {"amp": {"grants": [{"rights": ["write"], "scope": "workspace"}]}, "pi": {"grants": [{"rights": ["root"], "scope": "workspace"}]}},
+ "spaces": [{"id": "550e8400-e29b-41d4-a716-446655440001", "name": "Work"}]}
+[exit=0]
+
+$ grep -n 'invalid config key agents' /private/tmp/claude-501/-Users-m1-dev-paneflow/ed7b9b96-428f-465c-a947-cceac364368b/scratchpad/qual-cli-app.log ~/.paneflow-dev-qual-cli/serve/serve.log | tail -3
+/Users/m1/.paneflow-dev-qual-cli/serve/serve.log:10:[2026-11-24T17:14:49Z WARN  paneflow_config::loader] invalid config key agents.pi.grants: unknown right "root", expected one of write, spawn, layout; no grant of the agent profile pi is stored
+/Users/m1/.paneflow-dev-qual-cli/serve/serve.log:11:[2026-11-24T17:14:50Z WARN  paneflow_config::loader] invalid config key agents.pi.grants: unknown right "root", expected one of write, spawn, layout; no grant of the agent profile pi is stored
+/Users/m1/.paneflow-dev-qual-cli/serve/serve.log:12:[2026-11-24T17:14:50Z WARN  paneflow_serve::grant_methods] paneflow-serve: invalid config key agents.pi.grants: unknown right "root", expected one of write, spawn, layout; no grant of the agent profile pi is stored
+[exit=0]
+
+$ paneflow grants ls
+g-1795539482054-1  session 0129b837-451b-480d-bf96-3a710a3e5767  write  workspace  no expiry  profile amp
+g-1795539482054-2  session 4dd7268b-4644-4b52-8240-c999b3236394  write  workspace  no expiry  profile amp
+g-1795539482054-3  session b7ebaa7a-214e-40ac-a73a-1bfe342309e7  write  workspace  no expiry  profile amp
+[exit=0]
+
+$ paneflow grants --help
+List or revoke the grants agents in panes hold over Paneflow
+
+Usage: paneflow grants <COMMAND>
+
+Commands:
+  ls      List the grants panes hold: id, holder session, rights, scope, expiry and origin
+  revoke  Revoke a grant and every grant delegated from it
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help
+[exit=0]
+# from reviewer pane fake amp (session 4dd7268b) with profile grant write/workspace, gates closed: inpane-grant2.sh
+== whoami
+{
+  "principal": "pane",
+  "session": "4dd7268b-4644-4b52-8240-c999b3236394",
+  "workspace": "6ca37b6f-3d07-4b1d-8f36-c6ad28e1ad31"
+}
+== caps
+{
+  "scripting": false,
+  "orchestration": false,
+== grants ls (from pane)
+g-1795539482054-2  session 4dd7268b-4644-4b52-8240-c999b3236394  write  workspace  no expiry  profile amp
+[exit=0]
+== send producer (same ws)
+{
+  "sent": true,
+[exit=0]
+== key producer ctrl-u
+{
+  "sent": true
+}
+[exit=0]
+== send 5137 (other ws) default scope
+paneflow: paneflow error -32602: surface 5137 belongs to workspace "ws-b" (id 5138), outside the workspace of the calling pane; rerun with --scope all (needs PANEFLOW_IPC_ORCHESTRATION=1) to write across workspaces
+[exit=1]
+== send 5137 --scope all
+paneflow: paneflow error -32601: scope all needs orchestration; set PANEFLOW_IPC_ORCHESTRATION=1 or PANEFLOW_IPC_SCRIPTING=1 to write across workspaces
+[exit=1]
+== split with command (spawn right missing)
+paneflow: paneflow error -32601: surface.split orchestration disabled; set PANEFLOW_IPC_ORCHESTRATION=1 or PANEFLOW_IPC_SCRIPTING=1 to enable command, prompt, or env
+[exit=1]
+== grants revoke someone else's
+paneflow: paneflow error -32001: grant.revoke refused: grant g-1795539482054-1 was not delegated by the calling pane
+[exit=1]
+== grant.request layout workspace
+paneflow: paneflow error -32602: the layout right reaches every workspace: ask for it with scope instance
+[exit=1]
+== DONE
+
+# grant.request from producer pane, nobody answers (300 s): inpane-grant.sh (sends after 18:12:5x are confounded: scripting was reopened at that time)
+== 18:08:07 send before grant
+paneflow: send is disabled on the running Paneflow instance; relaunch it with PANEFLOW_IPC_SCRIPTING=1 to enable text injection (server said: paneflow error -32601: surface.send_text disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable)
+[exit=1]
+== 18:08:07 grant.request {"rights":["write"],"scope":"workspace","duration_secs":600}
+{
+  "granted": false,
+  "reason": "unanswered"
+}
+[exit=0]
+== 18:13:07 grants ls
+no grant is held (revision 1795539482053)
+[exit=0]
+== 18:13:07 send after grant
+{
+  "sent": true,
+  "length": 16,
+  "submitted": false,
+  "paste": false,
+  "submit_mode": null,
+  "agent_target": false,
+  "agent_tool": null,
+  "terminal_bracketed_paste": true
+}
+[exit=0]
+== 18:13:07 send cross-ws --scope all
+{
+  "sent": true,
+  "length": 8,
+  "submitted": false,
+  "paste": false,
+  "submit_mode": null,
+  "agent_target": false,
+  "agent_tool": null,
+  "terminal_bracketed_paste": true
+}
+[exit=0]
+== DONE
+
+# delegation from reviewer (split child d0f75d81)
+== split (no command)
+{
+  "split": true,
+  "direction": "horizontal",
+  "panes": 4,
+  "surface_id": 23656
+}
+child surface=23656 session=d0f75d81-a0cb-4f00-ba0e-45c3f78870c4
+== delegate wider (instance)
+paneflow: paneflow error -32602: grant.delegate refused: no grant of the calling pane covers write across every workspace with that expiry
+== delegate spawn (not held)
+paneflow: paneflow error -32602: grant.delegate refused: no grant of the calling pane covers spawn in its own workspace with that expiry
+== delegate to non-spawned pane (producer 490fa6c8)
+paneflow: paneflow error -32602: grant.delegate refused: session 490fa6c8-8d31-458e-b39a-967f979a2b52 was not spawned by the calling pane
+== delegate ok
+paneflow: paneflow error -32602: grant.delegate refused: no grant of the calling pane covers write in its own workspace with that expiry
+== grants ls from pane
+g-1795539482054-2  session 4dd7268b-4644-4b52-8240-c999b3236394  write  workspace  no expiry  profile amp
+== revoke delegated 
+paneflow: paneflow error -32602: no grant  is held
+[exit=1]
+== grants ls after
+g-1795539482054-2  session 4dd7268b-4644-4b52-8240-c999b3236394  write  workspace  no expiry  profile amp
+CHILD_SID=23656
+== DONE
+== whoami
+{
+  "principal": "pane",
+  "session": "4dd7268b-4644-4b52-8240-c999b3236394",
+  "workspace": "6ca37b6f-3d07-4b1d-8f36-c6ad28e1ad31"
+}
+== delegate no duration to d0f75d81-a0cb-4f00-ba0e-45c3f78870c4
+paneflow: paneflow error -32602: grant.delegate refused: no grant of the calling pane covers write in its own workspace with that expiry
+== delegate duration 0
+paneflow: paneflow error -32602: grant.delegate refused: no grant of the calling pane covers write in its own workspace with that expiry
+== DONE
+
+# delegation from upagent in up-made workspace (child 6695cfa6)
+== split (no command)
+{
+  "split": true,
+  "direction": "horizontal",
+  "panes": 4,
+  "surface_id": 24682
+}
+child surface=24682 session=6695cfa6-5c33-4484-8d8d-76c75db458fa
+== delegate wider (instance)
+paneflow: paneflow error -32602: grant.delegate refused: no grant of the calling pane covers write across every workspace with that expiry
+== delegate spawn (not held)
+paneflow: paneflow error -32602: grant.delegate refused: no grant of the calling pane covers spawn in its own workspace with that expiry
+== delegate to non-spawned pane (producer 490fa6c8)
+paneflow: paneflow error -32602: grant.delegate refused: session 490fa6c8-8d31-458e-b39a-967f979a2b52 was not spawned by the calling pane
+== delegate ok
+paneflow: paneflow error -32602: grant.delegate refused: no grant of the calling pane covers write in its own workspace with that expiry
+== grants ls from pane
+g-1795539482054-1  session 0129b837-451b-480d-bf96-3a710a3e5767  write  workspace  no expiry  profile amp
+== revoke delegated 
+paneflow: paneflow error -32602: no grant  is held
+[exit=1]
+== grants ls after
+g-1795539482054-1  session 0129b837-451b-480d-bf96-3a710a3e5767  write  workspace  no expiry  profile amp
+CHILD_SID=24682
+== DONE
+
+$ paneflow sessions --json | head -1 | python3 -c 'import sys,json; d=json.loads(sys.stdin.readline()); [print(s["session"], s["workspace"]) for s in d["sessions"] if s["session"].startswith(("6695cfa6","0129b837","d0f75d81","4dd7268b"))]'
+0129b837-451b-480d-bf96-3a710a3e5767 3aa65132-57e5-4734-a15b-1e3df91f9ccb
+4dd7268b-4644-4b52-8240-c999b3236394 6ca37b6f-3d07-4b1d-8f36-c6ad28e1ad31
+6695cfa6-5c33-4484-8d8d-76c75db458fa f93704ea-8834-4afe-bc0d-e59c9dd96886
+d0f75d81-a0cb-4f00-ba0e-45c3f78870c4 bdf606c3-64dc-49de-bcde-f75afe5f578a
+[exit=0]
+
+$ paneflow grants revoke g-1795539482054-3
+revoked g-1795539482054-3 (revision 1795539482055)
+[exit=0]
+
+$ paneflow grants ls
+g-1795539482054-1  session 0129b837-451b-480d-bf96-3a710a3e5767  write  workspace  no expiry  profile amp
+g-1795539482054-2  session 4dd7268b-4644-4b52-8240-c999b3236394  write  workspace  no expiry  profile amp
+[exit=0]

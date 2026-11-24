@@ -1,0 +1,46 @@
+## w1-dirty status
+ M README.md
+?? newfile.txt
+5ee0671 w1 dirty commit
+## w1-clean status
+966ccbb w1 clean commit
+## refs before
+/Users/m1/pfq-wt-main                                                     064eabd [main]
+/Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/existing-b 064eabd [existing-b]
+/Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/feat-one   064eabd [feat/one]
+/Users/m1/pfq-wt-foreign                                                  064eabd [foreign-br]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/feat-two                       064eabd [feat/two]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/snap-clean                     064eabd [snap/clean]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/snap-dirty                     064eabd [snap/dirty]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/w1-clean                       966ccbb [w1/clean]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/w1-dirty                       5ee0671 [w1/dirty]
+$ paneflow api call workspace.close index=1
+{
+  "closed": 1
+}
+## after close
+/Users/m1/pfq-wt-main                                                     064eabd [main]
+/Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/existing-b 064eabd [existing-b]
+/Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/feat-one   064eabd [feat/one]
+/Users/m1/pfq-wt-foreign                                                  064eabd [foreign-br]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/feat-two                       064eabd [feat/two]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/snap-clean                     064eabd [snap/clean]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/snap-dirty                     064eabd [snap/dirty]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/w1-clean                       966ccbb [w1/clean]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/w1-dirty                       5ee0671 [w1/dirty]
+$ for-each-ref refs/paneflow
+$ branches
++ existing-b 064eabd add a
++ feat/one   064eabd add a
++ feat/two   064eabd add a
++ foreign-br 064eabd add a
+* main       064eabd add a
++ snap/clean 064eabd add a
++ snap/dirty 064eabd add a
++ w1/clean   966ccbb w1 clean commit
++ w1/dirty   5ee0671 w1 dirty commit
+feat-two
+snap-clean
+snap-dirty
+w1-clean
+w1-dirty

@@ -1,0 +1,37 @@
+== 18:08:07 send before grant
+paneflow: send is disabled on the running Paneflow instance; relaunch it with PANEFLOW_IPC_SCRIPTING=1 to enable text injection (server said: paneflow error -32601: surface.send_text disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable)
+[exit=1]
+== 18:08:07 grant.request {"rights":["write"],"scope":"workspace","duration_secs":600}
+{
+  "granted": false,
+  "reason": "unanswered"
+}
+[exit=0]
+== 18:13:07 grants ls
+no grant is held (revision 1795539482053)
+[exit=0]
+== 18:13:07 send after grant
+{
+  "sent": true,
+  "length": 16,
+  "submitted": false,
+  "paste": false,
+  "submit_mode": null,
+  "agent_target": false,
+  "agent_tool": null,
+  "terminal_bracketed_paste": true
+}
+[exit=0]
+== 18:13:07 send cross-ws --scope all
+{
+  "sent": true,
+  "length": 8,
+  "submitted": false,
+  "paste": false,
+  "submit_mode": null,
+  "agent_target": false,
+  "agent_tool": null,
+  "terminal_bracketed_paste": true
+}
+[exit=0]
+== DONE

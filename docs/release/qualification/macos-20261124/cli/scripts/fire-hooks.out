@@ -1,0 +1,9 @@
+claude pid=96839
+SessionStart exit=0
+UserPromptSubmit exit=0
+PreToolUse exit=0
+Notification exit=0
+Stop exit=0
+== no-session case
+outside pane exit=0
+== DONE

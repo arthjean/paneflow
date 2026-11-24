@@ -1,0 +1,183 @@
+
+$ paneflow send 1026 'echo hello-gate'
+paneflow: send is disabled on the running Paneflow instance; relaunch it with PANEFLOW_IPC_SCRIPTING=1 to enable text injection (server said: paneflow error -32601: surface.send_text disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable)
+[exit=1]
+
+$ paneflow send 1026 'echo hello-gate' --submit
+paneflow: send is disabled on the running Paneflow instance; relaunch it with PANEFLOW_IPC_SCRIPTING=1 to enable text injection (server said: paneflow error -32601: surface.send_text disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable)
+[exit=1]
+
+$ paneflow key 1026 ctrl-c
+paneflow: key is disabled on the running Paneflow instance; relaunch it with PANEFLOW_IPC_SCRIPTING=1 to enable keystroke injection (server said: paneflow error -32601: surface.send_keystroke disabled; set PANEFLOW_IPC_SCRIPTING=1 or enable ai_unrestricted to use)
+[exit=1]
+
+$ paneflow api call system.capabilities | head -20
+{
+  "scripting": false,
+  "orchestration": false,
+  "methods": [
+    "system.ping",
+    "system.capabilities",
+    "system.identify",
+    "system.counters",
+    "workspace.list",
+    "workspace.create",
+    "workspace.select",
+    "workspace.close",
+    "workspace.current",
+    "workspace.restore_layout",
+    "workspace.up",
+    "surface.list",
+    "surface.read",
+    "surface.search",
+    "surface.rename",
+    "surface.send_text",
+[exit=0]
+
+$ QX_ENV=PANEFLOW_IPC_SCRIPTING=1 paneflowx send 1026 'echo env-gate-cli'
+paneflow: send is disabled on the running Paneflow instance; relaunch it with PANEFLOW_IPC_SCRIPTING=1 to enable text injection (server said: paneflow error -32601: surface.send_text disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable)
+[exit=1]
+
+$ paneflow read 1026 --lines 5
+<untrusted_terminal_output source="surface:1026" total_lines="1" eof="true" id="a1b03a67c12ed312">
+m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-demo %
+</untrusted_terminal_output id="a1b03a67c12ed312">[exit=0]
+
+$ cat ~/.paneflow-dev-qual-cli/paneflow.json
+{"ipc": {"scripting": true}}
+[exit=0]
+
+$ paneflow api call system.capabilities | head -4
+{
+  "scripting": true,
+  "orchestration": true,
+  "methods": [
+[exit=0]
+
+$ paneflow send 1026 'echo staged-not-submitted'
+{
+  "sent": true,
+  "length": 25,
+  "submitted": false,
+  "paste": false,
+  "submit_mode": null,
+  "agent_target": false,
+  "agent_tool": null,
+  "terminal_bracketed_paste": true
+}
+[exit=0]
+
+$ paneflow read 1026 --lines 5 --raw
+m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-demo % echo staged-not-submitted[exit=0]
+
+$ paneflow key 1026 ctrl-u
+{
+  "sent": true
+}
+[exit=0]
+
+$ paneflow key 1026 enter
+paneflow: paneflow error -32602: keystroke 'enter' would submit (CR/LF); use surface.send_text with submit=true (`paneflow send --submit`) instead
+[exit=1]
+
+$ paneflow key 1026 ctrl-m
+paneflow: paneflow error -32602: keystroke 'ctrl-m' would submit (CR/LF); use surface.send_text with submit=true (`paneflow send --submit`) instead
+[exit=1]
+
+$ paneflow key 1026 ctrl-j
+paneflow: paneflow error -32602: keystroke 'ctrl-j' would submit (CR/LF); use surface.send_text with submit=true (`paneflow send --submit`) instead
+[exit=1]
+
+$ paneflow send 1026 'echo SUBMITTED_OK' --submit --json
+error: unexpected argument '--json' found
+
+  tip: to pass '--json' as a value, use '-- --json'
+
+Usage: paneflow send --submit <TARGET> <TEXT>
+
+For more information, try '--help'.
+[exit=2]
+
+$ paneflow read 1026 --lines 6 --raw
+m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-demo %[exit=0]
+
+$ paneflow send 1026 'echo SUBMITTED_OK' --submit
+{
+  "sent": true,
+  "length": 17,
+  "submitted": true,
+  "paste": true,
+  "submit_mode": "deferred_paste_cr",
+  "agent_target": false,
+  "agent_tool": null,
+  "terminal_bracketed_paste": true,
+  "delivered": true,
+  "started": null,
+  "reason": "no_signal",
+  "state": "idle"
+}
+[exit=0]
+
+$ paneflow read 1026 --lines 6 --raw
+m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-demo % echo SUBMITTED_OK
+SUBMITTED_OK
+m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-demo %[exit=0]
+
+$ paneflow send --help
+Inject text into a pane WITHOUT submitting it (human-in-loop).
+
+Requires `PANEFLOW_IPC_SCRIPTING=1` on the running instance; the text is written verbatim with no trailing newline so the user/agent reviews and presses Enter themselves - unless `--submit` is passed explicitly.
+
+Usage: paneflow send [OPTIONS] <TARGET> <TEXT>
+
+Arguments:
+  <TARGET>
+          Target: surface id, name, `cmdline:<substr>`, or `cwd:<path>`
+
+  <TEXT>
+          Text to inject (no trailing carriage return is added by default)
+
+Options:
+      --broadcast
+          Send to EVERY pane matching the target (a multi-match selector is an error without this flag). Prints a `{sent, failed}` report
+
+      --submit
+          Submit the text (append a carriage return). Explicit opt-in: this is the ONLY way the CLI ever submits on the user's behalf, and it still requires the instance-side scripting gate
+
+      --paste
+          Force bracketed-paste delivery: the text is wrapped in `ESC[200~`/`ESC[201~` and, with `--submit`, the carriage return is sent separately after a calibrated delay so a TUI agent does not swallow it (EP-001). `--submit` toward an agent pane enables this automatically; pass `--paste` to force it (e.g. toward a shell) or `--paste` alone to wrap a non-submitted inject
+
+      --report-file <PATH>
+          Ask the agent to write its complete result to this file and print `REPORT_DONE <path>` after the file is fully written. The path is resolved relative to the caller's current directory
+
+      --force
+          Write even when the target agent waits for a decision (permission, menu, question) or no longer runs in the foreground. The forced write is logged by the instance
+
+      --scope <SCOPE>
+          From inside a Paneflow pane, writes stay in that pane's workspace. `all` reaches every workspace and needs PANEFLOW_IPC_ORCHESTRATION=1 on the instance
+          
+          [default: workspace]
+          [possible values: workspace, all]
+
+  -h, --help
+          Print help (see a summary with '-h')
+[exit=0]
+
+$ paneflow send 1026 "$(python3 -c 'print("x"*70000,end="")')" 2>&1 | cut -c1-300
+paneflow: paneflow error -32602: Text exceeds 64 KiB limit
+[exit=0]
+
+$ paneflow key 1026 ctrl-u
+{
+  "sent": true
+}
+[exit=0]
+
+$ paneflow send 1026 "$(python3 -c 'print("y"*65536,end="")')" | head -3; paneflow key 1026 ctrl-u >/dev/null; paneflow key 1026 ctrl-c
+{
+  "sent": true,
+  "length": 65536,
+{
+  "sent": true
+}
+[exit=0]

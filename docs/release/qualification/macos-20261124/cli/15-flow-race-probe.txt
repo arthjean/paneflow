@@ -1,0 +1,22 @@
+up: {"jsonrpc": "2.0", "result": {"index": 14, "title": "race-probe", "panes": 1, "surface_ids": [17493], "labels": ["race1"]}, "id": 1}
+0.038 {"jsonrpc": "2.0", "result": {"text": "", "lines": 0, "total_lines": 0, "eof": true, "output_generation": 0, "truncated": false}, "id": 1}
+0.194 {"jsonrpc": "2.0", "result": {"text": "m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-cli-flow %", "lines": 1, "total_lines": 1, "eof": true, "output_generation": 3, "truncated": false}, "id": 1}
+0.35 {"jsonrpc": "2.0", "result": {"text": "m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-cli-flow %", "lines": 1, "total_lines": 1, "eof": true, "output_generation": 3, "truncated": false}, "id": 1}
+0.509 {"jsonrpc": "2.0", "result": {"text": "m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-cli-flow %", "lines": 1, "total_lines": 1, "eof": true, "output_generation": 3, "truncated": false}, "id": 1}
+0.663 {"jsonrpc": "2.0", "result": {"text": "m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-cli-flow %", "lines": 1, "total_lines": 1, "eof": true, "output_generation": 3, "truncated": false}, "id": 1}
+0.82 {"jsonrpc": "2.0", "result": {"text": "m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-cli-flow %", "lines": 1, "total_lines": 1, "eof": true, "output_generation": 3, "truncated": false}, "id": 1}
+0.978 {"jsonrpc": "2.0", "result": {"text": "m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-cli-flow %", "lines": 1, "total_lines": 1, "eof": true, "output_generation": 3, "truncated": false}, "id": 1}
+1.135 {"jsonrpc": "2.0", "result": {"text": "m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-cli-flow %", "lines": 1, "total_lines": 1, "eof": true, "output_generation": 3, "truncated": false}, "id": 1}
+35.4 ms {"jsonrpc": "2.0", "result": {"text": "", "lines": 0, "total_lines": 0, "eof": true, "output_generation": 0, "truncated": false}, "id": 1}
+39.0 ms {"jsonrpc": "2.0", "result": {"text": "", "lines": 0, "total_lines": 0, "eof": true, "output_generation": 1, "truncated": false}, "id": 1}
+39.8 ms {"jsonrpc": "2.0", "result": {"text": "", "lines": 0, "total_lines": 0, "eof": true, "output_generation": 2, "truncated": false}, "id": 1}
+46.1 ms {"jsonrpc": "2.0", "result": {"text": "", "lines": 0, "total_lines": 0, "eof": true, "output_generation": 2, "truncated": false}, "id": 1}
+47.4 ms {"jsonrpc": "2.0", "result": {"text": "", "lines": 0, "total_lines": 0, "eof": true, "output_generation": 2, "truncated": false}, "id": 1}
+48.2 ms {"jsonrpc": "2.0", "result": {"text": "", "lines": 0, "total_lines": 0, "eof": true, "output_generation": 2, "truncated": false}, "id": 1}
+worker up: {"jsonrpc": "2.0", "id": 1, "result": {"index": 18, "title": "race-probe-4", "panes": 1, "surface_ids": [20572], "labels": ["race4"]}}
+0.5 ms {"jsonrpc": "2.0", "error": {"code": -32602, "message": "surface_id 20572 not found"}, "id": 1}
+0.8 ms {"jsonrpc": "2.0", "error": {"code": -32602, "message": "surface_id 20572 not found"}, "id": 1}
+1.1 ms {"jsonrpc": "2.0", "error": {"code": -32602, "message": "surface_id 20572 not found"}, "id": 1}
+1.4 ms {"jsonrpc": "2.0", "error": {"code": -32602, "message": "surface_id 20572 not found"}, "id": 1}
+1.8 ms {"jsonrpc": "2.0", "error": {"code": -32602, "message": "surface_id 20572 not found"}, "id": 1}
+2.1 ms {"jsonrpc": "2.0", "error": {"code": -32602, "message": "surface_id 20572 not found"}, "id": 1}

@@ -1,0 +1,219 @@
+
+$ paneflow status reviewer --json
+{
+  "surface_id": 3081,
+  "hooked": false,
+  "output_generation": 14,
+  "state": "idle",
+  "state_seq": 0,
+  "session": "4dd7268b-4644-4b52-8240-c999b3236394",
+  "outcome": null,
+  "activity_source": "none",
+  "reduced_by": "worker"
+}
+[exit=0]
+
+$ paneflow send reviewer 'hello one' --submit
+{
+  "sent": true,
+  "length": 9,
+  "submitted": true,
+  "paste": false,
+  "submit_mode": "inline_cr",
+  "agent_target": false,
+  "agent_tool": null,
+  "terminal_bracketed_paste": false
+}
+[exit=0]
+
+$ paneflow status reviewer --json
+{
+  "surface_id": 3081,
+  "hooked": false,
+  "output_generation": 16,
+  "state": "idle",
+  "state_seq": 0,
+  "session": "4dd7268b-4644-4b52-8240-c999b3236394",
+  "outcome": null,
+  "activity_source": "none",
+  "reduced_by": "worker"
+}
+[exit=0]
+
+$ paneflow read reviewer --lines 6 --raw
+q-cli-a/pane-env.txt
+m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-c
+li-a % ~/pfq-cli-fake/fake-agent.sh
+FAKE_AGENT_READY
+hello one
+working on: hello one[exit=0]
+
+$ paneflow status reviewer --json
+{
+  "surface_id": 3081,
+  "hooked": false,
+  "output_generation": 23,
+  "state": "idle",
+  "state_seq": 0,
+  "session": "4dd7268b-4644-4b52-8240-c999b3236394",
+  "outcome": null,
+  "activity_source": "none",
+  "reduced_by": "worker"
+}
+[exit=0]
+
+$ paneflow ps --json
+{
+  "agents": []
+}
+[exit=0]
+
+$ paneflow status reviewer --json
+{
+  "surface_id": 3081,
+  "hooked": false,
+  "output_generation": 28,
+  "state": "idle",
+  "state_seq": 0,
+  "session": "4dd7268b-4644-4b52-8240-c999b3236394",
+  "outcome": null,
+  "activity_source": "none",
+  "reduced_by": "worker"
+}
+[exit=0]
+
+$ paneflow ps --json
+{
+  "agents": []
+}
+[exit=0]
+
+$ paneflow status reviewer --json
+{
+  "surface_id": 3081,
+  "state": "finished",
+  "state_seq": 0,
+  "hooked": false,
+  "tool": "amp",
+  "active_tool_name": null,
+  "message": null,
+  "last_result": null,
+  "waiting_ms": null,
+  "idle_ms": 2075,
+  "output_generation": 36,
+  "session": "4dd7268b-4644-4b52-8240-c999b3236394",
+  "outcome": null,
+  "activity_source": "declared",
+  "agent_runtime": "com.sourcegraph.amp",
+  "reduced_by": "worker"
+}
+[exit=0]
+
+$ paneflow ps --json
+{
+  "agents": [
+    {
+      "pid": 69271,
+      "tool": "amp",
+      "state": "finished",
+      "hooked": false,
+      "reason": null,
+      "surface_id": 3081,
+      "surface_name": "reviewer",
+      "workspace": 0,
+      "active_tool_name": null,
+      "message": null,
+      "last_result": null,
+      "waiting_ms": null,
+      "idle_ms": 2098
+    }
+  ]
+}
+[exit=0]
+
+$ paneflow send reviewer 'first task' --submit
+{
+  "sent": true,
+  "length": 10,
+  "submitted": true,
+  "paste": true,
+  "submit_mode": "deferred_paste_cr",
+  "agent_target": true,
+  "agent_tool": "amp",
+  "terminal_bracketed_paste": false,
+  "delivered": true,
+  "started": true,
+  "reason": "state_transition",
+  "state": "working"
+}
+[exit=0]
+
+$ paneflow status reviewer --json
+{
+  "surface_id": 3081,
+  "state": "thinking",
+  "state_seq": 1,
+  "hooked": false,
+  "tool": "amp",
+  "active_tool_name": null,
+  "message": null,
+  "last_result": null,
+  "waiting_ms": null,
+  "idle_ms": 49,
+  "output_generation": 38,
+  "session": "4dd7268b-4644-4b52-8240-c999b3236394",
+  "outcome": null,
+  "activity_source": "declared",
+  "agent_runtime": "com.sourcegraph.amp",
+  "reduced_by": "worker"
+}
+[exit=0]
+
+$ paneflow status reviewer --json
+{
+  "surface_id": 3081,
+  "state": "finished",
+  "state_seq": 2,
+  "hooked": false,
+  "tool": "amp",
+  "active_tool_name": null,
+  "message": null,
+  "last_result": null,
+  "waiting_ms": null,
+  "idle_ms": 1102,
+  "output_generation": 39,
+  "session": "4dd7268b-4644-4b52-8240-c999b3236394",
+  "outcome": "completed",
+  "activity_source": "declared",
+  "agent_runtime": "com.sourcegraph.amp",
+  "reduced_by": "worker"
+}
+[exit=0]
+
+$ paneflow send reviewer 'noop please' --submit
+{
+  "sent": true,
+  "length": 11,
+  "submitted": true,
+  "paste": true,
+  "submit_mode": "deferred_paste_cr",
+  "agent_target": true,
+  "agent_tool": "amp",
+  "terminal_bracketed_paste": false,
+  "delivered": true,
+  "started": false,
+  "reason": "no_state_transition",
+  "state": "idle"
+}
+paneflow: the prompt was delivered to pane 3081, but no turn start was confirmed within 5000ms (no_state_transition)
+[exit=1]
+
+$ paneflow read reviewer --lines 8 --raw
+m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-c
+li-a % ~/pfq-cli-fake/bin3/amp
+FAKE_AGENT_READY
+first task
+working on: first task
+DONE: first task
+noop please
+ignored: noop please[exit=0]

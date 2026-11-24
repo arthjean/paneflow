@@ -1,0 +1,31 @@
+## Settings > Worktrees > Snapshots > lim/b > Restore (AXPress)
+ls: /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/lim-b: No such file or directory
+"ok":true
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/lim-b                          064eabd [lim/b]
+$ ls -a lim-b
+.
+..
+.env
+.env.local
+.git
+.gitignore
+a.txt
+AGENTS.override.md
+README.md
+$ git -C lim-b status --short --branch
+## lim/b
+ M README.md
+diff --git a/README.md b/README.md
+index ce01362..afe329b 100644
+--- a/README.md
++++ b/README.md
+@@ -1 +1,2 @@
+ hello
++dirty
+$ snapshot refs
+8a85ed6c08ec552fa20e8e0a48f6aeb2e78c9deb commit	refs/paneflow/snapshots/feat-two-1795540859
+ac9aabc0acfe0c472747f3fcf1453788f4153a43 commit	refs/paneflow/snapshots/up5-dirty-1795540084
+$ owner marker
+owner=paneflow
+repo_root=/Users/m1/pfq-wt-main
+branch=lim/b

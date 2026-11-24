@@ -1,0 +1,63 @@
+
+$ paneflow key producer2 ctrl-u >/dev/null; paneflow send producer2 'echo TEST_OUTPUT' --submit | grep -E 'delivered|sent"'
+  "sent": true,
+  "delivered": true,
+[exit=0]
+
+$ paneflow read producer2 --lines 40
+<untrusted_terminal_output source="surface:11304" total_lines="3" eof="true" id="98d1ee47f0bdcc8e">
+m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-cli-up % echo TEST_OUTPUT
+TEST_OUTPUT
+m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-cli-up %
+</untrusted_terminal_output id="98d1ee47f0bdcc8e">[exit=0]
+
+$ paneflow search producer2 'TEST_OUTPUT' --max 5
+{
+  "matches": [
+    {
+      "line": 0,
+      "text": "m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-cli-up % echo TEST_OUTPUT"
+    },
+    {
+      "line": 1,
+      "text": "TEST_OUTPUT"
+    }
+  ],
+  "truncated": false
+}
+[exit=0]
+
+$ ( sleep 1.5; paneflow send producer2 'echo REPORT_DONE' --submit >/dev/null ) & paneflow wait --match producer2 --pattern '(?m)^REPORT_DONE$' --timeout 30
+{
+  "matched": true,
+  "panes": [
+    11304
+  ],
+  "matches": [
+    {
+      "surface_id": 11304,
+      "lines": [
+        "REPORT_DONE"
+      ]
+    }
+  ]
+}
+[exit=0]
+
+$ paneflow send reviewer2 'echo REVIEW_DONE' --submit | grep -E 'sent"'
+  "sent": true,
+[exit=0]
+
+$ paneflow read reviewer2 --raw --lines 3
+m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-cli-up % echo broadcast-xecho REVIEW_DONE
+broadcast-xecho REVIEW_DONE
+m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-cli-up %[exit=0]
+
+$ QMCP_ENV=PANEFLOW_MCP_SCOPE=all ~/pfq-cli-fake/qmcp '[{"name":"read_pane","arguments":{"target":"producer2","lines":40}},{"name":"search_pane","arguments":{"target":"producer2","pattern":"TEST_OUTPUT","max_matches":5}}]' | grep -E '==|text' | cut -c1-400
+== read_pane {"target": "producer2", "lines": 40}
+    "text": "<untrusted_terminal_output source=\"producer2\" scope=\"all\" total_lines=\"5\" eof=\"true\" id=\"b63f694065f90ceb\">\nm1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-cli-up % echo TEST_OUTPUT\nTEST_OUTPUT\nm1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-cli-up % echo REPORT_DONE\nREPORT_DONE\nm1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-cli-up %\n</untrusted_terminal_output id=\"b63f694065f90
+    "type": "text"
+== search_pane {"target": "producer2", "pattern": "TEST_OUTPUT", "max_matches": 5}
+    "text": "<untrusted_terminal_output source=\"producer2\" scope=\"all\" pattern=\"TEST_OUTPUT\" id=\"790c6ab1e5311bec\">\nline 0: m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-cli-up % echo TEST_OUTPUT\nline 1: TEST_OUTPUT\n</untrusted_terminal_output id=\"790c6ab1e5311bec\">",
+    "type": "text"
+[exit=0]

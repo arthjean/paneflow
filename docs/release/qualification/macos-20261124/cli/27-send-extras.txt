@@ -1,0 +1,111 @@
+
+$ paneflow focus producer
+{
+  "focused": true,
+  "surface_id": 2053,
+  "workspace": 0,
+  "scope": "workspace"
+}
+[exit=0]
+
+$ paneflow api call workspace.current | head -3
+{
+  "index": 0,
+  "title": "ws-a",
+[exit=0]
+
+$ paneflow send cwd:$HOME/pfq-cli-up 'echo broadcast-x' --broadcast
+{
+  "sent": [
+    10276,
+    11304,
+    11305,
+    12336,
+    12337,
+    24682
+  ],
+  "failed": [],
+  "submitted": false
+}
+[exit=0]
+
+$ paneflow send cwd:$HOME/pfq-cli-up 'echo x' --broadcast --report-file /tmp/x.md
+paneflow: send --report-file cannot be combined with --broadcast; use one report file per target
+[exit=1]
+
+$ cd ~/pfq-cli-fake && paneflow send target-agent 'noop write report' --report-file rep.md
+paneflow: paneflow error -32602: text contains CR or LF; multiline surface.send_text requires active bracketed paste
+[exit=1]
+
+$ paneflow read target-agent --raw --lines 8
+working on: quick task
+DONE: quick task
+windowless task
+working on: windowless task
+DONE: windowless task
+slow stall test
+working on: slow stall test
+DONE: slow stall test[exit=0]
+
+$ paneflow key target-agent ctrl-u
+{
+  "sent": true
+}
+[exit=0]
+
+$ paneflow send producer2 'echo pasted' --paste
+{
+  "sent": true,
+  "length": 11,
+  "submitted": false,
+  "paste": true,
+  "submit_mode": null,
+  "agent_target": false,
+  "agent_tool": null,
+  "terminal_bracketed_paste": true
+}
+[exit=0]
+
+$ paneflow read producer2 --raw --lines 2 | cat -v
+m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-cli-up % echo broadcast-xecho pasted[exit=0]
+
+$ paneflow key producer2 ctrl-u
+{
+  "sent": true
+}
+[exit=0]
+
+$ cd ~/pfq-cli-fake && paneflow send tests 'noop write report' --report-file rep.md --submit
+{
+  "sent": true,
+  "length": 371,
+  "submitted": true,
+  "paste": true,
+  "submit_mode": "deferred_paste_cr",
+  "agent_target": true,
+  "agent_tool": "amp",
+  "terminal_bracketed_paste": true,
+  "delivered": true,
+  "started": true,
+  "reason": "state_transition",
+  "state": "working",
+  "report_file": "/Users/m1/pfq-cli-fake/rep.md",
+  "report_sentinel": "REPORT_DONE /Users/m1/pfq-cli-fake/rep.md"
+}
+[exit=0]
+
+$ paneflow read tests --raw --lines 14 | cat -v
+
+Paneflow report protocol:
+- Write the complete final answer/report to t
+his exact UTF-8 text file, overwriting it if
+it exists:
+/Users/m1/pfq-cli-fake/rep.md
+- When the file is fully written and closed,
+print exactly this single line to the termina
+l:
+REPORT_DONE /Users/m1/pfq-cli-fake/rep.md
+- Do not rely on terminal scrollback as the r
+eport channel.
+^[[201~working on: echo broadcast-xnoop write
+ report[exit=0]

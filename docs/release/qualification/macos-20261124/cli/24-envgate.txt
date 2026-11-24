@@ -1,0 +1,47 @@
+
+$ cat ~/.paneflow-dev-qual-cli/paneflow.json; ps -E -p $(cat /private/tmp/claude-501/-Users-m1-dev-paneflow/ed7b9b96-428f-465c-a947-cceac364368b/scratchpad/qual-cli-app.pid) -o command | tr ' ' '\n' | grep '^PANEFLOW_IPC'
+{"agents": {"amp": {"grants": [{"rights": ["write"], "scope": "workspace"}]}},
+ "spaces": [{"id": "550e8400-e29b-41d4-a716-446655440001", "name": "Work"}]}
+PANEFLOW_IPC_SCRIPTING=1
+[exit=0]
+
+$ paneflow send producer 'OUT=$HOME/pfq-cli-fake/inpane-envgate-1.out ~/pfq-cli-fake/inpane-envgate.sh' --submit | grep -E 'sent"'
+  "sent": true,
+[exit=0]
+== 18:23:19 caps
+{
+  "scripting": true,
+  "orchestration": true,
+== send 1026 from pane
+{
+  "sent": true,
+[exit=0]
+== DONE
+
+$ grep -n 'PANEFLOW_IPC_SCRIPTING\|deprecated' /private/tmp/claude-501/-Users-m1-dev-paneflow/ed7b9b96-428f-465c-a947-cceac364368b/scratchpad/qual-cli-app2.log | head -5
+75:[2026-11-24T17:23:19Z WARN  paneflow::app::ipc_handler::registry] PANEFLOW_IPC_SCRIPTING opened an IPC gate for a caller in a pane; this works until the next release only. Set ipc.scripting in paneflow.json instead: "ipc": {"scripting": true}
+[exit=0]
+
+$ cat ~/.paneflow-dev-qual-cli/paneflow.json
+{"ipc": {"scripting": false},
+ "agents": {"amp": {"grants": [{"rights": ["write"], "scope": "workspace"}]}},
+ "spaces": [{"id": "550e8400-e29b-41d4-a716-446655440001", "name": "Work"}]}
+[exit=0]
+
+$ paneflow api call system.capabilities | head -3
+{
+  "scripting": true,
+  "orchestration": true,
+[exit=0]
+
+$ paneflow send producer 'OUT=$HOME/pfq-cli-fake/inpane-envgate-2.out ~/pfq-cli-fake/inpane-envgate.sh' --submit | grep -E 'sent"'
+  "sent": true,
+[exit=0]
+== 18:23:29 caps
+{
+  "scripting": false,
+  "orchestration": false,
+== send 1026 from pane
+paneflow: send is disabled on the running Paneflow instance; relaunch it with PANEFLOW_IPC_SCRIPTING=1 to enable text injection (server said: paneflow error -32601: surface.send_text disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable)
+[exit=1]
+== DONE

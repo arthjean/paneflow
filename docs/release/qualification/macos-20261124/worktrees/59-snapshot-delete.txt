@@ -1,0 +1,28 @@
+## Delete up5/dirty snapshot (AXPress)
+"ok":true
+8a85ed6c08ec552fa20e8e0a48f6aeb2e78c9deb commit	refs/paneflow/snapshots/feat-two-1795540859
+ac9aabc0acfe0c472747f3fcf1453788f4153a43 commit	refs/paneflow/snapshots/up5-dirty-1795540084
+  up5/clean  064eabd add a
+  up5/dirty  e8cf3fa up5 dirty commit
+## Delete is two-step: first press arms "Confirm delete", second press deletes
+"ok":false
+$ for-each-ref refs/paneflow
+8a85ed6c08ec552fa20e8e0a48f6aeb2e78c9deb commit	refs/paneflow/snapshots/feat-two-1795540859
+ac9aabc0acfe0c472747f3fcf1453788f4153a43 commit	refs/paneflow/snapshots/up5-dirty-1795540084
+## retry: press Delete of up5/dirty, then look for Confirm delete
+"ok":true
+"delivery":"delivered_unverified"
+    button | 'Restore' | @s1x6tqgauzzb7y:e10
+    button | 'Delete' | @s1x6tqgauzzb7y:e11
+    button | 'Restore' | @s1x6tqgauzzb7y:e12
+    button | 'Delete' | @s1x6tqgauzzb7y:e13
+confirm ref: 
+$ for-each-ref refs/paneflow
+8a85ed6c08ec552fa20e8e0a48f6aeb2e78c9deb commit	refs/paneflow/snapshots/feat-two-1795540859
+ac9aabc0acfe0c472747f3fcf1453788f4153a43 commit	refs/paneflow/snapshots/up5-dirty-1795540084
+## (the up5/dirty row was below the fold: AXPress on an offscreen GPUI button does nothing, so that attempt is void)
+## feat/two: Delete -> "Confirm delete" (60-delete-armed.png) -> Confirm delete
+"ok":true
+$ for-each-ref refs/paneflow
+ac9aabc0acfe0c472747f3fcf1453788f4153a43 commit	refs/paneflow/snapshots/up5-dirty-1795540084
+  feat/two   064eabd add a

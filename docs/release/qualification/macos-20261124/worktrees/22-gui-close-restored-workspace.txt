@@ -1,0 +1,29 @@
+name = "pfq-up4"
+[[panes]]
+cwd = "~/pfq-wt-main"
+worktree = "up4/dirty"
+from = "main"
+[[panes]]
+cwd = "~/pfq-wt-main"
+worktree = "up4/clean"
+  ]
+}
+ M README.md
+?? new4.txt
+## restart the window (kill own PID 74639, relaunch)
+0 pfq-main False
+1 pfq-up4 True
+current: pfq-up4
+$ dispatch close_workspace on pfq-up4 (restored workspace)
+{
+  "dispatched": true,
+  "name": "close_workspace"
+}
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/up4-clean                      064eabd [up4/clean]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/up4-dirty                      071aa99 [up4/dirty]
+$ for-each-ref refs/paneflow
++ up4/clean  064eabd add a
++ up4/dirty  071aa99 up4 dirty commit
+## app log
+[2026-11-24T17:06:48Z INFO  paneflow_git::worktree] worktree kept (/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/up4-dirty): a live terminal session still runs inside it
+[2026-11-24T17:06:48Z INFO  paneflow_git::worktree] worktree kept (/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/up4-clean): a live terminal session still runs inside it

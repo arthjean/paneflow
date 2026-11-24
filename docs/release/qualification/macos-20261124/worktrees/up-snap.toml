@@ -1,0 +1,8 @@
+name = "pfq-up"
+[[panes]]
+cwd = "~/pfq-wt-main"
+worktree = "up/dirty"
+from = "main"
+[[panes]]
+cwd = "~/pfq-wt-main"
+worktree = "up/clean"

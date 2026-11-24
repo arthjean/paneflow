@@ -1,0 +1,9 @@
+name = "bad"
+[[step]]
+id = "a"
+needs = ["b"]
+pane = { cwd = "/Users/m1/pfq-cli-flow" }
+[[step]]
+id = "b"
+needs = ["a"]
+pane = { cwd = "/Users/m1/pfq-cli-flow" }

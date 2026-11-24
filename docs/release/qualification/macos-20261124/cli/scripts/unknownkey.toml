@@ -1,0 +1,4 @@
+name = "up-unknown"
+colour = "red"
+[[panes]]
+cwd = "/Users/m1/pfq-cli-up"

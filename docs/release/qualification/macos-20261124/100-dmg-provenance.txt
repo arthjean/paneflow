@@ -1,0 +1,18 @@
+$ gh attestation verify ...
+$ hdiutil attach -nobrowse -readonly
+hdiutil: WARNING: 'hdiutil attach -nobrowse -readonly -mountpoint ...' is deprecated. Please use 'diskutil image attach --mountOptions nobrowse --readOnly --mountPoint ...' instead.
+drwx------    4 m1  staff   128 Nov 19 20:42 .
+drwx------@ 193 m1  wheel  6176 Nov 24 19:26 ..
+lrwxr-xr-x    1 m1  staff    13 Nov 19 20:42 Applications -> /Applications
+drwxr-xr-x    3 m1  staff    96 Nov 19 20:42 PaneFlow.app
+$ spctl -a -vv (app inside the DMG)
+/private/tmp/claude-501/-Users-m1-dev-paneflow/ed7b9b96-428f-465c-a947-cceac364368b/scratchpad/mnt.i6UH/PaneFlow.app: accepted
+source=Notarized Developer ID
+origin=Developer ID Application: Arthur Jean (228F9H5P95)
+TeamIdentifier=228F9H5P95
+Runtime Version=15.5.0
+paneflow 0.20.0
+hdiutil: WARNING: 'hdiutil detach ...' is deprecated. Please use 'diskutil eject ...' instead.
+detached
+verified attestation: paneflow-0.20.0-aarch64-apple-darwin.dmg 34ed8e1da5435b7a | build workflow: https://github.com/arthjean/paneflow/.github/workflows/release.yml@refs/tags/v0.20.0 | source: https://github.com/arthjean/paneflow refs/tags/v0.20.0
+exit=

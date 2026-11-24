@@ -1,0 +1,143 @@
+
+$ paneflow split --help | head -30
+Split the active pane horizontally or vertically
+
+Usage: paneflow split [OPTIONS] <DIRECTION>
+
+Arguments:
+  <DIRECTION>  `h`/`horizontal` (panes stacked) or `v`/`vertical` (side by side) [possible values: horizontal, vertical]
+
+Options:
+      --target <TARGET>  Split the pane hosting this target instead of the first leaf. Target: surface id, name, `cmdline:<substr>`, or `cwd:<path>`
+  -h, --help             Print help
+[exit=0]
+
+$ paneflow split v --target 1026
+{
+  "split": true,
+  "direction": "vertical",
+  "panes": 2,
+  "surface_id": 2053
+}
+[exit=0]
+
+$ paneflow split h
+{
+  "split": true,
+  "direction": "horizontal",
+  "panes": 3,
+  "surface_id": 3081
+}
+[exit=0]
+
+$ paneflow ls --human
+  ID  NAME                  SPACE             CMD                       CWD
+1026  shell                 Default           zsh                       /Users/m1/pfq-demo
+3081  terminal@pfq-demo     Default                                     /Users/m1/pfq-demo
+2053  terminal@pfq-demo-2   Default                                     /Users/m1/pfq-demo
+[exit=0]
+
+$ paneflow api call surface.rename --args '{"surface_id":2053,"name":"producer"}'
+{
+  "renamed": true,
+  "name": "producer"
+}
+[exit=0]
+
+$ paneflow api call surface.rename --args '{"surface_id":3081,"name":"reviewer"}'
+{
+  "renamed": true,
+  "name": "reviewer"
+}
+[exit=0]
+
+$ paneflow send reviewer 'cd ~/pfq-cli-a' --submit | grep -E 'delivered|sent"'
+  "sent": true,
+  "delivered": true,
+[exit=0]
+
+$ paneflow send producer 'sleep 900' --submit | grep -E 'delivered'
+  "delivered": true,
+[exit=0]
+
+$ paneflow ls --human
+  ID  NAME                  SPACE             CMD                       CWD
+1026  shell                 Default           zsh                       /Users/m1/pfq-demo
+3081  reviewer              Default           zsh                       /Users/m1/pfq-cli-a
+2053  producer              Default           zsh                       /Users/m1/pfq-demo
+[exit=0]
+
+$ paneflow status producer --json
+{
+  "surface_id": 2053,
+  "hooked": false,
+  "output_generation": 7,
+  "state": "idle",
+  "state_seq": 0,
+  "session": "490fa6c8-8d31-458e-b39a-967f979a2b52",
+  "outcome": null,
+  "activity_source": "none",
+  "reduced_by": "worker"
+}
+[exit=0]
+
+$ paneflow status cmdline:sleep --json | head -5
+paneflow: no pane matches target 'cmdline:sleep'
+[exit=0]
+
+$ paneflow read cwd:$HOME/pfq-cli-a --lines 3
+<untrusted_terminal_output source="surface:3081" total_lines="4" eof="false" id="befa82fed8a1ac9c">
+emo % cd ~/pfq-cli-a
+m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-c
+li-a %
+</untrusted_terminal_output id="befa82fed8a1ac9c">[exit=0]
+
+$ paneflow read 2053 --lines 3 --raw
+m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-d
+emo % sleep 900[exit=0]
+
+$ paneflow read nosuchpane
+paneflow: no pane matches target 'nosuchpane'
+[exit=3]
+
+$ paneflow read cwd:$HOME/pfq-demo
+paneflow: ambiguous target 'cwd:/Users/m1/pfq-demo'; matches: 1026(shell), 2053(producer)
+[exit=3]
+
+$ paneflow read 99999
+paneflow: no pane matches target '99999'
+[exit=3]
+
+$ paneflow ls --human
+  ID  NAME                  SPACE             CMD                       CWD
+1026  shell                 Default           zsh                       /Users/m1/pfq-demo
+3081  reviewer              Default           zsh                       /Users/m1/pfq-cli-a
+2053  producer              Default           sleep                     /Users/m1/pfq-demo
+[exit=0]
+
+$ paneflow status cmdline:sleep --json
+{
+  "surface_id": 2053,
+  "hooked": false,
+  "output_generation": 7,
+  "state": "idle",
+  "state_seq": 0,
+  "session": "490fa6c8-8d31-458e-b39a-967f979a2b52",
+  "outcome": null,
+  "activity_source": "none",
+  "reduced_by": "worker"
+}
+[exit=0]
+
+$ paneflow status cmdline:zsh --json
+paneflow: ambiguous target 'cmdline:zsh'; matches: 1026(shell), 3081(reviewer)
+[exit=3]
+
+$ paneflow api call surface.list | grep -E 'cmd|surface_id'
+      "surface_id": 1026,
+      "cmd": "zsh",
+      "surface_id": 3081,
+      "cmd": "zsh",
+      "surface_id": 2053,
+      "cmd": "sleep",
+[exit=0]

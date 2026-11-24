@@ -1,0 +1,7 @@
+name = "ready-timeout"
+[defaults]
+timeout_secs = 3
+[[step]]
+id = "a"
+pane = { cwd = "/Users/m1/pfq-cli-flow", name = "ftimeout" }
+ready = { pattern = "NEVER_APPEARS_XYZ" }

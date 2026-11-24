@@ -1,0 +1,8 @@
+name = "ready-ok"
+[defaults]
+timeout_secs = 10
+[[step]]
+id = "a"
+pane = { cwd = "/Users/m1/pfq-cli-flow", name = "fready", command = "sleep 1; echo READY_MARK_42" }
+ready = { pattern = "(?m)^READY_MARK_42" }
+capture = { var = "out", lines = 2 }

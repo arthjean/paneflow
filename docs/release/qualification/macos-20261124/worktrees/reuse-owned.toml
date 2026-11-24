@@ -1,0 +1,5 @@
+name = "pfq-reuse3"
+[[panes]]
+cwd = "~/pfq-wt-main"
+worktree = "feat/two"
+from = "main~1"

@@ -1,0 +1,78 @@
+== api list (names only, grep reserved)
+peer.classify             host    Say whether a process runs inside one of the host's panes, and which one.
+layout.attach             worker  Attach this connection as a layout client until it closes, and return the view, its revision and the worker's epoch.
+layout.launch             worker  Start the terminal of a surface for the attached layout client that created it: the worker builds the launch from its configuration and the layout and creates the session under the id the client chose, which the client binds with bind_session. The surface must have no session or this one. Fails with -32070 and data {reason}: not_attached, not_found, invalid, host_unreachable or launch_failed with the host's message.
+layout.sweep              worker  Remove the records of ended sessions that no surface of the layout, no undo hold and no pending launch names, and with live, also stop the live sessions this host started that nothing holds. The attached layout client calls it after it restores; the worker runs the host requests. Fails with -32070 and data {reason}: not_attached or host_unreachable.
+== approval.decide --on window
+paneflow: Method not found: approval.decide
+[exit=1]
+== approval.follow --on window
+paneflow: Method not found: approval.follow
+[exit=1]
+== session.runtime.bind --on window
+paneflow: Method not found: session.runtime.bind
+[exit=1]
+== session.workspace --on window
+paneflow: Method not found: session.workspace
+[exit=1]
+== peer.classify --on window
+paneflow: missing 'started_at' parameter
+[exit=1]
+== layout.launch --on window
+paneflow: 'pid' is not a known field
+[exit=1]
+== layout.attach --on window
+paneflow: paneflow error -32601: Method not found: layout.attach
+[exit=1]
+== layout.sweep --on window
+paneflow: 'pid' is not a known field
+[exit=1]
+== approval.decide --on worker
+paneflow: Method not found: approval.decide
+[exit=1]
+== approval.follow --on worker
+paneflow: Method not found: approval.follow
+[exit=1]
+== session.runtime.bind --on worker
+paneflow: Method not found: session.runtime.bind
+[exit=1]
+== session.workspace --on worker
+paneflow: Method not found: session.workspace
+[exit=1]
+== peer.classify --on worker
+paneflow: missing 'started_at' parameter
+[exit=1]
+== layout.launch --on worker
+paneflow: 'pid' is not a known field
+[exit=1]
+== layout.attach --on worker
+paneflow: paneflow error -32070: layout.attach does not answer a caller identified as pane
+[exit=1]
+== layout.sweep --on worker
+paneflow: 'pid' is not a known field
+[exit=1]
+== approval.decide --on host
+paneflow: Method not found: approval.decide
+[exit=1]
+== approval.follow --on host
+paneflow: Method not found: approval.follow
+[exit=1]
+== session.runtime.bind --on host
+paneflow: Method not found: session.runtime.bind
+[exit=1]
+== session.workspace --on host
+paneflow: Method not found: session.workspace
+[exit=1]
+== peer.classify --on host
+paneflow: missing 'started_at' parameter
+[exit=1]
+== layout.launch --on host
+paneflow: 'pid' is not a known field
+[exit=1]
+== layout.attach --on host
+paneflow: paneflow error -32001: layout.attach does not answer a caller identified as pane
+[exit=1]
+== layout.sweep --on host
+paneflow: 'pid' is not a known field
+[exit=1]
+== DONE

@@ -1,0 +1,4 @@
+name = "pfq-reuse"
+[[panes]]
+cwd = "~/pfq-wt-main"
+worktree = "foreign-br"

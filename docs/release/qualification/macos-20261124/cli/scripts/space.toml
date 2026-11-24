@@ -1,0 +1,7 @@
+name = "up-in-work"
+space = "WORK"
+layout = "even_v"
+
+[[panes]]
+name = "upw1"
+cwd = "/Users/m1/pfq-cli-up"

@@ -1,0 +1,47 @@
+worker 0.20.0 protocol 1 pid 32562 core connected capabilities agent.snapshot,agent.follow,restart.recommendation,integrations.refresh,activity.reducer,activity.notifications,agent.unread,agent.activity_log,events.follow,prompt.follow,layout.authority
+0129b837-451b-480d-bf96-3a710a3e5767  idle      declared com.sourcegraph.amp unread
+1114accd-913f-47b4-a343-28ba5c9d5bcd  idle      none    -
+21bac720-30ae-4549-9d00-a459e87ed441  idle      none    -
+21dbaaf6-1d24-4df7-bc08-e49ea41c931c  idle      none    -
+244af9e4-b3fb-4e0d-8f1f-ab70c84681eb  idle      none    -
+293ee640-fb86-4a10-b3d2-8aaf4674e99a  idle      none    -
+2a3c6fd8-82c3-4cc7-82b0-aa935f77af80  idle      none    -
+3352dd7e-71bd-46bf-8ca0-273989fbd9a9  idle      none    -
+3c08088d-5704-4012-a942-ce099f52e6a8  idle      none    -
+490fa6c8-8d31-458e-b39a-967f979a2b52  idle      none    -
+4dd7268b-4644-4b52-8240-c999b3236394  idle      declared com.sourcegraph.amp unread
+52521ef1-26ec-4766-a57e-e7bb47cc7191  idle      declared com.anthropic.claude-code unread
+6616ccec-e23c-4f49-9ad3-f260b55c32dc  idle      none    -
+6695cfa6-5c33-4484-8d8d-76c75db458fa  idle      none    -
+6e8eb746-879a-4266-8f01-8deb0e551349  idle      none    -
+80927214-490c-487a-aef8-ad9f7f05dc40  idle      none    -
+84718104-dbe1-4260-ab7e-7f95db038576  idle      none    -
+92ad6ef6-216e-4757-b115-77ccf97da114  idle      none    -
+97df69aa-644d-44ae-865e-5bd006ee5b3b  idle      none    -
+a2c7ad9e-5109-4d73-9fa0-afdd58581e89  idle      none    -
+a5a9dad8-b215-415c-a93b-9d130acc0029  idle      none    -
+b00dafe7-04fa-4e6f-a942-984c3483579c  idle      none    -
+b7ebaa7a-214e-40ac-a73a-1bfe342309e7  idle      declared com.sourcegraph.amp
+bdb30813-fd2a-44fa-be11-169b3039f62b  idle      none    -
+c3014fac-a51f-41f0-8809-1014f17d122f  idle      none    -
+d0f75d81-a0cb-4f00-ba0e-45c3f78870c4  idle      none    -
+e5703552-6b63-4d1b-a86f-638622bd9400  idle      none    -
+eff7e545-7991-45e9-a352-c93c710572eb  idle      none    -
+fa987023-57c1-4ef3-9da2-09f0604137e0  idle      none    -
+b7ebaa7a-214e-40ac-a73a-1bfe342309e7  busy      declared com.sourcegraph.amp
+b7ebaa7a-214e-40ac-a73a-1bfe342309e7  idle      declared com.sourcegraph.amp unread notify:finished
+b7ebaa7a-214e-40ac-a73a-1bfe342309e7  idle      declared com.sourcegraph.amp
+4dd7268b-4644-4b52-8240-c999b3236394  idle      declared com.sourcegraph.amp
+a5a9dad8-b215-415c-a93b-9d130acc0029  idle      declared com.sourcegraph.amp
+0129b837-451b-480d-bf96-3a710a3e5767  idle      declared com.sourcegraph.amp
+a5a9dad8-b215-415c-a93b-9d130acc0029  idle      none    com.sourcegraph.amp
+a5a9dad8-b215-415c-a93b-9d130acc0029  idle      declared com.sourcegraph.amp
+0129b837-451b-480d-bf96-3a710a3e5767  busy      declared com.sourcegraph.amp
+0129b837-451b-480d-bf96-3a710a3e5767  idle      declared com.sourcegraph.amp unread notify:finished
+b7ebaa7a-214e-40ac-a73a-1bfe342309e7  busy      declared com.sourcegraph.amp
+b7ebaa7a-214e-40ac-a73a-1bfe342309e7  idle      declared com.sourcegraph.amp unread notify:finished
+b7ebaa7a-214e-40ac-a73a-1bfe342309e7  busy      declared com.sourcegraph.amp unread
+b7ebaa7a-214e-40ac-a73a-1bfe342309e7  idle      declared com.sourcegraph.amp unread notify:finished
+a5a9dad8-b215-415c-a93b-9d130acc0029  busy      declared com.sourcegraph.amp
+8d29d840-98b5-46c2-ad66-200218948eb9  idle      declared com.sourcegraph.amp
+a5a9dad8-b215-415c-a93b-9d130acc0029  idle      declared com.sourcegraph.amp unread notify:finished

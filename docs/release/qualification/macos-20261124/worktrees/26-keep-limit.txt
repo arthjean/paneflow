@@ -1,0 +1,24 @@
+6
+24694 1 24700 'lim/a' /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/lim-a
+24695 1 24701 'lim/b' /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/lim-b
+24696 1 24702 'lim/c' /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/lim-c
+## session.json: pfq-main managed_worktrees=[] (split-created worktrees not recorded); pfq-lim = lim/a, lim/b, lim/c
+ M README.md
+## restart window (kill own PID 77710)
+$ cat paneflow.json
+{
+  "worktrees": { "dir": "~/pfq-wt-root", "keep_limit": 1 }
+}
+$ surface.focus 24695; dispatch close_tab
+{"focused":true,"surface_id":24695,"workspace":1,"scope":"workspace"}
+{"dispatched":true,"name":"close_tab"}
+$ surface.focus 24696; dispatch close_tab
+{"focused":true,"surface_id":24696,"workspace":1,"scope":"workspace"}
+{"dispatched":true,"name":"close_tab"}
+## after 20 s
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/lim-a                          064eabd [lim/a]
+0a11038cde4e930bb6e00d27fa9e0c5e08012850 commit	refs/paneflow/snapshots/lim-b-1795540166
+ac9aabc0acfe0c472747f3fcf1453788f4153a43 commit	refs/paneflow/snapshots/up5-dirty-1795540084
+## app log
+[2026-11-24T17:09:26Z INFO  paneflow_git::worktree] worktree trimmed past keep limit: /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/lim-b (snapshot refs/paneflow/snapshots/lim-b-1795540166)
+[2026-11-24T17:09:26Z INFO  paneflow_git::worktree] worktree trimmed past keep limit: /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/lim-c

@@ -1,0 +1,109 @@
+$ paneflow new --name pfq-snap --cwd ~/pfq-wt-main
+{
+  "index": 1,
+  "title": "pfq-snap",
+  "panes": 1
+}
+first surface of pfq-snap: 1026
+$ surface.split surface_id=1026 worktree.branch=snap/dirty
+{
+  "split": true,
+  "direction": "vertical",
+  "panes": 9,
+  "surface_id": 10270,
+  "notices": [
+    "pane 0: copied .env, .env.local, AGENTS.override.md into /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/snap-dirty"
+  ]
+}
+$ surface.split surface_id=1026 worktree.branch=snap/clean
+{
+  "split": true,
+  "direction": "vertical",
+  "panes": 10,
+  "surface_id": 11297,
+  "notices": [
+    "pane 0: copied .env, .env.local, AGENTS.override.md into /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/snap-clean"
+  ]
+}
+$ surface.split surface_id=1026 worktree.branch=feat/two
+{
+  "split": true,
+  "direction": "vertical",
+  "panes": 11,
+  "surface_id": 12324
+}
+{
+  "workspaces": [
+    {
+      "index": 0,
+      "title": "pfq-main",
+      "cwd": "/Users/m1/pfq-wt-main",
+      "panes": 11,
+      "active": true,
+      "space": null
+    },
+    {
+      "index": 1,
+      "title": "pfq-snap",
+      "cwd": "/Users/m1/pfq-wt-main",
+      "panes": 1,
+      "active": false,
+      "space": null
+    }
+  ]
+}
+1026 0 1028 '' /Users/m1/pfq-wt-main
+2053 0 2055 'feat/one' /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/feat-one
+8216 0 2055 'feat/one' /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/feat-one
+4107 0 2055 'feat/one' /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/feat-one
+3080 0 3082 'existing-b' /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/existing-b
+5135 0 5137 'inc-new' /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-inc-4f4348c5/inc-new
+6162 0 6164 'with-secret' /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-inc-4f4348c5/with-secret
+7189 0 7191 'feat/two' /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/feat-two
+12324 0 7191 'feat/two' /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/feat-two
+10270 0 10272 'snap/dirty' /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/snap-dirty
+11297 0 11299 'snap/clean' /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/snap-clean
+9243 1 9245 '' /Users/m1/pfq-wt-main
+## correction: previous splits landed in workspace 0 (pfq-main) because the target surface was 1026; now targeting 9243 in workspace 1 (pfq-snap)
+$ surface.split surface_id=9243 worktree.branch=w1/dirty
+{
+  "split": true,
+  "direction": "vertical",
+  "panes": 2,
+  "surface_id": 13352,
+  "notices": [
+    "pane 0: copied .env, .env.local, AGENTS.override.md into /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/w1-dirty"
+  ]
+}
+$ surface.split surface_id=9243 worktree.branch=w1/clean
+{
+  "split": true,
+  "direction": "vertical",
+  "panes": 3,
+  "surface_id": 14379,
+  "notices": [
+    "pane 0: copied .env, .env.local, AGENTS.override.md into /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/w1-clean"
+  ]
+}
+$ surface.split surface_id=9243 worktree.branch=feat/two
+{
+  "split": true,
+  "direction": "vertical",
+  "panes": 4,
+  "surface_id": 15406
+}
+1026 0 1028 '' /Users/m1/pfq-wt-main
+2053 0 2055 'feat/one' /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/feat-one
+8216 0 2055 'feat/one' /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/feat-one
+4107 0 2055 'feat/one' /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/feat-one
+3080 0 3082 'existing-b' /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/existing-b
+5135 0 5137 'inc-new' /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-inc-4f4348c5/inc-new
+6162 0 6164 'with-secret' /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-inc-4f4348c5/with-secret
+7189 0 7191 'feat/two' /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/feat-two
+12324 0 7191 'feat/two' /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/feat-two
+10270 0 10272 'snap/dirty' /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/snap-dirty
+11297 0 11299 'snap/clean' /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/snap-clean
+9243 1 9245 '' /Users/m1/pfq-wt-main
+13352 1 13354 'w1/dirty' /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/w1-dirty
+14379 1 14381 'w1/clean' /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/w1-clean
+15406 1 15408 'feat/two' None

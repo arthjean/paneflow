@@ -1,0 +1,25 @@
+== split (no command)
+{
+  "split": true,
+  "direction": "horizontal",
+  "panes": 4,
+  "surface_id": 23656
+}
+child surface=23656 session=d0f75d81-a0cb-4f00-ba0e-45c3f78870c4
+== delegate wider (instance)
+paneflow: paneflow error -32602: grant.delegate refused: no grant of the calling pane covers write across every workspace with that expiry
+== delegate spawn (not held)
+paneflow: paneflow error -32602: grant.delegate refused: no grant of the calling pane covers spawn in its own workspace with that expiry
+== delegate to non-spawned pane (producer 490fa6c8)
+paneflow: paneflow error -32602: grant.delegate refused: session 490fa6c8-8d31-458e-b39a-967f979a2b52 was not spawned by the calling pane
+== delegate ok
+paneflow: paneflow error -32602: grant.delegate refused: no grant of the calling pane covers write in its own workspace with that expiry
+== grants ls from pane
+g-1795539482054-2  session 4dd7268b-4644-4b52-8240-c999b3236394  write  workspace  no expiry  profile amp
+== revoke delegated 
+paneflow: paneflow error -32602: no grant  is held
+[exit=1]
+== grants ls after
+g-1795539482054-2  session 4dd7268b-4644-4b52-8240-c999b3236394  write  workspace  no expiry  profile amp
+CHILD_SID=23656
+== DONE

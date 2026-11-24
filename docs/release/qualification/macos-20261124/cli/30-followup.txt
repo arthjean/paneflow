@@ -1,0 +1,196 @@
+
+$ cd ~/pfq-cli-wp && paneflow up wp.toml
+{
+  "index": 23,
+  "title": "wp-test",
+  "panes": 3,
+  "surface_ids": [
+    32937,
+    32938,
+    32939
+  ],
+  "labels": [
+    "src",
+    "dst",
+    "gsh"
+  ]
+}
+[exit=0]
+
+$ paneflow ps --json | python3 -c 'import sys,json; [print(a["surface_name"],a["tool"],a["state"]) for a in json.load(sys.stdin)["agents"]]'
+fakeclaude claude waiting_for_input
+src amp finished
+dst amp finished
+[exit=0]
+
+$ paneflow sessions --json | head -1 | python3 -c 'import sys,json; d=json.loads(sys.stdin.readline()); [print(s["session"][:8], s["workspace"], s["runtime_id"]) for s in d["sessions"] if (s["cwd"] or "").endswith("pfq-cli-wp")]'
+0bc4a30f d8f49c45-a775-4464-a276-4ae946b4cd10 com.sourcegraph.amp
+a0c439b1 d8f49c45-a775-4464-a276-4ae946b4cd10 None
+f2c35a50 d8f49c45-a775-4464-a276-4ae946b4cd10 com.sourcegraph.amp
+[exit=0]
+
+$ paneflow status fakeclaude --json; ps -ax -o pid,command | grep -c 'bin4/claude' 
+{
+  "surface_id": 5137,
+  "state": "waiting_for_input",
+  "state_seq": 1,
+  "hooked": true,
+  "tool": "claude",
+  "active_tool_name": null,
+  "message": null,
+  "last_result": null,
+  "waiting_ms": 20790,
+  "idle_ms": 9850,
+  "output_generation": 4,
+  "session": "dab36470-db38-4025-ae7f-731b815d1ed2",
+  "outcome": null,
+  "activity_source": "declared",
+  "agent_runtime": "com.anthropic.claude-code",
+  "reduced_by": "worker"
+}
+5
+[exit=0]
+# 18:31 after full restart (host stopped earlier, no bin4/claude process alive): ps -ax | grep bin4 -> none
+m1@9f65b6f4-0e68-4a86-818b-08
+6b2fc7a047 pfq-cli-wp % FAKE_
+AGENT_SCRIPT=/Users/m1/pfq-cl
+i-fake/fake-agent-bp.sh /User
+s/m1/pfq-cli-fake/bin3/amp
+FAKE_AGENT_READY
+== 18:32:26 mcp @/Users/m1/pfq-cli-fake/wp-calls.json
+== write_pane {"target": "dst", "text": "hello dst", "submit": true}
+    "text": "{\n  \"bytes\": 60,\n  \"delivered\": true,\n  \"reason\": \"state_transition\",\n  \"started\": true,\n  \"state\": \"working\",\n  \"status\": \"written\",\n  \"submit_mode\": \"deferred_paste_cr\",\n  \"submitted\": true\n}",
+    "type": "text"
+== write_pane {"target": "dst", "text": "noop line two\nsecond\tline ctl\u001b[31mred\u0007bell\u001b[201~after"}
+    "text": "{\n  \"bytes\": 96,\n  \"status\": \"written\",\n  \"submit_mode\": null,\n  \"submitted\": false\n}",
+    "type": "text"
+== write_pane {"target": "dst", "text": "noop zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz
+    "text": "Paneflow IPC pane.write failed: paneflow error -32602: text is 17005 bytes; pane.write relays at most 16384 bytes",
+    "type": "text"
+i-wp, surface 32937]
+^[[200~[Paneflow: message fro
+m pfq-cli-wp, surface 32937]
+noop line two
+second  line ctl[31mredbellaf
+ter^[[201~DONE: [Paneflow: me
+ssage from pfq-cli-wp, surfac
+e 32937]
+working on: hello dst
+DONE: hello dst
+working on: [Paneflow: messag
+e from pfq-cli-wp, surface 32
+937]
+DONE: [Paneflow: message from
+ pfq-cli-wp, surface 32937]
+ignored: noop line two
+== 18:32:46 mcp @/Users/m1/pfq-cli-fake/wp-calls2.json
+== write_pane {"target": "dst", "text": "while blocked"}
+    "text": "{\n  \"bytes\": 64,\n  \"status\": \"written\",\n  \"submit_mode\": null,\n  \"submitted\": false\n}",
+    "type": "text"
+== 18:33:02 mcp @/Users/m1/pfq-cli-fake/wp-calls3.json
+== write_pane {"target": "dst", "text": "to be denied"}
+    "text": "{\n  \"message\": \"a human must allow pfq-cli-wp to write into pfq-cli-wp in Paneflow; nothing was written, call write_pane again after the decision\",\n  \"request\": 2,\n  \"status\": \"approval_pending\"\n}",
+    "type": "text"
+== 18:33:21 mcp @/Users/m1/pfq-cli-fake/wp-calls3.json
+== write_pane {"target": "dst", "text": "to be denied"}
+    "text": "{\n  \"message\": \"a human must allow pfq-cli-wp to write into pfq-cli-wp in Paneflow; nothing was written, call write_pane again after the decision\",\n  \"request\": 2,\n  \"status\": \"approval_pending\"\n}",
+    "type": "text"
+21:[2026-11-24T17:21:22Z INFO  paneflow_host::agent_write] paneflow-host: write request 2: session 0129b837-451b-480d-bf96-3a710a3e5767 wants to write to session a5a9dad8-b215-415c-a93b-9d130acc0029
+24:[2026-11-24T17:23:22Z INFO  paneflow_host::agent_write] paneflow-host: write request 2 expired unanswered: session 0129b837-451b-480d-bf96-3a710a3e5767 to session a5a9dad8-b215-415c-a93b-9d130acc0029
+35:[2026-11-24T17:33:02Z INFO  paneflow_host::agent_write] paneflow-host: write request 2: session f2c35a50-3d42-4e87-9a5b-da9ad3831380 wants to write to session 0bc4a30f-d332-4691-88d1-368420948e23
+
+# grant.request Allow (Return on default Allow) from gsh (plain shell), gates closed
+== 18:35:22 send before grant
+paneflow: send is disabled on the running Paneflow instance; relaunch it with PANEFLOW_IPC_SCRIPTING=1 to enable text injection (server said: paneflow error -32601: surface.send_text disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable)
+[exit=1]
+== 18:35:22 grant.request {"rights":["write"],"scope":"workspace","duration_secs":120}
+{
+  "granted": true,
+  "id": "g-1795541465014-1",
+  "expires_at_ms": 1795541850419
+}
+[exit=0]
+== 18:35:30 grants ls
+g-1795541465014-1  session a0c439b1-9088-4fb3-9ed5-b0aef36a5979  write  workspace  119s left  prompt
+[exit=0]
+== 18:35:30 send after grant
+{
+  "sent": true,
+  "length": 16,
+  "submitted": false,
+  "paste": false,
+  "submit_mode": null,
+  "agent_target": true,
+  "agent_tool": "amp",
+  "terminal_bracketed_paste": false
+}
+[exit=0]
+== 18:35:30 send cross-ws --scope all
+paneflow: surface 5137 is waiting for a decision (permission or question): answer in the pane or rerun with --force
+[exit=3]
+== DONE
+
+# grant.request Deny (Down + Return)
+== 18:35:44 send before grant
+{
+  "sent": true,
+  "length": 17,
+  "submitted": false,
+  "paste": false,
+  "submit_mode": null,
+  "agent_target": true,
+  "agent_tool": "amp",
+  "terminal_bracketed_paste": false
+}
+[exit=0]
+== 18:35:44 grant.request {"rights":["spawn"],"scope":"workspace","duration_secs":60}
+{
+  "granted": false,
+  "reason": "denied"
+}
+[exit=0]
+== 18:35:56 grants ls
+g-1795541465014-1  session a0c439b1-9088-4fb3-9ed5-b0aef36a5979  write  workspace  93s left  prompt
+[exit=0]
+== 18:35:56 send after grant
+{
+  "sent": true,
+  "length": 16,
+  "submitted": false,
+  "paste": false,
+  "submit_mode": null,
+  "agent_target": true,
+  "agent_tool": "amp",
+  "terminal_bracketed_paste": false
+}
+[exit=0]
+== 18:35:56 send cross-ws --scope all
+paneflow: surface 5137 is waiting for a decision (permission or question): answer in the pane or rerun with --force
+[exit=3]
+== DONE
+
+$ paneflow ls --human | grep -E '^5137'; paneflow status 5137 --json | grep -E 'state|hooked|tool|session'; ps -ax -o command | grep -c '[b]in4/claude'
+5137  fakeclaude            Default           claude                    /Users/m1/pfq-cli-b
+  "state": "waiting_for_input",
+  "state_seq": 1,
+  "hooked": true,
+  "tool": "claude",
+  "active_tool_name": null,
+  "session": "dab36470-db38-4025-ae7f-731b815d1ed2",
+0
+[exit=1]
+
+$ paneflow sessions --json | head -1 | python3 -c 'import sys,json; d=json.loads(sys.stdin.readline()); [print(s) for s in d["sessions"] if s["session"].startswith("dab36470")]'
+{'session': 'dab36470-db38-4025-ae7f-731b815d1ed2', 'generation': 1, 'hook_revision': 1, 'workspace': 'c68ea596-6b36-4f38-821f-edf8bf21c11e', 'title': None, 'cwd': '/Users/m1/pfq-cli-b', 'lifecycle': {'state': 'running'}, 'live': True, 'health': 'live', 'status': 'attention', 'state_seq': 1, 'activity': {'tool': 'claude', 'state': 'waiting_for_input', 'source': 'terminal', 'pid': 12430, 'waiting_since_ms': 1795541470160, 'last_event_at_ms': 1795541469714, 'updated_at_ms': 1795541470160}, 'activity_source': 'declared', 'outcome': None, 'runtime_id': 'com.anthropic.claude-code', 'foreground_runtime_id': 'com.anthropic.claude-code', 'declared_status': {'state': 'blocked', 'kind': 'permission', 'app': 'claude-code', 'message': 'trust this folder'}, 'program_status_capable': True, 'unread': False, 'core_protocol': 1, 'core_build_id': '0.20.0+108cacb17ed8', 'updated_at_ms': 1795541735079}
+[exit=0]
+
+# CORRECTION 18:38: pane 5137 is NOT stale. On window+host restart, Paneflow relaunched a REAL Claude Code in that pane:
+#   12430 (ppid 12380) claude --resume 11111111-2222-4333-8444-555555555555
+#   12453 (ppid 12430) /Users/m1/.local/bin/claude --resume 11111111-2222-4333-8444-555555555555
+# The resume id is the fake session_id injected by fire-hooks.sh through paneflow-ai-hook (SessionStart/Stop payloads).
+# Claude sat at its "trust this folder" prompt (declared_status blocked/permission), so no model turn ran.
+# Both PIDs were killed by the qualifier (kill 12453 12430) at 18:38.
+== 18:36:37 mcp @/Users/m1/pfq-cli-fake/wp-calls2.json
+== write_pane {"target": "dst", "text": "while blocked"}
+    "text": "Paneflow IPC pane.write failed: paneflow error -32602: the write request from pfq-cli-wp into pfq-cli-wp expired unanswered; nothing was written",
+    "type": "text"

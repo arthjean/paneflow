@@ -1,0 +1,18 @@
+
+$ cat ~/.paneflow-dev-qual-cli/paneflow.json
+{"ipc": {"scripting": "yes"}}
+[exit=0]
+
+$ grep -n 'invalid config key' /private/tmp/claude-501/-Users-m1-dev-paneflow/ed7b9b96-428f-465c-a947-cceac364368b/scratchpad/qual-cli-app.log | tail -3
+48:[2026-11-24T17:07:39Z WARN  paneflow_config::loader] invalid config key ipc.scripting: expected true or false; every IPC gate stays closed for callers in a pane
+[exit=0]
+
+$ paneflow api call system.capabilities | head -3
+{
+  "scripting": false,
+  "orchestration": false,
+[exit=0]
+
+$ paneflow send 5137 'echo external-malformed'
+paneflow: send is disabled on the running Paneflow instance; relaunch it with PANEFLOW_IPC_SCRIPTING=1 to enable text injection (server said: paneflow error -32601: surface.send_text disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable)
+[exit=1]

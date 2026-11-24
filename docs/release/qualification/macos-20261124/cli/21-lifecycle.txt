@@ -1,0 +1,165 @@
+
+$ paneflow ps --json
+{
+  "agents": [
+    {
+      "pid": 86790,
+      "tool": "amp",
+      "state": "finished",
+      "hooked": false,
+      "reason": null,
+      "surface_id": 1026,
+      "surface_name": "target-agent",
+      "workspace": 0,
+      "active_tool_name": null,
+      "message": null,
+      "last_result": null,
+      "waiting_ms": null,
+      "idle_ms": 9186
+    },
+    {
+      "pid": 96839,
+      "tool": "claude",
+      "state": "finished",
+      "hooked": false,
+      "reason": null,
+      "surface_id": 5137,
+      "surface_name": "fakeclaude",
+      "workspace": 1,
+      "active_tool_name": null,
+      "message": null,
+      "last_result": null,
+      "waiting_ms": null,
+      "idle_ms": 9186
+    },
+    {
+      "pid": null,
+      "tool": "amp",
+      "state": "unknown_running",
+      "hooked": false,
+      "reason": "no_hook",
+      "surface_id": null,
+      "surface_name": null,
+      "workspace": 8,
+      "active_tool_name": null,
+      "message": null,
+      "last_result": null,
+      "waiting_ms": null,
+      "idle_ms": null
+    }
+  ]
+}
+[exit=0]
+claude pid=96839
+SessionStart exit=0
+UserPromptSubmit exit=0
+PreToolUse exit=0
+Notification exit=0
+Stop exit=0
+== no-session case
+outside pane exit=0
+== DONE
+
+$ paneflow status fakeclaude --json
+{
+  "surface_id": 5137,
+  "state": "finished",
+  "state_seq": 2,
+  "hooked": true,
+  "tool": "claude",
+  "active_tool_name": null,
+  "message": null,
+  "last_result": "Qualification finished: all good",
+  "waiting_ms": null,
+  "idle_ms": 1520,
+  "output_generation": 12,
+  "session": "52521ef1-26ec-4766-a57e-e7bb47cc7191",
+  "outcome": "completed",
+  "activity_source": "declared",
+  "agent_runtime": "com.anthropic.claude-code",
+  "reduced_by": "worker"
+}
+[exit=0]
+
+$ paneflow ps --json
+{
+  "agents": [
+    {
+      "pid": 69271,
+      "tool": "amp",
+      "state": "finished",
+      "hooked": false,
+      "reason": null,
+      "surface_id": 3081,
+      "surface_name": "reviewer",
+      "workspace": 0,
+      "active_tool_name": null,
+      "message": null,
+      "last_result": null,
+      "waiting_ms": null,
+      "idle_ms": 1548
+    },
+    {
+      "pid": 86790,
+      "tool": "amp",
+      "state": "finished",
+      "hooked": false,
+      "reason": null,
+      "surface_id": 1026,
+      "surface_name": "target-agent",
+      "workspace": 0,
+      "active_tool_name": null,
+      "message": null,
+      "last_result": null,
+      "waiting_ms": null,
+      "idle_ms": 1548
+    },
+    {
+      "pid": 96839,
+      "tool": "claude",
+      "state": "finished",
+      "hooked": true,
+      "reason": null,
+      "surface_id": 5137,
+      "surface_name": "fakeclaude",
+      "workspace": 1,
+      "active_tool_name": null,
+      "message": null,
+      "last_result": "Qualification finished: all good",
+      "waiting_ms": null,
+      "idle_ms": 1548
+    },
+    {
+      "pid": 82564,
+      "tool": "amp",
+      "state": "finished",
+      "hooked": false,
+      "reason": null,
+      "surface_id": 12337,
+      "surface_name": "upagent",
+      "workspace": 8,
+      "active_tool_name": null,
+      "message": null,
+      "last_result": null,
+      "waiting_ms": null,
+      "idle_ms": 1548
+    }
+  ]
+}
+[exit=0]
+
+$ paneflow ps --json | python3 -c 'import sys,json; [print(a["pid"],a["surface_name"],a["state"]) for a in json.load(sys.stdin)["agents"]]'; ps -p 69271,82564,86694,90607 -o pid,command
+69271 reviewer finished
+86790 target-agent finished
+96839 fakeclaude finished
+82564 upagent finished
+  PID COMMAND
+86694 /Users/m1/pfq-cli-fake/bin3/amp
+90607 /Users/m1/pfq-cli-fake/bin3/amp
+[exit=0]
+Notification exit=0
+PermissionRequest exit=0
+Stop exit=0
+SessionEnd exit=0
+Exit exit=0
+== DONE

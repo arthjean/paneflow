@@ -1,0 +1,75 @@
+
+$ cat ~/.paneflow-dev-qual-cli/paneflow.json
+{"ipc": {"scripting": false, "orchestration": false}, "ai_unrestricted": true, "ai_injection_fence": false,
+ "terminal": {"env": {"QUAL_TERMINAL_ENV": "from-terminal-env"}}, "agent_stall_threshold_secs": 3,
+ "agents": {"amp": {"grants": [{"rights": ["write"], "scope": "workspace"}]}},
+ "spaces": [{"id": "550e8400-e29b-41d4-a716-446655440001", "name": "Work"}]}
+[exit=0]
+
+$ grep -n 'invalid config' /private/tmp/claude-501/-Users-m1-dev-paneflow/ed7b9b96-428f-465c-a947-cceac364368b/scratchpad/qual-cli-app2.log | tail -3
+[exit=0]
+
+$ paneflow api call system.capabilities | head -3
+{
+  "scripting": true,
+  "orchestration": true,
+[exit=0]
+
+$ paneflow read producer --lines 2
+gate.sh
+m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-demo %[exit=0]
+
+$ paneflow api call surface.read --args '{"surface_id":2053,"lines":2}' | head -3
+{
+  "text": "gate.sh\nm1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-demo %",
+  "lines": 2,
+[exit=0]
+
+$ paneflow send producer 'OUT=$HOME/pfq-cli-fake/inpane-envgate-3.out ~/pfq-cli-fake/inpane-envgate.sh; echo "TERMENV=$QUAL_TERMINAL_ENV"' --submit | grep -E 'sent"'
+  "sent": true,
+[exit=0]
+== 18:26:22 caps
+{
+  "scripting": true,
+  "orchestration": true,
+== send 1026 from pane
+{
+  "sent": true,
+[exit=0]
+== DONE
+
+$ paneflow new --name env-probe --cwd ~/pfq-cli-split
+{
+  "index": 20,
+  "title": "env-probe",
+  "panes": 1
+}
+[exit=0]
+
+$ paneflow send 26763 'echo TERMENV=$QUAL_TERMINAL_ENV' --submit | grep -E 'sent"'
+  "sent": true,
+[exit=0]
+
+$ paneflow read 26763 --lines 3
+m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-cli-split % echo TERMENV=$QUAL_TERMINAL_ENV
+TERMENV=from-terminal-env
+m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-cli-split %[exit=0]
+
+$ paneflow send target-agent 'slow stall test' --submit | grep -E 'started|state"'
+  "started": true,
+  "state": "working"
+[exit=0]
+
+$ paneflow status target-agent --json | grep -E 'state|idle_ms'
+  "state": "thinking",
+  "state_seq": 5,
+  "idle_ms": 3399,
+[exit=0]
+
+$ paneflow ps --json | python3 -c 'import sys,json; [print(a["surface_name"],a["state"]) for a in json.load(sys.stdin)["agents"]]'
+reviewer finished
+target-agent thinking
+fakeclaude finished
+tests finished
+upagent finished
+[exit=0]

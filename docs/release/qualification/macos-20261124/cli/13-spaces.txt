@@ -1,0 +1,200 @@
+
+$ paneflow new --name ws-nospace --space NoSuchSpace
+paneflow: paneflow error -32602: unknown space: NoSuchSpace
+[exit=1]
+
+$ paneflow api call workspace.list | grep -c title
+2
+[exit=0]
+
+$ paneflow api list | grep -i space
+workspace.list            window  List every workspace with its title, directory, pane count and space.
+workspace.create          worker  Open a workspace with one terminal, or with a layout document.
+workspace.select          worker  Show the workspace at an index.
+workspace.close           worker  Close the workspace at an index; the last workspace cannot be closed.
+workspace.current         window  Describe the shown workspace with its layout document, or null when none is shown.
+workspace.restore_layout  worker  Conform the shown tab to a layout document, reusing its panes.
+workspace.up              worker  Open a workspace from pane specs, each with its own directory, command or prompt.
+surface.list              window  List the surfaces of the shown workspace, or of one workspace, with their identity.
+fleet.list                window  List the agents running in every workspace.
+[exit=0]
+
+$ paneflow new --help
+Create a new workspace
+
+Usage: paneflow new [OPTIONS]
+
+Options:
+      --name <NAME>    Workspace title
+      --cwd <CWD>      Working directory for the first pane (must exist)
+      --space <SPACE>  Space to create the workspace in, by name (any case) or id; defaults to the active space
+  -h, --help           Print help
+[exit=0]
+
+$ cat ~/.paneflow-dev-qual-cli/paneflow.json
+{"ipc": {"scripting": false, "orchestration": false},
+ "spaces": [{"id": "550e8400-e29b-41d4-a716-446655440001", "name": "Work"}]}
+[exit=0]
+
+$ paneflow new --name api --space work --cwd ~/pfq-cli-work
+{
+  "index": 2,
+  "title": "api",
+  "panes": 1
+}
+[exit=0]
+
+$ paneflow new --name api2 --space 550e8400-e29b-41d4-a716-446655440001 --cwd ~/pfq-cli-work
+{
+  "index": 3,
+  "title": "api2",
+  "panes": 1
+}
+[exit=0]
+
+$ paneflow new --name ws-default --space Default --cwd ~/pfq-cli-work
+{
+  "index": 4,
+  "title": "ws-default",
+  "panes": 1
+}
+[exit=0]
+
+$ paneflow api call workspace.list
+{
+  "workspaces": [
+    {
+      "index": 0,
+      "title": "ws-a",
+      "cwd": "/Users/m1/pfq-demo",
+      "panes": 3,
+      "active": true,
+      "space": null
+    },
+    {
+      "index": 1,
+      "title": "ws-b",
+      "cwd": "/Users/m1/pfq-cli-b",
+      "panes": 1,
+      "active": false,
+      "space": null
+    },
+    {
+      "index": 2,
+      "title": "api",
+      "cwd": "/Users/m1/pfq-cli-work",
+      "panes": 1,
+      "active": false,
+      "space": {
+        "id": "550e8400-e29b-41d4-a716-446655440001",
+        "name": "Work"
+      }
+    },
+    {
+      "index": 3,
+      "title": "api2",
+      "cwd": "/Users/m1/pfq-cli-work",
+      "panes": 1,
+      "active": false,
+      "space": {
+        "id": "550e8400-e29b-41d4-a716-446655440001",
+        "name": "Work"
+      }
+    },
+    {
+      "index": 4,
+      "title": "ws-default",
+      "cwd": "/Users/m1/pfq-cli-work",
+      "panes": 1,
+      "active": false,
+      "space": null
+    }
+  ]
+}
+[exit=0]
+
+$ paneflow api call workspace.current | head -8
+{
+  "index": 0,
+  "title": "ws-a",
+  "cwd": "/Users/m1/pfq-demo",
+  "panes": 3,
+  "space": null,
+  "layout": {
+    "type": "split",
+[exit=0]
+
+$ paneflow ls --human
+  ID  NAME                  SPACE             CMD                       CWD
+1026  shell@pfq-demo        Default           zsh                       /Users/m1/pfq-demo
+3081  reviewer              Default           amp                       /Users/m1/pfq-cli-a
+2053  producer              Default           bash                      /Users/m1/pfq-demo
+5137  shell@pfq-cli-b       Default           zsh                       /Users/m1/pfq-cli-b
+6165  terminal@pfq-cli-work  Work                                        /Users/m1/pfq-cli-work
+7193  terminal@pfq-cli-work-2  Work                                        /Users/m1/pfq-cli-work
+8221  terminal@pfq-cli-work-3  Default                                     /Users/m1/pfq-cli-work
+[exit=0]
+
+$ paneflow select 3
+{
+  "selected": 3
+}
+[exit=0]
+
+$ paneflow api call workspace.current | head -12
+{
+  "index": 3,
+  "title": "api2",
+  "cwd": "/Users/m1/pfq-cli-work",
+  "panes": 1,
+  "space": {
+    "id": "550e8400-e29b-41d4-a716-446655440001",
+    "name": "Work"
+  },
+  "layout": {
+    "type": "pane",
+    "surfaces": [
+[exit=0]
+
+$ paneflow new --name implicit-space --cwd ~/pfq-cli-work
+{
+  "index": 5,
+  "title": "implicit-space",
+  "panes": 1
+}
+[exit=0]
+
+$ paneflow api call workspace.list | python3 -c 'import sys,json; [print(w["index"],w["title"],w["active"],w["space"]) for w in json.load(sys.stdin)["workspaces"]]'
+0 ws-a False None
+1 ws-b False None
+2 api False {'id': '550e8400-e29b-41d4-a716-446655440001', 'name': 'Work'}
+3 api2 True {'id': '550e8400-e29b-41d4-a716-446655440001', 'name': 'Work'}
+4 ws-default False None
+5 implicit-space False {'id': '550e8400-e29b-41d4-a716-446655440001', 'name': 'Work'}
+[exit=0]
+
+$ paneflow ls | python3 -c 'import sys,json; [print(s["surface_id"],s["space"]) for s in json.load(sys.stdin)["surfaces"]]'
+1026 None
+3081 None
+2053 None
+5137 None
+6165 {'id': '550e8400-e29b-41d4-a716-446655440001', 'name': 'Work'}
+7193 {'id': '550e8400-e29b-41d4-a716-446655440001', 'name': 'Work'}
+8221 None
+9249 {'id': '550e8400-e29b-41d4-a716-446655440001', 'name': 'Work'}
+[exit=0]
+
+$ paneflow select 0
+{
+  "selected": 0
+}
+[exit=0]
+
+$ paneflow api call workspace.current | head -6
+{
+  "index": 0,
+  "title": "ws-a",
+  "cwd": "/Users/m1/pfq-demo",
+  "panes": 3,
+  "space": null,
+[exit=0]

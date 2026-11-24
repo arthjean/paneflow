@@ -1,0 +1,4 @@
+name = "up-bad-space"
+space = "Nope"
+[[panes]]
+cwd = "/Users/m1/pfq-cli-up"

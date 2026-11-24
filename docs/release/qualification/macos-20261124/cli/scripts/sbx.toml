@@ -1,0 +1,9 @@
+name = "sandbox-probe"
+[[panes]]
+cwd = "/Users/m1/pfq-cli-sbx"
+agent = "hermes"
+name = "sbx-hermes"
+[[panes]]
+cwd = "/Users/m1/pfq-cli-sbx"
+agent = "grok"
+name = "sbx-grok"

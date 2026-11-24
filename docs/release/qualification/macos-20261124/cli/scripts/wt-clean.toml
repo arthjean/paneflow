@@ -1,0 +1,12 @@
+name = "wt-clean"
+[[panes]]
+cwd = "~/pfq-cli-repo"
+worktree = "qual-clean-wt"
+copy_env = false
+name = "wtclean"
+[[panes]]
+cwd = "~/pfq-cli-repo"
+worktree = "qual-keep-wt"
+copy_env = false
+worktree_teardown = "keep"
+name = "wtkeep"

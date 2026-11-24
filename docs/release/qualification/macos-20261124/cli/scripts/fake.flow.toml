@@ -1,0 +1,25 @@
+name = "fake-pipeline"
+layout = "even_h"
+
+[defaults]
+timeout_secs = 30
+
+[[step]]
+id = "impl"
+pane = { cwd = "/Users/m1/pfq-cli-flow", command = "/Users/m1/pfq-cli-fake/bin3/amp", prompt = "implement then tests passed" }
+submit = true
+ready = { pattern = "DONE: implement" }
+capture = { var = "summary", lines = 3 }
+
+[[step]]
+id = "fan"
+needs = ["impl"]
+foreach = ["alpha", "beta"]
+pane = { cwd = "/Users/m1/pfq-cli-flow", name = "fan-${item}", command = "echo FAN_${item}" }
+ready = { pattern = "(?m)^FAN_${item}" }
+capture = { var = "fanout", lines = 2 }
+
+[[step]]
+id = "review"
+needs = ["fan"]
+send = { target = "impl", text = "noop summary=${summary} alpha=${fanout.alpha}", submit = true }

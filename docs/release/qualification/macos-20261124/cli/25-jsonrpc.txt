@@ -1,0 +1,44 @@
+
+$ printf '%s\n' '{"jsonrpc":"2.0","method":"system.capabilities","params":{},"id":1}' | nc -U /var/folders/jz/rpbxwt2d4wjgct6stdnkzd9w0000gn/T/paneflow-ipc-0e043cd22a083973.sock | cut -c1-200
+{"jsonrpc":"2.0","result":{"scripting":true,"orchestration":true,"methods":["system.ping","system.capabilities","system.identify","system.counters","workspace.list","workspace.create","workspace.selec
+[exit=0]
+
+$ printf '%s\n' '{"jsonrpc":"2.0","method":"system.ping","params":{},"id":1}' | nc -U /var/folders/jz/rpbxwt2d4wjgct6stdnkzd9w0000gn/T/paneflow-ipc-0e043cd22a083973.sock
+{"jsonrpc":"2.0","result":{"pong":true},"id":1}
+[exit=0]
+
+$ printf '%s\n' '{"jsonrpc":"2.0","method":"system.identify","params":{},"id":1}' | nc -U /var/folders/jz/rpbxwt2d4wjgct6stdnkzd9w0000gn/T/paneflow-ipc-0e043cd22a083973.sock
+{"jsonrpc":"2.0","result":{"name":"PaneFlow","version":"0.20.0","protocol":"jsonrpc-2.0"},"id":1}
+[exit=0]
+
+$ printf '%s\n' '{"jsonrpc":"2.0","method":"ai.stop","params":{},"id":1}' | nc -U /var/folders/jz/rpbxwt2d4wjgct6stdnkzd9w0000gn/T/paneflow-ipc-0e043cd22a083973.sock
+{"jsonrpc":"2.0","error":{"code":-32601,"message":"Method not found: ai.stop"},"id":1}
+[exit=0]
+
+$ printf '%s\n' '{"jsonrpc":"2.0","method":"surface.read","params":{"surface_id":"x"},"id":1}' | nc -U /var/folders/jz/rpbxwt2d4wjgct6stdnkzd9w0000gn/T/paneflow-ipc-0e043cd22a083973.sock
+{"jsonrpc":"2.0","error":{"code":-32602,"message":"'surface_id' must be a non-negative integer"},"id":1}
+[exit=0]
+
+$ printf '%s\n%s\n' '{"jsonrpc":"2.0","method":"system.ping","params":{},"id":1}' '{"jsonrpc":"2.0","method":"system.ping","params":{},"id":2}' | nc -U /var/folders/jz/rpbxwt2d4wjgct6stdnkzd9w0000gn/T/paneflow-ipc-0e043cd22a083973.sock
+{"jsonrpc":"2.0","result":{"pong":true},"id":1}
+{"jsonrpc":"2.0","result":{"pong":true},"id":2}
+[exit=0]
+
+$ (printf '%s\n' '{"jsonrpc":"2.0","method":"events.subscribe","params":{"types":["ai.stop"]},"id":1}'; sleep 2) | nc -U /var/folders/jz/rpbxwt2d4wjgct6stdnkzd9w0000gn/T/paneflow-ipc-0e043cd22a083973.sock | head -3
+{"type":"subscribed","id":1}
+{"type":"heartbeat"}
+{"type":"heartbeat"}
+[exit=0]
+
+$ (printf '%s\n' '{"jsonrpc":"2.0","method":"events.subscribe","params":{"types":["bogus.type"]},"id":1}'; sleep 1) | nc -U /var/folders/jz/rpbxwt2d4wjgct6stdnkzd9w0000gn/T/paneflow-ipc-0e043cd22a083973.sock | head -3
+{"jsonrpc":"2.0","error":{"code":-32602,"message":"unknown event type: bogus.type"},"id":1}
+[exit=0]
+
+$ ls -la $TMPDIR/paneflow/ | head; echo 'default-home socket present (installed app; not connected to)'
+total 0
+drwx------@    4 m1  staff     128 Nov 24 14:47 .
+drwx------@ 3171 m1  staff  101472 Nov 24 18:26 ..
+srw-------@    1 m1  staff       0 Nov 24 14:47 paneflow.sock
+-rw-------@    1 m1  staff       0 Nov 24 14:24 paneflow.sock.lock
+default-home socket present (installed app; not connected to)
+[exit=0]

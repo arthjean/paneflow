@@ -1,0 +1,164 @@
+
+$ paneflow ls --human | head -8
+  ID  NAME                  SPACE             CMD                       CWD
+1026  target-agent          Default           /bin/zsh                  /Users/m1/pfq-demo
+3081  reviewer              Default           /bin/zsh                  /Users/m1/pfq-cli-a
+23656  pfq-demo              Default           /bin/zsh                  /Users/m1/pfq-demo
+2053  producer              Default           /bin/zsh                  /Users/m1/pfq-demo
+5137  fakeclaude            Default           /bin/zsh                  /Users/m1/pfq-cli-b
+6165  pfq-cli-work          Default           /bin/zsh                  /Users/m1/pfq-cli-work
+7193  pfq-cli-work          Default           /bin/zsh                  /Users/m1/pfq-cli-work
+[exit=0]
+
+$ paneflow status reviewer --json
+{
+  "hooked": false,
+  "surface_id": 0,
+  "session": "4dd7268b-4644-4b52-8240-c999b3236394",
+  "generation": 1,
+  "output_generation": 5932,
+  "foreground_runtime": "com.sourcegraph.amp",
+  "state": "finished",
+  "state_seq": 16,
+  "outcome": "completed",
+  "activity_source": "declared",
+  "agent_runtime": "com.sourcegraph.amp",
+  "reduced_by": "worker"
+}
+[exit=0]
+
+$ paneflow status target-agent --json
+{
+  "hooked": false,
+  "surface_id": 0,
+  "session": "b7ebaa7a-214e-40ac-a73a-1bfe342309e7",
+  "generation": 1,
+  "output_generation": 75817,
+  "foreground_runtime": "com.sourcegraph.amp",
+  "state": "finished",
+  "state_seq": 2,
+  "outcome": "completed",
+  "activity_source": "declared",
+  "agent_runtime": "com.sourcegraph.amp",
+  "reduced_by": "worker"
+}
+[exit=0]
+
+$ paneflow ps --json
+{
+  "agents": [
+    {
+      "hooked": true,
+      "tool": "claude",
+      "pid": 96839,
+      "hook_event_name": "Exit",
+      "active_tool_name": null,
+      "runtime_generation": 1,
+      "idle_ms": 180528,
+      "surface_id": 12,
+      "surface_name": "pfq-cli-b",
+      "session": "52521ef1-26ec-4766-a57e-e7bb47cc7191",
+      "generation": 1,
+      "workspace": "9b4a978a-1dcc-46b4-8117-5cd37e60329e",
+      "state": "finished",
+      "state_seq": 4,
+      "outcome": "completed",
+      "activity_source": "declared",
+      "agent_runtime": "com.anthropic.claude-code",
+      "reduced_by": "worker"
+    }
+  ]
+}
+[exit=0]
+
+$ paneflow read target-agent --lines 3
+<untrusted_terminal_output source="session:b7ebaa7a-214e-40ac-a73a-1bfe342309e7" total_lines="78" eof="false" id="ab389a3db507ff19">
+quick task
+working on: quick task
+DONE: quick task
+</untrusted_terminal_output id="ab389a3db507ff19">[exit=0]
+
+$ paneflow send target-agent 'windowless task' --submit
+{
+  "sent": true,
+  "length": 15,
+  "submitted": true,
+  "paste": false,
+  "submit_mode": "inline_cr",
+  "agent_target": false,
+  "agent_tool": null,
+  "terminal_bracketed_paste": false
+}
+[exit=0]
+
+$ paneflow wait --match target-agent --idle --timeout 15
+{
+  "surface_id": 1026,
+  "idle": true,
+  "matched": false,
+  "state": "idle",
+  "signal": "agent_state"
+}
+[exit=0]
+
+$ paneflow sessions --json | head -1 | python3 -c 'import sys,json; d=json.loads(sys.stdin.readline()); print(d["core_connected"]); [print(s["session"][:8], s["status"], s["unread"]) for s in d["sessions"] if s["runtime_id"]]'
+True
+0129b837 idle True
+4dd7268b idle False
+52521ef1 idle True
+a5a9dad8 idle False
+b7ebaa7a idle True
+[exit=0]
+
+$ paneflow send upagent 'mcp [{"name":"write_pane","arguments":{"target":"tests","text":"no window"}},{"name":"read_pane","arguments":{"target":"tests","lines":2}}]' --submit
+{
+  "sent": true,
+  "length": 139,
+  "submitted": true,
+  "paste": false,
+  "submit_mode": "inline_cr",
+  "agent_target": false,
+  "agent_tool": null,
+  "terminal_bracketed_paste": false
+}
+[exit=0]
+== 18:22:46 mcp [{"name":"write_pane","arguments":{"target":"tests","text":"no window"}},{"name":"read_pane","arguments":{"target":"tests","lines":2}}]
+== write_pane {"target": "tests", "text": "no window"}
+    "text": "Paneflow IPC surface.list returned an invalid response: invalid type: null, expected a string",
+    "type": "text"
+== read_pane {"target": "tests", "lines": 2}
+    "text": "Paneflow IPC surface.list returned an invalid response: invalid type: null, expected a string",
+    "type": "text"
+
+$ paneflow ls | head -30
+{
+  "pane_count": 29,
+  "workspace": null,
+  "surfaces": [
+    {
+      "surface_id": 1026,
+      "session": "b7ebaa7a-214e-40ac-a73a-1bfe342309e7",
+      "generation": 1,
+      "name": "target-agent",
+      "title": null,
+      "cwd": "/Users/m1/pfq-demo",
+      "cmd": "/bin/zsh",
+      "workspace_id": 1027,
+      "workspace": "bdf606c3-64dc-49de-bcde-f75afe5f578a",
+      "scope": "layout",
+      "live": true,
+      "lifecycle": "running",
+      "tab_id": 1028,
+      "tab_title": "",
+      "sandboxed": false,
+      "workspace_title": "ws-a"
+    },
+    {
+      "surface_id": 3081,
+      "session": "4dd7268b-4644-4b52-8240-c999b3236394",
+      "generation": 1,
+      "name": "reviewer",
+      "title": null,
+      "cwd": "/Users/m1/pfq-cli-a",
+      "cmd": "/bin/zsh",
+[exit=0]

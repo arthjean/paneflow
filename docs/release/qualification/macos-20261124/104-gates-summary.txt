@@ -1,0 +1,10 @@
+=== exit=0 (3s): cargo fmt --check
+=== exit=0 (26s): cargo clippy --workspace --all-targets --locked -- -D warnings
+  TRY 1 FAIL [  28.198s] (─────────) paneflow-app::bin/paneflow git_command_tests::agent_commits_never_hit_index_lock_while_probes_run
+  TRY 1 FAIL [   2.281s] (─────────) paneflow-app::bin/paneflow update::verified_download::tests::a_slow_transfer_longer_than_the_old_global_timeout_completes
+     Summary [ 399.094s] 5975 tests run: 5973 passed (1 slow), 2 failed, 121 skipped
+ FLKY-FL 2/2 [  25.354s] (2852/5975) paneflow-app::bin/paneflow git_command_tests::agent_commits_never_hit_index_lock_while_probes_run
+ FLKY-FL 2/2 [   3.160s] (3746/5975) paneflow-app::bin/paneflow update::verified_download::tests::a_slow_transfer_longer_than_the_old_global_timeout_completes
+=== exit=100 (504s): cargo nextest run --workspace --locked --profile ci
+=== exit=0 (0s): bash scripts/check-test-wallclock.sh
+=== exit=1 (0s): bash scripts/check-helper-sizes.sh

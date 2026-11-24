@@ -1,0 +1,25 @@
+name = "orch-up"
+layout = "tiled"
+port_base = 4100
+
+[[panes]]
+cwd = "~/pfq-cli-up"
+command = "echo UP_CMD_RAN port=$PORT"
+name = "tests"
+env = { PORT = "${port_offset}" }
+
+[[panes]]
+cwd = "~/pfq-cli-up"
+command = "/Users/m1/pfq-cli-fake/bin3/amp"
+prompt = "prefilled prompt not submitted"
+name = "upagent"
+focus = true
+
+[[panes]]
+cwd = "~/pfq-cli-repo"
+command = "git status --short --branch; git rev-parse --show-toplevel; ls -a"
+worktree = "qual-up-wt"
+from = "HEAD"
+setup = "echo SETUP_RAN > setup-marker.txt"
+name = "wt"
+env = { PORT = "${port_offset}" }

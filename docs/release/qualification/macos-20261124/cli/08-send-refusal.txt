@@ -1,0 +1,161 @@
+
+$ paneflow send reviewer 'ask permission' --submit
+{
+  "sent": true,
+  "length": 14,
+  "submitted": true,
+  "paste": true,
+  "submit_mode": "deferred_paste_cr",
+  "agent_target": true,
+  "agent_tool": "amp",
+  "terminal_bracketed_paste": false,
+  "delivered": true,
+  "started": true,
+  "reason": "state_transition",
+  "state": "blocked"
+}
+[exit=0]
+
+$ paneflow status reviewer --json
+{
+  "surface_id": 3081,
+  "state": "waiting_for_input",
+  "state_seq": 5,
+  "hooked": false,
+  "tool": "amp",
+  "active_tool_name": null,
+  "message": null,
+  "last_result": null,
+  "waiting_ms": 86,
+  "idle_ms": 85,
+  "output_generation": 47,
+  "session": "4dd7268b-4644-4b52-8240-c999b3236394",
+  "outcome": "completed",
+  "activity_source": "declared",
+  "agent_runtime": "com.sourcegraph.amp",
+  "reduced_by": "worker"
+}
+[exit=0]
+
+$ paneflow send reviewer 'should be refused'
+paneflow: surface 3081 is waiting for a decision (permission or question): answer in the pane or rerun with --force
+[exit=3]
+
+$ paneflow send reviewer 'should be refused' --submit
+paneflow: surface 3081 is waiting for a decision (permission or question): answer in the pane or rerun with --force
+[exit=3]
+
+$ paneflow wait --match reviewer --idle --timeout 5
+{
+  "surface_id": 3081,
+  "idle": true,
+  "matched": false,
+  "state": "blocked",
+  "signal": "agent_state"
+}
+[exit=0]
+
+$ paneflow ps --json
+{
+  "agents": [
+    {
+      "pid": 69271,
+      "tool": "amp",
+      "state": "waiting_for_input",
+      "hooked": false,
+      "reason": null,
+      "surface_id": 3081,
+      "surface_name": "reviewer",
+      "workspace": 0,
+      "active_tool_name": null,
+      "message": null,
+      "last_result": null,
+      "waiting_ms": 183,
+      "idle_ms": 182
+    }
+  ]
+}
+[exit=0]
+
+$ paneflow send reviewer 'forced write' --submit --force
+{
+  "sent": true,
+  "length": 12,
+  "submitted": true,
+  "paste": true,
+  "submit_mode": "deferred_paste_cr",
+  "agent_target": true,
+  "agent_tool": "amp",
+  "terminal_bracketed_paste": false,
+  "delivered": true,
+  "started": true,
+  "reason": "state_transition",
+  "state": "working"
+}
+[exit=0]
+
+$ paneflow send reviewer 'ask again' --submit | grep -E 'state|started'
+  "started": true,
+  "reason": "state_transition",
+  "state": "blocked"
+[exit=0]
+
+$ paneflow send reviewer 'refused after restart'
+paneflow: surface 3081 is waiting for a decision (permission or question): answer in the pane or rerun with --force
+[exit=3]
+
+$ paneflow send reviewer 'forced write two' --submit --force | grep -E 'delivered|started'
+  "delivered": true,
+  "started": true,
+[exit=0]
+[2026-11-24T17:04:47Z INFO  paneflow::ipc::write] authorized PTY write to pane method="surface.send_text" surface_id=3081 caller_pid=None length=9 authorization="scripting" forced=false
+[2026-11-24T17:04:47Z INFO  paneflow::ipc::write] authorized PTY write to pane method="surface.send_text" surface_id=3081 caller_pid=None length=16 authorization="scripting" forced=true
+
+$ paneflow key reviewer ctrl-z
+{
+  "sent": true
+}
+[exit=0]
+
+$ paneflow status reviewer --json
+{
+  "surface_id": 3081,
+  "hooked": false,
+  "output_generation": 9,
+  "state": "finished",
+  "state_seq": 10,
+  "session": "4dd7268b-4644-4b52-8240-c999b3236394",
+  "outcome": "completed",
+  "activity_source": "declared",
+  "agent_runtime": "com.sourcegraph.amp",
+  "reduced_by": "worker"
+}
+[exit=0]
+
+$ paneflow api call surface.status --on host --args '{"session":"4dd7268b-4644-4b52-8240-c999b3236394"}'
+{
+  "hooked": false,
+  "surface_id": 0,
+  "session": "4dd7268b-4644-4b52-8240-c999b3236394",
+  "generation": 1,
+  "output_generation": 4754,
+  "foreground_runtime": null
+}
+[exit=0]
+
+$ paneflow send reviewer 'to a departed agent'
+paneflow: surface 3081 no longer runs Amp in the foreground (a shell or another program has it): rerun with --force to write anyway
+[exit=3]
+
+$ paneflow send shell 'echo plain pane never held'
+{
+  "sent": true,
+  "length": 26,
+  "submitted": false,
+  "paste": false,
+  "submit_mode": null,
+  "agent_target": false,
+  "agent_tool": null,
+  "terminal_bracketed_paste": true
+}
+[exit=0]

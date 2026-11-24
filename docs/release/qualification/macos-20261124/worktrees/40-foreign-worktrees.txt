@@ -1,0 +1,27 @@
+## foreign worktrees: ~/pfq-wt-foreign (outside root) and /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/manual-wt (inside the managed root), both made by git worktree add, both dirty
+{"index":3,"title":"pfq-foreign","panes":2,"surface_ids":[29847,29848],"labels":[null,null]}
+$ surface.split surface_id=29847 managed_worktree={path: ~/pfq-wt-foreign, repo_root: ~/pfq-wt-main, branch: foreign-br, teardown: auto}
+{  "split": true,  "direction": "vertical",  "panes": 3,  "surface_id": 30879}
+$ dispatch close_workspace (pfq-foreign)
+{"dispatched":true,"name":"close_workspace"}
+/Users/m1/pfq-wt-foreign                                                  064eabd [foreign-br]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/manual-wt                      064eabd [manual-br]
+ M README.md
+ M README.md
+(no snapshot of foreign worktrees)
+## second pass: the removal path made effective (restart so session-recorded worktrees are loaded, sessions stopped before close)
+{"index":3,"title":"pfq-foreign2","panes":2,"surface_ids":[31905,31906],"labels":[null,null]}
+{  "split": true,  "direction": "vertical",  "panes": 3,  "surface_id": 32937}
+session.json 0 pfq-main []
+session.json 1 pfq-lim ['/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/lim-a']
+session.json 2 pfq-walk []
+session.json 3 pfq-foreign2 []
+restart window (kill own PID 80271)
+$ dispatch close_workspace (pfq-foreign2)
+{"dispatched":true,"name":"close_workspace"}
+/Users/m1/pfq-wt-foreign                                                  064eabd [foreign-br]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/manual-wt                      064eabd [manual-br]
+ M README.md
+ M README.md
+(no snapshot of foreign worktrees)
+## app log

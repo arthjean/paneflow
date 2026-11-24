@@ -1,0 +1,10 @@
+name = "pfq-lim"
+[[panes]]
+cwd = "~/pfq-wt-main"
+worktree = "lim/a"
+[[panes]]
+cwd = "~/pfq-wt-main"
+worktree = "lim/b"
+[[panes]]
+cwd = "~/pfq-wt-main"
+worktree = "lim/c"

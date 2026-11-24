@@ -1,0 +1,37 @@
+## (a) existing branch not checked out, from=HEAD~1 should be ignored
+existing-b at: 064eabd; main~1: ece562c
+$ paneflow api call surface.split --args {"surface_id":1026,"direction":"vertical","cwd":"/Users/m1/pfq-wt-main","worktree":{"branch":"existing-b","from":"main~1"}}
+{
+  "split": true,
+  "direction": "vertical",
+  "panes": 3,
+  "surface_id": 3080,
+  "notices": [
+    "pane 0: copied .env, .env.local, AGENTS.override.md into /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/existing-b"
+  ]
+}
+## (b) branch already in a managed worktree (feat/one)
+$ paneflow api call surface.split --args {"surface_id":1026,"direction":"vertical","cwd":"/Users/m1/pfq-wt-main","worktree":{"branch":"feat/one","from":"main"}}
+{
+  "split": true,
+  "direction": "vertical",
+  "panes": 4,
+  "surface_id": 4107
+}
+## (c) branch checked out in a foreign worktree (foreign-br at ~/pfq-wt-foreign)
+$ paneflow api call surface.split --args {"surface_id":1026,"direction":"vertical","cwd":"/Users/m1/pfq-wt-main","worktree":{"branch":"foreign-br"}}
+paneflow: paneflow error -32602: pane 0: branch 'foreign-br' already checked out at /Users/m1/pfq-wt-foreign
+## (d) branch checked out in the project checkout (main)
+$ paneflow api call surface.split --args {"surface_id":1026,"direction":"vertical","cwd":"/Users/m1/pfq-wt-main","worktree":{"branch":"main"}}
+paneflow: paneflow error -32602: pane 0: branch 'main' already checked out at /Users/m1/pfq-wt-main
+$ git worktree list
+/Users/m1/pfq-wt-main                                                     064eabd [main]
+/Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/existing-b 064eabd [existing-b]
+/Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/feat-one   064eabd [feat/one]
+/Users/m1/pfq-wt-foreign                                                  064eabd [foreign-br]
+existing-b worktree HEAD: 064eabd
+$ paneflow ls (cwd/tab)
+1026 1028 '' /Users/m1/pfq-wt-main
+2053 2055 'feat/one' /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/feat-one
+4107 2055 'feat/one' /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/feat-one
+3080 3082 'existing-b' /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/existing-b

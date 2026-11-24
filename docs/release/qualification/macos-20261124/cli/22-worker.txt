@@ -1,0 +1,114 @@
+
+$ paneflow serve status
+{
+  "state": "running",
+  "pid": 32562,
+  "build_id": "fd8dcddaf8de2e11039db42e6087acfef7182605f5307f660e84db980adeb053",
+  "protocol": 1,
+  "required_core_protocol": 1,
+  "home": "/Users/m1/.paneflow-dev-qual-cli",
+  "endpoint": "/var/folders/jz/rpbxwt2d4wjgct6stdnkzd9w0000gn/T/paneflow-serve-0e043cd22a083973.sock",
+  "version": "0.20.0",
+  "session_count": 29,
+  "capabilities": [
+    "agent.snapshot",
+    "agent.follow",
+    "restart.recommendation",
+    "integrations.refresh",
+    "activity.reducer",
+    "activity.notifications",
+    "agent.unread",
+    "agent.activity_log",
+    "events.follow",
+    "prompt.follow",
+    "layout.authority"
+  ]
+}
+[exit=0]
+
+$ paneflow serve start
+{
+  "home": "/Users/m1/.paneflow-dev-qual-cli",
+  "started": false,
+  "state": "already running",
+  "identity": {
+    "name": "paneflow-serve",
+    "version": "0.20.0",
+    "build_id": "fd8dcddaf8de2e11039db42e6087acfef7182605f5307f660e84db980adeb053",
+    "protocol": 1,
+    "required_core_protocol": 1,
+    "pid": 32562,
+    "home": "/Users/m1/.paneflow-dev-qual-cli",
+    "endpoint": "/var/folders/jz/rpbxwt2d4wjgct6stdnkzd9w0000gn/T/paneflow-serve-0e043cd22a083973.sock",
+    "started_at_ms": 1795539482049,
+    "capabilities": [
+      "agent.snapshot",
+      "agent.follow",
+      "restart.recommendation",
+      "integrations.refresh",
+      "activity.reducer",
+      "activity.notifications",
+      "agent.unread",
+      "agent.activity_log",
+      "events.follow",
+      "prompt.follow",
+      "layout.authority"
+    ]
+  }
+}
+[exit=0]
+
+$ paneflow sessions | head -12
+worker 0.20.0 protocol 1 pid 32562 core connected capabilities agent.snapshot,agent.follow,restart.recommendation,integrations.refresh,activity.reducer,activity.notifications,agent.unread,agent.activity_log,events.follow,prompt.follow,layout.authority
+0129b837-451b-480d-bf96-3a710a3e5767  idle      declared com.sourcegraph.amp unread
+1114accd-913f-47b4-a343-28ba5c9d5bcd  idle      none    -
+21bac720-30ae-4549-9d00-a459e87ed441  idle      none    -
+21dbaaf6-1d24-4df7-bc08-e49ea41c931c  idle      none    -
+244af9e4-b3fb-4e0d-8f1f-ab70c84681eb  idle      none    -
+293ee640-fb86-4a10-b3d2-8aaf4674e99a  idle      none    -
+2a3c6fd8-82c3-4cc7-82b0-aa935f77af80  idle      none    -
+3352dd7e-71bd-46bf-8ca0-273989fbd9a9  idle      none    -
+3c08088d-5704-4012-a942-ce099f52e6a8  idle      none    -
+490fa6c8-8d31-458e-b39a-967f979a2b52  idle      none    -
+4dd7268b-4644-4b52-8240-c999b3236394  idle      declared com.sourcegraph.amp unread
+[exit=0]
+
+$ paneflow sessions --json | head -1 | python3 -c 'import sys,json; d=json.loads(sys.stdin.readline()); [print(s["session"][:8], s["status"], s["activity_source"], s["unread"], s["runtime_id"]) for s in d["sessions"] if s["runtime_id"]]'
+0129b837 idle declared True com.sourcegraph.amp
+4dd7268b idle declared True com.sourcegraph.amp
+52521ef1 idle declared True com.anthropic.claude-code
+b7ebaa7a idle declared False com.sourcegraph.amp
+[exit=0]
+
+$ paneflow sessions ack b7ebaa7a-214e-40ac-a73a-1bfe342309e7 4dd7268b-4644-4b52-8240-c999b3236394
+acknowledged 2 session(s)
+[exit=0]
+
+$ paneflow sessions --json | head -1 | python3 -c 'import sys,json; d=json.loads(sys.stdin.readline()); [print(s["session"][:8], s["status"], s["unread"]) for s in d["sessions"] if s["runtime_id"]]'
+0129b837 idle True
+4dd7268b idle False
+52521ef1 idle True
+b7ebaa7a idle False
+[exit=0]
+
+$ tail -3 /Users/m1/dev/paneflow/tasks/evidence/macos-qualification-20261124/cli/22-sessions-follow.txt
+b7ebaa7a-214e-40ac-a73a-1bfe342309e7  idle      declared com.sourcegraph.amp unread notify:finished
+b7ebaa7a-214e-40ac-a73a-1bfe342309e7  idle      declared com.sourcegraph.amp
+4dd7268b-4644-4b52-8240-c999b3236394  idle      declared com.sourcegraph.amp
+[exit=0]
+
+$ paneflow events --help | head -12
+Follow the worker's numbered event log: one line per event with its seq, type and ids, reconnecting across a worker restart
+
+Usage: paneflow events [OPTIONS]
+
+Options:
+      --json               Print one JSON object per event instead of a line
+      --types <TYPES>      Only these event types, comma-separated: exact names or a family such as terminal.*
+      --since <SEQ>        Replay the events after this seq first
+      --workspace-id <ID>  Only events about this layout workspace id
+  -h, --help               Print help
+[exit=0]
+
+$ timeout 3 paneflow events | tail -5 | cut -c1-250
+[exit=0]

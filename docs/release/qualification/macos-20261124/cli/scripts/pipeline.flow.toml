@@ -1,0 +1,17 @@
+name = "review-pipeline"
+layout = "even_h"
+
+[defaults]
+timeout_secs = 30
+
+[[step]]
+id = "impl"
+pane = { cwd = "/Users/m1/pfq-cli-flow", agent = "amp", prompt = "implement the fix and run tests" }
+submit = true
+ready = { pattern = "tests? passed" }
+capture = { var = "summary", lines = 20 }
+
+[[step]]
+id = "review"
+needs = ["impl"]
+send = { target = "impl", text = "Summarise what changed: ${summary}" }

@@ -1,0 +1,33 @@
+$ git log --format=fuller -3 refs/paneflow/snapshots/up5-dirty-1795540084
+ac9aabc0acfe0c472747f3fcf1453788f4153a43 e8cf3fa4d6e25969ab5220d487868fbe65e896bc
+  Paneflow snapshot of up5/dirty
+Paneflow-Path: /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/up5-dirty
+Paneflow-Branch: up5/dirty
+Paneflow-Head: e8cf3fa4d6e25969ab5220d487868fbe65e896bc
+Paneflow-Taken-At: 1795540084
+
+e8cf3fa4d6e25969ab5220d487868fbe65e896bc 064eabd9e0030aa095010db4548312690506c985
+  up5 dirty commit
+
+064eabd9e0030aa095010db4548312690506c985 ece562c0b2e5c4bdddec22d2b7ddd130751dab3f
+  add a
+
+$ git show --stat refs/paneflow/snapshots/up5-dirty-1795540084
+Paneflow snapshot of up5/dirty
+Paneflow-Path: /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/up5-dirty
+Paneflow-Branch: up5/dirty
+Paneflow-Head: e8cf3fa4d6e25969ab5220d487868fbe65e896bc
+Paneflow-Taken-At: 1795540084
+
+
+ README.md | 1 +
+ new5.txt  | 1 +
+ 2 files changed, 2 insertions(+)
+$ git show snapshot:README.md
+hello
+edit
+$ branch up5/dirty: e8cf3fa
+$ git ls-remote . refs/paneflow/*
+refs/paneflow/snapshots/up5-dirty-1795540084
+$ git config --get-regexp remote (none expected)
+(no remotes)

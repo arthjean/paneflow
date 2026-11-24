@@ -1,0 +1,56 @@
+$ cat up-snap.toml
+name = "pfq-up"
+[[panes]]
+cwd = "~/pfq-wt-main"
+worktree = "up/dirty"
+from = "main"
+[[panes]]
+cwd = "~/pfq-wt-main"
+worktree = "up/clean"
+$ paneflow up up-snap.toml
+pane 0: copied .env, .env.local, AGENTS.override.md into /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/up-dirty
+pane 1: copied .env, .env.local, AGENTS.override.md into /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/up-clean
+{
+  "index": 1,
+  "title": "pfq-up",
+  "panes": 2,
+  "surface_ids": [
+    16433,
+    16434
+  ],
+  "labels": [
+    null,
+    null
+  ],
+  "notices": [
+    "pane 0: copied .env, .env.local, AGENTS.override.md into /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/up-dirty",
+    "pane 1: copied .env, .env.local, AGENTS.override.md into /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/up-clean"
+  ]
+}
+0 pfq-main 11
+1 pfq-up 2
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/up-clean                       064eabd [up/clean]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/up-dirty                       064eabd [up/dirty]
+ M README.md
+?? upnew.txt
+head: illegal line count -- 0
+/workspaces[1]/managed_worktrees [{"path": "/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/up-dirty", "repo_root": "/Users/m1/pfq-wt-main", "branch": "up/dirty", "teardown": "auto"}, {"path": "/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/up-clean", "repo_root": "/Users/m1/pfq-wt-main", "branch": "up/clean", "teardown": "auto"}]
+$ paneflow api call workspace.close index=1
+{
+  "closed": 1
+}
+## after close
+/Users/m1/pfq-wt-main                                                     064eabd [main]
+/Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/existing-b 064eabd [existing-b]
+/Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/feat-one   064eabd [feat/one]
+/Users/m1/pfq-wt-foreign                                                  064eabd [foreign-br]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/feat-two                       064eabd [feat/two]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/snap-clean                     064eabd [snap/clean]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/snap-dirty                     064eabd [snap/dirty]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/up-clean                       064eabd [up/clean]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/up-dirty                       335d509 [up/dirty]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/w1-clean                       966ccbb [w1/clean]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/w1-dirty                       5ee0671 [w1/dirty]
+$ for-each-ref refs/paneflow
++ up/clean   064eabd add a
++ up/dirty   335d509 up dirty commit

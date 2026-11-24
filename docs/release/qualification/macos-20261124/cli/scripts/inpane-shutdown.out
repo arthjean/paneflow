@@ -1,0 +1,4 @@
+== host host.hello -> {"jsonrpc":"2.0","id":1,"result":{"name":"paneflow-host","version":"0.20.0","protocol":1,"build_id":"0.20.0+108cacb17ed8","host_instance":"1f87b8f1-e965-43e8-8fb6-8974183e1e2b","engine":{"engine":"libghostty-vt","app_version":"1.4.1-dev+108cacb17","api_version":"1.0.1","source_sha":"108cacb17ed8990840cd14abfce43d8ed8503ca1"},"pid":32547,"home":"/Users/m1/.paneflow-dev-qual-cli","endpoint":"/var/fo
+== host host.shutdown -> {"jsonrpc":"2.0","id":2,"error":{"code":-32001,"message":"host.shutdown does not answer a caller identified as pane","data":{"reason":"principal_refused","principal":"pane"}}}
+paneflow: host error -32001: host.shutdown does not answer a caller identified as pane
+host stop exit=1

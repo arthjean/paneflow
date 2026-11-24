@@ -1,0 +1,9 @@
+== 18:26:22 caps
+{
+  "scripting": true,
+  "orchestration": true,
+== send 1026 from pane
+{
+  "sent": true,
+[exit=0]
+== DONE

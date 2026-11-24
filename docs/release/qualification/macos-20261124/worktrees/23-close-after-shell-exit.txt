@@ -1,0 +1,74 @@
+name = "pfq-up5"
+[[panes]]
+cwd = "~/pfq-wt-main"
+worktree = "up5/dirty"
+from = "main"
+[[panes]]
+cwd = "~/pfq-wt-main"
+worktree = "up5/clean"
+  "surface_ids": [
+    22627,
+    22628
+  ],
+ M README.md
+?? new5.txt
+## restart window (kill own PID 76283)
+$ surface.send_text 22627 exit
+paneflow: paneflow error -32601: surface.send_text disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable
+$ surface.send_text 22628 exit
+paneflow: paneflow error -32601: surface.send_text disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable
+1026 zsh /Users/m1/pfq-wt-main
+2053 zsh /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/feat-one
+8216 zsh /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/feat-one
+4107 zsh /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/feat-one
+3080 zsh /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-main-483fe3b1/existing-b
+5135 zsh /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-inc-4f4348c5/inc-new
+6162 zsh /Users/m1/.paneflow-dev-qual-wt/worktrees/pfq-wt-inc-4f4348c5/with-secret
+7189 zsh /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/feat-two
+12324 zsh /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/feat-two
+10270 zsh /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/snap-dirty
+11297 zsh /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/snap-clean
+22627 zsh /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/up5-dirty
+22628 zsh /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/up5-clean
+$ surface.focus 22627; dispatch stop_session
+{  "focused": true,  "surface_id": 22627,  "workspace": 1,  "scope": "workspace"}
+{  "dispatched": true,  "name": "stop_session"}
+$ surface.focus 22628; dispatch stop_session
+{  "focused": true,  "surface_id": 22628,  "workspace": 1,  "scope": "workspace"}
+{  "dispatched": true,  "name": "stop_session"}
+Start, inspect or stop the detached local host that owns terminal sessions for this PANEFLOW_HOME (no running GUI needed)
+
+Usage: paneflow host <COMMAND>
+
+Commands:
+  start   Start the detached local host for this PANEFLOW_HOME, or adopt the one already serving it
+  status  Report the host serving this PANEFLOW_HOME and every session it knows
+  stop    Stop the local host; refused while live sessions remain (they are listed)
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help
+## host shows no live session in up5-* after stop_session
+current: pfq-up5
+$ dispatch close_workspace
+{  "dispatched": true,  "name": "close_workspace"}
+$ for-each-ref refs/paneflow
+ac9aabc0acfe0c472747f3fcf1453788f4153a43 commit	refs/paneflow/snapshots/up5-dirty-1795540084
+  up5/clean  064eabd add a
+  up5/dirty  e8cf3fa up5 dirty commit
+feat-two
+snap-clean
+snap-dirty
+up-clean
+up-dirty
+up2-clean
+up2-dirty
+up3-clean
+up3-dirty
+up4-clean
+up4-dirty
+w1-clean
+w1-dirty
+## app log
+[2026-11-24T17:08:04Z INFO  paneflow_git::worktree] worktree removed: /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/up5-dirty (snapshot refs/paneflow/snapshots/up5-dirty-1795540084)
+[2026-11-24T17:08:04Z INFO  paneflow_git::worktree] worktree removed: /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/up5-clean

@@ -1,0 +1,7 @@
+name = "ready-timeout-2"
+[defaults]
+timeout_secs = 3
+[[step]]
+id = "a"
+pane = { cwd = "/Users/m1/pfq-cli-flow", name = "ftimeout2", command = "echo started-a" }
+ready = { pattern = "NEVER_APPEARS_XYZ", timeout_secs = 3 }

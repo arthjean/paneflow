@@ -1,0 +1,21 @@
+$ git push qualbare --all; git push qualbare main
+$ git -C bare for-each-ref
+refs/heads/existing-b
+refs/heads/feat/one
+refs/heads/feat/two
+refs/heads/foreign-br
+refs/heads/main
+refs/heads/snap/clean
+refs/heads/snap/dirty
+refs/heads/up/clean
+refs/heads/up/dirty
+refs/heads/up2/clean
+refs/heads/up2/dirty
+refs/heads/up3/clean
+refs/heads/up3/dirty
+refs/heads/up4/clean
+refs/heads/up4/dirty
+refs/heads/up5/clean
+refs/heads/up5/dirty
+refs/heads/w1/clean
+refs/heads/w1/dirty

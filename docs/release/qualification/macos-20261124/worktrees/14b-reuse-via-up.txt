@@ -1,0 +1,22 @@
+$ cat reuse-foreign.toml
+name = "pfq-reuse"
+[[panes]]
+cwd = "~/pfq-wt-main"
+worktree = "foreign-br"
+$ paneflow up reuse-foreign.toml
+paneflow: pane 0: branch 'foreign-br' already checked out at /Users/m1/pfq-wt-foreign
+$ cat reuse-main.toml
+name = "pfq-reuse2"
+[[panes]]
+cwd = "~/pfq-wt-main"
+worktree = "main"
+$ paneflow up reuse-main.toml
+paneflow: pane 0: branch 'main' already checked out at /Users/m1/pfq-wt-main
+$ cat reuse-owned.toml
+name = "pfq-reuse3"
+[[panes]]
+cwd = "~/pfq-wt-main"
+worktree = "feat/two"
+from = "main~1"
+$ paneflow up reuse-owned.toml
+{  "index": 2,  "title": "pfq-reuse3",  "panes": 1,  "surface_ids": [    39143  ],  "labels": [    null  ]}

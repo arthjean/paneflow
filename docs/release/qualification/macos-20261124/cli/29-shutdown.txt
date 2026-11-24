@@ -1,0 +1,86 @@
+
+$ paneflow serve stop
+{
+  "home": "/Users/m1/.paneflow-dev-qual-cli",
+  "endpoint": "/var/folders/jz/rpbxwt2d4wjgct6stdnkzd9w0000gn/T/paneflow-serve-0e043cd22a083973.sock",
+  "stopped": true,
+  "drain_ms": 5000
+}
+[exit=0]
+
+$ paneflow host stop
+paneflow: 33 live session(s) remain; stop them before stopping the host
+  0129b837-451b-480d-bf96-3a710a3e5767 generation 1 pid 82549 /bin/zsh (/Users/m1/pfq-cli-up)
+  1114accd-913f-47b4-a343-28ba5c9d5bcd generation 1 pid 83398 /bin/zsh (/Users/m1/pfq-cli-flow)
+  21bac720-30ae-4549-9d00-a459e87ed441 generation 1 pid 83487 /bin/zsh (/Users/m1/pfq-cli-flow)
+  21dbaaf6-1d24-4df7-bc08-e49ea41c931c generation 1 pid 87591 /bin/zsh (/Users/m1/pfq-cli-split)
+  2444ef09-e10c-41ec-a9dd-97813e3ca6b4 generation 1 pid 9059 /bin/zsh (/Users/m1/pfq-cli-flow)
+  244af9e4-b3fb-4e0d-8f1f-ab70c84681eb generation 1 pid 80640 /bin/zsh (/Users/m1/pfq-cli-work)
+  291b01c3-b2f2-424c-a512-65db297c46b0 generation 1 pid 7786 /bin/zsh (/Users/m1/pfq-cli-split)
+  293ee640-fb86-4a10-b3d2-8aaf4674e99a generation 1 pid 84555 /bin/zsh (/Users/m1/pfq-cli-flow)
+  2a3c6fd8-82c3-4cc7-82b0-aa935f77af80 generation 1 pid 81655 /bin/zsh (/Users/m1/pfq-cli-up)
+  3352dd7e-71bd-46bf-8ca0-273989fbd9a9 generation 1 pid 85314 /bin/zsh (/Users/m1/pfq-cli-flow)
+  36ccadaa-ea8f-4fa5-a414-10fd69c7fa1c generation 1 pid 9058 /bin/zsh (/Users/m1/pfq-cli-flow)
+  3c08088d-5704-4012-a942-ce099f52e6a8 generation 1 pid 80925 /bin/zsh (/Users/m1/pfq-cli-work)
+  490fa6c8-8d31-458e-b39a-967f979a2b52 generation 1 pid 56927 /bin/zsh (/Users/m1/pfq-demo)
+  4dd7268b-4644-4b52-8240-c999b3236394 generation 1 pid 56941 /bin/zsh (/Users/m1/pfq-cli-a)
+  52521ef1-26ec-4766-a57e-e7bb47cc7191 generation 1 pid 77129 /bin/zsh (/Users/m1/pfq-cli-b)
+  6616ccec-e23c-4f49-9ad3-f260b55c32dc generation 1 pid 83925 /bin/zsh (/Users/m1/pfq-cli-flow)
+  6695cfa6-5c33-4484-8d8d-76c75db458fa generation 1 pid 90755 /bin/zsh (/Users/m1/pfq-cli-up)
+  6e8eb746-879a-4266-8f01-8deb0e551349 generation 1 pid 81656 /bin/zsh (/Users/m1/pfq-cli-up)
+  80927214-490c-487a-aef8-ad9f7f05dc40 generation 1 pid 80612 /bin/zsh (/Users/m1/pfq-cli-work)
+  84718104-dbe1-4260-ab7e-7f95db038576 generation 1 pid 82554 /bin/zsh (/Users/m1/.paneflow-dev-qual-cli/worktrees/pfq-cli-repo-e61c35f1/qual-up-wt)
+  8d29d840-98b5-46c2-ad66-200218948eb9 generation 1 pid 9043 /bin/zsh (/Users/m1/pfq-cli-flow)
+  92ad6ef6-216e-4757-b115-77ccf97da114 generation 1 pid 80675 /bin/zsh (/Users/m1/pfq-cli-work)
+  97df69aa-644d-44ae-865e-5bd006ee5b3b generation 1 pid 87555 /bin/zsh (/Users/m1/pfq-cli-split)
+  a2c7ad9e-5109-4d73-9fa0-afdd58581e89 generation 1 pid 83396 /bin/zsh (/Users/m1/pfq-cli-flow)
+  a5a9dad8-b215-415c-a93b-9d130acc0029 generation 1 pid 82548 /bin/zsh (/Users/m1/pfq-cli-up)
+  b00dafe7-04fa-4e6f-a942-984c3483579c generation 1 pid 83909 /bin/zsh (/Users/m1/pfq-cli-flow)
+  b7ebaa7a-214e-40ac-a73a-1bfe342309e7 generation 1 pid 54904 /bin/zsh (/Users/m1/pfq-demo)
+  bdb30813-fd2a-44fa-be11-169b3039f62b generation 1 pid 81611 /bin/zsh (/Users/m1/pfq-cli-up)
+  c3014fac-a51f-41f0-8809-1014f17d122f generation 1 pid 84383 /bin/zsh (/Users/m1/pfq-cli-flow)
+  d0f75d81-a0cb-4f00-ba0e-45c3f78870c4 generation 1 pid 89571 /bin/zsh (/Users/m1/pfq-demo)
+  e5703552-6b63-4d1b-a86f-638622bd9400 generation 1 pid 83894 /bin/zsh (/Users/m1/pfq-cli-flow)
+  eff7e545-7991-45e9-a352-c93c710572eb generation 1 pid 85445 /bin/zsh (/Users/m1/pfq-cli-flow)
+  fa987023-57c1-4ef3-9da2-09f0604137e0 generation 1 pid 85665 /bin/zsh (/Users/m1/pfq-cli-flow)
+stop each session with `paneflow-host session stop <id>` first, or rerun with `--force` to end them all
+[exit=1]
+
+$ ps -ax -o pid,command | grep 'paneflow-dev-qual-cli' | grep -v grep || echo 'no qual-cli process left'
+32547 /Users/m1/dev/paneflow/target/debug/paneflow-host --home /Users/m1/.paneflow-dev-qual-cli serve
+[exit=0]
+
+$ paneflow host stop
+{
+  "home": "/Users/m1/.paneflow-dev-qual-cli",
+  "host_instance": "1f87b8f1-e965-43e8-8fb6-8974183e1e2b",
+  "stopped": true,
+  "endpoint": "/var/folders/jz/rpbxwt2d4wjgct6stdnkzd9w0000gn/T/paneflow-host-0e043cd22a083973.sock"
+}
+[exit=0]
+
+$ ps -ax -o pid,command | grep -E 'paneflow-dev-qual-cli|pfq-cli-fake' | grep -v grep || echo 'no qual-cli process left'
+no qual-cli process left
+[exit=0]
+
+$ paneflow serve stop
+{
+  "home": "/Users/m1/.paneflow-dev-qual-cli",
+  "endpoint": "/var/folders/jz/rpbxwt2d4wjgct6stdnkzd9w0000gn/T/paneflow-serve-0e043cd22a083973.sock",
+  "stopped": true,
+  "drain_ms": 5000
+}
+[exit=0]
+
+$ paneflow host stop
+{
+  "home": "/Users/m1/.paneflow-dev-qual-cli",
+  "host_instance": "c665aace-b399-408b-a107-5ee4315ff0f1",
+  "stopped": true,
+  "endpoint": "/var/folders/jz/rpbxwt2d4wjgct6stdnkzd9w0000gn/T/paneflow-host-0e043cd22a083973.sock"
+}
+[exit=0]
+
+$ ps -ax -o pid,command | grep -E 'paneflow-dev-qual-cli|pfq-cli-fake|resume 11111111' | grep -v grep || echo 'no qual-cli process left'
+no qual-cli process left
+[exit=0]

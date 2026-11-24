@@ -1,0 +1,56 @@
+=== qual-wt-app.log
+=== qual-wt-app10.log
+[2026-11-24T17:20:05Z INFO  paneflow::app::hosted_sessions] paneflow: hosted session b5312766-919f-4ae2-b81d-16e220c0f9fd stopped (exited)
+[2026-11-24T17:20:05Z INFO  paneflow::app::hosted_sessions] paneflow: hosted session b5312766-919f-4ae2-b81d-16e220c0f9fd record removed
+[2026-11-24T17:20:07Z INFO  paneflow::app::hosted_sessions] paneflow: hosted session 990f377c-a023-4b48-bb04-fec2f53c33f6 stopped (exited)
+[2026-11-24T17:20:07Z INFO  paneflow::app::hosted_sessions] paneflow: hosted session 990f377c-a023-4b48-bb04-fec2f53c33f6 record removed
+[2026-11-24T17:20:08Z INFO  paneflow::app::hosted_sessions] paneflow: hosted session 3da30200-6158-4c65-af85-a0200fd6e8fe stopped (exited)
+[2026-11-24T17:20:08Z INFO  paneflow::app::hosted_sessions] paneflow: hosted session 3da30200-6158-4c65-af85-a0200fd6e8fe record removed
+[2026-11-24T17:20:10Z WARN  paneflow::app::hosted_sessions] paneflow: hosted session b5312766-919f-4ae2-b81d-16e220c0f9fd stop outcome unknown: host error -32020: session b5312766-919f-4ae2-b81d-16e220c0f9fd is not known to this host
+[2026-11-24T17:20:12Z WARN  paneflow::app::hosted_sessions] paneflow: hosted session b5312766-919f-4ae2-b81d-16e220c0f9fd stop outcome unknown: host error -32020: session b5312766-919f-4ae2-b81d-16e220c0f9fd is not known to this host
+[2026-11-24T17:20:39Z INFO  paneflow_config::watcher] config reloaded successfully
+=== qual-wt-app11.log
+[2026-11-24T17:20:52Z INFO  paneflow::app::hosted_sessions] paneflow: hosted session 372cd9ee-669a-4945-aea4-720b828e1aad stopped (exited)
+[2026-11-24T17:20:52Z INFO  paneflow::app::hosted_sessions] paneflow: hosted session 372cd9ee-669a-4945-aea4-720b828e1aad record removed
+[2026-11-24T17:20:54Z INFO  paneflow::app::hosted_sessions] paneflow: hosted session d6e359e4-605c-4e9f-a710-7d6cb44b86ca stopped (exited)
+[2026-11-24T17:20:54Z INFO  paneflow::app::hosted_sessions] paneflow: hosted session d6e359e4-605c-4e9f-a710-7d6cb44b86ca record removed
+[2026-11-24T17:20:56Z INFO  paneflow::app::hosted_sessions] paneflow: hosted session d90c4e28-ea77-4bc2-83a2-6019c4e88f3c stopped (exited)
+[2026-11-24T17:20:56Z INFO  paneflow::app::hosted_sessions] paneflow: hosted session d90c4e28-ea77-4bc2-83a2-6019c4e88f3c record removed
+[2026-11-24T17:20:59Z INFO  paneflow_git::worktree] worktree removed: /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/feat-two (snapshot refs/paneflow/snapshots/feat-two-1795540859)
+=== qual-wt-app2.log
+[2026-11-24T17:06:14Z ERROR paneflow::terminal::backend] hosted session resolution failed: host error -32022: session 7ad82894-eb95-4c85-b557-b7b7167a75f2 is not running
+=== qual-wt-app3.log
+[2026-11-24T17:06:48Z INFO  paneflow_git::worktree] worktree kept (/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/up4-dirty): a live terminal session still runs inside it
+[2026-11-24T17:06:48Z INFO  paneflow_git::worktree] worktree kept (/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/up4-clean): a live terminal session still runs inside it
+[2026-11-24T17:06:48Z ERROR paneflow::terminal::backend] hosted session resolution failed: host error -32022: the session is not running
+=== qual-wt-app4.log
+[2026-11-24T17:07:42Z INFO  paneflow::app::hosted_sessions] paneflow: hosted session e8a72878-3902-43a0-925f-fa96000f1236 stopped (exited)
+[2026-11-24T17:07:42Z INFO  paneflow::app::hosted_sessions] paneflow: hosted session e8a72878-3902-43a0-925f-fa96000f1236 record removed
+[2026-11-24T17:07:44Z INFO  paneflow::app::hosted_sessions] paneflow: hosted session 0bfbaea9-8a96-47f4-bb16-faf4cc4a259a stopped (exited)
+[2026-11-24T17:07:44Z INFO  paneflow::app::hosted_sessions] paneflow: hosted session 0bfbaea9-8a96-47f4-bb16-faf4cc4a259a record removed
+[2026-11-24T17:08:04Z INFO  paneflow_git::worktree] worktree removed: /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/up5-dirty (snapshot refs/paneflow/snapshots/up5-dirty-1795540084)
+[2026-11-24T17:08:04Z INFO  paneflow_git::worktree] worktree removed: /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/up5-clean
+=== qual-wt-app5.log
+[2026-11-24T17:09:04Z INFO  paneflow_config::watcher] config reloaded successfully
+[2026-11-24T17:09:26Z INFO  paneflow_git::worktree] worktree trimmed past keep limit: /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/lim-b (snapshot refs/paneflow/snapshots/lim-b-1795540166)
+[2026-11-24T17:09:26Z INFO  paneflow_git::worktree] worktree trimmed past keep limit: /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/lim-c
+[2026-11-24T17:10:59Z ERROR paneflow::terminal::backend] hosted session resolution failed: host error -32022: the session is not running
+=== qual-wt-app6.log
+[2026-11-24T17:11:39Z INFO  paneflow::app::hosted_sessions] paneflow: hosted session 8330450a-077c-446c-9249-cda2ce5408fa stopped (exited)
+[2026-11-24T17:11:39Z INFO  paneflow::app::hosted_sessions] paneflow: hosted session 8330450a-077c-446c-9249-cda2ce5408fa record removed
+[2026-11-24T17:11:40Z INFO  paneflow::app::hosted_sessions] paneflow: hosted session fe8f2e88-1e72-441e-a428-71cb324c287f stopped (exited)
+[2026-11-24T17:11:40Z INFO  paneflow::app::hosted_sessions] paneflow: hosted session fe8f2e88-1e72-441e-a428-71cb324c287f record removed
+[2026-11-24T17:11:41Z INFO  paneflow::app::hosted_sessions] paneflow: hosted session e953c9f5-254e-43bf-99fa-f0d06999681c stopped (exited)
+[2026-11-24T17:11:41Z INFO  paneflow::app::hosted_sessions] paneflow: hosted session e953c9f5-254e-43bf-99fa-f0d06999681c record removed
+[2026-11-24T17:12:11Z INFO  paneflow_config::watcher] config reloaded successfully
+[2026-11-24T17:12:54Z INFO  paneflow_config::watcher] config reloaded successfully
+=== qual-wt-app7.log
+=== qual-wt-app8.log
+[2026-11-24T17:17:10Z INFO  paneflow_config::watcher] config reloaded successfully
+[2026-11-24T17:17:13Z INFO  paneflow::app::hosted_sessions] paneflow: hosted session e7237c80-cd83-4596-a49b-6ad52a08abff stopped (exited)
+[2026-11-24T17:17:13Z INFO  paneflow::app::hosted_sessions] paneflow: hosted session e7237c80-cd83-4596-a49b-6ad52a08abff record removed
+=== qual-wt-app9.log
+=== qual-wt-app12.log
+[2026-11-24T17:23:10Z WARN  paneflow::app::session] session restore: a tab worktree is gone; unbinding the tab
+=== qual-wt-app13.log
+[2026-11-24T17:26:25Z INFO  paneflow_git::worktree] worktree kept (/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/set-a): a live terminal session still runs inside it

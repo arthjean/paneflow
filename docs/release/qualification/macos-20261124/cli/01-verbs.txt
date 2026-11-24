@@ -1,0 +1,80 @@
+
+$ paneflow frobnicate
+paneflow: unknown verb 'frobnicate'; see `paneflow --help` for the verb list
+[exit=2]
+
+$ paneflow new --name ws-a --cwd ~/pfq-demo
+{
+  "index": 0,
+  "title": "ws-a",
+  "panes": 1
+}
+[exit=0]
+
+$ paneflow ls --human
+  ID  NAME                  SPACE             CMD                       CWD
+1026  terminal              Default                                     /Users/m1/pfq-demo
+[exit=0]
+
+$ paneflow ls
+{
+  "pane_count": 1,
+  "workspace": 0,
+  "scope_workspace_id": null,
+  "surfaces": [
+    {
+      "surface_id": 1026,
+      "name": "terminal",
+      "title": "Terminal",
+      "cwd": "/Users/m1/pfq-demo",
+      "cmd": null,
+      "workspace_id": 1027,
+      "workspace": 0,
+      "scope": "workspace",
+      "tab_id": 1028,
+      "tab_title": "",
+      "space": null,
+      "sandboxed": false
+    }
+  ]
+}
+[exit=0]
+
+$ paneflow api call workspace.list
+{
+  "workspaces": [
+    {
+      "index": 0,
+      "title": "ws-a",
+      "cwd": "/Users/m1/pfq-demo",
+      "panes": 1,
+      "active": true,
+      "space": null
+    }
+  ]
+}
+[exit=0]
+
+$ paneflow api call workspace.current
+{
+  "index": 0,
+  "title": "ws-a",
+  "cwd": "/Users/m1/pfq-demo",
+  "panes": 1,
+  "space": null,
+  "layout": {
+    "type": "pane",
+    "surfaces": [
+      {
+        "surface_type": "terminal",
+        "name": "Terminal",
+        "command": null,
+        "cwd": "/Users/m1/pfq-demo",
+        "env": null,
+        "focus": true,
+        "session": "b7ebaa7a-214e-40ac-a73a-1bfe342309e7"
+      }
+    ]
+  }
+}
+[exit=0]

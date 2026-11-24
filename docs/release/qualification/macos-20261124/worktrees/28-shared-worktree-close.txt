@@ -1,0 +1,50 @@
+## invariant: a managed worktree is never removed automatically while a tab in an open workspace uses it
+feat/two: tab 'feat/two' in pfq-main (open) + reused by pfq-reuse3 (paneflow up, managed teardown=auto)
+ M README.md
+session.json 0 pfq-main []
+session.json 1 pfq-walk []
+session.json 2 pfq-reuse3 ['/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/feat-two']
+restart window (kill own PID 97619) so pfq-reuse3's managed record is loaded
+## stop the sessions (panes and tabs stay) of every pane whose cwd is feat-two, in both workspaces
+stop_session 7189
+stop_session 12324
+stop_session 39143
+ws 0: focus 7189 + stop_session
+ws 0: focus 12324 + stop_session
+ws 0: focus 39143 + stop_session
+ws 2: focus 7189 + stop_session
+ws 2: focus 12324 + stop_session
+ws 2: focus 39143 + stop_session
+live sessions in feat-two: 0
+7189 0 'feat/two' /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/feat-two
+12324 0 'feat/two' /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/feat-two
+39143 2 'feat/two' /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/feat-two
+pfq-main tab: 7189 'feat/two' /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/feat-two
+pfq-main tab: 12324 'feat/two' /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/feat-two
+pfq-main tab: 39143 'feat/two' /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/feat-two
+closing: pfq-reuse3
+{"dispatched":true,"name":"close_workspace"}
+## after close of pfq-reuse3
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/feat-two                       064eabd [feat/two]
+0 pfq-main
+1 pfq-walk
+## RERUN: the run above had auto_remove=false left in paneflow.json, so it proves nothing; now auto_remove=true
+{
+  "worktrees": { "dir": "~/pfq-wt-root", "keep_limit": 15, "auto_remove": true }
+}
+{"index":2,"title":"pfq-reuse4","panes":1,"surface_ids":[41209],"labels":[null]}
+restart window (kill own PID 99014)
+live sessions in feat-two: 0
+7189 0 'feat/two' /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/feat-two
+12324 0 'feat/two' /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/feat-two
+41209 2 'feat/two' /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/feat-two
+closing: pfq-reuse4
+{"dispatched":true,"name":"close_workspace"}
+## after close of pfq-reuse4
+feat-two REMOVED
+8a85ed6c08ec552fa20e8e0a48f6aeb2e78c9deb commit	refs/paneflow/snapshots/feat-two-1795540859
+0 pfq-main
+1 pfq-walk
+still open: 7189 0 'feat/two' /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/feat-two
+still open: 12324 0 'feat/two' /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/feat-two
+[2026-11-24T17:20:59Z INFO  paneflow_git::worktree] worktree removed: /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/feat-two (snapshot refs/paneflow/snapshots/feat-two-1795540859)

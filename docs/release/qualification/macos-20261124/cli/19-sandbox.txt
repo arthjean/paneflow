@@ -1,0 +1,51 @@
+
+$ cat ~/.paneflow-dev-qual-cli/paneflow.json
+{"ipc": {"scripting": false, "orchestration": true},
+ "agents": {"amp": {"grants": [{"rights": ["write"], "scope": "workspace"}]}, "hermes": {"sandbox": "paneflow"}, "grok": {"sandbox": "bogus"}},
+ "spaces": [{"id": "550e8400-e29b-41d4-a716-446655440001", "name": "Work"}]}
+[exit=0]
+
+$ grep -in 'sandbox' /private/tmp/claude-501/-Users-m1-dev-paneflow/ed7b9b96-428f-465c-a947-cceac364368b/scratchpad/qual-cli-app.log ~/.paneflow-dev-qual-cli/serve/serve.log ~/.paneflow-dev-qual-cli/host/host.log | tail -8
+/Users/m1/.paneflow-dev-qual-cli/serve/serve.log:57:[2026-11-24T17:17:18Z WARN  paneflow_config::loader] invalid config key agents.grok.sandbox: unknown sandbox "bogus", expected "paneflow"; the agent profile grok does not start
+/Users/m1/.paneflow-dev-qual-cli/serve/serve.log:58:[2026-11-24T17:17:18Z WARN  paneflow_config::loader] invalid config key agents.hermes.sandbox: Sandbox 'paneflow' is not available on macos; the agent profile hermes does not start
+/Users/m1/.paneflow-dev-qual-cli/serve/serve.log:59:[2026-11-24T17:17:18Z WARN  paneflow_config::loader] invalid config key agents.grok.sandbox: unknown sandbox "bogus", expected "paneflow"; the agent profile grok does not start
+/Users/m1/.paneflow-dev-qual-cli/serve/serve.log:60:[2026-11-24T17:17:18Z WARN  paneflow_config::loader] invalid config key agents.hermes.sandbox: Sandbox 'paneflow' is not available on macos; the agent profile hermes does not start
+/Users/m1/.paneflow-dev-qual-cli/serve/serve.log:61:[2026-11-24T17:17:19Z WARN  paneflow_config::loader] invalid config key agents.grok.sandbox: unknown sandbox "bogus", expected "paneflow"; the agent profile grok does not start
+/Users/m1/.paneflow-dev-qual-cli/serve/serve.log:62:[2026-11-24T17:17:19Z WARN  paneflow_config::loader] invalid config key agents.hermes.sandbox: Sandbox 'paneflow' is not available on macos; the agent profile hermes does not start
+/Users/m1/.paneflow-dev-qual-cli/host/host.log:16:[2026-11-24T17:17:18Z WARN  paneflow_config::loader] invalid config key agents.grok.sandbox: unknown sandbox "bogus", expected "paneflow"; the agent profile grok does not start
+/Users/m1/.paneflow-dev-qual-cli/host/host.log:17:[2026-11-24T17:17:18Z WARN  paneflow_config::loader] invalid config key agents.hermes.sandbox: Sandbox 'paneflow' is not available on macos; the agent profile hermes does not start
+[exit=0]
+
+$ cd ~/pfq-cli-sbx && paneflow up sbx.toml --dry-run
+[2026-11-24T17:17:20Z WARN  paneflow_config::loader] invalid config key agents.grok.sandbox: unknown sandbox "bogus", expected "paneflow"; the agent profile grok does not start
+[2026-11-24T17:17:20Z WARN  paneflow_config::loader] invalid config key agents.hermes.sandbox: Sandbox 'paneflow' is not available on macos; the agent profile hermes does not start
+paneflow: pane 0: invalid config key agents.hermes.sandbox: Sandbox 'paneflow' is not available on macos; the agent profile hermes does not start
+[exit=1]
+
+$ cd ~/pfq-cli-sbx && paneflow up sbx.toml
+[2026-11-24T17:17:20Z WARN  paneflow_config::loader] invalid config key agents.grok.sandbox: unknown sandbox "bogus", expected "paneflow"; the agent profile grok does not start
+[2026-11-24T17:17:20Z WARN  paneflow_config::loader] invalid config key agents.hermes.sandbox: Sandbox 'paneflow' is not available on macos; the agent profile hermes does not start
+paneflow: pane 0: invalid config key agents.hermes.sandbox: Sandbox 'paneflow' is not available on macos; the agent profile hermes does not start
+[exit=1]
+
+$ paneflow read sbx-hermes --raw --lines 10
+paneflow: no pane matches target 'sbx-hermes'
+[exit=3]
+
+$ paneflow read sbx-grok --raw --lines 10
+paneflow: no pane matches target 'sbx-grok'
+[exit=3]
+
+$ paneflow ls | python3 -c 'import sys,json; [print(s["surface_id"],s["name"],s["sandboxed"]) for s in json.load(sys.stdin)["surfaces"] if s["name"].startswith("sbx")]'
+[exit=0]
+
+$ grep -in 'sandbox' /private/tmp/claude-501/-Users-m1-dev-paneflow/ed7b9b96-428f-465c-a947-cceac364368b/scratchpad/qual-cli-app.log ~/.paneflow-dev-qual-cli/serve/serve.log ~/.paneflow-dev-qual-cli/host/host.log | tail -8
+/Users/m1/.paneflow-dev-qual-cli/serve/serve.log:57:[2026-11-24T17:17:18Z WARN  paneflow_config::loader] invalid config key agents.grok.sandbox: unknown sandbox "bogus", expected "paneflow"; the agent profile grok does not start
+/Users/m1/.paneflow-dev-qual-cli/serve/serve.log:58:[2026-11-24T17:17:18Z WARN  paneflow_config::loader] invalid config key agents.hermes.sandbox: Sandbox 'paneflow' is not available on macos; the agent profile hermes does not start
+/Users/m1/.paneflow-dev-qual-cli/serve/serve.log:59:[2026-11-24T17:17:18Z WARN  paneflow_config::loader] invalid config key agents.grok.sandbox: unknown sandbox "bogus", expected "paneflow"; the agent profile grok does not start
+/Users/m1/.paneflow-dev-qual-cli/serve/serve.log:60:[2026-11-24T17:17:18Z WARN  paneflow_config::loader] invalid config key agents.hermes.sandbox: Sandbox 'paneflow' is not available on macos; the agent profile hermes does not start
+/Users/m1/.paneflow-dev-qual-cli/serve/serve.log:61:[2026-11-24T17:17:19Z WARN  paneflow_config::loader] invalid config key agents.grok.sandbox: unknown sandbox "bogus", expected "paneflow"; the agent profile grok does not start
+/Users/m1/.paneflow-dev-qual-cli/serve/serve.log:62:[2026-11-24T17:17:19Z WARN  paneflow_config::loader] invalid config key agents.hermes.sandbox: Sandbox 'paneflow' is not available on macos; the agent profile hermes does not start
+/Users/m1/.paneflow-dev-qual-cli/host/host.log:16:[2026-11-24T17:17:18Z WARN  paneflow_config::loader] invalid config key agents.grok.sandbox: unknown sandbox "bogus", expected "paneflow"; the agent profile grok does not start
+/Users/m1/.paneflow-dev-qual-cli/host/host.log:17:[2026-11-24T17:17:18Z WARN  paneflow_config::loader] invalid config key agents.hermes.sandbox: Sandbox 'paneflow' is not available on macos; the agent profile hermes does not start
+[exit=0]

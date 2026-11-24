@@ -1,0 +1,232 @@
+
+$ env -u CLAUDE_CONFIG_DIR -u CODEX_HOME HOME=$HOME/pfq-cli-home3 paneflow integrations list
+claude-code	not installed
+codex	not installed
+opencode	no integration (detection only)
+pi	no integration (detection only)
+hermes	no integration (detection only)
+grok	no integration (detection only)
+amp	no integration (detection only)
+gemini	no integration (detection only)
+github-copilot	no integration (detection only)
+factory	no integration (detection only)
+openclaw	no integration (detection only)
+muse-code	no integration (detection only)
+fx	no integration (detection only)
+[exit=0]
+
+$ env -u CLAUDE_CONFIG_DIR -u CODEX_HOME HOME=$HOME/pfq-cli-home3 paneflow hooks status
+claude-code: not installed
+codex: not installed
+opencode: no integration (detection only)
+pi: no integration (detection only)
+hermes: no integration (detection only)
+grok: no integration (detection only)
+amp: no integration (detection only)
+gemini: no integration (detection only)
+github-copilot: no integration (detection only)
+factory: no integration (detection only)
+openclaw: no integration (detection only)
+muse-code: no integration (detection only)
+fx: no integration (detection only)
+[exit=0]
+
+$ env -u CLAUDE_CONFIG_DIR -u CODEX_HOME HOME=$HOME/pfq-cli-home3 paneflow integrations install claude-code
+Claude Code: installed
+[exit=0]
+
+$ find $HOME/pfq-cli-home3 -type f -not -path '*/bin/*' | sort
+/Users/m1/pfq-cli-home3/.claude.json
+/Users/m1/pfq-cli-home3/.claude/settings.json
+/Users/m1/pfq-cli-home3/.claude/settings.json.bak
+/Users/m1/pfq-cli-home3/.claude/skills/paneflow-conductor/SKILL.md
+/Users/m1/pfq-cli-home3/.paneflow-dev-qual-cli/agent-config.lock
+/Users/m1/pfq-cli-home3/.paneflow-dev-qual-cli/integrations/claude-code.json
+/Users/m1/pfq-cli-home3/.paneflow-dev-qual-cli/integrations/claude-code.paneflow-conductor.json
+[exit=0]
+
+$ python3 -c 'import json; d=json.load(open("/Users/m1/pfq-cli-home3/.claude/settings.json")); print(json.dumps(d["hooks"].get("Stop"), indent=1)); print(sorted(d["hooks"].keys())); print(d.get("model"))'
+[
+ {
+  "hooks": [
+   {
+    "type": "command",
+    "command": "/usr/bin/true my-own-stop-hook"
+   }
+  ]
+ },
+ {
+  "_paneflow_managed": true,
+  "hooks": [
+   {
+    "type": "command",
+    "command": "/Users/m1/pfq-cli-home3/.paneflow-dev-qual-cli/bin/paneflow-ai-hook.sh",
+    "args": [
+     "Stop"
+    ],
+    "timeout": 5,
+    "async": false
+   }
+  ]
+ }
+]
+['Notification', 'PermissionRequest', 'PreToolUse', 'SessionStart', 'Stop', 'StopFailure', 'SubagentStart', 'SubagentStop', 'UserPromptSubmit']
+sonnet
+[exit=0]
+
+$ head -8 $HOME/pfq-cli-home3/.claude/skills/paneflow-conductor/SKILL.md
+---
+name: paneflow-conductor
+description: Orchestrate a fleet of CLI coding agents running side by side in Paneflow panes - discover them, read their live state, dispatch prompts, and wait on events - all over the public `paneflow` CLI. Use when the user asks you to coordinate, supervise, or hand work between multiple agents (Claude Code, Codex, OpenCode, Gemini, ...) that are open in Paneflow.
+metadata:
+  paneflow-version: "0.20.0"
+---
+
+# Paneflow conductor
+[exit=0]
+
+$ grep -c paneflow $HOME/pfq-cli-home3/.claude.json
+2
+[exit=0]
+
+$ paneflowh integrations install claude-code
+Claude Code: installed
+/Users/m1/pfq-cli-home3/.claude/skills/paneflow-conductor/SKILL.md: kept your modified paneflow-conductor skill; delete it and install again for the 0.20.0 copy
+[exit=0]
+
+$ tail -2 $HOME/pfq-cli-home3/.claude/skills/paneflow-conductor/SKILL.md
+problem to the user - do not retry the identical command.
+user edit
+[exit=0]
+
+$ paneflowh integrations remove claude-code
+Claude Code: not installed
+/Users/m1/pfq-cli-home3/.claude/skills/paneflow-conductor/SKILL.md: kept your modified paneflow-conductor skill
+[exit=0]
+
+$ ls $HOME/pfq-cli-home3/.claude/skills/paneflow-conductor/; python3 -c 'import json; d=json.load(open("/Users/m1/pfq-cli-home3/.claude/settings.json")); print(json.dumps(d.get("hooks"), indent=1))'
+SKILL.md
+{
+ "Stop": [
+  {
+   "hooks": [
+    {
+     "type": "command",
+     "command": "/usr/bin/true my-own-stop-hook"
+    }
+   ]
+  }
+ ]
+}
+[exit=0]
+
+$ rm -rf $HOME/pfq-cli-home3/.claude/skills/paneflow-conductor && paneflowh integrations install claude-code && paneflowh integrations remove claude-code && ls $HOME/pfq-cli-home3/.claude/skills/ 2>&1
+Claude Code: installed
+Claude Code: not installed
+[exit=0]
+
+$ paneflowh integrations install codex
+Codex: installed
+Trust the Paneflow hooks once in Codex with /hooks.
+[exit=0]
+
+$ cat $HOME/pfq-cli-home3/.codex/hooks.json | head -30; grep -n paneflow $HOME/pfq-cli-home3/.codex/config.toml
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "_paneflow_managed": true,
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/m1/pfq-cli-home3/.paneflow-dev-qual-cli/bin/paneflow-ai-hook.sh SessionStart",
+            "command_windows": "/Users/m1/pfq-cli-home3/.paneflow-dev-qual-cli/bin/paneflow-ai-hook SessionStart",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "_paneflow_managed": true,
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/m1/pfq-cli-home3/.paneflow-dev-qual-cli/bin/paneflow-ai-hook.sh UserPromptSubmit",
+            "command_windows": "/Users/m1/pfq-cli-home3/.paneflow-dev-qual-cli/bin/paneflow-ai-hook UserPromptSubmit",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+1:[mcp_servers.paneflow]
+2:command = "/Users/m1/pfq-cli-home3/.paneflow-dev-qual-cli/bin/paneflow-mcp"
+[exit=0]
+
+$ paneflowh hooks status
+claude-code: not installed
+codex: installed
+opencode: no integration (detection only)
+pi: no integration (detection only)
+hermes: no integration (detection only)
+grok: no integration (detection only)
+amp: no integration (detection only)
+gemini: no integration (detection only)
+github-copilot: no integration (detection only)
+factory: no integration (detection only)
+openclaw: no integration (detection only)
+muse-code: no integration (detection only)
+fx: no integration (detection only)
+[exit=0]
+
+$ paneflowh hooks uninstall
+claude-code: no Paneflow hooks present
+codex: hooks removed
+[exit=0]
+
+$ paneflowh hooks status; grep -c paneflow $HOME/pfq-cli-home3/.claude.json $HOME/pfq-cli-home3/.codex/config.toml
+claude-code: not installed
+codex: not installed
+opencode: no integration (detection only)
+pi: no integration (detection only)
+hermes: no integration (detection only)
+grok: no integration (detection only)
+amp: no integration (detection only)
+gemini: no integration (detection only)
+github-copilot: no integration (detection only)
+factory: no integration (detection only)
+openclaw: no integration (detection only)
+muse-code: no integration (detection only)
+fx: no integration (detection only)
+/Users/m1/pfq-cli-home3/.claude.json:0
+/Users/m1/pfq-cli-home3/.codex/config.toml:0
+[exit=1]
+
+$ paneflowh hooks setup
+claude-code: hooks installed
+codex: hooks installed
+Trust the Paneflow hooks once in Codex with /hooks.
+[exit=0]
+
+$ paneflowh hooks status
+claude-code: installed
+codex: installed
+opencode: no integration (detection only)
+pi: no integration (detection only)
+hermes: no integration (detection only)
+grok: no integration (detection only)
+amp: no integration (detection only)
+gemini: no integration (detection only)
+github-copilot: no integration (detection only)
+factory: no integration (detection only)
+openclaw: no integration (detection only)
+muse-code: no integration (detection only)
+fx: no integration (detection only)
+[exit=0]
+
+$ paneflowh hooks uninstall
+claude-code: hooks removed
+codex: hooks removed
+[exit=0]

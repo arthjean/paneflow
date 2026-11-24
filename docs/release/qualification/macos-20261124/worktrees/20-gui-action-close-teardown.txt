@@ -1,0 +1,33 @@
+$ cat up2.toml
+name = "pfq-up2"
+[[panes]]
+cwd = "~/pfq-wt-main"
+worktree = "up2/dirty"
+from = "main"
+[[panes]]
+cwd = "~/pfq-wt-main"
+worktree = "up2/clean"
+    "pane 1: copied .env, .env.local, AGENTS.override.md into /Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/up2-clean"
+  ]
+}
+ M README.md
+?? new2.txt
+0 pfq-main False
+1 pfq-up2 True
+$ paneflow select 1
+{
+  "selected": 1
+}
+current: pfq-up2 1
+$ paneflow api call client.dispatch_action name=close_workspace
+{
+  "dispatched": true,
+  "name": "close_workspace"
+}
+0 pfq-main True
+## after GUI-action close
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/up2-clean                      064eabd [up2/clean]
+/Users/m1/pfq-wt-root/pfq-wt-main-483fe3b1/up2-dirty                      07752e8 [up2/dirty]
+$ for-each-ref refs/paneflow
++ up2/clean  064eabd add a
++ up2/dirty  07752e8 up2 dirty commit

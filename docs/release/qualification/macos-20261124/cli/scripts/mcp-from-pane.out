@@ -1,0 +1,16 @@
+== 18:24:02 mcp [{"name":"write_pane","arguments":{"target":"tests","text":"req4"}}]
+initialize: {"id": 1, "jsonrpc": "2.0", "result": {"capabilities": {"resources": {"listChanged": false, "subscribe": false}, "tools": {"listChanged": false}}, "instructions": "Reads terminal output from other Paneflow surfaces (panes/tabs). By default it is scoped to the current workspace when launched from a Paneflow pane; set PANEFLOW_MCP_SCOPE=all only when instance-wide reads are intentional. Call list_pa
+== write_pane {"target": "tests", "text": "req4"}
+{
+ "id": 2,
+ "jsonrpc": "2.0",
+ "result": {
+  "content": [
+   {
+    "text": "{\n  \"message\": \"a human must allow pfq-cli-up to write into pfq-cli-up in Paneflow; nothing was written, call write_pane again after the decision\",\n  \"request\": 3,\n  \"status\": \"approval_pending\"\n}",
+    "type": "text"
+   }
+  ],
+  "isError": false
+ }
+}

@@ -1,0 +1,38 @@
+== whoami
+{
+  "principal": "pane",
+  "session": "4dd7268b-4644-4b52-8240-c999b3236394",
+  "workspace": "6ca37b6f-3d07-4b1d-8f36-c6ad28e1ad31"
+}
+== caps
+{
+  "scripting": false,
+  "orchestration": false,
+== grants ls (from pane)
+g-1795539482054-2  session 4dd7268b-4644-4b52-8240-c999b3236394  write  workspace  no expiry  profile amp
+[exit=0]
+== send producer (same ws)
+{
+  "sent": true,
+[exit=0]
+== key producer ctrl-u
+{
+  "sent": true
+}
+[exit=0]
+== send 5137 (other ws) default scope
+paneflow: paneflow error -32602: surface 5137 belongs to workspace "ws-b" (id 5138), outside the workspace of the calling pane; rerun with --scope all (needs PANEFLOW_IPC_ORCHESTRATION=1) to write across workspaces
+[exit=1]
+== send 5137 --scope all
+paneflow: paneflow error -32601: scope all needs orchestration; set PANEFLOW_IPC_ORCHESTRATION=1 or PANEFLOW_IPC_SCRIPTING=1 to write across workspaces
+[exit=1]
+== split with command (spawn right missing)
+paneflow: paneflow error -32601: surface.split orchestration disabled; set PANEFLOW_IPC_ORCHESTRATION=1 or PANEFLOW_IPC_SCRIPTING=1 to enable command, prompt, or env
+[exit=1]
+== grants revoke someone else's
+paneflow: paneflow error -32001: grant.revoke refused: grant g-1795539482054-1 was not delegated by the calling pane
+[exit=1]
+== grant.request layout workspace
+paneflow: paneflow error -32602: the layout right reaches every workspace: ask for it with scope instance
+[exit=1]
+== DONE

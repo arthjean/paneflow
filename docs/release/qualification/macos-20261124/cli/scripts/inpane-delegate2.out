@@ -1,0 +1,11 @@
+== whoami
+{
+  "principal": "pane",
+  "session": "4dd7268b-4644-4b52-8240-c999b3236394",
+  "workspace": "6ca37b6f-3d07-4b1d-8f36-c6ad28e1ad31"
+}
+== delegate no duration to d0f75d81-a0cb-4f00-ba0e-45c3f78870c4
+paneflow: paneflow error -32602: grant.delegate refused: no grant of the calling pane covers write in its own workspace with that expiry
+== delegate duration 0
+paneflow: paneflow error -32602: grant.delegate refused: no grant of the calling pane covers write in its own workspace with that expiry
+== DONE

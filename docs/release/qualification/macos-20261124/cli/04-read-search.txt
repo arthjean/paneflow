@@ -1,0 +1,91 @@
+
+$ paneflow search shell SUBMITTED_OK --max 5
+{
+  "matches": [
+    {
+      "line": -29,
+      "text": "emo % echo SUBMITTED_OK"
+    },
+    {
+      "line": -28,
+      "text": "SUBMITTED_OK"
+    }
+  ],
+  "truncated": false
+}
+[exit=0]
+
+$ paneflow search_pane shell submitted_ok
+{
+  "matches": [
+    {
+      "line": -29,
+      "text": "emo % echo SUBMITTED_OK"
+    },
+    {
+      "line": -28,
+      "text": "SUBMITTED_OK"
+    }
+  ],
+  "truncated": false
+}
+[exit=0]
+
+$ paneflow list_panes --human
+  ID  NAME                  SPACE             CMD                       CWD
+1026  shell                 Default           zsh                       /Users/m1/pfq-demo
+3081  reviewer              Default           zsh                       /Users/m1/pfq-cli-a
+2053  producer              Default           sleep                     /Users/m1/pfq-demo
+[exit=0]
+
+$ paneflow read_pane shell --lines 2
+<untrusted_terminal_output source="surface:1026" total_lines="50" eof="false" id="32c4cb42ec0ef23d">
+yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy
+yyyyyyyyyyyyyyy
+</untrusted_terminal_output id="32c4cb42ec0ef23d">[exit=0]
+
+$ paneflow read shell --json --lines 3
+{
+  "text": "<untrusted_terminal_output source=\"surface:1026\" total_lines=\"50\" eof=\"false\" id=\"1ea811026e72a26c\">\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\nyyyyyy\n</untrusted_terminal_output id=\"1ea811026e72a26c\">",
+  "lines": 3,
+  "total_lines": 50,
+  "eof": false,
+  "output_generation": 3257,
+  "truncated": false
+}
+[exit=0]
+
+$ paneflow read shell --json --raw --lines 3
+{
+  "text": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy",
+  "lines": 3,
+  "total_lines": 50,
+  "eof": false,
+  "output_generation": 3262,
+  "truncated": false
+}
+[exit=0]
+
+$ paneflow api call surface.read --args '{"surface_id":1026,"lines":0}' | grep -E '"lines"|error'
+  "lines": 1,
+[exit=0]
+
+$ paneflow api call surface.read --args '{"surface_id":1026,"lines":999999}' | grep -E '"lines"|error'
+  "lines": 50,
+[exit=0]
+
+$ paneflow api call surface.read --args '{"surface_id":1026}' | grep -E '"lines"|total_lines|eof|output_generation'
+  "text": "<untrusted_terminal_output source=\"surface:1026\" total_lines=\"50\" eof=\"true\" id=\"a54f2f635c0adf3f\">\nm1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-d\nemo % echo SUBMITTED_OK\nSUBMITTED_OK\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nm1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 pfq-d\nemo % >....\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\n</untrusted_terminal_output id=\"a54f2f635c0adf3f\">",
+  "lines": 50,
+  "total_lines": 50,
+  "eof": true,
+  "output_generation": 3279,
+[exit=0]
+
+$ paneflow api call surface.read --args '{"surface_id":1026,"offset":100000}'
+paneflow: paneflow error -32602: offset 100000 out of range (total_lines=50)
+[exit=1]
+
+$ paneflow read shell --lines 2 --offset 100000
+paneflow: paneflow error -32602: offset 100000 out of range (total_lines=50)
+[exit=1]

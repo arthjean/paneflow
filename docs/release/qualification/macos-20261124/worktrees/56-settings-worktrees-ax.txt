@@ -1,0 +1,22 @@
+snapshot s1lkvjcnoiku49
+window | 'Paneflow' |  | states=['focused']
+  group | '' | 
+    button | 'Back to the app' | @s1lkvjcnoiku49:e1
+    search | 'Search settings' | 
+      textfield | 'Search settings…' | @s1lkvjcnoiku49:e2
+    button | 'Change…' | @s1lkvjcnoiku49:e3
+    button | 'Use default' | @s1lkvjcnoiku49:e4
+    switch | 'Remove old worktrees automatically' | @s1lkvjcnoiku49:e5 | value=true | states=['checked']
+    button | 'Keep one fewer worktree' | @s1lkvjcnoiku49:e6
+    button | 'Keep one more worktree' | @s1lkvjcnoiku49:e7
+    button | 'Remove' | @s1lkvjcnoiku49:e8
+    button | 'Restore' | @s1lkvjcnoiku49:e9
+    button | 'Delete' | @s1lkvjcnoiku49:e10
+    button | 'Restore' | @s1lkvjcnoiku49:e11
+    button | 'Delete' | @s1lkvjcnoiku49:e12
+    button | 'Restore' | @s1lkvjcnoiku49:e13 | states=['offscreen']
+    button | 'Delete' | @s1lkvjcnoiku49:e14 | states=['offscreen']
+    button | 'Hide sidebar' | @s1lkvjcnoiku49:e15
+  button | 'Close' | @s1lkvjcnoiku49:e16
+  button | 'Full Screen' | @s1lkvjcnoiku49:e17
+  button | 'Minimize' | @s1lkvjcnoiku49:e18

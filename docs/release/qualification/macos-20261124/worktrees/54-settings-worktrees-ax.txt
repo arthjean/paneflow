@@ -1,0 +1,16 @@
+snapshot s2ez4y6rr1cq91
+window | 'Paneflow' |  | states=['focused']
+  group | '' | 
+    button | 'Back to the app' | @s2ez4y6rr1cq91:e1
+    search | 'Search settings' | 
+      textfield | 'Search settings…' | @s2ez4y6rr1cq91:e2
+    button | 'Change…' | @s2ez4y6rr1cq91:e3
+    button | 'Use default' | @s2ez4y6rr1cq91:e4
+    switch | 'Remove old worktrees automatically' | @s2ez4y6rr1cq91:e5 | value=true | states=['checked']
+    button | 'Keep one fewer worktree' | @s2ez4y6rr1cq91:e6
+    button | 'Keep one more worktree' | @s2ez4y6rr1cq91:e7
+    button | 'Remove' | @s2ez4y6rr1cq91:e8
+    button | 'Hide sidebar' | @s2ez4y6rr1cq91:e9
+  button | 'Close' | @s2ez4y6rr1cq91:e10
+  button | 'Full Screen' | @s2ez4y6rr1cq91:e11
+  button | 'Minimize' | @s2ez4y6rr1cq91:e12

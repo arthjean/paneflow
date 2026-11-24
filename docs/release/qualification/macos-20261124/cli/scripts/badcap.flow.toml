@@ -1,0 +1,10 @@
+name = "badcap"
+[defaults]
+timeout_secs = 5
+[[step]]
+id = "a"
+pane = { cwd = "/Users/m1/pfq-cli-flow" }
+[[step]]
+id = "b"
+needs = ["a"]
+send = { target = "a", text = "x ${nope}" }
