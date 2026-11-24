@@ -539,7 +539,7 @@ impl GhosttySession {
         let len = message
             .queued_input_bytes()
             .expect("enqueue_input only accepts input messages");
-        let reserved = self.inner.queued_input_bytes.fetch_update(
+        let reserved = self.inner.queued_input_bytes.try_update(
             Ordering::AcqRel,
             Ordering::Acquire,
             |queued| {

@@ -353,7 +353,7 @@ mod tests {
         state.live_bytes.fetch_sub(memory_len, Ordering::SeqCst);
         if state
             .live
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |live| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |live| {
                 live.checked_sub(1)
             })
             .is_err()

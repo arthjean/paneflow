@@ -24,7 +24,7 @@ impl ClipboardGate {
         }
         let _ = self
             .state
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |state| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |state| {
                 Some((state & Self::FOCUSED) | policy)
             });
     }
