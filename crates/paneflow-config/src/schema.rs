@@ -135,7 +135,7 @@ mod tests {
             claude_code_bypass_permissions: Some(false),
             ai_unrestricted: Some(true),
             ai_injection_fence: Some(false),
-            ipc: None,
+            ipc: Some(serde_json::json!({"scripting": true, "orchestration": false})),
             on_quit: Some(OnQuit::Stop),
             agent_prompts: Some(AgentPrompts::Paneflow),
             agent_button_visibility: [
@@ -372,6 +372,29 @@ mod tests {
             object_keys(&serialized_command["workspace"]["layout"]["surfaces"][0]),
             object_keys(&schema["definitions"]["surface"]["properties"]),
             "SurfaceDefinition and public JSON Schema drifted"
+        );
+    }
+
+    #[test]
+    fn the_public_schema_describes_every_ipc_switch_the_config_reads() {
+        let schema_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../schemas/paneflow.schema.json");
+        let schema: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(schema_path).unwrap()).unwrap();
+        let ipc = &schema["properties"][IPC_KEY];
+        assert!(ipc.is_object(), "the public schema has no `ipc` section");
+        assert_eq!(object_keys(&ipc["properties"]), key_set(&IPC_SWITCH_KEYS));
+        for name in IPC_SWITCH_KEYS {
+            assert_eq!(
+                ipc["properties"][name]["type"],
+                serde_json::json!(["boolean", "null"]),
+                "ipc.{name} is a nullable boolean"
+            );
+        }
+        assert_eq!(
+            ipc["additionalProperties"],
+            serde_json::json!(true),
+            "an unknown ipc key is ignored, not refused"
         );
     }
 

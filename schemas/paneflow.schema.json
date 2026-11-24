@@ -274,7 +274,7 @@
     },
     "window_backdrop": {
       "type": ["string", "null"],
-      "description": "Native window backdrop. 'auto' uses Mica on supported Windows 11 builds and opaque elsewhere; 'mica' forces Mica when supported; 'blurred'/'acrylic' opts into blur, except on Windows, where a config value resolves to 'auto' and only PANEFLOW_WINDOW_BACKDROP=blurred applies blur; 'transparent' keeps a transparent surface; 'opaque'/'off' disables native transparency. Read once at startup; PANEFLOW_WINDOW_BACKDROP overrides it for one launch.",
+      "description": "Deprecated. auto, mica, blurred, acrylic, transparent, opaque, or off. On Windows, blurred and acrylic set in the config resolve to auto; only PANEFLOW_WINDOW_BACKDROP applies blur there. While background_style is absent, opaque or off (and transparent on macOS) resolves the style to Themed. On Linux, the blur follows the Blended background style. Settings and the command palette remove it when they save background_style. PANEFLOW_WINDOW_BACKDROP overrides it for one launch.",
       "enum": ["auto", "mica", "blurred", "acrylic", "transparent", "opaque", "off", null],
       "default": "auto",
       "deprecated": true,
@@ -282,42 +282,42 @@
     },
     "windows_terminal_material": {
       "type": ["boolean", "null"],
-      "description": "Windows-only. When true, CLI terminal default backgrounds are transparent so the active native window backdrop (Mica, blur, or transparent) can show through. Other platforms ignore this field.",
+      "description": "Deprecated. Read only while background_style is absent: true on either Windows key resolves the style to Blended on Windows. Settings and the command palette remove it when they save background_style. Ignored on other platforms.",
       "default": false,
       "deprecated": true,
       "deprecationMessage": "Legacy key, read only when background_style is absent, to keep the look of a config saved by an older release. Settings removes it when a background style is saved. Use background_style."
     },
     "windows_chrome_material": {
       "type": ["boolean", "null"],
-      "description": "Windows-only. When true, the primary sidebar card reveals the active native window backdrop (Mica, blur, or transparent). Other platforms ignore this field.",
+      "description": "Deprecated. Read only while background_style is absent: true on either Windows key resolves the style to Blended on Windows. Settings and the command palette remove it when they save background_style. Ignored on other platforms.",
       "default": false,
       "deprecated": true,
       "deprecationMessage": "Legacy key, read only when background_style is absent, to keep the look of a config saved by an older release. Settings removes it when a background style is saved. Use background_style."
     },
     "windows_material_veil": {
       "type": ["boolean", "null"],
-      "description": "Windows-only. When true, the system backdrop switches from Mica to Acrylic, a blur of what lies behind the window, and the shell paints a theme veil over it (0.72 on dark themes, 0.80 on light ones) while the terminal card adds a 0.35 shade, like Linux: this is the Blended background style. When false or null, the backdrop shows through unveiled: the Mica background style. Only matters while windows_chrome_material or windows_terminal_material is on. Other platforms ignore this field.",
+      "description": "Deprecated and no longer read. Settings and the command palette remove it when they save background_style.",
       "default": false,
       "deprecated": true,
       "deprecationMessage": "Legacy key, read only when background_style is absent, to keep the look of a config saved by an older release. Settings removes it when a background style is saved. Use background_style."
     },
     "macos_chrome_material": {
       "type": ["boolean", "null"],
-      "description": "macOS-only. When true, the primary sidebar card reveals AppKit's native Sidebar material. Other platforms ignore this field.",
+      "description": "Deprecated. Read only while background_style is absent: true resolves the style to Blended on macOS. Settings and the command palette remove it when they save background_style. Ignored on other platforms.",
       "default": false,
       "deprecated": true,
       "deprecationMessage": "Legacy key, read only when background_style is absent, to keep the look of a config saved by an older release. Settings removes it when a background style is saved. Use background_style."
     },
     "linux_terminal_material": {
       "type": ["boolean", "null"],
-      "description": "Linux-only. When true, the window surface turns transparent and the terminal card becomes a translucent shade over the window veil, so a compositor blur shows through. Other platforms ignore this field.",
+      "description": "Deprecated. Read only while background_style is absent: true on either Linux key resolves the style to Blended on Linux. Settings and the command palette remove it when they save background_style. Ignored on other platforms.",
       "default": false,
       "deprecated": true,
       "deprecationMessage": "Legacy key, read only when background_style is absent, to keep the look of a config saved by an older release. Settings removes it when a background style is saved. Use background_style."
     },
     "linux_chrome_material": {
       "type": ["boolean", "null"],
-      "description": "Linux-only. When true, the window surface turns transparent and the sidebar and title bar show a translucent theme veil, so a compositor blur shows through. Other platforms ignore this field.",
+      "description": "Deprecated. Read only while background_style is absent: true on either Linux key resolves the style to Blended on Linux. Settings and the command palette remove it when they save background_style. Ignored on other platforms.",
       "default": false,
       "deprecated": true,
       "deprecationMessage": "Legacy key, read only when background_style is absent, to keep the look of a config saved by an older release. Settings removes it when a background style is saved. Use background_style."
@@ -505,13 +505,39 @@
     },
     "ai_unrestricted": {
       "type": ["boolean", "null"],
-      "description": "AI free-access mode. When true, a conductor (a CLI agent or external orchestrator) may auto-submit prompts to other panes (surface.send_text submit:true) WITHOUT the PANEFLOW_IPC_SCRIPTING env gate. Null/false (default) keeps the current behavior strictly unchanged. Re-evaluated per call, so toggling it off revokes the capability with no residual access.",
+      "description": "Opens both IPC gates, ipc.scripting and ipc.orchestration, for every caller. Null/false (default) leaves each gate to its ipc key. Re-evaluated per call, so turning it off revokes the access with no residual grant.",
       "default": false
     },
     "ai_injection_fence": {
       "type": ["boolean", "null"],
       "description": "Anti-injection fence on the surface.read CLI/IPC path, independent of ai_unrestricted. Null/true (default) wraps returned terminal text in an <untrusted_terminal_output> marker so a malicious peer pane cannot hijack a conductor reading it. False returns raw text (an assumed risk). Stays ON by default even in free-access mode because the fence protects the AI, it does not bridle it.",
       "default": true
+    },
+    "ipc": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "IPC write gates. Each applies to the next request after the file is saved. A malformed section is logged and closes both gates.",
+      "additionalProperties": true,
+      "properties": {
+        "scripting": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Opens text and keystroke writes (surface.send_text, surface.send_keystroke, session.input) and implies ipc.orchestration.",
+          "default": false
+        },
+        "orchestration": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Lets a request launch a command, a prompt or environment variables, and lets --scope all reach every workspace.",
+          "default": false
+        }
+      }
     },
     "on_quit": {
       "type": ["string", "null"],
