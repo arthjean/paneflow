@@ -444,10 +444,7 @@ impl PaneFlowApp {
             TabMenuAction::Rename => self.begin_tab_rename(ws_idx, tab_idx, cx),
             TabMenuAction::ResetName => self.reset_tab_name(ws_idx, tab_idx, cx),
             TabMenuAction::Close => self.close_workspace_tab(ws_idx, tab_idx, window, cx),
-            TabMenuAction::NewBranch => {
-                self.open_pane_palette(ws_idx, window, cx);
-                self.pane_palette_open_new_branch(window, cx);
-            }
+            TabMenuAction::NewBranch => self.open_new_branch_for_tab(ws_idx, tab_idx, window, cx),
             TabMenuAction::BindBranch(branch) => {
                 self.bind_tab_to_branch(ws_idx, tab_idx, branch.clone(), cx);
             }

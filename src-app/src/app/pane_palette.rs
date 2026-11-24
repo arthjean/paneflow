@@ -548,6 +548,67 @@ impl PaneFlowApp {
         }
     }
 
+    pub(crate) fn open_new_branch_for_tab(
+        &mut self,
+        ws_idx: usize,
+        tab_idx: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tab) = self
+            .workspaces
+            .get(ws_idx)
+            .and_then(|ws| ws.tabs().get(tab_idx))
+        else {
+            return;
+        };
+        let tab_id = tab.id;
+        if !self.pane_palette_owns_tab(tab_id) {
+            let target = match tab.root.as_ref() {
+                Some(root) => {
+                    if tab.is_zoomed() {
+                        self.show_toast("Unzoom before adding a pane", cx);
+                        return;
+                    }
+                    if !tab.can_add_pane() {
+                        self.show_toast(
+                            format!("Maximum pane count reached ({})", crate::layout::MAX_PANES),
+                            cx,
+                        );
+                        return;
+                    }
+                    root.focused_pane(window, cx).or_else(|| root.first_leaf())
+                }
+                None => None,
+            };
+            self.focus_workspace_tab(ws_idx, tab_idx, window, cx);
+            match target {
+                Some(target) => self.open_split_palette(target, SplitDirection::Vertical, cx),
+                None => {
+                    let ws_id = self.workspaces[ws_idx].id;
+                    self.commit_rename(cx);
+                    self.dismiss_transient_surfaces();
+                    self.spawn_worktree_listing(ws_idx, cx);
+                    self.pane_palette = Some(PanePaletteState {
+                        ws_id,
+                        placement: PalettePlacement::Tab { tab_id },
+                        selected: 0,
+                        error: None,
+                        restore_focus: crate::FocusReturn::default(),
+                        scroll: ScrollHandle::new(),
+                        branch_picker_open: false,
+                        new_branch: None,
+                        pending_launch: None,
+                        rebound: false,
+                    });
+                }
+            }
+        }
+        self.pending_palette_focus = false;
+        self.pending_pane_focus = None;
+        self.pane_palette_open_new_branch(window, cx);
+    }
+
     pub(crate) fn pane_palette_open_new_branch(
         &mut self,
         window: &mut Window,

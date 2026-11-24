@@ -8,7 +8,7 @@ use super::Rig;
 use crate::PaneFlowApp;
 use crate::workspace::worktree::{ManagedWorktree, TeardownPolicy};
 
-pub(super) const PINS: usize = 3;
+pub(super) const PINS: usize = 4;
 
 const OUTCOME_WAIT: Duration = Duration::from_secs(60);
 const PUMP_INTERVAL: Duration = Duration::from_millis(5);
@@ -190,6 +190,52 @@ fn pin_a_split_palette_new_branch_binds_the_tab_and_opens_the_pane_in_its_worktr
     assert_eq!(rig.tabs(ws).len(), 1, "the split stays in its tab");
     assert_eq!(rig.shape(ws, 0), "V(0.500 a, 0.500 b)");
     let opened = rig.terminal("b");
+    assert!(
+        rig.cx
+            .update(|_, cx| opened.read(cx).launched_under(&worktree)),
+        "the new pane starts in {}",
+        worktree.display()
+    );
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_the_tab_menu_new_branch_binds_the_clicked_tab_and_adds_its_pane_there(
+    cx: &mut TestAppContext,
+) {
+    let root = tempfile::tempdir().expect("a repository root");
+    let repo = committed_repo(root.path());
+    let mut rig = Rig::mount(cx);
+    let ws = project(&mut rig, &repo);
+    rig.act(|app, window, cx| {
+        app.open_tab_with_surface(
+            ws,
+            "second".to_string(),
+            paneflow_config::schema::TerminalSurfaceProfile::Normal,
+            crate::app::workspace_ops::SurfaceLaunch::default(),
+            window,
+            cx,
+        )
+    });
+    assert_eq!(rig.tabs(ws).len(), 2);
+
+    rig.act(|app, window, cx| app.open_new_branch_for_tab(ws, 0, window, cx));
+    launch_from_palette(&mut rig, "feat/menu");
+
+    let (count, clicked, other) = rig.act(|app, _, _| {
+        let tabs = app.workspaces[ws].tabs();
+        (
+            tabs.len(),
+            tabs[0].worktree.clone(),
+            tabs[1].worktree.clone(),
+        )
+    });
+    assert_eq!(count, 2, "the menu opens no tab of its own");
+    assert_eq!(other, None);
+    let worktree = clicked.expect("the clicked tab is bound to the new worktree");
+    assert_eq!(current_branch(&worktree), "feat/menu");
+    assert_eq!(rig.shape(ws, 0), "V(0.500 a, 0.500 c)");
+    let opened = rig.terminal("c");
     assert!(
         rig.cx
             .update(|_, cx| opened.read(cx).launched_under(&worktree)),
