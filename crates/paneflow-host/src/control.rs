@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 use crate::host::{HostError, SessionHost, SessionSummary};
 use crate::manifest::HookRecord;
 use crate::protocol::InputOrigin;
+use crate::runtime_observer::RuntimeObservation;
 
 pub const DEFAULT_READ_LINES: usize = 200;
 pub const MAX_READ_LINES: usize = 4000;
@@ -129,7 +130,7 @@ fn surface_value(alias: u64, summary: &SessionSummary) -> Value {
         "name": surface_name(summary),
         "title": summary.manifest.title,
         "cwd": summary.manifest.current_cwd.clone().or_else(|| Some(summary.manifest.cwd.clone())),
-        "cmd": summary.manifest.launch.shell,
+        "cmd": foreground_command(summary),
         "workspace_id": Value::Null,
         "workspace": summary.manifest.workspace,
         "scope": "host",
@@ -200,14 +201,35 @@ pub(crate) fn agent_status_value(
 }
 
 pub(crate) fn foreground_runtime(summary: &SessionSummary) -> Value {
-    json!(
-        summary
-            .manifest
-            .runtime
-            .as_ref()
-            .and_then(|runtime| runtime.current_observation.as_ref())
-            .map(|observation| observation.id.as_str())
+    json!(current_observation(summary).map(|observation| observation.id.as_str()))
+}
+
+fn current_observation(summary: &SessionSummary) -> Option<&RuntimeObservation> {
+    summary
+        .manifest
+        .runtime
+        .as_ref()
+        .and_then(|runtime| runtime.current_observation.as_ref())
+}
+
+fn foreground_command(summary: &SessionSummary) -> Option<&str> {
+    current_observation(summary)
+        .map(|observation| observation.process_name.trim())
+        .filter(|name| !name.is_empty())
+}
+
+pub(crate) fn agent_target_tool(summary: &SessionSummary) -> Option<String> {
+    current_hook(
+        summary.manifest.generation,
+        summary.manifest.last_hook.as_ref(),
     )
+    .map(|hook| hook.tool.clone())
+    .or_else(|| {
+        current_observation(summary)
+            .and_then(RuntimeObservation::runtime)
+            .and_then(|runtime| runtime.detection.command_aliases.first())
+            .map(|alias| (*alias).to_string())
+    })
 }
 
 pub(crate) fn output_generation(host: &SessionHost, session: &SessionId) -> Option<u64> {
@@ -719,7 +741,8 @@ fn answer(
             authorize_write_scope(host, params, permissions, &session)?;
             let summary = host.inspect(&session)?;
             let generation = Some(summary.manifest.generation);
-            let agent_target = summary.manifest.last_hook.is_some();
+            let agent_tool = agent_target_tool(&summary);
+            let agent_target = agent_tool.is_some();
             let forced = params
                 .get("force")
                 .and_then(Value::as_bool)
@@ -749,7 +772,7 @@ fn answer(
                 "paste": delivered.paste,
                 "submit_mode": delivered.submit_mode,
                 "agent_target": agent_target,
-                "agent_tool": summary.manifest.last_hook.as_ref().map(|hook| hook.tool.clone()),
+                "agent_tool": agent_tool,
                 "terminal_bracketed_paste": delivered.terminal_bracketed_paste,
             }))
         }
@@ -971,6 +994,44 @@ mod tests {
             Value::Null,
             "a launch binding is not a foreground observation"
         );
+    }
+
+    #[test]
+    fn an_observed_agent_is_a_send_target_and_names_the_listed_command_like_the_window() {
+        let mut shell = summary(SessionId::new(), None, "/a");
+        assert_eq!(agent_target_tool(&shell), None);
+        assert_eq!(
+            surface_value(1, &shell)["cmd"],
+            Value::Null,
+            "the launch shell is not what runs in the pane now"
+        );
+
+        shell.manifest.last_hook = Some(status_hook("claude", SessionGeneration::FIRST));
+        shell.manifest.generation = SessionGeneration::FIRST.next();
+        assert_eq!(
+            agent_target_tool(&shell),
+            None,
+            "a hook from a previous launch names no agent"
+        );
+
+        let mut amp = summary(SessionId::new(), None, "/a");
+        amp.manifest.runtime = Some(crate::manifest::HostedSessionRuntime {
+            current_observation: Some(crate::runtime_observer::RuntimeObservation {
+                id: "com.sourcegraph.amp".to_string(),
+                pid: 42,
+                pid_started_at: Some(7),
+                process_group: 42,
+                process_name: "amp".to_string(),
+                argv: None,
+            }),
+            launch_binding: None,
+        });
+        assert_eq!(agent_target_tool(&amp).as_deref(), Some("amp"));
+        assert_eq!(surface_value(1, &amp)["cmd"], "amp");
+
+        let mut claude = summary(SessionId::new(), None, "/a");
+        claude.manifest.last_hook = Some(status_hook("claude", SessionGeneration::FIRST));
+        assert_eq!(agent_target_tool(&claude).as_deref(), Some("claude"));
     }
 
     #[test]

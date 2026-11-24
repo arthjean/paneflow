@@ -18,6 +18,11 @@ pub(super) fn with_worker_state(method: &str, mut result: Value) -> Value {
     result
 }
 
+pub(super) fn with_projections(method: &str, mut result: Value, projections: &[Value]) -> Value {
+    apply_projections(method, &mut result, projections);
+    result
+}
+
 pub(super) fn with_host_foreground(status: &mut Value) {
     if status.get(FOREGROUND_RUNTIME).is_some() {
         return;
@@ -42,7 +47,7 @@ fn host_foreground(session: &str) -> Option<Value> {
         .cloned()
 }
 
-fn worker_projections() -> Option<Vec<Value>> {
+pub(super) fn worker_projections() -> Option<Vec<Value>> {
     let endpoint = paneflow_home::serve_endpoint_path_for_current_home()?;
     let mut controller = paneflow_serve::controller::Controller::connect(&endpoint).ok()?;
     Some(controller.snapshot().ok()?.sessions)

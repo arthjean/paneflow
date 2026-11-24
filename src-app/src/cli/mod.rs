@@ -793,21 +793,54 @@ impl IpcTransport for CliTransport {
             Self::Controller(client) => client
                 .call(method, params)
                 .map(|result| worker_state::with_worker_state(method, result)),
-            Self::Host(transport) => {
-                let layout = headless::current_worker_layout();
-                let params = match &layout {
-                    Some(layout) => headless::name_sessions(params, layout),
-                    None => params,
-                };
-                transport
+            Self::Host(transport) => match headless::current_worker_layout() {
+                Some(layout) => windowless_call(transport, &layout, method, params),
+                None => transport
                     .call(method, params)
-                    .map(|result| match (&layout, method) {
-                        (Some(layout), "surface.list") => headless::with_layout_ids(result, layout),
-                        _ => result,
-                    })
-                    .map(|result| worker_state::with_worker_state(method, result))
-            }
+                    .map(|result| worker_state::with_worker_state(method, result)),
+            },
         }
+    }
+}
+
+fn windowless_call(
+    transport: &HostTransport,
+    layout: &headless::WorkerLayout,
+    method: &str,
+    params: Value,
+) -> Result<Value, String> {
+    let requested = headless::requested_layout_surface(&params, layout);
+    let params = headless::name_sessions(params, layout);
+    match method {
+        "surface.list" => transport.call(method, params).map(|listed| {
+            headless::with_layout_ids(listed, layout, &paneflow_config::loader::load_config())
+        }),
+        "fleet.list" => {
+            let listed = transport.call("surface.list", serde_json::json!({}))?;
+            let listed = headless::with_layout_ids(
+                listed,
+                layout,
+                &paneflow_config::schema::PaneFlowConfig::default(),
+            );
+            let projections = worker_state::worker_projections().unwrap_or_default();
+            Ok(headless::fleet(
+                layout,
+                &headless::surface_names(&listed),
+                &projections,
+            ))
+        }
+        "surface.status" => transport.call(method, params).map(|status| {
+            let projections = worker_state::worker_projections().unwrap_or_default();
+            let status = headless::with_requested_surface(status, requested);
+            worker_state::with_projections(
+                method,
+                headless::agent_status(status, &projections),
+                &projections,
+            )
+        }),
+        _ => transport
+            .call(method, params)
+            .map(|result| headless::with_requested_surface(result, requested)),
     }
 }
 

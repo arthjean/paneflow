@@ -452,13 +452,13 @@ pub(crate) fn sanitize_pane_name(raw: &str) -> Option<String> {
     (!cleaned.is_empty()).then_some(cleaned)
 }
 
-struct WsFleet<'a> {
-    idx: usize,
-    sessions: &'a HashMap<u32, AgentSession>,
-    detected: &'a HashSet<String>,
+pub(crate) struct WsFleet<'a> {
+    pub(crate) idx: usize,
+    pub(crate) sessions: &'a HashMap<u32, AgentSession>,
+    pub(crate) detected: &'a HashSet<String>,
 }
 
-fn build_fleet_rows(
+pub(crate) fn build_fleet_rows(
     workspaces: &[WsFleet],
     name_by_sid: &HashMap<u64, String>,
     now: std::time::Instant,
@@ -526,7 +526,7 @@ fn session_is_hooked(session: &AgentSession) -> bool {
             != paneflow_agent_config::RuntimeHookAdapter::None
 }
 
-fn surface_status_value(
+pub(crate) fn surface_status_value(
     sid: u64,
     session: Option<&AgentSession>,
     output_generation: u64,

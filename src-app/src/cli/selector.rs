@@ -135,7 +135,8 @@ fn layout_holds(client: &impl IpcTransport, selector: &Selector<'_>) -> bool {
     else {
         return false;
     };
-    let rows: Vec<Surface> = super::headless::layout_surfaces(&snapshot)
+    let rows: Vec<Surface> = super::headless::worker_layout_of(&snapshot)
+        .surfaces
         .into_iter()
         .map(|surface| Surface {
             surface_id: surface.surface_id,
