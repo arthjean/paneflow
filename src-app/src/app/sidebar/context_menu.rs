@@ -12,6 +12,8 @@ use crate::pane::PaneSurface;
 use crate::ui_primitives::action_menu::{ActionMenu, MenuHandlers, MenuItem};
 use crate::{PaneContextMenu, PaneFlowApp, TabContextMenu, TabKey, WorkspaceContextMenu};
 
+use super::SidebarRow;
+
 pub(crate) struct EditorMenuEntry {
     pub(crate) label: &'static str,
     pub(crate) command: &'static str,
@@ -173,6 +175,38 @@ impl PaneFlowApp {
             .iter()
             .find(|entry| entry.action_name == action_name && entry.key != "Unassigned")
             .map(|entry| entry.key.as_str())
+    }
+
+    pub(super) fn open_sidebar_row_menu(
+        &mut self,
+        row: SidebarRow,
+        position: gpui::Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.open_sidebar_selection_menu(row, position, window, cx) {
+            return;
+        }
+        self.commit_rename(cx);
+        self.dismiss_transient_surfaces();
+        self.place_sidebar_cursor(row, window, cx);
+        match row {
+            SidebarRow::Folder(idx) => {
+                self.workspace_menu_open = Some(WorkspaceContextMenu::at(idx, position));
+            }
+            SidebarRow::Tab(ws_idx, tab_idx) => {
+                let Some(tab) = self
+                    .workspaces
+                    .get(ws_idx)
+                    .and_then(|ws| TabKey::of(ws, tab_idx))
+                else {
+                    return;
+                };
+                self.tab_menu_open = Some(TabContextMenu { tab, position });
+                self.spawn_worktree_listing(ws_idx, cx);
+            }
+        }
+        cx.notify();
     }
 
     pub(crate) fn open_workspace_service_url(&mut self, url: &str, cx: &mut Context<Self>) {

@@ -257,6 +257,8 @@ impl PaneFlowApp {
                 row_name
             }))
             .aria_selected(is_active_tab && is_active_workspace)
+            .aria_description(SIDEBAR_ROW_MENU_HINT)
+            .aria_keyshortcuts(SIDEBAR_ROW_MENU_SHORTCUT)
             .when_some(title_tooltip, |shell, title| {
                 shell.delayed_tooltip(crate::ui_primitives::text_tooltip(title))
             })
@@ -297,24 +299,12 @@ impl PaneFlowApp {
                     && let Some(position) = e.mouse_position()
                 {
                     cx.stop_propagation();
-                    if this.open_sidebar_selection_menu(
+                    this.open_sidebar_row_menu(
                         SidebarRow::Tab(ws_idx, tab_idx),
                         position,
                         window,
                         cx,
-                    ) {
-                        return;
-                    }
-                    this.commit_rename(cx);
-                    this.dismiss_transient_surfaces();
-                    this.place_sidebar_cursor(SidebarRow::Tab(ws_idx, tab_idx), window, cx);
-                    this.tab_menu_open = Some(TabContextMenu {
-                        tab: tab_key,
-                        position,
-                    });
-                    this.spawn_worktree_listing(ws_idx, cx);
-                    cx.stop_propagation();
-                    cx.notify();
+                    );
                 }
             }))
             .on_key_down(cx.listener(move |this, e: &KeyDownEvent, _window, cx| {
@@ -372,7 +362,9 @@ impl PaneFlowApp {
                 row.child(sidebar_selection_fill(ui, shape))
             })
             .when(cursor, |row| {
-                row.children(self.sidebar_cursor_ring_for(shape, ui))
+                row.debug_selector(|| "sidebar-cursor-row".into())
+                    .children(self.sidebar_cursor_ring_for(shape, ui))
+                    .children(self.sidebar_cursor_probe())
             });
 
         div()

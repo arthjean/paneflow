@@ -2072,7 +2072,7 @@ every modal answers Enter and Escape.
 | Focus across the grid | `alt-arrow` |
 | New tab, next, previous | `secondary-shift-t`, `secondary-]`, `secondary-[` |
 | Workspaces 1 to 9 | `secondary-1` to `secondary-9` |
-| Focus the Workspaces sidebar | `secondary-alt-s`; then up, down, home, end move, on into the Agents section rows; enter opens, or focuses an agent's pane; space, left, right fold; F2 renames a tab; delete closes it; alt-up and alt-down reorder; tab focuses the Agents resize handle; escape returns to the pane. Grouped by status, the cursor walks the tab rows in group order and skips the headers; fold and reorder keys do nothing |
+| Focus the Workspaces sidebar | `secondary-alt-s`; then up, down, home, end move, on into the Agents section rows; enter opens, or focuses an agent's pane; space, left, right fold; F2 renames a tab; shift-f10, or the menu key where the keyboard has one, opens the context menu of the row under the cursor, anchored below that row; delete closes it; alt-up and alt-down reorder; tab focuses the Agents resize handle; escape returns to the pane. Grouped by status, the cursor walks the tab rows in group order and skips the headers; fold and reorder keys do nothing |
 | File tree in the dock | `secondary-alt-f` |
 | Jump to next waiting agent | `secondary-shift-j`: agents waiting for input, then errored, then finished and not yet seen, in the Agents section order, active space first |
 | Layout presets | `secondary-alt-1` to `secondary-alt-4` |

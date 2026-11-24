@@ -1,4 +1,10 @@
-use gpui::{Context, KeyDownEvent, Window};
+use std::cell::Cell;
+use std::rc::Rc;
+
+use gpui::{
+    AnyElement, Bounds, Context, IntoElement, KeyDownEvent, Modifiers, Pixels, Point, Styled,
+    Window, canvas, point,
+};
 
 use crate::app::drag::TabDrag;
 use crate::{FocusWorkspacesSidebar, PaneFlowApp};
@@ -14,6 +20,23 @@ pub(crate) enum SidebarCursor {
     Agent {
         surface_id: u64,
     },
+}
+
+pub(crate) type SidebarCursorBounds = Rc<Cell<Option<(SidebarCursor, Bounds<Pixels>)>>>;
+
+pub(super) const SIDEBAR_ROW_MENU_SHORTCUT: &str = "Shift+F10";
+pub(super) const SIDEBAR_ROW_MENU_HINT: &str = "Shift+F10 opens the context menu";
+
+fn opens_row_menu(key: &str, modifiers: Modifiers) -> bool {
+    match key {
+        "f10" => modifiers.shift && !modifiers.alt,
+        "menu" => !modifiers.alt,
+        _ => false,
+    }
+}
+
+fn row_menu_anchor(row: Bounds<Pixels>) -> Point<Pixels> {
+    point(row.left(), row.bottom())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -91,6 +114,27 @@ impl PaneFlowApp {
         self.sidebar_cursor = self.sidebar_cursor_for(row);
         self.sidebar_selection.reveal_cursor_ring();
         self.sidebar_focus.focus(window, cx);
+    }
+
+    pub(super) fn sidebar_cursor_probe(&self) -> Option<AnyElement> {
+        let cursor = self.sidebar_cursor?;
+        let bounds = self.sidebar_cursor_bounds.clone();
+        Some(
+            canvas(
+                move |painted, _, _| bounds.set(Some((cursor, painted))),
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .inset_0()
+            .into_any_element(),
+        )
+    }
+
+    fn sidebar_cursor_menu_anchor(&self) -> Point<Pixels> {
+        match self.sidebar_cursor_bounds.get() {
+            Some((cursor, row)) if Some(cursor) == self.sidebar_cursor => row_menu_anchor(row),
+            _ => self.sidebar_scroll.bounds().origin,
+        }
     }
 
     fn sidebar_cursor_for(&self, row: SidebarRow) -> Option<SidebarCursor> {
@@ -306,6 +350,14 @@ impl PaneFlowApp {
             cx.stop_propagation();
             return;
         }
+        if opens_row_menu(key, modifiers)
+            && let Some(SidebarNavRow::Tree(row)) = self.sidebar_cursor_row(cx)
+        {
+            let anchor = self.sidebar_cursor_menu_anchor();
+            self.open_sidebar_row_menu(row, anchor, window, cx);
+            cx.stop_propagation();
+            return;
+        }
         if matches!(key, "delete" | "backspace") && !self.sidebar_selection.is_empty() {
             self.request_close_sidebar_selection(window, cx);
             cx.stop_propagation();
@@ -377,7 +429,28 @@ impl PaneFlowApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{CursorMove, SidebarNavRow, SidebarRow, moved_cursor_index, sidebar_nav_order};
+    use gpui::{Bounds, Modifiers, point, px, size};
+
+    use super::{
+        CursorMove, SidebarNavRow, SidebarRow, moved_cursor_index, opens_row_menu, row_menu_anchor,
+        sidebar_nav_order,
+    };
+
+    #[test]
+    fn shift_f10_and_the_menu_key_open_the_row_menu_and_bare_f10_does_not() {
+        assert!(opens_row_menu("f10", Modifiers::shift()));
+        assert!(opens_row_menu("menu", Modifiers::none()));
+        assert!(opens_row_menu("menu", Modifiers::shift()));
+        assert!(!opens_row_menu("f10", Modifiers::none()));
+        assert!(!opens_row_menu("f10", Modifiers::alt()));
+        assert!(!opens_row_menu("f2", Modifiers::shift()));
+    }
+
+    #[test]
+    fn the_keyboard_row_menu_opens_below_the_row_at_its_left_edge() {
+        let row = Bounds::new(point(px(12.), px(80.)), size(px(200.), px(28.)));
+        assert_eq!(row_menu_anchor(row), point(px(12.), px(108.)));
+    }
 
     #[test]
     fn cursor_moves_clamp_at_both_ends() {

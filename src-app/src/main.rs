@@ -212,6 +212,7 @@ struct PaneFlowApp {
     renaming_tab: Option<TabKey>,
     sidebar_focus: FocusHandle,
     sidebar_cursor: Option<app::sidebar::keyboard::SidebarCursor>,
+    sidebar_cursor_bounds: app::sidebar::keyboard::SidebarCursorBounds,
     rename_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     sidebar_filter_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     sidebar_filter_hovered: bool,

@@ -360,6 +360,7 @@ impl PaneFlowApp {
             renaming_tab: None,
             sidebar_focus: cx.focus_handle(),
             sidebar_cursor: None,
+            sidebar_cursor_bounds: Default::default(),
             rename_input,
             sidebar_filter_input,
             sidebar_filter_hovered: false,

@@ -40,6 +40,8 @@ impl PaneFlowApp {
             .aria_label(row_name)
             .aria_expanded(is_expanded)
             .aria_selected(self.shown_workspace_idx() == Some(i))
+            .aria_description(SIDEBAR_ROW_MENU_HINT)
+            .aria_keyshortcuts(SIDEBAR_ROW_MENU_SHORTCUT)
             .when_some(title_tooltip, |shell, title| {
                 shell.delayed_tooltip(crate::ui_primitives::text_tooltip(title))
             })
@@ -75,20 +77,7 @@ impl PaneFlowApp {
                     && let Some(position) = e.mouse_position()
                 {
                     cx.stop_propagation();
-                    if this.open_sidebar_selection_menu(
-                        SidebarRow::Folder(idx),
-                        position,
-                        window,
-                        cx,
-                    ) {
-                        return;
-                    }
-                    this.commit_rename(cx);
-                    this.dismiss_transient_surfaces();
-                    this.place_sidebar_cursor(SidebarRow::Folder(idx), window, cx);
-                    this.workspace_menu_open = Some(WorkspaceContextMenu::at(idx, position));
-                    cx.stop_propagation();
-                    cx.notify();
+                    this.open_sidebar_row_menu(SidebarRow::Folder(idx), position, window, cx);
                 }
             }));
 
@@ -193,7 +182,9 @@ impl PaneFlowApp {
                 row.child(sidebar_selection_fill(ui, shape))
             })
             .when(cursor, |row| {
-                row.children(self.sidebar_cursor_ring_for(shape, ui))
+                row.debug_selector(|| "sidebar-cursor-row".into())
+                    .children(self.sidebar_cursor_ring_for(shape, ui))
+                    .children(self.sidebar_cursor_probe())
             });
 
         div()

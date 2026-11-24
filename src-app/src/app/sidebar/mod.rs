@@ -31,6 +31,7 @@ use crate::ui_primitives::squircle_skin;
 pub(crate) use agents_section::AgentsSection;
 use drop::*;
 pub(crate) use folder_glyph::{FolderGlyphs, folder_glyphs};
+use keyboard::{SIDEBAR_ROW_MENU_HINT, SIDEBAR_ROW_MENU_SHORTCUT};
 pub(crate) use lane::SpinnerClock;
 use lane::{Lane, infer_lane, render_lane_slot};
 use meta::*;
@@ -42,8 +43,7 @@ pub(crate) use style::*;
 pub(crate) use tab_row::*;
 
 use crate::{
-    PaneFlowApp, SIDEBAR_WIDTH, TabContextMenu, TabDrag, TabKey, WorkspaceContextMenu,
-    WorkspaceDrag, WorkspaceDragPreview, ai_types,
+    PaneFlowApp, SIDEBAR_WIDTH, TabDrag, TabKey, WorkspaceDrag, WorkspaceDragPreview, ai_types,
     app::pull_request::PullRequest,
     pane_drag::PaneDrag,
     settings::components::with_alpha,
