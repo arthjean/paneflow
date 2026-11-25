@@ -66,6 +66,46 @@ fn row(session: &SessionId, generation: u64, workspace: &WorkspaceId) -> Value {
     })
 }
 
+fn still_running(home: &Path, session: &SessionId, workspace: &WorkspaceId) {
+    use paneflow_config::schema::{HostInstanceToken, SessionGeneration};
+    use paneflow_host::manifest::{MANIFEST_SCHEMA_VERSION, SessionLaunch, SessionManifest};
+    let manifest = SessionManifest {
+        schema: MANIFEST_SCHEMA_VERSION,
+        session: session.clone(),
+        workspace: Some(workspace.clone()),
+        generation: SessionGeneration::FIRST,
+        host_instance: HostInstanceToken::new(),
+        cwd: "/work".to_string(),
+        launch: SessionLaunch {
+            shell: "/bin/sh".to_string(),
+            args: Vec::new(),
+            env: Default::default(),
+            cols: 80,
+            rows: 24,
+            sandbox: false,
+            sandbox_unix_scope: false,
+        },
+        lifecycle: SessionLifecycle::Running,
+        process: None,
+        process_session: None,
+        name: None,
+        title: None,
+        current_cwd: None,
+        last_hook: None,
+        hook_revision: 0,
+        generation_started_at_ms: Some(1),
+        declared_status: None,
+        program_status_capable: false,
+        runtime: None,
+        final_output: None,
+        host_protocol_version: paneflow_host::HOST_PROTOCOL_VERSION,
+        host_build_id: "test-build".to_string(),
+        created_at_ms: 1,
+        updated_at_ms: 2,
+    };
+    paneflow_host::manifest::write_manifest(home, &manifest).unwrap();
+}
+
 fn snapshot(worker: &Arc<Worker>, rows: Vec<Value>) {
     crate::worker::apply(worker, CoreFrame::Snapshot(rows), true);
 }
@@ -191,8 +231,10 @@ fn grants_of_live_sessions_survive_a_worker_restart() {
         running.stop();
         created.id
     };
+    still_running(home.path(), &session, &workspace);
     let running = open(home.path(), CLOSED);
     let worker = running.worker();
+    worker.reconcile_pane_grants();
     let ids: Vec<String> = worker
         .pane_grants
         .set()
