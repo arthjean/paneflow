@@ -845,6 +845,63 @@ libghostty_archive_cases() {
     "$compare" x86_64-unknown-linux-gnu
 }
 
+cef_fixture_manifest() {
+  local dir="$1" archive="$2" sha="$3"
+  mkdir -p "$dir"
+  cat > "$dir/manifest.toml" <<EOF
+schema_version = 1
+cef_version = "1.0.0+gfixture+chromium-1.0.0.0"
+
+[targets."x86_64-unknown-linux-gnu"]
+cef_platform = "linux64"
+archive_url = "file://$archive"
+archive_name = "cef_binary_fixture_linux64_minimal.tar.bz2"
+archive_sha256 = "$sha"
+archive_bytes = 7
+EOF
+}
+
+fetch_cef_cases() {
+  local fetch="$ROOT/scripts/fetch-cef.sh"
+  local dir="$WORK/fetch-cef"
+  local archive="$dir/source/cef.tar.bz2"
+  mkdir -p "$dir/source"
+  printf 'archive' > "$archive"
+  local good
+  good="$(sha256sum "$archive" | awk '{print $1}')"
+  local placed="prebuilt/x86_64-unknown-linux-gnu/cef_binary_fixture_linux64_minimal.tar.bz2"
+
+  cef_fixture_manifest "$dir/good" "$archive" "$good"
+  expect "a CEF archive whose hash matches the manifest is placed" 0 \
+    "x86_64-unknown-linux-gnu: placed .*$placed \($good\)" \
+    "$fetch" --manifest "$dir/good/manifest.toml" --target x86_64-unknown-linux-gnu
+  expect "a CEF archive already in place is left alone" 0 \
+    "x86_64-unknown-linux-gnu: CEF 1\.0\.0\+gfixture\+chromium-1\.0\.0\.0 already in place" \
+    "$fetch" --manifest "$dir/good/manifest.toml" --target x86_64-unknown-linux-gnu
+
+  cef_fixture_manifest "$dir/bad" "$archive" "$(printf '0%.0s' {1..64})"
+  mkdir -p "$dir/bad/prebuilt/x86_64-unknown-linux-gnu"
+  printf 'stale' > "$dir/bad/$placed"
+  expect "a CEF archive whose hash differs from the manifest is refused" 1 \
+    "downloaded archive hash $good does not match manifest archive_sha256 0{64}" \
+    "$fetch" --manifest "$dir/bad/manifest.toml" --target x86_64-unknown-linux-gnu
+  cases=$((cases + 1))
+  if [ -n "$(find "$dir/bad/prebuilt" -type f)" ]; then
+    echo "FAIL a refused CEF archive left files in place: $(find "$dir/bad/prebuilt" -type f)"
+    failures=$((failures + 1))
+  else
+    echo "ok   a refused CEF archive leaves no archive in place"
+  fi
+
+  expect "a target the CEF manifest does not declare is refused" 1 \
+    "manifest declares no target aarch64-apple-darwin" \
+    "$fetch" --manifest "$dir/good/manifest.toml" --target aarch64-apple-darwin
+  expect "the tracked CEF manifest pins all four shipping targets" 0 "" \
+    bash -c "for t in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu aarch64-apple-darwin x86_64-pc-windows-msvc; do
+      awk -v t=\"\$t\" '\$0 == \"[targets.\\\"\" t \"\\\"]\" { f = 1; next } f && /^\\[/ { exit } f && /^archive_sha256 = \"[0-9a-f]{64}\"\$/ { s = 1 } f && /^archive_url = \"https:\\/\\// { u = 1 } END { exit !(s && u) }' '$ROOT/native/cef/manifest.toml' || { echo \"missing pin for \$t\"; exit 1; }
+    done"
+}
+
 have_tool() {
   local tool="$1" purpose="$2"
   if command -v "$tool" >/dev/null; then
@@ -1227,6 +1284,7 @@ release_staging_cases
 signing_detection_cases
 release_tag_cases
 libghostty_archive_cases
+fetch_cef_cases
 retry_cases
 powershell_retry_cases
 

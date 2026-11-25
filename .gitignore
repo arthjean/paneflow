@@ -95,3 +95,6 @@ LOG_*.text
 # native/libghostty/manifest.toml (scripts/fetch-libghostty.sh), never tracked.
 /native/libghostty/prebuilt/*/lib/
 /native/conpty/prebuilt/
+# CEF archives: fetched from the URLs pinned by native/cef/manifest.toml
+# (scripts/fetch-cef.sh), never tracked.
+/native/cef/prebuilt/

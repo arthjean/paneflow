@@ -1,0 +1,42 @@
+schema_version = 1
+cef_version = "156.0.31+ge603d97+chromium-156.0.8078.100"
+chromium_version = "156.0.8078.100"
+cef_channel = "stable"
+cef_crate = "cef"
+cef_crate_version = "156.7.0+156.0.31"
+cef_crate_repository = "https://github.com/tauri-apps/cef-rs"
+cef_crate_tag = "cef-v156.7.0+156.0.31"
+archive_index_url = "https://cef-builds.spotifycdn.com/index.json"
+archive_type = "minimal"
+
+[targets."x86_64-unknown-linux-gnu"]
+cef_platform = "linux64"
+archive_url = "https://cef-builds.spotifycdn.com/cef_binary_156.0.31%2Bge603d97%2Bchromium-156.0.8078.100_linux64_minimal.tar.bz2"
+archive_name = "cef_binary_156.0.31+ge603d97+chromium-156.0.8078.100_linux64_minimal.tar.bz2"
+archive_sha256 = "a6c3452c47f344f9f125c71dfc9d8965149bac7c8df1e23ffd80442a28ce1b62"
+archive_sha1 = "0adb813face4ca098f17210fe471b172c2bc1950"
+archive_bytes = 333321290
+
+[targets."aarch64-unknown-linux-gnu"]
+cef_platform = "linuxarm64"
+archive_url = "https://cef-builds.spotifycdn.com/cef_binary_156.0.31%2Bge603d97%2Bchromium-156.0.8078.100_linuxarm64_minimal.tar.bz2"
+archive_name = "cef_binary_156.0.31+ge603d97+chromium-156.0.8078.100_linuxarm64_minimal.tar.bz2"
+archive_sha256 = "6c6898a58a11733ba097b5b850aff38287d0df17e4d9b9209ceff47eba087cd3"
+archive_sha1 = "a253f6ba3e790be18057f5d89533bac373cde19c"
+archive_bytes = 431212107
+
+[targets."aarch64-apple-darwin"]
+cef_platform = "macosarm64"
+archive_url = "https://cef-builds.spotifycdn.com/cef_binary_156.0.31%2Bge603d97%2Bchromium-156.0.8078.100_macosarm64_minimal.tar.bz2"
+archive_name = "cef_binary_156.0.31+ge603d97+chromium-156.0.8078.100_macosarm64_minimal.tar.bz2"
+archive_sha256 = "1bd39ff38db20baa5b52768919d6599aafb4aacbc7fd192458496749a0630ee8"
+archive_sha1 = "7d1d513c779db3829f69a35567f3fd8e641ed5a9"
+archive_bytes = 134916866
+
+[targets."x86_64-pc-windows-msvc"]
+cef_platform = "windows64"
+archive_url = "https://cef-builds.spotifycdn.com/cef_binary_156.0.31%2Bge603d97%2Bchromium-156.0.8078.100_windows64_minimal.tar.bz2"
+archive_name = "cef_binary_156.0.31+ge603d97+chromium-156.0.8078.100_windows64_minimal.tar.bz2"
+archive_sha256 = "c691636862b5f6bab05e76d77bd1b57799659552a25a5bc8b7eaa365de6e63fd"
+archive_sha1 = "d179fb251141d6c30992a1775db80a6a879852ba"
+archive_bytes = 175156160
