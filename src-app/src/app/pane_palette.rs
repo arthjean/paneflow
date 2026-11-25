@@ -852,14 +852,7 @@ impl PaneFlowApp {
         }
         column = column.child(buttons);
         if let Some(error) = &palette.error {
-            column = column.child(
-                div()
-                    .pt(px(10.))
-                    .max_w(px(PICKER_WIDTH))
-                    .text_size(px(11.))
-                    .text_color(ui.vc_deleted)
-                    .child(error.clone()),
-            );
+            column = column.child(palette_refusal(error.clone(), ui));
         }
 
         div()
@@ -1369,6 +1362,18 @@ impl PaneFlowApp {
 
 const PRESET_NOT_INSTALLED: &str = "not installed";
 
+fn palette_refusal(message: String, ui: crate::theme::UiColors) -> Stateful<Div> {
+    div()
+        .id("pane-palette-refusal")
+        .role(Role::Status)
+        .aria_label(SharedString::from(message.clone()))
+        .pt(px(10.))
+        .max_w(px(PICKER_WIDTH))
+        .text_size(px(11.))
+        .text_color(ui.vc_deleted)
+        .child(message)
+}
+
 fn palette_preset_row(
     idx: usize,
     preset: &Preset,
@@ -1614,6 +1619,15 @@ mod tests {
         assert_eq!(role, Role::Button);
         assert_eq!(node.label(), Some("Terminal"));
         assert_eq!(node.description(), None);
+    }
+
+    #[test]
+    fn a_refused_launch_is_a_status_that_reads_its_reason() {
+        let ui = crate::theme::ui_colors();
+        let reason = "invalid config key agents.hermes.sandbox: Sandbox 'paneflow' is not available on macos; the agent profile hermes does not start";
+        let (role, node) = exposed(&palette_refusal(reason.to_string(), ui));
+        assert_eq!(role, Role::Status);
+        assert_eq!(node.label(), Some(reason));
     }
 
     #[test]

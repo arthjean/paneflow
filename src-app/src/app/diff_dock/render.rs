@@ -496,6 +496,32 @@ fn toolbar_toggle(
     ui: crate::theme::UiColors,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static,
 ) -> gpui::Stateful<gpui::Div> {
+    toolbar_control(
+        gpui::accesskit::Role::Button,
+        id,
+        label,
+        icon,
+        height,
+        pressed,
+        ui,
+        on_click,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the toolbar_toggle arguments plus the accessibility role"
+)]
+fn toolbar_control(
+    role: gpui::accesskit::Role,
+    id: &'static str,
+    label: &'static str,
+    icon: &'static str,
+    height: f32,
+    pressed: bool,
+    ui: crate::theme::UiColors,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static,
+) -> gpui::Stateful<gpui::Div> {
     let hover = crate::app::constants::sidebar_tab_hover_background();
     squircle_skin(
         div()
@@ -511,7 +537,7 @@ fn toolbar_toggle(
         pressed.then_some(hover),
         Some(hover),
     )
-    .accessible_control(gpui::accesskit::Role::Button, label)
+    .accessible_control(role, label)
     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
     .on_activate(on_click)
     .child(
@@ -528,24 +554,74 @@ fn render_layout_segments(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> gpui::Stateful<gpui::Div> {
-    let unified = toolbar_toggle(
-        "diff-dock-layout-unified",
-        "Unified diff view",
-        LAYOUT_UNIFIED_ICON,
-        TOOLBAR_SEGMENT_HEIGHT,
+    let unified = layout_segment(
+        LayoutSegment::Unified,
         !split,
         ui,
         cx.listener(|this, _: &ClickEvent, _w, cx| this.set_diff_dock_split(false, cx)),
     );
-    let side_by_side = toolbar_toggle(
-        "diff-dock-layout-split",
-        "Split diff view",
-        LAYOUT_SPLIT_ICON,
-        TOOLBAR_SEGMENT_HEIGHT,
+    let side_by_side = layout_segment(
+        LayoutSegment::Split,
         split,
         ui,
         cx.listener(|this, _: &ClickEvent, _w, cx| this.set_diff_dock_split(true, cx)),
     );
+    layout_segment_group(ui).child(unified).child(side_by_side)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LayoutSegment {
+    Unified,
+    Split,
+}
+
+impl LayoutSegment {
+    fn id(self) -> &'static str {
+        match self {
+            Self::Unified => "diff-dock-layout-unified",
+            Self::Split => "diff-dock-layout-split",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Unified => "Unified diff view",
+            Self::Split => "Split diff view",
+        }
+    }
+
+    fn icon(self) -> &'static str {
+        match self {
+            Self::Unified => LAYOUT_UNIFIED_ICON,
+            Self::Split => LAYOUT_SPLIT_ICON,
+        }
+    }
+}
+
+fn layout_segment(
+    segment: LayoutSegment,
+    selected: bool,
+    ui: crate::theme::UiColors,
+    on_click: impl Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static,
+) -> gpui::Stateful<gpui::Div> {
+    toolbar_control(
+        gpui::accesskit::Role::RadioButton,
+        segment.id(),
+        segment.label(),
+        segment.icon(),
+        TOOLBAR_SEGMENT_HEIGHT,
+        selected,
+        ui,
+        on_click,
+    )
+    .aria_toggled(if selected {
+        gpui::accesskit::Toggled::True
+    } else {
+        gpui::accesskit::Toggled::False
+    })
+}
+
+fn layout_segment_group(ui: crate::theme::UiColors) -> gpui::Stateful<gpui::Div> {
     squircle_skin(
         div()
             .id("diff-dock-layout")
@@ -561,8 +637,8 @@ fn render_layout_segments(
         Some(with_alpha(ui.text, 0.05)),
         None,
     )
-    .child(unified)
-    .child(side_by_side)
+    .role(gpui::accesskit::Role::RadioGroup)
+    .aria_label("Diff view")
 }
 
 pub(super) fn render_diff_files_toolbar(
@@ -776,6 +852,44 @@ pub(super) fn diff_panel_centered(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::accesskit::{Action, Node, Role, Toggled};
+
+    fn exposed<E: gpui::Element>(element: &E) -> (Role, Node) {
+        let role = element
+            .a11y_role()
+            .expect("the element exposes an accessibility role");
+        let mut node = Node::new(role);
+        element.write_a11y_info(&mut node);
+        (role, node)
+    }
+
+    #[test]
+    fn the_unified_and_split_buttons_are_a_radio_pair_that_checks_the_active_view() {
+        let ui = crate::theme::ui_colors();
+        let (role, node) = exposed(&layout_segment_group(ui));
+        assert_eq!(role, Role::RadioGroup);
+        assert_eq!(node.label(), Some("Diff view"));
+        for split in [false, true] {
+            for (segment, selected) in [
+                (LayoutSegment::Unified, !split),
+                (LayoutSegment::Split, split),
+            ] {
+                let (role, node) = exposed(&layout_segment(segment, selected, ui, |_, _, _| {}));
+                assert_eq!(role, Role::RadioButton, "{segment:?}");
+                assert_eq!(node.label(), Some(segment.label()));
+                assert_eq!(
+                    node.toggled(),
+                    Some(if selected {
+                        Toggled::True
+                    } else {
+                        Toggled::False
+                    }),
+                    "{segment:?} with split {split}"
+                );
+                assert!(node.supports_action(Action::Click), "{segment:?}");
+            }
+        }
+    }
 
     #[test]
     fn the_dock_card_takes_the_terminal_card_color_under_a_material() {

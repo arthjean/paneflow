@@ -255,6 +255,43 @@ fn removal_explanation(blockers: &[WorktreeBlocker]) -> &'static str {
     }
 }
 
+fn removal_dialog_title(dialog: &WorktreeRemoveDialog) -> String {
+    format!("Remove the worktree of {}?", dialog.branch)
+}
+
+fn removal_dialog_card(
+    dialog: &WorktreeRemoveDialog,
+    ui: crate::theme::UiColors,
+    content: gpui::Div,
+) -> gpui::Stateful<gpui::Div> {
+    modal_card(
+        "worktree-remove-dialog",
+        DIALOG_WIDTH,
+        CARD_RADIUS,
+        ui,
+        content,
+    )
+    .role(gpui::accesskit::Role::AlertDialog)
+    .aria_label(removal_dialog_title(dialog))
+    .aria_description(removal_dialog_message(dialog))
+}
+
+fn removal_dialog_message(dialog: &WorktreeRemoveDialog) -> String {
+    let mut parts = vec![
+        format!("{}.", blocker_summary(&dialog.blockers)),
+        dialog.path.display().to_string(),
+    ];
+    if let Some(error) = &dialog.unlisted_sessions {
+        parts.push(unlisted_sessions_warning(error));
+    }
+    parts.push(removal_explanation(&dialog.blockers).to_string());
+    parts.join(" ")
+}
+
+fn unlisted_sessions_warning(error: &str) -> String {
+    format!("Running sessions could not be listed, so this may remove more than it shows: {error}")
+}
+
 impl PaneFlowApp {
     fn worktree_blockers(&self, path: &Path, sessions: &[LiveSession]) -> Vec<WorktreeBlocker> {
         let workspaces: Vec<(u64, String, PathBuf)> = self
@@ -527,7 +564,7 @@ impl PaneFlowApp {
 
         let header = modal_header(
             ui,
-            format!("Remove the worktree of {}?", dialog.branch),
+            removal_dialog_title(dialog),
             blocker_summary(&dialog.blockers),
         )
         .child(
@@ -541,10 +578,7 @@ impl PaneFlowApp {
                 div()
                     .text_size(LABEL_SM)
                     .text_color(ui.vc_deleted)
-                    .child(format!(
-                        "Running sessions could not be listed, so this may remove more than \
-                         it shows: {error}"
-                    )),
+                    .child(unlisted_sessions_warning(&error)),
             )
         });
 
@@ -580,10 +614,8 @@ impl PaneFlowApp {
                 )),
             );
 
-        let card = modal_card(
-            "worktree-remove-dialog",
-            DIALOG_WIDTH,
-            CARD_RADIUS,
+        let card = removal_dialog_card(
+            dialog,
             ui,
             div()
                 .child(header)
@@ -607,6 +639,56 @@ impl PaneFlowApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::accesskit::{Action, Node, Role};
+
+    fn exposed<E: gpui::Element>(element: &E) -> (Role, Node) {
+        let role = element
+            .a11y_role()
+            .expect("the element exposes an accessibility role");
+        let mut node = Node::new(role);
+        element.write_a11y_info(&mut node);
+        (role, node)
+    }
+
+    #[test]
+    fn the_removal_confirmation_is_an_alert_dialog_with_its_title_message_and_buttons() {
+        let ui = crate::theme::ui_colors();
+        let dialog = WorktreeRemoveDialog {
+            path: PathBuf::from("/repo.worktrees/feat-solo"),
+            repo_root: PathBuf::from("/repo"),
+            branch: "feat-solo".to_string(),
+            blockers: vec![WorktreeBlocker::Session {
+                session: SessionId::new(),
+                title: "zsh".to_string(),
+            }],
+            unlisted_sessions: None,
+            focused: false,
+        };
+        let (role, node) = exposed(&removal_dialog_card(&dialog, ui, gpui::div()));
+        assert_eq!(role, Role::AlertDialog);
+        assert_eq!(node.label(), Some("Remove the worktree of feat-solo?"));
+        let message = node.description().expect("the dialog reads its message");
+        assert!(
+            message.contains("1 running session is using it"),
+            "{message}"
+        );
+        assert!(message.contains("/repo.worktrees/feat-solo"), "{message}");
+        assert!(message.contains("snapshot"), "{message}");
+
+        let (role, node) = exposed(&secondary_button(
+            "worktree-remove-cancel",
+            "Cancel",
+            ui,
+            |_, _, _| {},
+        ));
+        assert_eq!((role, node.label()), (Role::Button, Some("Cancel")));
+        assert!(node.supports_action(Action::Click));
+        let (role, node) = exposed(
+            &destructive_button("worktree-remove-confirm", "Remove").on_activate(|_, _, _| {}),
+        );
+        assert_eq!((role, node.label()), (Role::Button, Some("Remove")));
+        assert!(node.supports_action(Action::Click));
+    }
 
     fn session(title: &str, cwd: &str) -> LiveSession {
         LiveSession {
