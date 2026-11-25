@@ -1,0 +1,136 @@
+# T7: integrations, hooks, status line relay, skills add on the final build, every write into a throwaway HOME under $SCRATCH/cover-fx (never the real ~/.claude or ~/.codex). PANEFLOW_HOME=~/.paneflow-dev-cover; 'ph' = pf with HOME set to the throwaway directory and CLAUDE_CONFIG_DIR, CODEX_HOME unset.
+# throwaway HOME=$SCRATCH/cover-fx/home1 with a user statusLine already in ~/.claude/settings.json; PANEFLOW_HOME=~/.paneflow-dev-cover
+$ ph integrations list
+claude-code	not installed
+codex	not installed
+opencode	no integration (detection only)
+pi	no integration (detection only)
+hermes	no integration (detection only)
+grok	no integration (detection only)
+amp	no integration (detection only)
+gemini	no integration (detection only)
+github-copilot	no integration (detection only)
+factory	no integration (detection only)
+openclaw	no integration (detection only)
+muse-code	no integration (detection only)
+fx	no integration (detection only)
+[exit=0]
+
+$ ph integrations install claude-code
+Claude Code: installed
+[exit=0]
+
+$ python3 -c 'import json; d=json.load(open("$SCRATCH/cover-fx/home1/.claude/settings.json")); print("statusLine:", d.get("statusLine")); print("hooks:", sorted(d.get("hooks",{}).keys())); print("model:", d.get("model"))'
+statusLine: {'type': 'command', 'command': 'echo my-own-status'}
+hooks: ['Notification', 'PermissionRequest', 'PreToolUse', 'SessionStart', 'Stop', 'StopFailure', 'SubagentStart', 'SubagentStop', 'UserPromptSubmit']
+model: opus
+[exit=0]
+
+$ ls $SCRATCH/cover-fx/home1/.claude/skills/
+paneflow-conductor
+[exit=0]
+
+$ grep -c paneflow $SCRATCH/cover-fx/home1/.claude.json
+2
+[exit=0]
+
+$ ph hooks status
+claude-code: installed
+codex: not installed
+opencode: no integration (detection only)
+pi: no integration (detection only)
+hermes: no integration (detection only)
+grok: no integration (detection only)
+amp: no integration (detection only)
+gemini: no integration (detection only)
+github-copilot: no integration (detection only)
+factory: no integration (detection only)
+openclaw: no integration (detection only)
+muse-code: no integration (detection only)
+fx: no integration (detection only)
+[exit=0]
+
+
+# throwaway HOME=$SCRATCH/cover-fx/home2, no statusLine of the user
+$ ph integrations install claude-code
+Claude Code: installed
+[exit=0]
+
+statusLine: {'type': 'command', 'command': '~/.paneflow-dev-cover/bin/paneflow-ai-hook.sh StatusLine', '_paneflow_managed': True}
+# usage.plan_limits=false, then install again
+$ ph integrations install claude-code
+Claude Code: installed
+[exit=0]
+
+statusLine: None
+$ ph integrations install claude-code
+Claude Code: installed
+[exit=0]
+
+statusLine: {'type': 'command', 'command': '~/.paneflow-dev-cover/bin/paneflow-ai-hook.sh StatusLine', '_paneflow_managed': True}
+$ ph integrations remove claude-code
+Claude Code: not installed
+[exit=0]
+
+statusLine: None
+== an entry another Paneflow home owns
+$ ph integrations install claude-code
+Claude Code: installed
+[exit=0]
+
+$ env -u CLAUDE_CONFIG_DIR -u CODEX_HOME HOME=$SCRATCH/cover-fx/home2 PANEFLOW_HOME=$HOME/.paneflow-dev-cover-other pf integrations install claude-code
+paneflow integrations: the Paneflow hook set in $SCRATCH/cover-fx/home2/.claude/settings.json belongs to the Paneflow home ~/.paneflow-dev-cover, not to this one (~/.paneflow-dev-cover-other); re-run with --force to point it at ~/.paneflow-dev-cover-other
+[exit=1]
+
+$ env -u CLAUDE_CONFIG_DIR -u CODEX_HOME HOME=$SCRATCH/cover-fx/home2 PANEFLOW_HOME=$HOME/.paneflow-dev-cover-other pf integrations install claude-code --force
+Claude Code: installed
+[exit=0]
+
+$ grep -o 'paneflow-dev-cover[a-z-]*/bin/paneflow-mcp' $SCRATCH/cover-fx/home2/.claude.json
+paneflow-dev-cover-other/bin/paneflow-mcp
+[exit=0]
+
+== CLAUDE_CONFIG_DIR and CODEX_HOME overrides
+$ env HOME=$SCRATCH/cover-fx/home2 CLAUDE_CONFIG_DIR=$SCRATCH/cover-fx/home2/alt-claude CODEX_HOME=$SCRATCH/cover-fx/home2/alt-codex pf integrations install claude-code
+Claude Code: installed
+[exit=0]
+
+$ env HOME=$SCRATCH/cover-fx/home2 CLAUDE_CONFIG_DIR=$SCRATCH/cover-fx/home2/alt-claude CODEX_HOME=$SCRATCH/cover-fx/home2/alt-codex pf integrations install codex
+Codex: installed
+Trust the Paneflow hooks once in Codex with /hooks.
+[exit=0]
+
+$ find $SCRATCH/cover-fx/home2/alt-claude $SCRATCH/cover-fx/home2/alt-codex -maxdepth 3 -type f | sort
+$SCRATCH/cover-fx/home2/alt-claude/.claude.json
+$SCRATCH/cover-fx/home2/alt-claude/settings.json
+$SCRATCH/cover-fx/home2/alt-claude/skills/paneflow-conductor/SKILL.md
+$SCRATCH/cover-fx/home2/alt-codex/config.toml
+$SCRATCH/cover-fx/home2/alt-codex/hooks.json
+[exit=0]
+
+
+== paneflow-ai-hook outside every pane (no PANEFLOW_SESSION_ID), Paneflow running
+[exit=0] in 0.193 s
+
+## skills add, throwaway HOME ($SCRATCH/cover-fx/home3) and projects
+$ bunx skills add https://github.com/arthjean/paneflow/tree/main/skills/paneflow-conductor -y
+│                                                                           │
+├───────────────────────────────────────────────────────────────────────────╯
+
+│
+└  Done!  Review skills before use; they run with full agent permissions.
+
+$ bunx skills add https://github.com/arthjean/paneflow/tree/main/skills/paneflow-conductor -a codex -y
+
+│
+└  Done!  Review skills before use; they run with full agent permissions.
+
+$ npx skills add https://github.com/arthjean/paneflow/tree/main/skills/paneflow-conductor -y
+env: npx: No such file or directory (npx, pnpm and yarn are not installed on this Mac)
+files:
+<home>/proj/.agents/skills/paneflow-conductor/SKILL.md
+<home>/proj/agent/skills/paneflow-conductor/SKILL.md
+<home>/proj2/.agents/skills/paneflow-conductor/SKILL.md
+pnpm not found
+yarn not found
+== verdict: pass. integrations list and hooks status; install writes the hooks, the MCP entry and the conductor skill and leaves a user statusLine and other keys alone; with no user statusLine the managed relay is set, usage.plan_limits=false removes it at the next install, remove removes it; an entry owned by another home is refused naming both homes and --force takes it over; CLAUDE_CONFIG_DIR and CODEX_HOME redirect the files; the hook exits 0 at once outside a pane; bunx skills add installs for every detected agent and -a codex for Codex only. npx, pnpm dlx and yarn dlx: unavailable (not installed).

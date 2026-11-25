@@ -1,0 +1,5 @@
+# T13: Changes dock on the final build, workspace 'solo' with a.txt modified and untracked.txt added.
+== Cmd+Alt+B (physical key on the dev window): the dock opens on 'Open a surface' with Changes (C), Terminal (T), File (F), exposed as three buttons (50-dock-cmd-alt-b.jpg)
+== key C: the Changes surface opens; toolbar buttons exposed: combobox 'Branch main', 'Refresh changes', 'Collapse all files', 'Unified diff view', 'Split diff view', 'Hide whitespace changes', 'Show file tree'; group 'Changed files' lists 'a.txt, modified' and 'untracked.txt, added'
+== press 'Unified diff view': the diff shows one column with the added line of a.txt and the new file (50-dock-unified.jpg); press 'Hide whitespace changes': the button becomes 'Show whitespace changes'
+== verdict: pass. Observation: the Unified and Split buttons carry no pressed or selected state in the accessibility tree, so the active view is not announced.

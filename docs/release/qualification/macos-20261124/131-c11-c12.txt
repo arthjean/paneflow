@@ -1,0 +1,47 @@
+# C11 and C12 fixes: live check on a dev build. Local evidence (untracked).
+Build: worktree branch worktree-agent-a44b5596bbc63e9d8, commits 71a712dc (C12) and 027141e6 (C11), debug.
+Instance: scripts/dev.sh --tag c11c12, home ~/.paneflow-dev-c11c12, every inherited PANEFLOW_* variable unset,
+PATH led by the coverage stand-in dir ($SCRATCH/cover-fx/sbin). No agent launcher was pressed: every pane ran zsh or echo.
+$P = $SCRATCH/c11c12-proj (an empty folder).
+
+paneflow.json commands:
+  {"name":"qa-run","description":"QA simple command","command":"echo qa-command-ran"}
+  {"name":"qa-tpl","workspace":{"name":"qa-tpl","cwd":"$P","layout_preset":"even_v","layout":split horizontal [
+     t-one "echo one", t-two "echo two" focus]}}
+
+Setup: paneflow up proj.toml (name "proj", 3 panes p-one, p-two, p-three, all cwd $P).
+  host status: live_sessions 3, panes 3.
+
+## C11: a commands[] shell entry in the command palette
+Cmd+Shift+P, query "qa-":
+  list 'Commands' -> statictext 'qa-run' ['selected']   (before the fix: 'No matching command')
+Enter:
+  sidebar: proj > Tab 1, qa-run (selected)   (a new tab named after the entry, in the shown workspace)
+  paneflow ls: 1025 p-one, 1026 p-two, 1027 p-three, 1036 shell (cwd $P)
+  paneflow read 1036:
+    % echo qa-command-ran
+    qa-command-ran
+  host status: live_sessions 4, panes 4.
+Settings > Workspaces still lists only 'Open template qa-tpl' (simple commands are config-only there, as settings.md says).
+
+## C12: Settings > Workspaces > Launch with a workspace of the same folder open
+Before Launch: workspaces [proj (4 panes, active, cwd $P)]; host live_sessions 4.
+Settings... (app menu) > Workspaces > Open template qa-tpl > Launch.
+After Launch:
+  workspace.list: [('proj', 4, cwd $P), ('qa-tpl', 2, cwd $P, active)]
+  sidebar: proj > Tab 1, qa-run ; qa-tpl > Tab 1 (selected)
+  panes: 6 [p-one, p-two, p-three, shell, t-one, t-two]
+  paneflow read t-one -> "one", t-two -> "two"
+  host status: live_sessions 6, listed 6, running 6   (6 sessions for 6 panes; before the fix: 29 for 21)
+  proj kept every pane; nothing was replaced, so nothing was held or orphaned.
+Recount 6 s later (past the 5 s closed-session grace): workspaces proj 4 + qa-tpl 2, panes 6, host live_sessions 6.
+
+## Run workflow (workspace menu), the other caller of Op::LaunchTemplate
+Not exercised live: the dev window could not be brought to the front (focus-window: "Application did not become
+frontmost"), and the workspace menu needs a right-click. Covered by the layout pin
+pin_a_template_closes_the_tab_it_replaces_and_is_refused_while_zoomed: the replaced tab's sessions are held
+("hold a", "hold b"), the "Tab closed" toast offers to reopen it, and they stop once the grace ends ("stop a", "stop b").
+
+## Teardown
+kill <pid of the dev window we started>; paneflow serve stop; paneflow host stop --force (the shells of this home);
+no process with home ~/.paneflow-dev-c11c12 left; home moved to the Trash.

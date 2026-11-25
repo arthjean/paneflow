@@ -1,0 +1,122 @@
+# 125: flow runner fixes C2, C3, C4 (macOS qualification 2026-11-24)
+# Worktree branch worktree-agent-a6ef6f6bef834c284, on top of main fd627b91:
+#   e774d0f8 fix(flow): name the reason when a layout op is refused, and fail only that step   (C4)
+#   f509c111 fix(serve): show a terminal the worker starts only once its session is bound      (C2, root cause of C4 too)
+#   ca8e5a48 fix(flow): fail a refused send step with its reason instead of aborting the flow (C3)
+# Live instance: scripts/dev.sh --tag flowfix (PANEFLOW_HOME=~/.paneflow-dev-flowfix, every PANEFLOW_* unset), debug build,
+# paneflow.json {"ipc":{"scripting":true}}, default shell zsh. Fake agent = $SCRATCH/cover-fx/bin/amp (bash read loop,
+# OSC 7501 states); the bracketed-paste variant is the same binary with FAKE_AGENT_SCRIPT=fake-agent-bp.sh. No real agent ran.
+# Each loop run renames the flow, runs `paneflow flow run` (timeout 90 s), then closes the run's workspace.
+# Note: the "busy=0" loops actually ran 2 busy shell loops (BSD `seq 1 0` prints "1 0"); "busy=10" saturates all 10 cores.
+# The "before" fan-out loop ran on a build of main; no "before" loop was run at busy=10.
+
+== Root cause (C2 and C4)
+The worker served surface.split by committing the new surface to the layout, then creating the host session, then binding
+it (bind_session). The window, which fetches the layout view after the events of the previous split, could read the
+layout in that gap, see a terminal surface with no session, start its own shell for it and send its own bind_session.
+ - window bind first -> the worker's bind is refused -> surface.split fails "-32070: the layout op was refused: invalid" (C4)
+ - worker bind first -> the worker types the prompt into its own session; the window shows its other, empty shell (C2)
+That is why only the second pane of the fan-out (fan[beta]) was hit. Trace of the lost races: after the 30 "before" runs,
+`paneflow host stop` listed 13 extra live zsh sessions (cwd $SCRATCH/flowfix/repo) that no pane showed; after the 60
+"after" runs it listed exactly the 3 sessions of the 3 panes of the one remaining workspace.
+
+== Before (build of main): fan-out flow, 30 runs
+label=before-fan runs=30 pass=20 fail=10 busy=0
+C4 refusals: 4   C2 fan[beta] timeouts: 6   fan[alpha] failures: 0
+-- sample C4 (run 1): alpha was already RUNNING, the refused split is fan[beta]'s; no report, no reason
+== run 1 exit=1
+[    0.0s] impl → RUNNING
+[    5.1s] impl → READY
+[    5.1s] fan[alpha] → RUNNING
+paneflow: paneflow error -32070: the layout op was refused: invalid
+-- sample C2 (run 8)
+== run 8 exit=4
+[    0.0s] impl → RUNNING
+[    5.1s] impl → READY
+[    5.2s] fan[alpha] → RUNNING
+[    5.2s] fan[beta] → RUNNING
+[    7.2s] fan[alpha] → READY
+[   20.4s] fan[beta] → FAILED (timed out after 15s waiting for /FAN_beta/)
+---
+impl                     READY    
+fan[alpha]               READY    
+fan[beta]                FAILED   timed out after 15s waiting for /FAN_beta/
+
+== After (all three commits): fan-out flow, 30 runs at busy=0 (2 loops), 30 runs at busy=10
+label=after-fan runs=30 pass=30 fail=0 busy=0
+label=after-fan-load runs=30 pass=30 fail=0 busy=10
+-- sample (busy=10, run 30)
+== run 30 exit=0
+[    0.0s] impl → RUNNING
+[    5.2s] impl → READY
+[    5.3s] fan[alpha] → RUNNING
+[    5.3s] fan[beta] → RUNNING
+[    7.4s] fan[alpha] → READY
+[    7.4s] fan[beta] → READY
+[    7.4s] review → RUNNING
+[   10.0s] review → READY
+---
+impl                     READY    
+fan[alpha]               READY    
+fan[beta]                READY    
+
+== C3: send of a 3-line capture (capture lines = 3, send submit = true)
+-- toward the plain fake agent (no bracketed paste), 10 runs each
+before (CLI of f509c111, fire_feed unchanged from main):
+label=before-multi runs=10 pass=0 fail=10 busy=0
+paneflow: flow aborted: instance unreachable: paneflow error -32602: text contains CR or LF; multiline surface.send_text requires active bracketed paste (partial report above)
+after:
+label=after-multi runs=10 pass=0 fail=10 busy=0
+== run 1 exit=1
+[    0.0s] impl → RUNNING
+[    5.1s] impl → READY
+[    5.1s] review → RUNNING
+[    7.1s] review → FAILED (pane 297231 refused the text: it spans 3 lines and the program in that pane has not turned on bracketed paste, so the lines cannot arrive as one paste and each newline would submit on its own; target an agent that turns on bracketed paste or capture a single line (text contains CR or LF; multiline surface.send_text requires active bracketed paste))
+---
+impl                     READY    
+review                   FAILED   pane 297231 refused the text: it spans 3 lines and the program in that pane has not turned on bracketed paste, so the lines cannot arrive as one paste and each newline would submit on its own; target an agent that turns on bracketed paste or capture a single line (text contains CR or LF; multiline surface.send_text requires active bracketed paste)
+(exit 1 is the exit code of a failed step; the flow is no longer aborted and prints its report)
+-- toward the fake agent that turns on bracketed paste, 10 runs each (one paste, review READY)
+label=before-multi-bp runs=10 pass=10 fail=0 busy=0
+label=after-multi-bp runs=10 pass=10 fail=0 busy=0
+-- parity with `paneflow send --submit` (same two kinds of pane, same 3-line text)
+$ paneflow send plain-agent $'review one\ntwo\nthree' --submit
+paneflow: paneflow error -32602: text contains CR or LF; multiline surface.send_text requires active bracketed paste
+$ paneflow send bp-agent $'review one\ntwo\nthree' --submit
+{"sent": true, "paste": true, "submit_mode": "deferred_paste_cr", "agent_target": true, "terminal_bracketed_paste": true, "delivered": true, "started": true, "reason": "state_transition"}
+The flow delivers exactly as `paneflow send --submit` does: one bracketed paste toward a pane that turned it on; toward a
+pane that did not, the same refusal, now reported as that step's failure with its cause.
+
+== Tests: red with the fix reverted, green with it
+-- C4 red:
+test a_refused_bind_names_the_op_and_the_session_the_surface_already_shows ... FAILED
+thread 'a_refused_bind_names_the_op_and_the_session_the_surface_already_shows' (5591952) panicked at crates/paneflow-serve/tests/worker_launch.rs:469:5:
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.17s
+test cli::flow_cmd::tests::a_refused_split_fails_its_step_with_the_reason_and_the_flow_still_reports ... FAILED
+thread 'cli::flow_cmd::tests::a_refused_split_fails_its_step_with_the_reason_and_the_flow_still_reports' (5593863) panicked at src-app/src/cli/flow_cmd.rs:1391:14:
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3837 filtered out; finished in 0.03s
+-- C2 red (layout_authority.rs of e774d0f8):
+test a_terminal_the_worker_starts_is_never_shown_without_its_session ... FAILED
+thread 'a_terminal_the_worker_starts_is_never_shown_without_its_session' (5630434) panicked at crates/paneflow-serve/tests/worker_launch.rs:524:5:
+while its terminal starts, the layout shows the surface as Some(None): a window that reads it then starts a second terminal of its own
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.01s
+-- C3 red:
+test cli::flow_cmd::tests::a_refused_multiline_send_fails_its_step_with_the_reason_instead_of_aborting ... FAILED
+a refused write is a step failure, not an unreachable instance: "instance unreachable: paneflow error -32602: text contains CR or LF; multiline surface.send_text requires active bracketed paste"
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 3838 filtered out; finished in 0.05s
+-- green with the fix:
+  crates/paneflow-serve/tests/worker_launch.rs  a_terminal_the_worker_starts_is_never_shown_without_its_session        (C2)
+                                                a_refused_bind_names_the_op_and_the_session_the_surface_already_shows (C4)
+  src-app/src/cli/flow_cmd.rs                   a_refused_split_fails_its_step_with_the_reason_and_the_flow_still_reports (C4)
+                                                a_refused_multiline_send_fails_its_step_with_the_reason_instead_of_aborting (C3)
+
+== Gates on ca8e5a48
+cargo fmt --check                                                             ok
+cargo clippy --workspace --all-targets --locked -- -D warnings                ok
+cargo test -p paneflow-serve --locked                                         all pass but worker::tests::a_change_of_agent_prompts_in_paneflow_json_rewrites_the_agent_hooks_once,
+                                                                              which fails the same way with main's code in the full suite and passes alone (pre-existing)
+cargo test -p paneflow-app --bin paneflow flow                                82 passed
+cargo test -p paneflow-app --bin paneflow ipc_handler                         139 passed
+cargo test -p paneflow-app --bin paneflow layout                              74 passed
+cargo test -p paneflow-app --bin paneflow every_layout_pin_holds_in_an_isolated_home   1 passed
+bash scripts/check-test-wallclock.sh                                          no new wall-clock assertion

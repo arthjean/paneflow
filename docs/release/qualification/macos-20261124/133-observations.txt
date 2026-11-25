@@ -1,0 +1,46 @@
+# Coverage audit observations (macOS, 2026-11-25): agent row Error after exit, workspace.create title=, Cmd+W in a team lead, accessibility of the custom button dialog and the New branch refusal
+Worktree branch worktree-agent-aabb18e4ba764adec (local evidence, not tracked). Dev builds from that worktree, home ~/.paneflow-dev-obs started with `scripts/dev.sh --tag obs`, stopped with `paneflow serve stop` and `paneflow host stop --force` under that home and the app PID, then the home was trashed.
+Stand-ins only: PATH=$SCRATCH/obs-fx/sbin:~/.bun/bin:~/.cargo/bin:~/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin, FAKE_AGENT_SCRIPT=$SCRATCH/obs-fx/err-agent.sh (bash loop: err -> OSC 7501 state=error msg "Build failed"; busy -> state=working then sleep 300; split -> tmux split-window). No real agent ran.
+Dry check in a pane of the instance before any launch:
+  codex is ~/.paneflow-dev-obs/cache/bin/0.20.0/codex
+  codex is $SCRATCH/obs-fx/sbin/codex
+  claude is ~/.paneflow-dev-obs/cache/bin/0.20.0/claude
+  claude is $SCRATCH/obs-fx/sbin/claude
+  claude is ~/.local/bin/claude   (after the stand-in; the shim takes the first non-shim match)
+  codex --version / claude --version -> 0.0.0 (Paneflow coverage stand-in)
+Physical input: two early attempts to open the workspace menu (`--headed mouse-click --button right` at 576,204) and one `--headed press x` (TIMEOUT, delivery unverified) did not reach this instance: several dev windows of other agents were stacked on the same screen spot with another one focused, so those inputs may have landed in another agent's window. After that, no physical input was used: every action below went through IPC (`paneflow send`, `paneflow key`, `client.dispatch_action`) or a headless accessibility press.
+
+== 1. An agent row stays Error after its process ended (fixed, 02bf3d2a)
+Docs (features.md): the Agents section "lists the agent sessions of the active space"; "done and error stay until you type in the pane" (pane header); "A program without an agent that reports blocked or error counts toward that space button ... An error stops counting once you have looked at the pane, while the header keeps error until you type."
+Before (build at main 1825a6fc): pane o-codex runs the codex stand-in, `err` -> status errored, outcome failed:Build failed, Agents row 'Codex, Codex, obs, error'.
+`paneflow key o-codex ctrl-c` (not counted as typing) -> the stand-in ended, the pane is back at 'bash-3.2$'.
+  40 s later: `paneflow ps --json` still lists {"pid": 7872, "tool": "codex", "state": "errored", "surface_name": "o-codex"}; worker row: foreground_runtime_id null, activity {tool codex, state errored, pid 7872}, declared_status {state error, message Build failed}.
+  AX: list 'Agents' > group 'Codex, Codex, obs, error'; the tree row Tab 1 shows Error (133-item1-before-row-stays-error.png).
+Cause: projected_session (src-app/src/app/host_agents.rs) drops a finished session once no agent holds the pane's foreground, but kept an errored one; the worker keeps the run while the declared error is held.
+After (fixed build, same steps):
+  before Ctrl+C: status errored, AX group 'Codex, Codex, obs, error' (a running errored agent is still listed)
+  after Ctrl+C: `paneflow ps --json` -> {"agents": []}; AX list 'Agents' empty, the section reads 'No agents running'; the pane header keeps 'error · Build failed' (133-item1-after-row-removed.png).
+Test: app::host_agents::tests::an_errored_agent_leaves_the_agents_section_once_its_process_is_gone, red before the fix ("the pane is back at its shell, so no agent session is left to list"), green after. The old assertion "a crashed agent keeps its error on screen" was removed from an_agent_that_left_the_foreground_drops_its_session_despite_its_last_hook_state.
+
+== 2. workspace.create ignores title= (not a bug, no change)
+Docs (scripting/reference.md, JSON-RPC table): `workspace.create` takes `name?`, `cwd?`, `layout?`, `space?`; the CLI verb is `new [--name]`. There is no `title` parameter, so `title=` is an unknown key and is ignored. `name` is applied, pinned by layout_pins (rig.ipc("workspace.create", {"name": "gamma"})), and used here: `paneflow new --name nb --cwd $SCRATCH/obs-fx/repo` -> {"title": "nb"}.
+
+== 3. Cmd+W in a team lead closes the whole tab (documented, no change)
+Docs (keybindings.md): close_tab = Cmd/Ctrl+W, close_pane = Cmd/Ctrl+Shift+W; features.md: "Closing the lead's pane leaves the teammates open as ordinary panes" and "Use Undo after closing a tab". Cmd+W is the tab close, so closing lead and teammates together with an Undo toast is the documented behavior.
+Live check of the documented pane close: workspace nb, New tab palette (client.dispatch_action new_tab) > 'Claude Code (team)' pressed through accessibility -> lead pane 4107 'clear && CLAUDE_CODE_TMUX_TRUECOLOR=1 TMUX=paneflow-tmux-compat,0,0 TMUX_PANE=%0 PATH="~/.paneflow-dev-obs/bin/tmux-compat:$PATH" claude --teammate-mode tmux' -> stand-in ready; `split` -> SPLIT_DONE 0, teammate pane 4110 (bash) in the same tab 4105.
+`paneflow focus 4107` then client.dispatch_action close_pane (Cmd+Shift+W) -> panes left: 4102 (other tab) and 4110 in tab 4105; `echo still-open-after-lead-closed` sent to 4110 ran.
+
+== 4. Accessibility of the custom button dialog and the New branch refusal (fixed, f5753e36, plus one part already fixed upstream)
+New branch refusal in the New pane palette: already exposed on main by 35a52ee1 (after the audit build fd627b91). Live: workspace nb with the codex stand-in running `busy` (status thinking) in the repo checkout; New tab palette > 'Branch: main' > 'New branch…' > switch 'Worktree' off > 'Terminal', all pressed through accessibility. The palette shows 'An agent is working in this checkout; create a worktree instead' (133-item4-new-branch-refusal-status.png) and the AX tree holds: group 'New branch' > status 'An agent is working in this checkout; create a worktree instead'.
+Not yet exposed on main and fixed here:
+  - Custom buttons dialog (workspace menu > Manage custom buttons…): Dialog named 'Custom buttons' / 'New button' / 'Edit button', description 'Buttons of the workspace <name>'; Close, Cancel, Create / Save changes are Buttons answering a press, the save button described 'Needs a name and a command' while incomplete; icon tiles are RadioButtons in a RadioGroup 'Icon', the chosen one checked; the Edit form's inputs are named Name and Command.
+  - Tab menu > Create branch here… prompt (the other branch form): Dialog 'Create branch here' described by what it does; its refusal is a Status named after its reason; the confirm button is a Button 'Create branch' / 'Creating…'.
+Tests (red against the pre-fix element shape, every element without role or label, then green):
+  app::custom_buttons_modal::tests::the_custom_buttons_dialog_is_a_dialog_named_by_its_view_and_workspace
+  app::custom_buttons_modal::tests::the_icon_choice_is_a_radio_group_that_checks_the_chosen_icon
+  app::custom_buttons_modal::tests::the_dialog_buttons_are_named_and_answer_a_press
+  app::branch_prompt::tests::the_create_branch_prompt_is_a_dialog_that_reads_what_it_does
+  app::branch_prompt::tests::a_refused_branch_is_a_status_that_reads_its_reason
+  app::branch_prompt::tests::the_confirm_button_names_its_state_and_answers_a_press
+  red run: "test result: FAILED. 0 passed; 6 failed"; green run: all pass.
+Not checked live: both dialogs open only from a context menu (right-click or Shift+F10 on a focused row), which needs physical input; it was not used (see above).

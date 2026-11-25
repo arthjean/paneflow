@@ -1,0 +1,68 @@
+Build: fd627b91 debug (target-fix-t), home ~/.paneflow-dev-cover2, 2026-11-25
+
+How an agent launcher resolves its binary (code read, no execution):
+- agent_launcher.rs launch_command renders the preset command (for example `claude ...`) and wraps it with clear_then, so the pane shell resolves it on the pane PATH.
+- The pane PATH starts with $PANEFLOW_HOME/cache/bin/<version> (paneflow-shim copies named after each agent). The shim (crates/paneflow-shim/src/detect.rs find_real_binary_in) walks PATH in order and takes the first match that is not a shim or helper dir.
+- The app rebuilds its own PATH at start: login_shell_env.rs adopts PATH from `$SHELL -l -i -c env` (path_helper puts system dirs first and appends the inherited entries), then runtime_paths.rs augment_path_for_gui_launch PREPENDS ~/.bun/bin, ~/.cargo/bin, ~/.local/bin, /opt/homebrew/bin and /usr/local/bin when they are not on PATH yet.
+- That prepend is why the earlier PATH prefix lost: ~/.local/bin (the real claude) was put ahead of the stand-in dir.
+- Redirect used here: launch with PATH=$SCRATCH/cover-fx/sbin:~/.bun/bin:~/.cargo/bin:~/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin. Every augment candidate is already present after the stand-in dir, so nothing is prepended.
+- Only real agent binary found in those dirs on this Mac: ~/.local/bin/claude. Stand-ins (an argv-logging C binary that answers --version and exits at once when stdin is not a tty) exist for every runtime alias: amp claude codex copilot droid fx gemini grok hermes muse openclaw opencode pi.
+
+Worker and host PATH after start (order kept): system dirs, $SCRATCH/cover-fx/sbin, ~/.bun/bin, ~/.cargo/bin, ~/.local/bin, /opt/homebrew/bin.
+
+Pane dry check (type -a, then the shim with --version, which the stand-in answers):
+SHELL=/bin/bash
+claude is ~/.paneflow-dev-cover2/cache/bin/0.
+20.0/claude
+claude is $C/sbin/claude
+claude is ~/.local/bin/claude
+codex is ~/.paneflow-dev-cover2/cache/bin/0.2
+0.0/codex
+codex is $C/sbin/codex
+gemini is ~/.paneflow-dev-cover2/cache/bin/0.
+20.0/gemini
+gemini is $C/sbin/gemini
+opencode is ~/.paneflow-dev-cover2/cache/bin/
+0.20.0/opencode
+opencode is $C/sbin/opencode
+amp is ~/.paneflow-dev-cover2/cache/bin/0.20.
+0/amp
+amp is $C/sbin/amp
+PATHHEAD
+~/.paneflow-dev-cover2/cache/bin/0.20.0
+/usr/local/bin
+/System/Cryptexes/App/usr/bin
+/usr/bin
+/bin
+/usr/sbin
+/sbin
+/var/run/com.apple.security.cryptexd/codex.sy
+stem/bootstrap/usr/local/bin
+/var/run/com.apple.security.cryptexd/codex.sy
+stem/bootstrap/usr/bin
+/var/run/com.apple.security.cryptexd/codex.sy
+stem/bootstrap/usr/appleinternal/bin
+/pkg/env/global/bin
+/Library/Apple/usr/bin
+$C/sbin
+~/.bun/bin
+~/.cargo/bin
+~/.local/bin
+/opt/homebrew/bin
+bash-3.2$ clear; for a in claude codex gemini
+ opencode amp; do $a --version; done
+0.0.0 (Paneflow coverage stand-in)
+0.0.0 (Paneflow coverage stand-in)
+0.0.0 (Paneflow coverage stand-in)
+0.0.0 (Paneflow coverage stand-in)
+0.0.0 (Paneflow coverage stand-in)
+bash-3.2$
+
+stand-in argv log:
+claude pid=1884 --version
+codex pid=1889 --version
+gemini pid=1896 --version
+opencode pid=1901 --version
+amp pid=1906 --version
+
+Verdict: every launcher in a pane of this instance resolves to the stand-in; launches below are safe.

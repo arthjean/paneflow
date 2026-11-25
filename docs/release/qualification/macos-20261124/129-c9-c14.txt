@@ -1,0 +1,84 @@
+# C9 and C14 fixes: live checks on a dev build, macOS arm64, 2026-11-25
+Worktree branch based on main 1825a6fc. Dev instance: scripts/dev.sh --tag c9c14 (home ~/.paneflow-dev-c9c14),
+inherited PANEFLOW_* unset, own CARGO_TARGET_DIR. Driven with agent-desktop on the dev window only (by window id),
+the window moved to a screen area no other window covered. Cmd+hover and Cmd+click were posted as CGEvents with
+the Command flag on the mouse moves and the click (agent-desktop mouse-click --modifiers meta sends no Cmd-held move,
+so the terminal never resolves the link under it; that is a tool limit, not a Paneflow bug).
+$FX = a scratch fixture folder; $SHIM = ~/.paneflow-dev-c9c14/cache/bin/0.20.0.
+
+## C9: Cmd+click on a path that matches two project files
+
+Fixture: workspace 'hover' rooted at $FX/repo with deep/inner/uniq.rs, p/q/helpers.rs, r/q/helpers.rs,
+x/twin.rs, y/twin.rs.
+
+Before the fix (build of main 1825a6fc):
+- inner/uniq.rs:2 -> dock opens uniq.rs at Ln 2, Col 1.
+- q/helpers.rs:3 -> file finder opens, query 'q/helpers.rs', rows p/q/helpers.rs and r/q/helpers.rs.
+- twin.rs:1 -> file finder, rows x/twin.rs and y/twin.rs.
+  So the ambiguous case works when the files predate the project index.
+- Repro of the audit symptom: Cmd+hover a line (the project index is walked), then create s/t/dup.rs and
+  u/t/dup.rs, print 'open t/dup.rs:2', Cmd+click it: no underline, no finder, nothing in AX (04:46:15).
+  Same Cmd+click on the same line at 04:46:36 and 04:46:54: still nothing. Only at 04:47:12 did the finder list
+  s/t/dup.rs and u/t/dup.rs.
+
+Cause: the terminal's suffix lookup (src-app/src/terminal/link_fallback.rs) reads a project file index kept for
+30 s, and the view caches each hovered line's links. A file created after the walk is missing from that index,
+so the path resolves to nothing, and the empty answer stays cached for that line. In the audit the twin files
+were created during the session, in workspaces whose index already existed.
+
+Fix: a path the index does not know, read from an index walked 2 s or more ago, makes the lookup walk the project
+again (bounded by the same 200 ms deadline) and retry. A hover answer that could not settle (walk still running,
+or index younger than 2 s with a path still missing) is used but not trusted by the cache, so the next hover
+resolves the line again.
+
+After the fix (rebuilt, same home):
+- Cmd+hover 'warm inner/uniq.rs:1' (index walked 04:52:33), then create g/k/fresh.rs and h/k/fresh.rs, print
+  'open k/fresh.rs:2', Cmd+click at 04:52:39 -> the path is underlined and the file finder opens with query
+  'k/fresh.rs', rows g/k/fresh.rs and h/k/fresh.rs.
+- A unique file created the same way (m/solo/newone.rs, 'open solo/newone.rs:3') -> dock opens newone.rs at
+  Ln 3, Col 1.
+
+Test: terminal::link_fallback::tests::twin_files_created_after_the_index_was_walked_still_open_the_file_picker
+(red before: no zone; green after).
+
+## C14: jump_next_waiting to an agent in a tab that is not selected
+
+Stand-in agent: $FX/sbin/claude, a shell script that answers --version with '9.9.9 (stand-in)', declares
+OSC 7501 working then done, prints 'stand-in finished' and sleeps. The pane PATH puts the real ~/.local/bin
+ahead of the stand-in, so the stand-in was always started as
+  env PATH=$SHIM:$FX/sbin:/usr/bin:/bin claude
+On that PATH 'type claude' -> $SHIM/claude (the Paneflow shim); /usr/bin and /bin hold no claude; and
+'env PATH=... claude --version' printed '9.9.9 (stand-in)'. No real agent binary was run.
+
+Setup: workspace 'hover', Tab 1 runs the stand-in (sleep 5 first); client.dispatch_action new_tab opens
+'New tab' (a shell) and selects it before the stand-in declares done. paneflow ps: claude finished, ws 0.
+AX before the jump:
+  treeitem Tab 1
+  treeitem New tab [selected]
+  group 'Claude Code, Claude Code, hover, done, not yet seen'
+
+Before the fix: client.dispatch_action jump_next_waiting -> AX unchanged: 'New tab' stays selected and the agent
+row still reads 'done, not yet seen'.
+
+Cause: the jump (and the Agents row and fleet search, which share the path) activates the workspace with a
+pane target, but reveal_pane_through_model only lifted a zoom on the active tab; it never selected the tab
+holding the pane.
+
+Fix: reveal_pane_through_model selects the tab that holds the pane when it is not the active one (keeping
+the pending focus), so the pane is shown and focused and acknowledge_visible_completions marks it seen; the jump
+also activates the agent's surface inside its pane.
+
+After the fix (GUI rebuilt and restarted on the same host and worker, state restored identical):
+client.dispatch_action jump_next_waiting -> AX:
+  treeitem Tab 1 [selected]
+  treeitem New tab
+  group 'Claude Code, Claude Code, hover, idle' [selected]
+  radiobutton 'Claude Code' [checked]
+The pane shows 'stand-in claude / stand-in finished' with a focused (solid) cursor.
+
+Test: app::layout_pins::create_close::pin_jumping_to_an_unseen_agent_in_a_hidden_tab_shows_its_tab_and_marks_it_seen
+(red before: tabs ["=a", "*second=b"]; green after).
+
+## Teardown
+GUI stopped by its PID (SIGTERM), then `paneflow serve stop` and `paneflow host stop --force` with
+PANEFLOW_HOME=~/.paneflow-dev-c9c14; no process left for that home; the home moved to the Trash.

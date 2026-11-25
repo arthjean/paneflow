@@ -1,0 +1,76 @@
+Build: fd627b91 debug (target-fix-t), home ~/.paneflow-dev-cover2, 2026-11-25. Every pointer action below is a physical mouse event (agent-desktop --headed mouse-move / mouse-click --xy) aimed at the dev window only (pid of this instance, window w-1973); no AXPress.
+
+Layout: workspace "hover" with panes left | right (even_h), left focused.
+
+1. Pane header buttons of an unfocused pane (51-pane-header-hover.jpg, rows top to bottom):
+   - pointer on the sidebar: right (unfocused) pane shows no +, Split right, Split down, Detach; no tab shows a close glyph.
+   - pointer on the right pane's tab: its close glyph and the four header buttons appear.
+   - pointer on the right pane's terminal body (51-pane-header-hover-body.jpg): the four header buttons stay visible, the tab close glyph does not (it is tied to the tab, not the pane).
+   - pointer on the left tab: the left close glyph appears, the right pane's buttons are hidden again.
+   The focused pane always shows its header buttons.
+2. Clicks on hover-revealed controls (pointer moved from the sidebar straight onto the control, then clicked):
+before: 2 ['left', 'right']
+mouse-click at 1443,130: pointer_click/physical_synthetic/succeeded | delivered_unverified
+after real click on unfocused right pane 'Split right' (1443,130): 2 [(1025, 'left'), (1026, 'right')]
+-- real click on the right pane's '+' New tab (1341,130), right pane unfocused
+mouse-click at 1341,130: pointer_click/physical_synthetic/succeeded | delivered_unverified
+    tablist 'Pane tabs'  
+      radiobutton 'left' ['checked'] @s2qilz8saiauht:e15
+        button 'Close left'  @s2qilz8saiauht:e16
+--
+    tablist 'Pane tabs'  
+      radiobutton 'right' ['checked'] @s2qilz8saiauht:e21
+        button 'Close right'  @s2qilz8saiauht:e22
+    tablist 'Pane tabs'  
+      radiobutton '$C/repo' ['checked'] @s2qilz8saiauht:e24
+        button 'Close $C/repo'  @s2qilz8saiauht:e25
+    button 'Show Changes dock'  @s2qilz8saiauht:e27
+-- the '+' opened a launcher menu under the pointer (screenshot 51-pane-plus-menu.jpg); real click on 'Terminal' (1216,167)
+mouse-click at 1216,167: pointer_click/physical_synthetic/succeeded | delivered_unverified
+      radiobutton 'right'  @s2hvnqhsj6y6y9:e21
+        button 'Close right'  @s2hvnqhsj6y6y9:e22
+      radiobutton '$C/repo' ['checked'] @s2hvnqhsj6y6y9:e23
+        button 'Close $C/repo'  @s2hvnqhsj6y6y9:e24
+      radiobutton '$C/repo' ['checked'] @s2hvnqhsj6y6y9:e26
+-- tab close: pointer away = no close glyph on any tab; pointer on the middle pane's active tab = its close glyph appears (51-tab-close-hover.jpg). Real click on that close glyph (1311,129):
+mouse-click at 1311,129: pointer_click/physical_synthetic/succeeded | delivered_unverified
+      radiobutton 'right' ['checked'] @s3a9eaqzcapbyv:e21
+        button 'Close right'  @s3a9eaqzcapbyv:e22
+      radiobutton '$C/repo' ['checked'] @s3a9eaqzcapbyv:e24
+        button 'Close $C/repo'  @s3a9eaqzcapbyv:e25
+-- sidebar: real click on the workspace row's hover-revealed '+' (771,204)
+mouse-click at 771,204: pointer_click/physical_synthetic/succeeded | delivered_unverified
+      treeitem 'hover' ['selected'] @s4zs1d6vf99kp:e4
+        button 'New tab in hover'  @s4zs1d6vf99kp:e5
+      treeitem 'Tab 1'  @s4zs1d6vf99kp:e6
+        button 'Close tab'  @s4zs1d6vf99kp:e7
+      treeitem 'New tab' ['selected'] @s4zs1d6vf99kp:e8
+        button 'Close tab'  @s4zs1d6vf99kp:e9
+-- sidebar: real click on 'New tab' row's hover-revealed close (771,272)
+mouse-click at 771,272: pointer_click/physical_synthetic/succeeded | delivered_unverified
+      treeitem 'hover' ['selected'] @s3ozl0q6ti2r2z:e4
+      treeitem 'Tab 1' ['selected'] @s3ozl0q6ti2r2z:e6
+        button 'Close tab'  @s3ozl0q6ti2r2z:e7
+-- title bar Files (bounds 464,120 38x20): real click at 483,130
+mouse-click at 483,130: pointer_click/physical_synthetic/succeeded | delivered_unverified
+      menuitem 'New Workspace'  @s2198ncxa8a6ju:e31
+      menuitem 'Settings'  @s2198ncxa8a6ju:e32
+press True delivered_unverified
+-- title bar Help (bounds 506,120 38x20): real click at 525,130
+mouse-click at 525,130: pointer_click/physical_synthetic/succeeded | delivered_unverified
+      menuitem 'Paneflow Documentation'  @s252eqn508hxm9:e31
+      menuitem "What's New"  @s252eqn508hxm9:e32
+      menuitem 'Check for Updates…'  @s252eqn508hxm9:e33
+      menuitem 'Automations'  @s252eqn508hxm9:e34
+      menuitem 'Troubleshooting'  @s252eqn508hxm9:e35
+      menuitem 'System Info…'  @s252eqn508hxm9:e36
+      menuitem 'About Paneflow'  @s252eqn508hxm9:e37
+press True delivered_unverified
+
+   Result: Split right on the unfocused pane split it and showed the New pane chooser; choosing Terminal gave 3 panes. The unfocused pane's + opened the launcher menu anchored under the button (51-pane-plus-menu.jpg); Terminal added a second tab. The hover-revealed tab close closed that tab. In the sidebar the workspace row + and the tab row close appear only on row hover (51-sidebar-row-hover.jpg) and both work with a real click.
+3. Title bar menus (51-titlebar-menus.jpg): a real click on Files opens New Workspace / Settings, a real click on Help opens Paneflow Documentation ... About Paneflow; each menu opens directly under the clicked button, left edge aligned with it. Escape closes them.
+
+Observations:
+- O-a (visual): the New pane chooser that a split shows is 260 px wide and centered; in a pane narrower than that (about 190 px here, window 1200 px with three panes) the list is clipped on both sides: "Branch: main" reads "ain", the first letter of every launcher is cut (51-new-pane-chooser-clipped.jpg).
+- O-b (accessibility): when not hovered, the sidebar row buttons "New tab in hover" and "Close tab" report an AX width of 0 (11 px when hovered); the pane header buttons keep their size at opacity 0.
+- O-c: a pane tab strip that overflows scrolls the active tab into view; the hidden tab keeps AX bounds that lie over the neighboring pane.

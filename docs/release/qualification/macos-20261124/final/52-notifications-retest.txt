@@ -1,0 +1,12 @@
+# C8 re-test. Build 1825a6fc (debug, current main, includes 81b35db0), home ~/.paneflow-dev-cover3, HOME=$SCRATCH/cover3/fakehome for the app, its host and worker
+Same repro as final/51-notifications-fail.txt:
+1. paneflow.json: "agent_panel": {"notify_when_agent_waiting": "PrimaryScreen"}, spaces Work and Play, ipc.scripting=true.
+2. Workspace on $SCRATCH/cover-fx/repo moved to Work; space Play shown.
+3. In its pane: osc.sh blocked 2; 3 s later blocked again; 12 s later blocked again; then error.
+Result:
+- The Play space button shows the red error marker (52-notifications-no-modal.jpg). No modal: the Paneflow process (dev pid) owns one window only (agent-desktop list-windows), the window kept answering (space switch, accessibility reads, pane reads).
+- Log, once for the whole run:
+[2026-11-25T03:39:49Z INFO  paneflow::agents::notifications] paneflow: desktop notifications route NoAppBundle for bundle <none> at $SCRATCH/target-fix-t/debug
+[2026-11-25T03:39:49Z WARN  paneflow::agents::notifications] paneflow: desktop notifications are off because this process does not run from an app bundle; macOS only delivers them to a bundled app
+- Delivery itself is not observable on a debug build: macOS only delivers notifications to an app bundle, which is exactly what the warning says. The 10 s per pane throttle is therefore not observable here either.
+Verdict: C8 no longer reproduces on 1825a6fc.

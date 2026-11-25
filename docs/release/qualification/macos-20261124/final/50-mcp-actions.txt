@@ -1,0 +1,87 @@
+# T15: MCP ask_human, list_actions, run_action and init.lua actions on the final build. ~/.paneflow-dev-cover/init.lua:
+paneflow.action{ name = 'deploy', title = 'Deploy', description = 'Coverage probe action', agents = true, args = { env = 'string' },
+  run = function(ctx, args) return { env = args.env, origin = ctx.origin } end }
+paneflow.action{ name = 'secret', title = 'Secret', run = function() return 'hidden' end }
+paneflow.action{ name = 'slow', title = 'Slow', agents = true, run = function() paneflow.sleep(25) return 'slept' end }
+# config.status: found true, ok true, actions 3. MCP calls run inside pane gA (fake agent 'amp') through mcpclient.py and mcp-slow.py with the home's paneflow-mcp.
+# in pane gA (surface 3091) 02:09:24
+$ python3 -I $SCRATCH/cover-fx/mcpclient.py '[{"name":"list_actions"},{"name":"run_action","arguments":{"name":"secret"}},{"name":"run_action","arguments":{"name":"deploy","args":{"env":"staging"}}}]'
+== list_actions {}
+    "text": "{\n  \"actions\": [\n    {\n      \"args\": {\n        \"additionalProperties\": false,\n        \"properties\": {\n          \"env\": {\n            \"type\": \"string\"\n          }\n        },\n        \"required\": [\n          \"env\"\n        ],\n        \"type\": \"object\"\n      },\n      \"description\": \"Coverage probe action\",\n      \"name\": \"deploy\",\n      \"title\": \"Deploy\"\n    },\n    {\n      \"args\": {\n        \"additionalProperties\": false,\n        \"properties\": {},\n        \"type\": \"object\"\n      },\n      \"name\": \"slow\",\n      \"title\": \"Slow\"\n    }\n  ]\n}",
+== run_action {"name": "secret"}
+    "text": "paneflow error -32602: no action named 'secret'; paneflow actions lists the actions init.lua declares",
+== run_action {"name": "deploy", "args": {"env": "staging"}}
+    "text": "{\n  \"result\": {\n    \"env\": \"staging\",\n    \"origin\": \"agent\"\n  },\n  \"status\": \"done\"\n}",
+[exit=0]
+# in pane gA (surface 3091) 02:09:31
+$ python3 -I $SCRATCH/cover-fx/mcpclient.py '[{"name":"ask_human","arguments":{"question":"Ship the coverage build?","options":["yes","no"]}}]'
+== ask_human {"question": "Ship the coverage build?", "options": ["yes", "no"]}
+    "text": "{\n  \"answer\": \"no\",\n  \"status\": \"answered\"\n}",
+[exit=0]
+# in pane gA (surface 3091) 02:09:55
+$ python3 -I $SCRATCH/cover-fx/mcp-slow.py
+== run_action {"name": "slow"} -> (20.0 s) {   "run_id": "5ff9355d22eac04bba07e82b162a7bbb",   "status": "running" }
+== run_action {"run_id": "5ff9355d22eac04bba07e82b162a7bbb"} -> (5.0 s) {   "result": "slept",   "status": "done" }
+== run_action {"name": "deploy", "args": {"env": "burst0"}} -> (0.0 s) {   "result": {     "env": "burst0",     "origin": "agent"   },   "status": "done" }
+== run_action {"name": "deploy", "args": {"env": "burst1"}} -> (0.0 s) {   "result": {     "env": "burst1",     "origin": "agent"   },   "status": "done" }
+== run_action {"name": "deploy", "args": {"env": "burst2"}} -> (0.0 s) {   "result": {     "env": "burst2",     "origin": "agent"   },   "status": "done" }
+== run_action {"name": "deploy", "args": {"env": "burst3"}} -> (0.0 s) {   "status": "rate_limited" }
+== run_action {"name": "deploy", "args": {"env": "burst4"}} -> (0.0 s) {   "status": "rate_limited" }
+== run_action {"name": "deploy", "args": {"env": "burst5"}} -> (0.0 s) {   "status": "rate_limited" }
+[exit=0]
+# ask_human prompt: 'Ship the coverage build?' with 'Asked by Amp in gA' under it and options yes, no (50-ask-human.jpg); 'no' chosen by accessibility press -> status answered, answer no
+
+== CLI
+$ pf actions
+deploy  Deploy  [Actions]  init.lua:1
+secret  Secret  [Actions]  init.lua:3
+slow    Slow  [Actions]  init.lua:4
+[exit=0]
+
+$ pf actions run deploy --args '{"env":"from-cli"}'
+error: unexpected argument 'run' found
+
+Usage: paneflow actions [OPTIONS]
+
+For more information, try '--help'.
+[exit=2]
+
+$ pf actions run secret
+error: unexpected argument 'run' found
+
+Usage: paneflow actions [OPTIONS]
+
+For more information, try '--help'.
+[exit=2]
+
+$ pf actions --help
+List the actions init.lua declares, as the worker loaded them: name, title, category and where each is declared. Run one with `paneflow do <name> key=value`.
+
+Examples:
+  paneflow actions
+  paneflow actions --json
+
+Usage: paneflow actions [OPTIONS]
+
+Options:
+      --json
+          Print the action.list result as JSON
+
+  -h, --help
+          Print help (see a summary with '-h')
+[exit=0]
+
+$ pf api call action.invoke --args '{"name":"deploy","args":{"env":"from-api"},"ctx":{"origin":"cli"}}'
+{
+  "result": {
+    "env": "from-api",
+    "origin": "cli"
+  }
+}
+[exit=0]
+
+$ pf do deploy env=from-do
+{"env":"from-do","origin":"cli"}
+[exit=0]
+
+== verdict: pass for list_actions (name, title, description, args schema), run_action refusing an action not marked agents (as an unknown name), done with result and origin agent, running with run_id after 20 s then done when called with the run_id, rate_limited after a burst of three, ask_human answered. FAIL (docs): scripting.md says an action 'started by paneflow actions run acts as its caller', but the CLI has no 'actions run' (exit 2, unexpected argument); 'paneflow actions --help' points at 'paneflow do <name> key=value', which runs it with origin cli.

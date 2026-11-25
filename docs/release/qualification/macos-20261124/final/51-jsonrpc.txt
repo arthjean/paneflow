@@ -1,0 +1,74 @@
+Build: fd627b91 debug (target-fix-t), home ~/.paneflow-dev-cover2 (isolated home), 2026-11-25
+
+== JSON-RPC idle close (reference.md Request model): connect, optionally send one request, then wait up to 90 s
+reply: {"jsonrpc":"2.0","id":1,"error":{"code":-32010,"message":"host.hello must be the first request on a connection"}}
+HOST_SOCK after-request: closed by server after 0.0 s idle
+HOST_SOCK no-request: closed by server after 10.0 s idle
+reply: {"jsonrpc":"2.0","result":{"pong":true},"id":1}
+WIN_SOCK after-request: closed by server after 30.0 s idle
+WIN_SOCK no-request: closed by server after 30.0 s idle
+reply: {"jsonrpc":"2.0","id":1,"error":{"code":-32010,"message":"worker.hello must be the first request on a connection"}}
+WORKER_SOCK after-request: closed by server after 0.0 s idle
+WORKER_SOCK no-request: closed by server after 60.0 s idle
+Window endpoint: closed after 30.0 s with and without a prior request, as documented. Host (10 s) and worker (60 s) are separate protocols that require host.hello / worker.hello first.
+
+== Socket override and runtime dir
+$ PANEFLOW_SOCKET_PATH=$TMPDIR/paneflow-ipc-ffffffffffffffff.sock paneflow ls   (foreign endpoint, no override)
+{
+  "pane_count": 3,
+  "workspace": 0,
+  "scope_workspace_id": null,
+  "surfaces": [
+    {
+      "surface_id": 1025,
+      "name": "left",
+      "title": "Terminal",
+      "cwd": "$SCRATCH/cover-fx/repo",
+      "cm
+[exit=0]
+
+$ PANEFLOW_ALLOW_SOCKET_OVERRIDE=1 PANEFLOW_SOCKET_PATH=$TMPDIR/paneflow-ipc-ffffffffffffffff.sock paneflow ls
+{
+  "pane_count": 3,
+  "workspace": 0,
+  "surfaces": [
+    {
+[exit=]
+
+$ env -u TMPDIR paneflow ls   (isolated home, TMPDIR unset)
+paneflow: the local Paneflow host is not reachable at /tmp/paneflow-host-105b1e5cf131de0c.sock (No such file or directory (os error 2)); start it with `paneflow host start`
+
+$ env -u TMPDIR XDG_RUNTIME_DIR=$TMPDIR paneflow ls   (XDG_RUNTIME_DIR ignored on macOS)
+paneflow: the local Paneflow host is not reachable at /tmp/paneflow-host-105b1e5cf131de0c.sock (No such file or directory (os error 2)); start it with `paneflow host start`
+
+$ TMPDIR=$TMPDIR XDG_RUNTIME_DIR=/nonexistent paneflow ls
+{
+$ PANEFLOW_SOCKET_PATH=$TMPDIR/paneflow-ipc-ffffffffffffffff.sock paneflow api call workspace.list  -> answered by this home window (override ignored)
+$ PANEFLOW_ALLOW_SOCKET_OVERRIDE=1 PANEFLOW_SOCKET_PATH=<same> paneflow api call workspace.list
+paneflow: paneflow error -32030: no Paneflow window is attached to this state home; this action needs an open controller
+(ls still answers in that case because it falls back to the host, without scope_workspace_id)
+
+$ env -u PANEFLOW_HOME -u TMPDIR paneflow api call system.ping   (debug build, default dev home, no TMPDIR; ~/Library/Caches/run does not exist so the connect fails and names the path)
+paneflow: the local Paneflow host is not reachable at /tmp/paneflow-host-db453e54143d39f8.sock (No such file or directory (os error 2)); start it with `paneflow host start`
+
+$ env -u PANEFLOW_HOME -u TMPDIR XDG_RUNTIME_DIR=$TMPDIR paneflow api call system.ping
+paneflow: the local Paneflow host is not reachable at /tmp/paneflow-host-db453e54143d39f8.sock (No such file or directory (os error 2)); start it with `paneflow host start`
+~/Library/Caches/run is only the default home's fallback (the installed app's ~/.paneflow, out of bounds here); the debug default dev home is resolved as isolated and also falls back to /tmp.
+
+== Legacy error shape: eight invalid window calls
+<< {"jsonrpc":"2.0","error":{"code":-32602,"message":"index 99 is out of bounds (1 workspaces)"},"id":1}
+<< {"jsonrpc":"2.0","error":{"code":-32602,"message":"surface_id 999999 not found"},"id":2}
+<< {"jsonrpc":"2.0","error":{"code":-32602,"message":"surface_id 999999 not found"},"id":3}
+<< {"jsonrpc":"2.0","error":{"code":-32602,"message":"Surface not found"},"id":4}
+<< {"jsonrpc":"2.0","error":{"code":-32602,"message":"Cannot close the last workspace"},"id":5}
+<< {"jsonrpc":"2.0","error":{"code":-32602,"message":"'direction' must be one of \"horizontal\", \"vertical\""},"id":6}
+<< {"jsonrpc":"2.0","error":{"code":-32601,"message":"Method not found: workspace.rename"},"id":7}
+<< {"jsonrpc":"2.0","error":{"code":-32601,"message":"Method not found: tool.call"},"id":8}
+No reply carries {"error":...} inside result: the window promotes a legacy string result to a -32603 error envelope (src-app/src/app/ipc_handler/jsonrpc.rs promote_response). The client advice (treat both shapes as failures) holds.
+
+== sessions --follow across a worker restart
+$ paneflow sessions --follow --json &; paneflow serve stop; paneflow serve start
+{'type': 'bootstrap', 'worker': '...', 'capabilities': '...', 'core_connected': True, 'resumed': False, 'sessions': '...', 'fresh': '...'}
+{'type': 'bootstrap', 'worker': '...', 'capabilities': '...', 'core_connected': True, 'resumed': True, 'sessions': '...', 'fresh': '...'}
+paneflow: the worker stream dropped (the worker is stopping); reconnecting
+Two bootstraps: the second, after the restart, has resumed=true. Worker pid changed 99748 -> 15131.

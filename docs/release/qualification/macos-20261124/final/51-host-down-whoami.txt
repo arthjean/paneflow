@@ -1,0 +1,6 @@
+# Who is calling: pane principal with the window closed, and the host-down case. Build fd627b91 (debug), home ~/.paneflow-dev-cover2
+Window quit with 'Keep sessions running'; worker and host still up.
+From pane 33933 (a teammate shell left by the team test): nohup $SCRATCH/cover-fx/whoami-probe.sh ... & disown. The probe runs 'paneflow api call system.whoami' every 2 s with the pane's environment (the dev binary by path).
+Log: 04:26:34 to 04:26:42, five reads of "principal": "pane" (answered without the window).
+paneflow host stop --force at 04:26:43 -> host gone, and the probe died with it: the stop ends every process of every pane session, a nohup'd, disowned child included. No pane process survived the host, so the manifest fallback could not be exercised.
+The only way to leave a pane process alive with the host down is to kill the host by signal, which the safety rules for this audit forbid (stop a dev host only through its home's stop command).

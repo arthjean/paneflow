@@ -1,0 +1,151 @@
+123 - the last accessibility gaps: diff fold rows, tab strips, title bar menus (worktree branch worktree-agent-ab901a98aa946cd09)
+Date: 2026-11-25, macOS 27.2 on Apple Silicon, agent-desktop 2.6
+Build: debug, scripts/dev.sh --tag axlast, PANEFLOW_HOME=~/.paneflow-dev-axlast with paneflow.json {"ipc": {"scripting": true}},
+every inherited PANEFLOW_* variable unset, dev window targeted by --window-id only (final run: window w-1905).
+The installed app was not touched. Every press below is headless (AXPress, semantic_api). The instance was stopped
+with its own PID, `serve stop` and `host stop --force` on its home, and the home was moved to ~/.Trash.
+<fixture> is a throwaway git repository: notes.txt, 60 lines "line N", with lines 2 and 40 edited after the commit.
+The workspace was opened with `paneflow api call workspace.create --args {"cwd": "<fixture>"}`.
+
+Commits (final hashes; the run used the same production code, a later fixup touched only a unit test in c00f6e97):
+  555c14e0 fix(a11y): expose the Changes dock fold rows as buttons that show their lines
+  a36a5e73 fix(a11y): expose the pane and dock tab strips as tab lists of named tabs
+  c00f6e97 fix(a11y): expose the title bar Files and Help menus as menu buttons
+  5baa76a5 fix(a11y): expose the pane tab strip's new tab button
+  659accb3 fix(a11y): let a tab's hover-revealed close button answer a press
+
+BEFORE (main 0cd67ce4): none of these controls was in the tree. The pane tab strip, its '+', the dock tab chips,
+their close buttons, the diff fold rows and the title bar Files and Help triggers were mouse only.
+
+Found during the live check and fixed (659accb3): on the build of a36a5e73, an AXPress on "Close <title>" of an
+unselected pane tab selected that tab instead of closing it (snapshot after the press: the tab became value=true,
+both tabs still present). Cause: the close button is hidden until hover with visibility hidden, and GPUI paints no
+listener for a hidden element, so it answered the press with a mouse click synthesized at the button's center, which
+landed on the tab. The pane '+' was found unexposed while adding a tab (5baa76a5); on its build (window w-1890) an AXPress on button 'New tab' opened the pane New tab menu (menuitem Terminal, Claude Code, ...), and pressing menuitem Terminal added the second tab used below.
+
+Notes on what macOS reports:
+- A Tab reaches macOS as AXRadioButton (agent-desktop: radiobutton) with value true/false and the checked state; the
+  tab list is AXTabGroup (tablist). Position and set size are in the node (unit tests) but agent-desktop does not print them.
+- AccessKit 0.26 (accesskit_macos 0.26.3) maps neither the expanded state nor has_popup on macOS, so the Show/Hide
+  wording of a fold button carries its state for VoiceOver; Windows (UIA ExpandCollapse) and Linux (AT-SPI) receive
+  expanded, and UIA receives has_popup=menu for Files and Help.
+- The fold button names keep the visible wording "unmodified" ("Show 31 unmodified lines"), not "unchanged", so the
+  accessible name contains the visible label (WCAG 2.5.3, Label in Name).
+- macOS draws the Files and Help menus in its own title bar (right of the traffic lights), so gap 3 was checked live.
+
+== initial state: fixture tab plus a second Terminal tab opened from the pane New tab menu ==
+    treeitem 'Tab 1' states=selected actions=Click,SetFocus,Expand,Collapse @s3k6vlhituul13:e6
+      button 'Close tab' actions=Click,SetFocus @s3k6vlhituul13:e7
+    tablist 'Pane tabs'
+      radiobutton '<fixture>' value=false actions=Click,Toggle,SetValue,SetFocus @s3k6vlhituul13:e17
+        button 'Close <fixture>' actions=Click,SetFocus @s3k6vlhituul13:e18
+      radiobutton '<fixture>' value=true states=checked actions=Click,Toggle,SetValue,SetFocus @s3k6vlhituul13:e19
+        button 'Close <fixture>' actions=Click,SetFocus @s3k6vlhituul13:e20
+== click @s3k6vlhituul13:e17 (first pane tab) ==
+{"ok": true, "steps": [{"label": "AXPress", "mechanism": "semantic_api", "outcome": "succeeded", "verified": false}], "error": null}
+== after selecting tab 1 tablist ==
+    tablist 'Pane tabs'
+      radiobutton '<fixture>' value=true states=checked actions=Click,Toggle,SetValue,SetFocus @s2eqqeqlyzwjde:e17
+        button 'Close <fixture>' actions=Click,SetFocus @s2eqqeqlyzwjde:e18
+      radiobutton '<fixture>' value=false actions=Click,Toggle,SetValue,SetFocus @s2eqqeqlyzwjde:e19
+        button 'Close <fixture>' actions=Click,SetFocus @s2eqqeqlyzwjde:e20
+== click @s2eqqeqlyzwjde:e20 (close button of the second, unselected pane tab) ==
+{"ok": true, "steps": [{"label": "AXPress", "mechanism": "semantic_api", "outcome": "succeeded", "verified": false}], "error": null}
+== after closing tab 2 tablist ==
+    tablist 'Pane tabs'
+      radiobutton '<fixture>' value=true states=checked actions=Click,Toggle,SetValue,SetFocus @s3ptprsqbe9k63:e17
+        button 'Close <fixture>' actions=Click,SetFocus @s3ptprsqbe9k63:e18
+== click @s1u44c60pnjyuo:e23 (Show Changes dock) ==
+{"ok": true, "steps": [{"label": "AXPress", "mechanism": "semantic_api", "outcome": "succeeded", "verified": false}], "error": null}
+== click @s2de7k8k3xff7z:e20 (dock empty state: Changes) ==
+{"ok": true, "steps": [{"label": "AXPress", "mechanism": "semantic_api", "outcome": "succeeded", "verified": false}], "error": null}
+== Changes tab open: diff body and dock tab strip Changed files Dock tabs ==
+    group 'Changed files' actions=SetFocus
+      button 'notes.txt, modified' actions=Click,SetFocus @s1r94ldpnr3fkl:e27
+      button 'Show 31 unmodified lines' actions=Click,SetFocus @s1r94ldpnr3fkl:e28
+      button 'Show 17 unmodified lines' actions=Click,SetFocus @s1r94ldpnr3fkl:e29
+    tablist 'Dock tabs'
+      radiobutton 'Changes' value=true states=checked actions=Click,Toggle,SetValue,SetFocus @s1r94ldpnr3fkl:e30
+        button 'Close Changes' actions=Click,SetFocus @s1r94ldpnr3fkl:e31
+== click @s1psrane2o0zbp:e28 (Show 31 unmodified lines) ==
+{"ok": true, "steps": [{"label": "AXPress", "mechanism": "semantic_api", "outcome": "succeeded", "verified": false}], "error": null}
+== after the press Changed files ==
+    group 'Changed files' actions=SetFocus
+      button 'notes.txt, modified' actions=Click,SetFocus @s3aesthfzygpzw:e27
+      button 'Hide 31 unmodified lines' actions=Click,SetFocus @s3aesthfzygpzw:e28
+Screenshot after the press (checked by eye, not kept): lines 6 to 33 now shown under the fold row, which stays in place.
+== click @s3aesthfzygpzw:e28 (Hide 31 unmodified lines) ==
+{"ok": true, "steps": [{"label": "AXPress", "mechanism": "semantic_api", "outcome": "succeeded", "verified": false}], "error": null}
+== after the second press Changed files ==
+    group 'Changed files' actions=SetFocus
+      button 'notes.txt, modified' actions=Click,SetFocus @sz9eorqov7s68:e27
+      button 'Show 31 unmodified lines' actions=Click,SetFocus @sz9eorqov7s68:e28
+      button 'Show 17 unmodified lines' actions=Click,SetFocus @sz9eorqov7s68:e29
+== click @s22toewsgxan6b:e23 (Unified diff view) ==
+{"ok": true, "steps": [{"label": "AXPress", "mechanism": "semantic_api", "outcome": "succeeded", "verified": false}], "error": null}
+== unified view Changed files ==
+    group 'Changed files' actions=SetFocus
+      button 'notes.txt, modified' actions=Click,SetFocus @smyba30r1rifi:e27
+      button 'Show 31 unmodified lines' actions=Click,SetFocus @smyba30r1rifi:e28
+      button 'Show 17 unmodified lines' actions=Click,SetFocus @smyba30r1rifi:e29
+== click @smyba30r1rifi:e29 (Show 17 unmodified lines (unified view)) ==
+{"ok": true, "steps": [{"label": "AXPress", "mechanism": "semantic_api", "outcome": "succeeded", "verified": false}], "error": null}
+== after the press Changed files ==
+    group 'Changed files' actions=SetFocus
+      button 'notes.txt, modified' actions=Click,SetFocus @s11nwycl88906v:e27
+      button 'Show 31 unmodified lines' actions=Click,SetFocus @s11nwycl88906v:e28
+      button 'Hide 17 unmodified lines' actions=Click,SetFocus @s11nwycl88906v:e29
+== click @s2xj8l2nkauujp:e32 (New dock tab) ==
+{"ok": true, "steps": [{"label": "AXPress", "mechanism": "semantic_api", "outcome": "succeeded", "verified": false}], "error": null}
+== click @s2vxex8x1ozis1:e41 (menu item Terminal) ==
+{"ok": true, "steps": [{"label": "AXPress", "mechanism": "semantic_api", "outcome": "succeeded", "verified": false}], "error": null}
+== dock tab strip with two tabs Dock tabs ==
+    tablist 'Dock tabs'
+      radiobutton 'Changes' value=false actions=Click,Toggle,SetValue,SetFocus @sc5o4rbasyf50:e20
+        button 'Close Changes' actions=Click,SetFocus @sc5o4rbasyf50:e21
+      radiobutton 'Terminal' value=true states=checked actions=Click,Toggle,SetValue,SetFocus @sc5o4rbasyf50:e22
+        button 'Close Terminal' actions=Click,SetFocus @sc5o4rbasyf50:e23
+== click @sc5o4rbasyf50:e20 (dock tab Changes) ==
+{"ok": true, "steps": [{"label": "AXPress", "mechanism": "semantic_api", "outcome": "succeeded", "verified": false}], "error": null}
+== after selecting Changes Dock tabs ==
+    tablist 'Dock tabs'
+      radiobutton 'Changes' value=true states=checked actions=Click,Toggle,SetValue,SetFocus @s2rzdp1v1jimpa:e30
+        button 'Close Changes' actions=Click,SetFocus @s2rzdp1v1jimpa:e31
+      radiobutton 'Terminal' value=false actions=Click,Toggle,SetValue,SetFocus @s2rzdp1v1jimpa:e32
+        button 'Close Terminal' actions=Click,SetFocus @s2rzdp1v1jimpa:e33
+== click @s2rzdp1v1jimpa:e33 (Close Terminal (unselected dock tab, pointer elsewhere)) ==
+{"ok": true, "steps": [{"label": "AXPress", "mechanism": "semantic_api", "outcome": "succeeded", "verified": false}], "error": null}
+== after closing Dock tabs ==
+    tablist 'Dock tabs'
+      radiobutton 'Changes' value=true states=checked actions=Click,Toggle,SetValue,SetFocus @s1vfx005bis7p3:e30
+        button 'Close Changes' actions=Click,SetFocus @s1vfx005bis7p3:e31
+== click @s2n75ikbdljvqy:e37 (title bar Files) ==
+{"ok": true, "steps": [{"label": "AXPress", "mechanism": "semantic_api", "outcome": "succeeded", "verified": false}], "error": null}
+== after pressing Files Files menu ==
+    button 'Files' actions=Click,SetFocus @sryz5a81zx94d:e37
+    menu None states=focused
+      menuitem 'New Workspace' actions=Click,SetFocus @sryz5a81zx94d:e39
+      menuitem 'Settings' actions=Click,SetFocus @sryz5a81zx94d:e40
+Files trigger bounds (screen): x=464 y=120 w=38 h=20, center x=483. First menu item bounds: x=476 y=159 w=170 h=28: the menu opens under the trigger (panel left = trigger center - 12 px + item inset), screenshot checked by eye, not kept.
+== click @sryz5a81zx94d:e37 (title bar Files again) ==
+{"ok": true, "steps": [{"label": "AXPress", "mechanism": "semantic_api", "outcome": "succeeded", "verified": false}], "error": null}
+== after the second press Files menu ==
+    button 'Files' actions=Click,SetFocus @s3ihojb7pe4nnc:e37
+Help trigger bounds {'height': 20.0, 'width': 38.0, 'x': 506.0, 'y': 120.0}
+== click @s2z82o0v1su0wx:e38 (title bar Help) ==
+{"ok": true, "steps": [{"label": "AXPress", "mechanism": "semantic_api", "outcome": "succeeded", "verified": false}], "error": null}
+== after pressing Help Help menu ==
+    button 'Help' actions=Click,SetFocus @stz945sbz2m0w:e38
+    menu None states=focused
+      menuitem 'Paneflow Documentation' actions=Click,SetFocus @stz945sbz2m0w:e39
+      menuitem "What's New" actions=Click,SetFocus @stz945sbz2m0w:e40
+      menuitem 'Check for Updates…' actions=Click,SetFocus @stz945sbz2m0w:e41
+      menuitem 'Automations' actions=Click,SetFocus @stz945sbz2m0w:e42
+      menuitem 'Troubleshooting' actions=Click,SetFocus @stz945sbz2m0w:e43
+      menuitem 'System Info…' actions=Click,SetFocus @stz945sbz2m0w:e44
+      menuitem 'About Paneflow' actions=Click,SetFocus @stz945sbz2m0w:e45
+Help menu first item bounds {'height': 28.0, 'width': 226.0, 'x': 518.0, 'y': 159.0}
+== click @stz945sbz2m0w:e38 (title bar Help again) ==
+{"ok": true, "steps": [{"label": "AXPress", "mechanism": "semantic_api", "outcome": "succeeded", "verified": false}], "error": null}
+== after the second press Help menu ==
+    button 'Help' actions=Click,SetFocus @s158cya8si1dfq:e38

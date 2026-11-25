@@ -1,0 +1,59 @@
+# Agent config writes kept off the real ~/.claude. Build 1825a6fc (debug, current main), home ~/.paneflow-dev-cover3
+Isolation: the app, its host and its worker ran with HOME=$SCRATCH/cover3/fakehome (checked with ps -E on all three; none had CLAUDE_CONFIG_DIR or CODEX_HOME), so the default Claude and Codex directories were $SCRATCH/cover3/fakehome/.claude, .claude.json and .codex. Space Work set CLAUDE_CONFIG_DIR=$SCRATCH/cover3/claude-work and CODEX_HOME=$SCRATCH/cover3/codex-work. Every agent alias resolved to a stand-in under $SCRATCH/cover-fx/sbin; no real agent binary ran.
+
+## Real files, read only (sha256 prefix, size; ~/.claude.json also hashed on its mcpServers and per-project mcpServers; "dev-home refs" counts the string paneflow-dev-cover in the file)
+Before (04:37):
+~/.claude/settings.json: sha256 3f0eeca00eea6958 size 7552 | hooks sha d828fc5d258bc24c statusLine sha 3d5d0ac55cfd7a0d
+~/.claude.json: sha256 bb960f975d264ed5 size 175604 | mcpServers sha b36cbb2a70d9768b projects-mcp sha a99d339af5f5d296
+~/.codex/hooks.json: absent
+~/.codex/config.toml: absent
+~/.claude/skills/paneflow-conductor/SKILL.md: sha256 636c1c245ff0deeb size 13676
+~/.gemini/settings.json: absent
+~/.config/opencode/opencode.json: absent
+~/.config/opencode/opencode.jsonc: absent
+~/.fx/mcp.json: absent
+After every step below (04:49):
+~/.claude/settings.json: sha256 3f0eeca00eea6958 size 7552 | hooks sha d828fc5d258bc24c statusLine sha 3d5d0ac55cfd7a0d | dev-home refs 0
+~/.claude.json: sha256 085a609a65896bb1 size 175676 | mcpServers sha b36cbb2a70d9768b projects-mcp sha a99d339af5f5d296 | dev-home refs 0
+~/.codex/hooks.json: absent
+~/.codex/config.toml: absent
+~/.claude/skills/paneflow-conductor/SKILL.md: sha256 636c1c245ff0deeb size 13676 | dev-home refs 0
+~/.gemini/settings.json: absent
+~/.config/opencode/opencode.json: absent
+~/.config/opencode/opencode.jsonc: absent
+~/.fx/mcp.json: absent
+~/.claude/settings.json and the conductor SKILL.md are byte-identical. ~/.claude.json changed as a whole file because the Claude Code session that drives this audit rewrites it continuously; its mcpServers and every project's mcpServers are unchanged and it holds no reference to the dev home. The Codex, Gemini, opencode and fx files stayed absent.
+
+## Settings > Agents: the hooks toggle (rows 49, 398, 493)
+Claude Code settings (gear) > 'Hooks and MCP' on -> fakehome/.claude/settings.json gets 9 hook events (Notification, PermissionRequest, PreToolUse, SessionStart, Stop, StopFailure, SubagentStart, SubagentStop, UserPromptSubmit), each a group marked "_paneflow_managed": true running ~/.paneflow-dev-cover3/bin/paneflow-ai-hook.sh <event>, plus statusLine '<...>/paneflow-ai-hook.sh StatusLine' (managed); fakehome/.claude.json gets mcpServers.paneflow (stdio, ~/.paneflow-dev-cover3/bin/paneflow-mcp); fakehome/.claude/skills/paneflow-conductor/SKILL.md (13676 bytes).
+Toggle off -> hooks 0, statusLine gone, mcp paneflow gone, skill gone. On again -> all four back.
+Codex settings > 'Hooks and MCP' on -> fakehome/.codex/hooks.json (Interrupt, PermissionRequest, PreToolUse, SessionEnd, SessionStart, Stop, SubagentStart, SubagentStop, UserPromptSubmit) and config.toml [mcp_servers.paneflow]; the row then says 'Trust the Paneflow hooks once in Codex with /hooks.' (52-hooks-toggle.jpg)
+The pages call it 'Paneflow hooks'; the switch is labelled 'Hooks and MCP' and sits in each agent's settings dialog (C17).
+
+## Settings > Spaces > Work: install into the space's directories (rows 198, 492)
+Saving the env (here through paneflow.json) installs nothing on a debug build, as the log says: 'spaces: a debug build leaves the space integrations untouched; Settings > Spaces > Retry installs'.
+The Work page has no 'Agent setup' block; it shows an 'Accounts' section: per agent an account picker (the space's directory), 'Paneflow's hooks are not in this account yet' and an 'Add hooks' button (52-space-accounts.jpg, top).
+Claude Code 'Add hooks' -> claude-work/settings.json gets the 9 managed hook groups, claude-work/.claude.json mcpServers.paneflow, claude-work/skills/paneflow-conductor/SKILL.md, and a settings.json.bak backup. The space's records: ~/.paneflow-dev-cover3/integrations/spaces/<Work id>/claude-code.json, claude-code.paneflow-conductor.json, codex.json.
+Codex 'Add hooks' -> codex-work/hooks.json and config.toml.
+Afterwards the Claude row reads 'No account is signed in to <claude-work>' with 'Sign in' (not pressed); the Codex row stays 'Checking <codex-work>...' (52-space-accounts.jpg, bottom).
+
+## Own status line (rows 228, 225, 604)
+claude-work/settings.json held {"statusLine": {"type": "command", "command": "echo my-own-status-line"}, "theme": "dark"} before 'Add hooks' and after it, and after two CLI reinstalls: the statusLine and theme stayed as written, only "hooks" was added. In the default directory, which had no status line, the install set statusLine to paneflow-ai-hook.sh StatusLine.
+Settings > Usage, Claude Code Work card: 'Claude Code has not reported plan limits for <claude-work> yet. Check that it is installed and signed in for this folder, then reopen this panel.'
+
+## Accounts (rows 213, 214)
+Settings > Usage lists Claude Code and Codex for Work (from the space env), Default (fakehome), 'Claude Code, Keyed' (space Keyed: CLAUDE_CONFIG_DIR=$SCRATCH/cover3/claude-keyed and ANTHROPIC_API_KEY=not-a-real-key-qa, a dummy string): 'Billed through an API key. This account has no plan limits.', and 'Claude Code, Claude QA profile' (agent_profiles entry with its own CLAUDE_CONFIG_DIR). Space Play pointed at the same claude-work directory and added no card: one account for two spaces (52-usage-accounts.jpg).
+Observation: the Keyed account appeared only once its directory existed.
+
+## agent_prompts (row 584)
+agent_prompts="paneflow" in paneflow.json; a debug worker leaves the hooks untouched ('a debug build leaves the agent integrations untouched; paneflow integrations install <runtime> --force points them at it'), so: paneflow integrations install claude-code --force (HOME=fakehome) and the same with CLAUDE_CONFIG_DIR=$SCRATCH/cover3/claude-work -> PermissionRequest (matcher *) and PreToolUse (matcher AskUserQuestion) run 'paneflow-ai-hook.sh <event> answer' with timeout 600; the other events keep timeout 5.
+From a Claude Code stand-in pane in space Work (PANEFLOW_AI_TOOL=claude, session and host endpoint set), $SCRATCH/cover3/perm.sh read the PermissionRequest command from $CLAUDE_CONFIG_DIR/settings.json and piped Claude Code's payload into it:
+- {"hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"rm -rf build"}} -> Paneflow prompt 'Bash / command: rm -rf build / Asked by Claude Code in Claude Code' with Allow once, Deny, Decide in the terminal (52-agent-prompts.jpg, top). Deny -> hook stdout {"hookSpecificOutput":{"decision":{"behavior":"deny","message":"The user denied this in Paneflow"},"hookEventName":"PermissionRequest"}}, exit 0, 12 s after the call.
+- PreToolUse AskUserQuestion 'Which color?' (Red, Blue) -> prompt with Red, Blue, Answer in the terminal (bottom). Blue -> {"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","updatedInput":{"answers":{"Which color?":"Blue"},...}}}.
+agent_prompts="native" plus a reinstall -> the hook has no 'answer' argument; the same PermissionRequest returns at once with no output and no prompt, so the question stays in the agent's terminal.
+
+## paneflow mcp install toward scratch directories (row 114, 395)
+`paneflow mcp --help` has no target flag; the paths come from the environment. Run with env -i PATH=<stand-ins>:/usr/bin:/bin HOME=$SCRATCH/cover3/fakehome2 CLAUDE_CONFIG_DIR=$SCRATCH/cover3/claude-cli CODEX_HOME=$SCRATCH/cover3/codex-cli:
+status before: claude-code, codex, opencode, gemini 'detected but not installed', fx 'not detected'.
+install: claude-code, codex, opencode, gemini 'installed (~/.paneflow-dev-cover3/bin/paneflow-mcp)', fx skipped.
+Files written: claude-cli/.claude.json, codex-cli/config.toml, fakehome2/.gemini/settings.json, fakehome2/.config/opencode/opencode.jsonc. status after: all four installed.

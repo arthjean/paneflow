@@ -1,0 +1,103 @@
+# Editor, viewers and Files tree, build fd627b91 (debug), home ~/.paneflow-dev-cover2, workspace 'dock' on fixture repo $SCRATCH/cover-fx/dockrepo
+# Keys sent with System Events to the dev window only (guarded on its pid); clicks are real mouse clicks (agent-desktop --headed mouse-click).
+
+## Cmd+Alt+F (toggle_files_sidebar)
+agent-desktop press cmd+alt+f fails with APP_UNRESPONSIVE (AXMenuItemCmdModifiers invalid in the app menu); the same chord through System Events opened the Files tree (outline 'Files' appears in AX).
+
+## Cmd+Alt+M (toggle_diff_dock_maximize)
+before: button 'Maximize panel'
+after Cmd+Alt+M: button 'Restore panel'
+after Cmd+Alt+M again: button 'Maximize panel'
+
+## Tree resize by dragging its left edge
+tree outline before: x=1296 w=255
+after dragging its left edge 400 px left: x=1056 w=495
+after dragging it 600 px right: x=1056 w=495
+from x=1055: x=1392 w=159
+after dragging the edge from 1391 to 600: x=1056 w=495
+(minimum about 159-160 px holds; the maximum reached 495 px, bounded by the window width of this test, so the 560 px end was not reachable)
+
+## Tree rows
+AX outline: docs, src, target, .envrc.sample, .gitignore, .hidden, run.log -> dot files shown; target/ and run.log (both in .gitignore) drawn dimmed (51-files-tree-menus.jpg).
+Click on run.log (ignored) -> dock tab 'run.log' opened with its content 'log'.
+
+## Entry context menu (right click on .hidden, .gitignore, pic.png)
+      menuitem 'Open with Default App' 
+      menuitem 'Reveal in Finder' 
+      menuitem 'Open With' 
+      menuitem 'Copy Path' 
+      menuitem 'Copy Relative Path' 
+      menuitem 'Send to Agent' 
+Open With is disabled on every entry tried, pic.png included: it lists detected code editors and none was detected here (observation, not a failure).
+
+## Send to Agent
+One agent (d-agent, Claude Code stand-in): Send to Agent on .hidden typed '<email>' into d-agent without Enter.
+Two agents (d-agent + d-gem Gemini stand-in): the entry opened a list [Gemini, Claude Code]; Gemini -> d-gem received '<email>', no Enter.
+Drag .hidden from the tree onto the d-sh shell -> the quoted absolute path was inserted ('$SCRATCH/cover-fx/dockrepo/.hidden'); drag .gitignore onto d-agent -> '<email>' appended.
+
+## Find bar (Cmd+F) on src/main.rs (200 lines)
+'value_1' -> '1 of 111'; Enter -> '2 of 111'; Shift+Enter -> '1 of 111'; Regular Expression on, 'value_(1[0-9])\b' -> '1 of 10'; Match Case on, 'VALUE_1' -> 'No results' (51-editor-find.jpg).
+Toggle Replace -> 'Replace with', Replace, Replace All. Replace with 'renamed_$1', Replace All -> value_10..value_19 became renamed_10..renamed_19; a single Cmd+Z in the editor restored all ten (51-editor-replace-undo.jpg).
+':120' + Enter -> status 'Ln 120, Col 1' and the bar shows 'Go to line 120'.
+Editor Controls menu: Word Wrap, Minimap, Scrollbar. Word Wrap folded the long lines of that tab (51-editor-jump-wrap.jpg).
+
+## Viewers
+after Show rendered markdown: editor = {'minimap': False, 'scrollbar': True, 'word_wrap': False, 'markdown_rendered': True, 'csv_table': True, 'semantic_tokens': False}; toggle now: button 'Show markdown source'
+after Show source on data.csv: editor = {'minimap': False, 'scrollbar': True, 'word_wrap': False, 'markdown_rendered': True, 'csv_table': False, 'semantic_tokens': False}; toggle now: button 'Show folder contents' button 'Show folder contents' 
+pic.png: '200 x 120', zoom out, 100%, zoom in, Fit, Actual size controls. data.csv: table with header row and line numbers. readme.md: source by default. bundle.zip: listing with names, sizes, dates. big.txt (15.6 MB): 'Large file: read-only, no syntax colors', 1,800,001 lines. blob.bin: 'No preview for this file', '4 KB . This file is binary', Open with Default App, Reveal in Finder, Open With (51-viewers.jpg, 51-viewer-no-preview.jpg).
+
+## Breadcrumb
+docs collapsed: rows under docs visible: 0
+after a click on the breadcrumb 'docs': data.csv row visible: 1, docs row:       treeitem 'docs' ['selected']
+after the chevron after 'docs':
+      menuitem 'big.txt' 
+      menuitem 'blob.bin' 
+      menuitem 'bundle.zip' 
+      menuitem 'data.csv' 
+      menuitem 'data.tsv' 
+      menuitem 'pic.png' 
+      menuitem 'readme.md' 
+
+## File tab menu
+tab menu on readme.md:
+      menuitem 'Copy Path' 
+      menuitem 'Copy Relative Path' 
+      menuitem 'Send to Agent' 
+      menuitem 'Close' 
+      menuitem 'Close Others' 
+      menuitem 'Close to the Right' 
+      menuitem 'Close All' 
+      menuitem 'Reopen Closed Tab' 
+after Close: 'main.rs' 'run.log' 'pic.png' 'data.csv' 'bundle.zip' 'big.txt' 
+after Reopen Closed Tab: 'main.rs' 'run.log' 'pic.png' 'data.csv' 'bundle.zip' 'big.txt' 'readme.md' 
+main.rs edited (unsaved): 
+after Close All: 
+menu: 8 items
+after Close All with main.rs modified: 'main.rs' 
+Middle click on the blob.bin tab closed it. Unsaved main.rs survived Close All (only 'main.rs' remained).
+Closing the workspace with main.rs unsaved -> 'Save changes before closing this workspace?' with Cancel / Don't Save / Save (51-unsaved-close-dialog.jpg); Cancel kept it.
+
+## Git gutter (line 10 modified in the work tree)
+clipboard after Copy: [fn line_10() { let value_10 = 10; }]
+Revert -> line 10 back to 'value_10 = 10'; marker gone (cg5)
+
+## Comment for an agent
+Cmd+Shift+M with the caret on line 14 -> block 'Comment on L14'; typed 'rename this'; Cmd+Enter -> list [Gemini, Claude Code]; Claude Code -> Paneflow asked 'Paste 7 lines? This program did not enable bracketed paste' (the stand-in has no bracketed paste); Paste ->
+rename this
+
+```rs
+fn line_14(
+) { let val
+ue_14 = 14;
+ }
+```working
+on: <email>
+n <email>
+re src/main
+.rs:14
+
+## Cmd+click paths in d-sh (cwd docs/)
+src/main.rs:42:7 -> main.rs opened at 'Ln 42, Col 7' (workspace-root lookup).
+main.rs:30 -> main.rs at 'Ln 30' (suffix lookup).
+src/gone.rs:1 (file created, then clicked) -> gone.rs opened; after deleting it, a new Cmd+click shows the open tab with 'This file was deleted on disk. Saving recreates it.' (no 'File not found' since the tab was still open).
+twin.rs:1 with lib/a/twin.rs and lib/b/twin.rs -> nothing visible, three tries (hover first, fresh line). Not observed; see coverage.md.

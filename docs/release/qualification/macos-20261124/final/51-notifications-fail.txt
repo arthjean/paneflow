@@ -1,0 +1,22 @@
+Build: fd627b91 debug (target-fix-t), home ~/.paneflow-dev-cover2, 2026-11-25
+FAIL C8: a desktop notification opens a modal "Choose Application / Where is use_default?" dialog and freezes the window.
+
+Repro:
+1. paneflow.json: "agent_panel": {"notify_when_agent_waiting": "PrimaryScreen"} (hot reload).
+2. Spaces Work and Play; show Play. In a pane of a Work workspace, run a program that writes OSC 7501 state=blocked (cover-fx/osc.sh blocked 2), again 3 s later, again 12 s later, then state=error.
+3. Result: no notification reaches Notification Center (agent-desktop list-notifications --app paneflow: 0). Two app-modal "Choose Application" windows titled "Where is use_default?" open in the Paneflow process (CGWindowList: two layer-8 windows of pid 99740). While they are open, every accessibility read of the window times out (agent-desktop: APP_UNRESPONSIVE / inventory did not stabilize); the IPC socket still answers system.ping. Cancel on both dialogs restores the window.
+Evidence: 51-notification-choose-application.jpg; main-thread sample:
+736 ???  (in AE)  load address 0x1a9ca0000 + 0xafd8  [0x1a9caafd8]
+736 ???  (in AE)  load address 0x1a9ca0000 + 0xb578  [0x1a9cab578]
+736 AEVTsysoppcb  (in StandardAdditions) + 2640  [0x1256aec88]
+736 -[NSApplication runModalForWindow:]  (in AppKit) + 276  [0x1a5ea8da4]
+736 _NSTryRunModal  (in AppKit) + 100  [0x1a5ea8ec8]
+--
+736 ???  (in AE)  load address 0x1a9ca0000 + 0xafd8  [0x1a9caafd8]
+736 ???  (in AE)  load address 0x1a9ca0000 + 0xb578  [0x1a9cab578]
+(the full sample shows -[NSApplication runModalForWindow:] nested twice under AEVTsysoppcb, StandardAdditions)
+
+Cause (code read, not fixed): src-app/src/agents/notifications.rs show_desktop_notification calls notify_rust::Notification::show on macOS without setting an application. notify-rust 4.18.0 calls mac-notification-sys 0.6.15, whose ensure_application_set runs get_bundle_identifier_or_default("use_default"), i.e. the AppleScript `get id of application "use_default"` (objc/notify.m getBundleIdentifier). With no such application, macOS shows the Choose Application dialog.
+Scope: the path has no build gate, so the installed release is probably affected whenever notify_when_agent_waiting is not Never (default Never); not verified on the release build (out of bounds here). The 10 s per pane throttle could not be observed for the same reason.
+
+What does work (same run): a program blocked or error state counts toward the hidden-space button, and a seen error stops counting (51-spaces.txt).

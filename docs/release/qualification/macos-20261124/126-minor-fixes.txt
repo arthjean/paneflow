@@ -1,0 +1,194 @@
+# 126: minor fixes of the macOS coverage audit, verified live on a debug build of the fix branch
+# branch head:
+#   c4bb03ca fix(a11y): let the sidebar rows' hover-revealed buttons answer a headless press
+#   d6060080 fix(a11y): expose the palette refusal, the worktree removal dialog and the diff view toggle
+#   18a9b486 fix(layout): name the panes a restored layout opens after their surface name
+#   ff6b0e3c fix(cli): report a host or worker whose connection slots are all taken as busy
+# instance: scripts/dev.sh --tag minorfix, every inherited PANEFLOW_* unset, home ~/.paneflow-dev-minorfix, own IPC endpoint, host and worker; external terminal; Apple Silicon Mac, macOS 27
+# probe: hold.py holds N idle unix connections to an endpoint, runs a CLI command, releases them and runs it again (the final/50-dropped-busy.txt recipe)
+
+== 1. host status and serve status against a full endpoint (was: state faulted, 'Broken pipe' for the host, exit 0)
+== host: 128 idle connections, then paneflow host status
+# held 128 idle connections to paneflow-host-8e572d1f233cb57b.sock
+$ paneflow host status
+{
+  "state": "busy",
+  "home": "~/.paneflow-dev-minorfix",
+  "endpoint": "$TMPDIR/paneflow-host-8e572d1f233cb57b.sock",
+  "message": "the host is running but every connection slot is taken (host busy: too many concurrent connections); retry once other clients disconnect"
+}
+[exit=1]
+# after releasing them: {   "state": "running",   "home": "~/.paneflow-dev-minorfix",   "endpoint": "$TMPDIR/paneflow-host-8e572d1f233c [exit=0]
+== host: 120 idle connections, then paneflow host status
+# held 120 idle connections to paneflow-host-8e572d1f233cb57b.sock
+$ paneflow host status
+{
+  "state": "running",
+  "home": "~/.paneflow-dev-minorfix",
+  "endpoint": "$TMPDIR/paneflow-host-8e572d1f233cb57b.sock",
+  "identity": {
+    "name": "paneflow-host",
+    "version": "0.20.0",
+    "protocol": 1,
+    "build_id": "0.20.0+108cacb17ed8",
+    "host_instance": "f682e032-9868-44e9-a79d-57071da3fb50",
+    "engine": {
+      "engine": "libghostty-vt",
+      "app_version": "1.4.1-dev+108cacb17",
+      "api_version": "1.0.1",
+      "source_sha": "108cacb17ed8990840cd14abfce43d8ed8503ca1"
+    },
+    "pid": 41926,
+    "home": "~/.paneflow-dev-minorfix",
+    "endpoint": "$TMPDIR/paneflow-host-8e572d1f233cb57b.sock",
+    "started_at_ms": 1795571166513
+  },
+  "helpers": {
+    "ai_hook_dir": "~/.paneflow-dev-minorfix/cache/bin/0.20.0"
+  },
+  "resources": {
+    "persistence": {
+      "queued_bytes": 0,
+      "peak_queued_bytes": 0,
+      "budget_bytes": 8388608,
+      "reserved_bytes": 0,
+      "queued_jobs": 0,
+      "pending_final_revisions": 0,
+      "metadata_rejected": 0
+    },
+    "checkpoints": {
+      "active": 0,
+      "max_concurrent": 2,
+      "staged_bytes": 0,
+      "peak_staged_bytes": 0,
+      "budget_bytes": 268435456,
+      "refused": 0
+    },
+    "live_runtimes": 0,
+    "pending_launches": 0,
+    "connections": {
+      "streaming": 0,
+      "streaming_limit": 120,
+      "limit": 128,
+      "reserved_control": 8
+    },
+    "sessions": []
+  },
+  "live_sessions": 0,
+  "sessions": []
+}
+[exit=0]
+# after releasing them: {   "state": "running",   "home": "~/.paneflow-dev-minorfix",   "endpoint": "$TMPDIR/paneflow-host-8e572d1f233c [exit=0]
+== worker: 128 idle connections, then paneflow serve status
+# held 128 idle connections to paneflow-serve-8e572d1f233cb57b.sock
+$ paneflow serve status
+{
+  "state": "busy",
+  "home": "~/.paneflow-dev-minorfix",
+  "endpoint": "$TMPDIR/paneflow-serve-8e572d1f233cb57b.sock",
+  "message": "the worker is running but every connection slot is taken (paneflow error -32000: worker busy: too many concurrent connections); retry once other clients disconnect"
+}
+[exit=1]
+# after releasing them: {   "state": "running",   "pid": 41929,   "build_id": "3504b77aeda02cfc7753784edfdb409434317c0b3db187a84974ed8872417e63",   "protocol": 1,   "required_core_prot [exit=0]
+# note: with this idle window (no pane attached) 120 idle connections leave the control slots free, so the host answers running; 128 fill the cap
+
+== 2. workspace.restore_layout applies a surface's name to the panes it opens, on the window and on the worker (was: names ignored, pf read rl-cmd exit 3)
+$ paneflow new --name restore --cwd $SCRATCH/repo
+{
+  "index": 0,
+  "title": "restore",
+  "panes": 1
+}
+[exit=0]
+$ paneflow ls --human
+  ID  NAME                  SPACE             CMD                       CWD
+1026  shell                 Default           zsh                       $SCRATCH/repo
+[exit=0]
+== workspace.restore_layout on the window, surface names rl-logs, '  rl-spaced  ', and custom_name rl-chosen over name title
+>> {"layout": {"type": "split", "direction": "horizontal", "children": [{"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{"name": "rl-logs"}]}, {"type": "pane", "surfaces": [{"name": "  rl-spaced  "}]}, {"type": "pane", "surfaces": [{"name": "title", "custom_name": "rl-chosen"}]}]}}
+$ paneflow api call workspace.restore_layout --on window --args {"layout": {"type": "split", "direction": "horizontal", "children": [{"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{"name": "rl-logs"}]}, {"type": "pane", "surfaces": [{"name": "  rl-spaced  "}]}, {"type": "pane", "surfaces": [{"name": "title", "custom_name": "rl-chosen"}]}]}}
+{
+  "restored": true,
+  "panes": 4
+}
+[exit=0]
+$ paneflow ls --human
+  ID  NAME                  SPACE             CMD                       CWD
+1026  shell                 Default           zsh                       $SCRATCH/repo
+1032  rl-logs               Default           zsh                       $SCRATCH/repo
+1034  rl-spaced             Default           zsh                       $SCRATCH/repo
+1036  rl-chosen             Default           zsh                       $SCRATCH/repo
+[exit=0]
+$ paneflow read rl-logs --lines 2
+<untrusted_terminal_output source="surface:1032" total_lines="1" eof="true" id="bb64415cc7a9a0b9">
+user@host repo %
+</untrusted_terminal_output id="bb64415cc7a9a0b9">[exit=0]
+== reset to one pane before the worker run
+$ paneflow api call workspace.restore_layout --on window --args {"layout": {"type": "pane", "surfaces": [{}]}}
+{
+  "restored": true,
+  "panes": 1
+}
+[exit=0]
+$ paneflow ls --human
+  ID  NAME                  SPACE             CMD                       CWD
+1026  shell                 Default           zsh                       $SCRATCH/repo
+[exit=0]
+== workspace.restore_layout on the worker, surface names rl-logs, '  rl-spaced  ', and custom_name rl-chosen over name title
+>> {"layout": {"type": "split", "direction": "horizontal", "children": [{"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{"name": "rl-logs"}]}, {"type": "pane", "surfaces": [{"name": "  rl-spaced  "}]}, {"type": "pane", "surfaces": [{"name": "title", "custom_name": "rl-chosen"}]}]}}
+$ paneflow api call workspace.restore_layout --on worker --args {"layout": {"type": "split", "direction": "horizontal", "children": [{"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{"name": "rl-logs"}]}, {"type": "pane", "surfaces": [{"name": "  rl-spaced  "}]}, {"type": "pane", "surfaces": [{"name": "title", "custom_name": "rl-chosen"}]}]}}
+{
+  "restored": true,
+  "panes": 4
+}
+[exit=0]
+$ paneflow ls --human
+  ID  NAME                  SPACE             CMD                       CWD
+1026  shell                 Default           zsh                       $SCRATCH/repo
+2056  rl-logs               Default                                     $SCRATCH/repo
+2058  rl-spaced             Default                                     $SCRATCH/repo
+2060  rl-chosen             Default                                     $SCRATCH/repo
+[exit=0]
+$ paneflow read rl-logs --lines 2
+<untrusted_terminal_output source="surface:2056" total_lines="1" eof="true" id="e385b35f787bcd26">
+user@host repo %
+</untrusted_terminal_output id="e385b35f787bcd26">[exit=0]
+# verdict: new panes take the trimmed name, a custom_name wins over name, the reused first pane keeps its own name (shell)
+
+== 3. accessibility, headless agent-desktop snapshots of the dev window only (--window-id), no physical input
+-- Changes dock toolbar, Split active (default), then after a headless press on 'Unified diff view'
+ window 'Paneflow' states=['focused']
+   group None 
+     radiogroup 'Diff view' 
+      @s362qgfgd6fs46:e30 radiobutton 'Unified diff view' value=false
+      @s362qgfgd6fs46:e31 radiobutton 'Split diff view' states=['checked'] value=true
+ window 'Paneflow' states=['focused']
+   group None 
+     radiogroup 'Diff view' 
+      @s3tspv1vczsksm:e30 radiobutton 'Unified diff view' states=['checked'] value=true
+      @s3tspv1vczsksm:e31 radiobutton 'Split diff view' value=false
+-- Settings > Worktrees > Remove (headless press) on the managed worktree feat-solo (pf up with worktree = feat-solo): the confirmation is a dialog named by its question, with its buttons inside it
+dialog 'Remove the worktree of feat-solo?'
+  button 'Cancel' actions=['Click', 'SetFocus']
+  button 'Remove' actions=['Click', 'SetFocus']
+-- headless press on Cancel: the dialog closes (0 dialog nodes in the next snapshot), the worktree stays
+# agent-desktop does not print accessibility descriptions, so the dialog's message (blocker summary, path, explanation) is covered by the unit test
+#   app::worktree_remove::tests::the_removal_confirmation_is_an_alert_dialog_with_its_title_message_and_buttons
+-- New pane palette refusal: not exercised live. The only refusals the palette shows come from pressing an agent launcher
+#   (sandbox the platform lacks, agent not installed), and agent launchers are not pressed in a live instance. Covered by
+#   app::pane_palette::tests::a_refused_launch_is_a_status_that_reads_its_reason (role Status, named by its reason)
+
+== 4. the sidebar rows' hover-revealed buttons answer a headless press (instance relaunched on the build with this fix, fresh home)
+-- before the fix (same session, build without it): bounds of 'New tab in hover' at rest {'height': 20.0, 'width': 0.0, ...}
+--   agent-desktop click -> ACTION_FAILED: Target is not actionable: visible (bounds are zero-sized), delivery not_delivered
+-- bounds of the hidden 'New tab in hover' button at rest (pointer away from the sidebar)
+{'height': 20.0, 'width': 11.0, 'x': 777.0, 'y': 194.0}
+-- headless press on 'New tab in hover'
+ok {'delivery': 'delivered_unverified', 'retry': 'unsafe'}
+-- after the press, the tree holds the New pane palette:
+     group 'New pane' 
+      @s1n50j2mpgsshb:e18 button 'Terminal' 
+Close tab at rest: {'height': 20.0, 'width': 11.0, 'x': 777.0, 'y': 228.0}
+# the press opened the New pane palette for the workspace; no launcher in it was pressed
+
+# teardown: PANEFLOW_HOME=~/.paneflow-dev-minorfix paneflow serve stop, host stop --force, kill of the window PID started by dev.sh (never by name), home moved to the Trash

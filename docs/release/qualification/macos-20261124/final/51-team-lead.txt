@@ -1,0 +1,12 @@
+# Claude Code (team): lead close, and the tab-bar entry. Build fd627b91 (debug), home ~/.paneflow-dev-cover2
+Dry check: the app PATH starts with $SCRATCH/cover-fx/sbin and the launch line runs 'claude --teammate-mode tmux' through Paneflow's shim, which resolved to the stand-in (FAKE_AGENT_READY). No real agent ran.
+
+## Closing the lead leaves the teammate
+Sidebar w-one row > New tab (+) > palette 'Claude Code (team)' -> lead pane 33930 started with TMUX=paneflow-tmux-compat,0,0 TMUX_PANE=%0 PATH=<home>/bin/tmux-compat:$PATH claude --teammate-mode tmux.
+Stand-in ran: tmux split-window -h "bash -c 'echo TEAMMATE_TWO; exec bash'" -> a new pane (TMUX_PANE=%1) next to the lead printed TEAMMATE_TWO (an earlier round also showed tmux display-message -> %0, list-panes -> %0 %1).
+Pane tab close button 'Close Claude Code' on the lead only -> the lead pane closed, no dialog; the teammate stayed as surface 33933 'shell@repo' (cmd bash), and 'echo still-open-after-lead-closed' typed into it ran (51-team-lead-close.jpg, before and after).
+Note: Cmd+W in the lead closed the whole tab (lead and teammate) with an Undo toast, as Cmd+W does for any tab.
+
+## C15: the pane tab bar '+' menu opens a team lead without its team token
+Repro: in any workspace, pane tab bar '+' > 'Claude Code (team)'. The launch line has the TMUX and tmux-compat PATH, but the pane's environment has no PANEFLOW_TMUX_TEAM (env listing in the stand-in: PANEFLOW_AI_PID ... PANEFLOW_WORKSPACE_UUID, TMUX, TMUX_PANE; ps -E on the shim process: no PANEFLOW_TMUX_TEAM). Every tmux call then fails: 'paneflow tmux-compat: PANEFLOW_TMUX_TEAM is not set; this pane is not a Paneflow team pane' (51-team-tabbar-no-token.jpg). Claude Code would get no teammate panes from this entry.
+The same entry from the sidebar New tab palette sets the token and works (above).

@@ -1,0 +1,91 @@
+# Coverage audit, macOS 27.2 Apple Silicon, debug build of main at 0cd67ce4 (code f9b79a3b), PANEFLOW_HOME=~/.paneflow-dev-cover, inherited PANEFLOW_* cleared. 'pf' is that build's paneflow.
+# T1: tmux.compat send-keys with ipc.scripting=true (final/08 ran it only with the gate closed). Team started by accessibility press on 'Claude Code (team)' in the New pane palette; a stand-in 'claude' in $PANEFLOW_HOME/bin/tmux-compat/ logged its tmux calls.
+== run 1 (teammate %1 runs cat)
+# stand-in claude started as the team lead: argv=--teammate-mode tmux
+# TMUX=paneflow-tmux-compat,0,0 TMUX_PANE=%0 PANEFLOW_SURFACE_ID=1040 PANEFLOW_TMUX_TEAM=<set, 32 chars>
+# gates: {"ipc":{"scripting":true}}
+$ tmux -V
+tmux 3.5a
+[exit=0]
+$ tmux split-window -h -P -F #{pane_id} echo teammate-1-started; cat
+%1
+[exit=0]
+$ tmux list-panes -F #{pane_id} #{pane_title}
+%0 
+%1 
+[exit=0]
+$ tmux send-keys -t %1 -l typed-by-send-keys
+[exit=0]
+$ tmux send-keys -t %1 Enter
+text contains CR or LF; multiline surface.send_text requires active bracketed paste
+[exit=1]
+$ tmux capture-pane -p -t %1
+paneflow tmux-compat: unsupported verb: capture-pane
+[exit=1]
+$ tmux kill-pane -t %0
+paneflow tmux-compat: the team leader pane is closed by its user, not by the team
+[exit=1]
+# done
+
+== run 2 (%2 split without a command is only reserved until a respawn-pane, by design, so 'has not started' is expected)
+# stand-in claude started as the team lead: argv=--teammate-mode tmux
+# TMUX=paneflow-tmux-compat,0,0 TMUX_PANE=%0 PANEFLOW_SURFACE_ID=1048 PANEFLOW_TMUX_TEAM=<set, 32 chars>
+# gates: {"ipc":{"scripting":true}}
+$ tmux -V
+tmux 3.5a
+[exit=0]
+$ tmux split-window -h -P -F #{pane_id} echo teammate-1-started; cat
+%1
+[exit=0]
+$ tmux split-window -v -P -F #{pane_id}
+%2
+[exit=0]
+$ tmux list-panes -F #{pane_id} #{pane_title}
+%0 
+%1 
+%2 
+[exit=0]
+$ tmux send-keys -t %1 -l typed-by-send-keys
+[exit=0]
+$ tmux send-keys -t %1 Enter
+text contains CR or LF; multiline surface.send_text requires active bracketed paste
+[exit=1]
+$ tmux send-keys -t %1 C-m
+text contains CR or LF; multiline surface.send_text requires active bracketed paste
+[exit=1]
+$ tmux send-keys -t %2 echo typed-into-zsh Enter
+paneflow tmux-compat: pane %2 has not started
+[exit=1]
+$ tmux send-keys -t %2 -l echo literal-into-zsh
+paneflow tmux-compat: pane %2 has not started
+[exit=1]
+$ tmux send-keys -t %2 Enter
+paneflow tmux-compat: pane %2 has not started
+[exit=1]
+$ tmux send-keys -t %2 C-c
+paneflow tmux-compat: pane %2 has not started
+[exit=1]
+$ tmux capture-pane -p -t %1
+paneflow tmux-compat: unsupported verb: capture-pane
+[exit=1]
+$ tmux kill-pane -t %0
+paneflow tmux-compat: the team leader pane is closed by its user, not by the team
+[exit=1]
+# done
+
+== paneflow send and key toward the same teammate (surface 1051, cat, no bracketed paste)
+$ pf send 1051 $'line'
+paneflow: paneflow error -32602: text contains CR or LF; multiline surface.send_text requires active bracketed paste
+[exit=1]
+
+$ pf key 1051 Enter
+paneflow: paneflow error -32602: keystroke 'Enter' would submit (CR/LF); use surface.send_text with submit=true (`paneflow send --submit`) instead
+[exit=1]
+
+$ pf read 1051 --lines 2
+<untrusted_terminal_output source="surface:1051" total_lines="7" eof="false" id="7ba2233f90657386">
+teammate-1-started
+typed-by-send-keysline<CR>
+</untrusted_terminal_output id="7ba2233f90657386">[exit=0]
+
+== verdict: send-keys -l types into a teammate once ipc.scripting=true (pass). FAIL: send-keys Enter (or C-m) is always refused, 'text contains CR or LF; multiline surface.send_text requires active bracketed paste': the shim maps Enter to CR and calls surface.send_text with paste=false and no submit, so a team can type into a teammate but never submit. paneflow send has --submit for this; send-keys has no equivalent path.

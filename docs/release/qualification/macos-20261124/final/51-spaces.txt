@@ -1,0 +1,61 @@
+Build: fd627b91 debug (target-fix-t), home ~/.paneflow-dev-cover2, 2026-11-25
+Spaces in paneflow.json: Work (blue, env QUAL_SPACE=from-work), Play (green). Keys pressed with physical key events on the dev window.
+
+== Space menu (51-spaces-menus.jpg, top): Default (current), Work, Play, New space…, Manage spaces.
+AX: 'Space Default, current' / 'Space Work' / 'Space Play' / 'New space…' / 'Manage spaces'.
+
+== Active space only, remembered workspace, next/previous space
+space Work, current: 
+Cmd+1 in Work: w-one space: {'id': '550e8400-e29b-41d4-a716-446655440001', 'name': 'Work'}
+Cmd+2 in Work: w-two space: {'id': '550e8400-e29b-41d4-a716-446655440001', 'name': 'Work'}
+Cmd+3 in Work (no third workspace): w-two space: {'id': '550e8400-e29b-41d4-a716-446655440001', 'name': 'Work'}
+Ctrl+Tab (next workspace) in Work: w-one space: {'id': '550e8400-e29b-41d4-a716-446655440001', 'name': 'Work'}
+Ctrl+Tab again: w-two space: {'id': '550e8400-e29b-41d4-a716-446655440001', 'name': 'Work'}
+Cmd+2 (w-two) before leaving: w-two space: {'id': '550e8400-e29b-41d4-a716-446655440001', 'name': 'Work'}
+start: button 'Space Work', workspace w-two
+cmd+alt+right -> button 'Space Play', workspace None
+cmd+alt+right -> button 'Space Default', workspace hover
+cmd+alt+right -> button 'Space Work', workspace w-two
+cmd+alt+left -> button 'Space Default', workspace hover
+cmd+alt+left -> button 'Space Play', workspace None
+after Show: button 'Space Play', workspace other
+(In Work the tree listed only w-one and w-two. Cmd+3 with two workspaces did nothing. Cmd+Alt+Right/Left wrap Default -> Work -> Play -> Default, and each space came back to the workspace it last showed: Work -> w-two, Default -> hover, Play -> none yet.)
+
+== Move to space (workspace context menu > Move to space > Play): toast "Moved other to Play" with Show (51-spaces-menus.jpg, bottom); a real click on Show switched to space Play.
+
+== Hidden-space attention button (51-spaces-attention-button.jpg, top to bottom)
+button: button 'Go to Default: 1 agent waiting for input, 2 agents finished'
+after a real click: button 'Space Default', workspace agents
+in Play, Default has finished agents only: button 'Go to Default: 1 agent finished'
+program error in w-one (Work): button 'Go to Work: 1 agent failed, 1 more in other spaces'
+program blocked in w-two (Work): button 'Go to Work: 1 agent waiting for input, 1 agent failed, 1 more in other spaces'
+      menuitem 'Space Default, 1 agent finished'  @s3c5k9p6xrm5bm:e31
+      menuitem 'Space Work, 1 agent waiting for input, 1 agent failed'  @s3c5k9p6xrm5bm:e32
+      menuitem 'Space Play, current'  @s3c5k9p6xrm5bm:e33
+      menuitem 'New space…'  @s3c5k9p6xrm5bm:e34
+      menuitem 'Manage spaces'  @s3c5k9p6xrm5bm:e35
+worker1 muted, from Play (Work cleared): no attention button
+from Play after the program error in w-two: no attention button
+from Play, program error pending in Work: button 'Go to Work: 1 agent failed'
+after a real click: button 'Space Work', workspace w-two
+back in Play after seeing it: no attention button
+Images: amber bell 3 (Default: 1 waiting + 2 finished) | blue dot, no count (1 finished) | red crossed circle 2 (program error in Work + finished in Default) | bell 3 after a program declared blocked.
+Space menu marks (51-spaces-menus.jpg, middle): Default blue dot 1, Work bell 2.
+A real click on the bell opened workspace agents with the waiting a-claude pane focused.
+
+== Customize agent rows > All spaces
+in Play, Agents rows: 0
+Customize agent rows menu:
+      menuitem 'Agent logo'  @s3nd95a7y1qw0s:e30
+      menuitem 'Workspace'  @s3nd95a7y1qw0s:e31
+      menuitem 'Shimmer'  @s3nd95a7y1qw0s:e32
+      menuitem 'All spaces'  @s3nd95a7y1qw0s:e33
+after All spaces: sidebar_show.agent_all_spaces = True
+      group 'Amp, Amp, worker1, Default space, done, not yet seen' 
+      group 'Gemini, Gemini, agents, Default space, idle' 
+      group 'Codex, Codex, agents, Default space, idle' 
+      group 'Amp, Amp, agents, Default space, idle' ['offscreen']
+      group 'Claude Code, Claude Code, agents, Default space, idle' ['offscreen']
+      group 'Claude Code, Claude Code, agents, Default space, no status' ['offscreen']
+      group 'OpenCode, OpenCode, agents, Default space, no status' ['offscreen']
+51-agents-all-spaces.jpg: from Play, the Default space's agents appear, each row naming its space (Amp · worker1 · Default).

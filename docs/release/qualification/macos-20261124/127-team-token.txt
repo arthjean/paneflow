@@ -1,0 +1,69 @@
+# Fix verification: a Claude Code team lead gets its team token from every launcher (side finding of 124-tmux-send-keys.txt)
+# macOS 27.2 Apple Silicon, debug build of commit e89c45a4 (fix(tmux): give a Claude Code team lead its team token from every launcher)
+# on top of b06c1499, started with scripts/dev.sh --tag teamtoken (PANEFLOW_HOME=~/.paneflow-dev-teamtoken), every inherited PANEFLOW_*
+# variable unset, {"ipc":{"scripting":true}}. The real Claude Code was never run: a stand-in 'claude' in $PANEFLOW_HOME/bin/tmux-compat/
+# logged its argv, its team token (length only) and three tmux calls, then waited on cat. The team token is masked.
+
+== before the fix (b06c1499, recorded during 124): 'Claude Code (team)' from the pane tab strip's New tab menu
+# PANEFLOW_TMUX_TEAM=<set, 0 chars>
+$ tmux split-window -h -P -F #{pane_id} echo teammate-1-started; cat
+paneflow tmux-compat: PANEFLOW_TMUX_TEAM is not set; this pane is not a Paneflow team pane
+[exit=1]
+
+== proof that the launcher resolves to the stand-in, before pressing anything
+# the team preset types PATH="<home>/bin/tmux-compat:$PATH" claude --teammate-mode tmux (pinned by
+# agent_launcher::tests::the_claude_team_preset_launches_through_the_tmux_shim_off_windows_only); the same PATH in a pane of this instance:
+~ teamtoken % PATH="$HOME/.paneflow-dev-teamtoken/bin/tmux-compat:$PATH" command -v claude tmux
+~/.paneflow-dev-teamtoken/bin/tmux-compat/claude
+~/.paneflow-dev-teamtoken/bin/tmux-compat/tmux
+
+== after the fix, entry 1: pane tab strip 'New tab' menu > 'Claude Code (team)' (accessibility press on the menu item)
+== stand-in claude (this file: ~/.paneflow-dev-teamtoken/bin/tmux-compat/claude) started as a team lead: argv=--teammate-mode tmux
+# TMUX=paneflow-tmux-compat,0,0 TMUX_PANE=%0 PANEFLOW_SURFACE_ID=1029 PANEFLOW_TMUX_TEAM=<set, 32 chars>
+$ tmux display-message -p #{pane_id}
+%0
+[exit=0]
+$ tmux split-window -h -P -F #{pane_id} echo teammate-1-started; cat
+%1
+[exit=0]
+$ tmux list-panes -F #{pane_id}
+%0
+%1
+[exit=0]
+# done
+
+== after the fix, entry 2: 'Split right' > New pane palette > 'Claude Code (team)' (unchanged path, now through the same launch_preset)
+== stand-in claude (this file: ~/.paneflow-dev-teamtoken/bin/tmux-compat/claude) started as a team lead: argv=--teammate-mode tmux
+# TMUX=paneflow-tmux-compat,0,0 TMUX_PANE=%0 PANEFLOW_SURFACE_ID=1033 PANEFLOW_TMUX_TEAM=<set, 32 chars>
+$ tmux display-message -p #{pane_id}
+%0
+[exit=0]
+$ tmux split-window -h -P -F #{pane_id} echo teammate-1-started; cat
+%1
+[exit=0]
+$ tmux list-panes -F #{pane_id}
+%0
+%1
+[exit=0]
+# done
+
+# The sidebar row's hover-revealed 'New tab in teamtoken' button refused a headless accessibility press (ACTION_FAILED, not delivered),
+# so that entry was not pressed live; it calls open_pane_palette, the same function as the New tab action, and both are covered by
+# the pins below.
+
+== automated coverage (src-app/src/app/layout_pins/team_tokens.rs, runner every_team_entry_point_gives_its_lead_a_team_token, which
+== puts a stand-in claude first on PATH of an isolated child; the terminals are display-only, nothing is spawned)
+pin_the_new_tab_action_opens_a_team_lead_with_a_token        (NewTab action: command palette, keybinding)
+pin_the_sidebar_new_tab_opens_a_team_lead_with_a_token       (open_pane_palette: sidebar row and status group New tab)
+pin_the_split_palette_opens_a_team_lead_with_a_token         (open_split_palette: Split right / Split down)
+pin_the_pane_new_tab_menu_opens_a_team_lead_with_a_token     (PaneEvent::NewTabPreset: pane tab strip New tab menu)
+# on b06c1499 code: 3 passed, pin_the_pane_new_tab_menu... FAILED "the lead b was started without PANEFLOW_TMUX_TEAM"; with the fix: 4 passed.
+# Each pin also checks the token enters a team Paneflow issued (tmux_teams.enter returns the leader, %0).
+
+== other launchers
+Workspace templates (template_launch.rs), paneflow up and the JSON-RPC surface.split / workspace.up only launch built-in agents
+(AgentLaunch::Builtin), never the team preset, so they cannot start a team lead. Preset's command, env and team test are now private
+to pane_palette.rs: PaneFlowApp::launch_preset is the only way to launch a preset, and it issues the token.
+
+== cleanup
+paneflow serve stop, paneflow host stop --force (only this tag's sessions), window stopped by its PID, ~/.paneflow-dev-teamtoken moved to the Trash.

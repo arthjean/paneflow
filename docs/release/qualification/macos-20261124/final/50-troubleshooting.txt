@@ -1,0 +1,32 @@
+# T10: troubleshooting.md on the final build.
+# paneflow.json: {"ipc":{"scripting":true},"no_such_top_level_key":1,"shortcuts":{"ctrl+shift+t":"new_tab","ctrl+shift+w":"none"}}
+before: 1 tabs in the shown workspace
+after ctrl+shift+t: 1 tabs in the shown workspace
+after cmd+alt+t (new_tab's default, replaced by the custom binding): 1 tabs in the shown workspace
+# warnings the reload logged:
+hosted resize to 45x20 was not applied by the host: the session is not attached
+== python3 -m json.tool
+$ python3 -m json.tool $F/broken.json
+Expecting value: line 2 column 1 (char 10)
+[exit=1]
+
+$ python3 -m json.tool $PANEFLOW_HOME/paneflow.json >/dev/null
+[exit=0]
+
+== retry the keys
+before: 1 tabs in the shown workspace
+after ctrl+shift+t: 1 tabs in the shown workspace
+after cmd+alt+t (new_tab's default, replaced by the custom binding): 1 tabs in the shown workspace
+== counted in the sidebar instead (a new tab shows the New pane palette and has no surface yet, so ls does not count it)
+now: 2 tab rows under grants in the sidebar
+after ctrl+shift+t: 3 tab rows under grants in the sidebar
+after cmd+alt+t: 3 tab rows under grants in the sidebar
+
+== Help > System Info: the macOS menu bar's Help menu holds 'System Info…'; an accessibility press opens dialog 'System info' with Close and Copy (50-system-info.jpg); Copy put this block on the pasteboard:
+- **Paneflow**: 0.20.0 (aarch64-apple-darwin, unknown)
+- **OS**: macOS 27.2.1 (build 26B131)
+- **CPU**: Apple M4
+- **GPU**: Apple M4
+- **Renderer**: Metal
+- **Terminal engine**: libghostty 1.4.1-dev+108cacb17 (API 1.0.1)== RUST_LOG=info: every launch in this audit ran the binary with RUST_LOG=info and wrote the app output used as evidence above.
+== verdict: pass. Unknown top-level key ignored without blocking the load; the documented shortcuts example works (ctrl+shift+t opens a tab, new_tab's default Cmd+Alt+T is released); json.tool flags a broken file and accepts a valid one; System Info opens and Copy puts version, OS, CPU, GPU, renderer and engine on the pasteboard. The startup fallback for an invalid file is in 50-restart.txt.

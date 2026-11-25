@@ -1,0 +1,24 @@
+# Config hot reload, build fd627b91 (debug), home ~/.paneflow-dev-cover2. Each key was written to paneflow.json with the app running, then removed.
+Fixture: workspace 'hover' Tab 2 split in panes; pane-a printed truecolor fg 60,60,60 on bg 40,40,40 ('low contrast text').
+
+terminal.minimum_contrast: unset (Auto) -> text lifted to readable gray; 0 -> no correction, the text vanishes into its background; 90 -> brightest; 120 -> same as 90 (capped); "bogus" -> same as Auto. All without restart (51-config-hot-reload.jpg, row 1).
+unfocused_pane_opacity=0.3 -> the unfocused vis-b pane drawn dimmed, focused pane unchanged (row 2).
+terminal.cursor_color="#ff2020" -> the focused cursor turned red at once (row 3).
+terminal.cursor_shape="underline", terminal.cursor_blink="off" -> a pane split afterwards shows an underline cursor, identical in four samples 350 ms apart (row 4); older panes keep the block (new terminal only, as documented).
+font_size=18 + line_height=1.6, then font_family="Menlo" -> the visible grid re-rendered each time without restart (row 5).
+workspace_icon default, standard, metal, windows, windows95, pixel -> six distinct glyphs on the 'hover' row; standard is a chevron (row 6).
+comfortable_density=false under classic -> no change (classic is edge to edge); interface_style=rounded + comfortable_density=true -> pane cards with gutters; rounded + false -> panes joined by 1 px dividers (row 7).
+
+## option_as_meta (failure C10)
+Default (unset, false on macOS): Option+B in bash typed '∫' ('echo aaa bbb∫X'); Alt+F outside the search overlay typed 'ƒ' (51-terminal-keys.txt).
+option_as_meta=true: typing 'echo aaa bbb', Option+B, 'X' gives 'echo aaa ∫Xbbb': the cursor jumped back a word (Meta-b arrived) AND '∫' was inserted.
+Byte check with 'cat -v' in the same pane (each key followed by Enter):
+  ∫
+  �M-^H�
+  ^[b∫
+  ^[b�M-^H�
+  ^[fƒ
+  ^[f�M-^R
+  ^C
+  $  line 1-2: false, Option+B -> only the UTF-8 bytes of ∫. line 3-6: true, Option+B -> '^[b' followed by the bytes of ∫; Option+F -> '^[f' followed by ƒ.
+Keys were synthesized by System Events (keystroke "b" using {option down}) to the dev window; a physical keyboard was not used.

@@ -1,0 +1,25 @@
+# Markdown pane and editor config, build fd627b91 (debug), home ~/.paneflow-dev-cover2
+
+## Read-only file (src/ro.rs, chmod 444), Cmd+F
+ro.rs (chmod 444) find bar AX:  textfield 'Search in file' ['focused']| switch 'Match Case' |
+-> no 'Toggle Replace' on a read-only file (main.rs, writable, has it). The 15.6 MB big.txt viewer opens no find bar at all.
+
+## editor.word_wrap
+Set "editor": {"word_wrap": true} in paneflow.json, then opened repo/long.txt (one 960-char line) in a new tab: the line is folded (51-word-wrap-config.jpg).
+Earlier toggles wrote editor.markdown_rendered=true and editor.csv_table=false into paneflow.json; the editor block also carries minimap, scrollbar, semantic_tokens.
+
+## Send to Agent with no agent
+Workspace 'hover' (shells only), right click a.txt:
+      menuitem 'Open with Default App' 
+      menuitem 'Reveal in Finder' 
+      menuitem 'Open With' 
+      menuitem 'Copy Path' 
+      menuitem 'Copy Relative Path' 
+      menuitem 'No agent in this workspace' 
+
+## Markdown pane (Cmd+click 'notes.md' printed in the shell@repo pane)
+A markdown pane 'notes.md' opened with the rendered document.
+Shift+PageDown -> scrolled to paragraphs 12-14; Shift+PageUp -> back to the 'Notes' title.
+Ctrl+F -> 'Find:' field; 'Paragraph 7' -> '1 of 11'; Enter -> '2 of 11'; Shift+Enter -> '1 of 11'; Escape -> find field gone (51-markdown-pane-keys.jpg).
+Observation: at '2 of 11' (Paragraph 70) the view scrolled to paragraphs 56-66, so the match itself was below the viewport.
+Ctrl+Shift+C -> clipboard received the document text ('Notes', 'Paragraph 1 mentions alpha and beta.' ... 'Paragraph 120 ...'); the preceding drag left no visible selection, so the whole text was copied.

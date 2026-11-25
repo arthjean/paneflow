@@ -1,0 +1,106 @@
+# Fix verification: tmux.compat send-keys Enter / key names (repro of final/50-tmux-send-keys-scripting.txt)
+# macOS 27.2 Apple Silicon, debug build of commit 164fd6a0 (fix(tmux): let a team press Enter and named keys in a teammate with send-keys),
+# started with scripts/dev.sh --tag tmuxkeys (PANEFLOW_HOME=~/.paneflow-dev-tmuxkeys), every inherited PANEFLOW_* variable unset.
+# Team started by accessibility press on 'Claude Code (team)' in the New pane palette (Split right). The real Claude Code was not run:
+# a stand-in 'claude' in $PANEFLOW_HOME/bin/tmux-compat/ ran the tmux calls below and logged them. Teammate %1 runs cat, teammate %2 runs a
+# fake TUI agent (python, raw mode, enables bracketed paste with ESC[?2004h, logs every read() to agent-bytes.log).
+# <scratch> = the session scratchpad directory. The team token is masked.
+
+== stand-in lead log
+# stand-in claude started as the team lead: argv=--teammate-mode tmux
+# TMUX=paneflow-tmux-compat,0,0 TMUX_PANE=%0 PANEFLOW_SURFACE_ID=1030 PANEFLOW_TMUX_TEAM=<set, 32 chars>
+$ tmux -V
+tmux 3.5a
+[exit=0]
+$ tmux split-window -h -P -F #{pane_id} echo teammate-1-started; cat
+%1
+[exit=0]
+$ tmux split-window -v -P -F #{pane_id} python3 <scratch>/fake-agent.py <scratch>/agent-bytes.log
+%2
+[exit=0]
+# phase 1, gates: {"ipc":{"scripting":false}}
+$ tmux send-keys -t %1 x Enter
+surface.send_text disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable
+[exit=1]
+$ tmux send-keys -t %1 C-c
+surface.send_keystroke disabled; set PANEFLOW_IPC_SCRIPTING=1 or enable ai_unrestricted to use
+[exit=1]
+# phase 2, gates: {"ipc":{"scripting":true}}   (paneflow.json edited while the team kept running)
+$ tmux send-keys -t %1 -l typed-by-send-keys
+[exit=0]
+$ tmux send-keys -t %1 Enter
+[exit=0]
+$ tmux send-keys -t %1 C-m
+[exit=0]
+$ tmux send-keys -t %1 x Enter
+[exit=0]
+$ tmux send-keys -t %1 echo Space hi Enter
+[exit=0]
+$ tmux send-keys -t %1 -l Enter
+[exit=0]
+$ tmux send-keys -t %1 Enter
+[exit=0]
+$ tmux send-keys -t %2 first prompt Enter second prompt Enter
+[exit=0]
+$ tmux send-keys -t %2 Escape Tab BSpace Up
+[exit=0]
+$ tmux send-keys -t %2 third prompt Enter
+[exit=0]
+$ tmux send-keys -t %1 C-c
+[exit=0]
+$ tmux kill-pane -t %0
+paneflow tmux-compat: the team leader pane is closed by its user, not by the team
+[exit=1]
+# done
+
+== teammate %1 (surface 1033, cat): pf read 1033 --lines 20 (narrow pane, wrapped)
+<untrusted_terminal_output source="surface:1033" total_lines="26" eof="false" id="<masked>">
+H="~/.paneflo
+w-dev-tmuxkeys/bin/tm
+ux-compat:$PATH" sh -
+c 'echo teammate-1-st
+arted; cat'
+teammate-1-started
+typed-by-send-keys
+typed-by-send-keys
+
+
+x
+x
+echo hi
+echo hi
+Enter
+Enter
+^C
+<user>@<host> tm
+uxkeys %
+</untrusted_terminal_output id="<masked>">
+# each submitted line appears twice: the tty echo, then cat's copy. The bare Enter and C-m give the two empty lines, '-l Enter' typed
+# the word Enter and the next Enter submitted it, C-c ended cat.
+
+== teammate %2 (fake TUI agent with bracketed paste on): agent-bytes.log, one read() per line
+b'\x1b[200~first prompt\x1b[201~'
+b'\r'
+b'\x1b[200~second prompt\x1b[201~'
+b'\r'
+b'\x1b'
+b'\t'
+b'\x7f'
+b'\x1b[A'
+b'\x1b[200~third prompt\x1b[201~'
+b'\r'
+# a prompt followed by Enter takes the paneflow send --submit path: bracketed paste, then a CR deferred until the echo, in a separate
+# read, so the TUI cannot fold it into the paste. 'a Enter b Enter' in one call keeps its order (the second prompt waits for the first CR).
+# Escape, Tab, BSpace and Up arrive as their keystrokes (ESC, HT, DEL, CSI A).
+
+== verdict
+PASS: send-keys Enter, C-m, 'x' Enter, 'echo Space hi Enter', C-c and the named keys reach the teammate in order once ipc.scripting=true;
+with ipc.scripting=false both the text and the keystroke paths still refuse; -l stays literal; the leader still cannot be killed by the team.
+
+== side finding (not fixed here)
+The pane tab strip's "New tab" menu also lists 'Claude Code (team)', but launching it from there gives the lead no team token
+(PANEFLOW_TMUX_TEAM empty), so every tmux call fails with "PANEFLOW_TMUX_TEAM is not set; this pane is not a Paneflow team pane".
+Only the New pane palette (pane_palette.rs) issues the token; PaneEvent::NewTabPreset in app/event_handlers/mod.rs does not.
+
+== cleanup
+paneflow serve stop, paneflow host stop --force (only this tag's sessions), window stopped by its PID, ~/.paneflow-dev-tmuxkeys moved to the Trash.

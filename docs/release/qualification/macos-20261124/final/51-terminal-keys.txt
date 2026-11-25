@@ -1,0 +1,27 @@
+# Terminal and app keys, build fd627b91 (debug), home ~/.paneflow-dev-cover2
+# Keys sent with System Events to the dev window only (guarded on its pid).
+
+Shell pane in workspace 'hover': 'clear; seq 1 400'. Top visible line: 358 -> Shift+PageUp x2 -> 270 -> Shift+PageDown -> 314 -> Shift+PageDown -> 358 (51-terminal-keys.jpg, rows 1-4).
+Cmd+Shift+K -> screen cleared; Shift+PageUp x5 then stops at 358: lines 1-357 are gone from history (rows 5-6).
+Cmd+- -> smaller glyphs; Cmd+= -> back to the default size (row 7).
+Ctrl+Shift+A then Ctrl+Shift+C -> the clipboard held the whole screen text; Ctrl+Shift+V pasted 'echo pasted-by-ctrl-shift-v' at the prompt (row 8).
+(Shift+End reached the shell as ';2F'; that key has no Paneflow binding.)
+Ctrl+Shift+F -> search overlay ('Search' field, Previous match, Next match). 'row 1' -> 11/11; Down -> 1/11; Up -> 11/11; Tab -> 1/11; Shift+Tab -> 11/11 (row 9).
+Alt+F outside the overlay types 'ƒ' into the shell (toggle_fleet_search lives in the Search context); inside the overlay Alt+F opens 'Fleet search row 1 . Terminal hover 11 . 11 matches in 1 pane . Enter focuses with the search armed . Esc closes' (last row).
+
+## Cmd+] (next_tab)
+after Cmd+]:  treeitem 'hover' ['selected']| treeitem 'agents' |
+after Cmd+] again:  treeitem 'hover' ['selected']| treeitem 'agents' |
+after Cmd+]:  treeitem 'hover' ['selected']| treeitem 'Tab 1' ['selected']| treeitem 'Tab 2' | treeitem 'agents' |
+after Cmd+] again:  treeitem 'hover' ['selected']| treeitem 'Tab 1' | treeitem 'Tab 2' ['selected']| treeitem 'agents' |
+
+## shortcuts in paneflow.json
+"shortcuts": {"cmd-shift-y": "new_space", "alt+1": "select_workspace_1", "ctrl+shift+u": "next_space"} (dash separator, explicit cmd and ctrl), reloaded without restart:
+after Alt+1 (alt+1 -> select_workspace_1): ['hover']
+after Cmd+Shift+Y (cmd-shift-y -> new_space): ['Work', 'Play', 'Space 1']; Settings > Spaces opened on the new space (the extra space was then removed)
+Ctrl+Shift+U (next_space) #1: button 'Space Work'
+Ctrl+Shift+U (next_space) #2: button 'Space Play'
+Ctrl+Shift+U (next_space) #3: button 'Space Default'
+spaces=[]: header , workspaces 9 ['hover']
+Ctrl+Shift+U with no space: header , workspaces 9 ['hover']
+With spaces=[] the header 'Space' button disappears and next_space does nothing; the spaces were restored afterwards.

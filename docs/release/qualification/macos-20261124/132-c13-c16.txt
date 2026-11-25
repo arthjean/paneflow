@@ -1,0 +1,50 @@
+# C13 and C16 fixes. Worktree branch worktree-agent-a6aaba0a01aa37f9f, debug build, home ~/.paneflow-dev-c13c16 (trashed afterwards), 2026-11-25
+
+## C13: every in-place checkout switch goes through one guard
+
+Entry points that change a checkout's files, found by reading every caller of `git switch`:
+- New branch form with Worktree off: `switch_checkout_for_tab` (was guarded, own workspace only).
+- Changes dock branch picker: `switch_diff_branch` in diff_dock/branch.rs (was not guarded: the bug).
+Entry points that never switch in place (no guard needed, pinned green):
+- Tab menu > a branch (Bind branch) and the pane palette's Branch rows: `bind_tab_to_branch`, which binds an existing worktree or creates one (`prepare_branch_checkout`), never `git switch` in the shared checkout.
+- Tab menu > Create branch here (detached worktree): `git switch -c <name>` from the current HEAD, which names the checkout's branch and moves no file.
+- Snapshot restore: creates a fresh worktree.
+
+Fix: `PaneFlowApp::in_place_switch_refusal(checkout)` in tab_worktree.rs is the one guard, with the one wording
+"An agent is working in this checkout; create a worktree instead". It now counts a working agent of any workspace
+whose tab uses that checkout (before, only the form's own workspace). The form keeps showing it inline (its Worktree
+toggle is the alternative); the dock shows it as an error toast with a "Create worktree" action that checks the branch
+out in a worktree and binds the active tab to it.
+
+Pins (src-app/src/app/layout_pins/worktree_flows.rs), red on main + scaffolding, green after the fix:
+- pin_the_changes_dock_branch_picker_refuses_to_switch_a_checkout_an_agent_is_working_in
+  red: left "Switched to qa-other", right "An agent is working in this checkout; create a worktree instead"
+- pin_the_new_branch_form_refuses_a_switch_under_an_agent_of_another_workspace_on_the_checkout
+  red: left None, right Some("An agent is working in this checkout; create a worktree instead")
+- pin_binding_a_tab_to_a_branch_under_a_working_agent_checks_it_out_in_a_worktree: green before and after (never switched in place)
+worktree_flows pins: 9 passed.
+
+Live check (dev build, stand-in agents only):
+- Pane PATH dry check: `type -a claude` -> shim (~/.paneflow-dev-c13c16/cache/bin/0.20.0/claude), then $SCRATCH/cover-fx/sbin/claude, then ~/.local/bin/claude; `claude --version` -> "0.0.0 (Paneflow coverage stand-in)". The shim takes the first non-shim match, the stand-in.
+- Workspace c13 on $SCRATCH/c13-live/repo (branches main, qa-other). `claude` in the pane -> FAKE_AGENT_READY; `run sleep 170` -> `paneflow ps`: claude thinking; sidebar "Claude Code, Claude Code, c13, working".
+- Changes dock > "Branch main" > qa-other -> refused: toast "An agent is working in this checkout; create a worktree instead" + "Create worktree" (132-c13-dock-refused.png); `git branch --show-current` in the repo: main.
+- Picked qa-other again, pressed "Create worktree" -> `git worktree list`: repo [main] and ~/.paneflow-dev-c13c16/worktrees/repo-2d9ca0ac/qa-other [qa-other]; the tab is renamed qa-other; root checkout still main (132-c13-create-worktree.png).
+- After RUN_DONE (`paneflow ps`: claude finished): Changes dock > qa-idle -> the root checkout switched to qa-idle at once (132-c13-idle-switch.png), so an idle checkout is not over-blocked. Switched back to main with the git CLI.
+- Stopped: the window by the PID started (dev.sh), `paneflow serve stop`, `paneflow host stop --force` (its one session was the test pane's shell); home trashed.
+
+Gates: cargo fmt --check ok; cargo clippy --workspace --all-targets --locked -- -D warnings ok;
+cargo test -p paneflow-app --bin paneflow -- app::notifications app::diff_dock app::tab_worktree every_layout_pin_holds_in_an_isolated_home: 568 passed;
+scripts/check-test-wallclock.sh: no new wall-clock assertion.
+No cfg(windows) item added; every new item sits before its file's `mod tests`.
+
+## C16: PANEFLOW_WINDOW_BACKDROP on macOS
+
+Decision: not a code bug; the docs over-promise. The variable is a Windows-only legacy knob being retired:
+- tasks/prd-unified-window-backdrop.md D7: "`window_backdrop` and `PANEFLOW_WINDOW_BACKDROP` are retired ... `PANEFLOW_WINDOW_BACKDROP` is removed. A debug-only `PANEFLOW_DEV_BLUR_SUPPORT` replaces it for testing"; US-012 (EP-005, TODO) removes the remaining Windows read.
+- Code: the only read is `window_backdrop_preference` in src-app/src/app/constants.rs, `#[cfg(target_os = "windows")]`; macOS and Linux resolve the backdrop from `background_style` (or the legacy config keys) only.
+- DESIGN.md already scopes it to Windows (Windows 11 row: "blur needs `PANEFLOW_WINDOW_BACKDROP=blurred` for one launch").
+Making macOS and Linux honor it would add reads of a variable the accepted PRD removes, so the fix is in the site docs:
+configuration/schema.md, `window_backdrop` row, replace "`PANEFLOW_WINDOW_BACKDROP` overrides it for one launch." with
+"On Windows only, `PANEFLOW_WINDOW_BACKDROP` overrides it for one launch; macOS and Linux ignore that variable."
+troubleshooting.md never names the variable; nothing to change there.
+No live run for C16: no code changed, and the audit's 51-backdrop-env-opaque.jpg already shows the variable ignored on macOS.

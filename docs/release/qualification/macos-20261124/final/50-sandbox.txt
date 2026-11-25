@@ -1,0 +1,30 @@
+# T6: macOS sandbox on the final build. paneflow.json below; sbx.toml = cli/scripts/sbx.toml with its cwd adapted.
+$ cat $PANEFLOW_HOME/paneflow.json
+{"ipc":{"scripting":true},"agents":{"hermes":{"sandbox":"paneflow"},"grok":{"sandbox":"bogus"},"amp":{"sandbox":"paneflow"}}}
+[exit=0]
+
+$ pf up sbx.toml --dry-run
+[2026-11-25T00:52:15Z WARN  paneflow_config::loader] invalid config key agents.amp.sandbox: Sandbox 'paneflow' is not available on macos; the agent profile amp does not start
+[2026-11-25T00:52:15Z WARN  paneflow_config::loader] invalid config key agents.grok.sandbox: unknown sandbox "bogus", expected "paneflow"; the agent profile grok does not start
+[2026-11-25T00:52:15Z WARN  paneflow_config::loader] invalid config key agents.hermes.sandbox: Sandbox 'paneflow' is not available on macos; the agent profile hermes does not start
+paneflow: pane 0: invalid config key agents.hermes.sandbox: Sandbox 'paneflow' is not available on macos; the agent profile hermes does not start
+[exit=1]
+
+$ pf up sbx.toml
+[2026-11-25T00:52:15Z WARN  paneflow_config::loader] invalid config key agents.amp.sandbox: Sandbox 'paneflow' is not available on macos; the agent profile amp does not start
+[2026-11-25T00:52:15Z WARN  paneflow_config::loader] invalid config key agents.grok.sandbox: unknown sandbox "bogus", expected "paneflow"; the agent profile grok does not start
+[2026-11-25T00:52:15Z WARN  paneflow_config::loader] invalid config key agents.hermes.sandbox: Sandbox 'paneflow' is not available on macos; the agent profile hermes does not start
+paneflow: pane 0: invalid config key agents.hermes.sandbox: Sandbox 'paneflow' is not available on macos; the agent profile hermes does not start
+[exit=1]
+
+$ pf ls | python3 -c 'import sys,json; print([s["name"] for s in json.load(sys.stdin)["surfaces"] if s["name"].startswith("sbx")])'
+[]
+[exit=0]
+
+# logs:
+[2026-11-25T00:52:13Z WARN  paneflow_config::loader] invalid config key agents.hermes.sandbox: Sandbox 'paneflow' is not available on macos; the agent profile hermes does not start
+[2026-11-25T00:52:13Z WARN  paneflow_config::loader] invalid config key agents.amp.sandbox: Sandbox 'paneflow' is not available on macos; the agent profile amp does not start
+[2026-11-25T00:52:13Z WARN  paneflow_config::loader] invalid config key agents.grok.sandbox: unknown sandbox "bogus", expected "paneflow"; the agent profile grok does not start
+[2026-11-25T00:52:13Z WARN  paneflow_config::loader] invalid config key agents.hermes.sandbox: Sandbox 'paneflow' is not available on macos; the agent profile hermes does not start
+== New pane palette: accessibility press on 'Hermes Agent' (profile with sandbox paneflow): no pane opens; the palette shows, in red under the list, 'invalid config key agents.hermes.sandbox: Sandbox 'paneflow' is not available on macos; the agent profile hermes does not start' (50-sandbox-palette-hermes.jpg). pf ls before and after: unchanged (2063, 2081, 2083 in 'restore').
+== verdict: pass. Observation: the palette's red refusal text is not in the accessibility tree (agent-desktop finds no node with that text), so a screen reader user gets no feedback after the press.

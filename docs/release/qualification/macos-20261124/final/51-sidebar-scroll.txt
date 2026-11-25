@@ -1,0 +1,43 @@
+# Sidebar width, multi-select, scrollbar, scroll multiplier. Build fd627b91 (debug), home ~/.paneflow-dev-cover2, pid 45118
+
+## Sidebar width (real mouse drags on the sidebar's right edge)
+drag from x=792 to 1400: width 480
+drag from x=840 to 380: width 240
+drag to 700: width 340
+double-click on the edge: width 340
+drag to 480 again before restart test: width 480; window-state: {'width': 1200.0, 'sidebar_width': 480.0, 'files_tree_width': 160.0}
+double-click at x=841: width 432
+drag the edge to 426 px: width 432
+-> clamps at 480 and 240; a drag that ends near 432 snaps to 432; a double-click exactly on the edge returns to 432 (the first double-click 1 px off did nothing); width saved as window-state sidebar_width. Capping in a narrow window not tried.
+
+## Multi-select (workspace 'hover', Tab 1 and Tab 2)
+      menuitem 'Close 1 tab' 
+      menuitem 'Clear selection' 
+Cmd+click Tab 1 then (already) Tab 2:
+      treeitem 'hover' ['selected']
+      treeitem 'Tab 1, selected' ['selected']
+      treeitem 'Tab 2, selected' 
+      treeitem 'scope-send' 
+menu:
+      menuitem 'Close 2 tabs' 
+      menuitem 'Clear selection' 
+after Close 2 tabs:  button 'Cancel' | button 'Close' |
+Cancel, then Escape:
+      treeitem 'hover' ['selected']
+      treeitem 'Tab 1' ['selected']
+      treeitem 'Tab 2' 
+      treeitem 'scope-send' 
+Cmd+click Tab 1:  treeitem 'Tab 1, selected' ['selected']| treeitem 'Tab 2' |
+Shift+Down:  treeitem 'Tab 1, selected' ['selected']| treeitem 'Tab 2, selected' |
+Shift+Up:  treeitem 'Tab 1, selected' ['selected']| treeitem 'Tab 2' |
+Escape:  treeitem 'Tab 1' ['selected']| treeitem 'Tab 2' |
+Cmd+click Tab 2:  treeitem 'Tab 1' ['selected']| treeitem 'Tab 2, selected' |
+Delete:  treeitem 'Tab 1' ['selected']| ; dialog: 0
+Dialog for two tabs: 'Close 2 tabs? 9 sessions will stop.' listing hover > Tab 2 and hover > Tab 1, Cancel / Close selection (51-multiselect-close-dialog.jpg). Delete on a single selected tab closed it with no dialog. Shift+click not tried.
+
+## terminal.scrollbar
+Default: moving the pointer to the right edge of a pane with 300 lines of history draws the overlay thumb (51-scrollbar-multiplier.jpg left pair: before, hovered). With terminal.scrollbar=false, a pane split afterwards ('nosb') shows no thumb when its right edge is hovered.
+
+## terminal.scroll_multiplier
+Default 1: one wheel line (agent-desktop mouse-wheel --dy 1) on 'nosb' moved its top line from 282 to 281.
+terminal.scroll_multiplier=5, new pane 'mult5': one wheel line moved its top line from 294 to 289 (51-scrollbar-multiplier.jpg right pair).

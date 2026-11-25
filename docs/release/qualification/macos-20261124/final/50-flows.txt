@@ -1,0 +1,273 @@
+# T5: paneflow flow run on the final build, ipc.scripting=true, external terminal. Fixtures under $SCRATCH/cover-fx/flows/ (fake.flow.toml and timeout.flow.toml from cli/scripts with their paths adapted; amp = the fake agent of cli/06).
+== flows/fake1.flow.toml (the one that passes in run d):
+name = "fake-pipeline-1line-j"
+layout = "even_h"
+
+[defaults]
+timeout_secs = 15
+
+[[step]]
+id = "impl"
+pane = { cwd = "$SCRATCH/cover-fx/repo", command = "$SCRATCH/cover-fx/bin/amp", prompt = "implement then tests passed" }
+submit = true
+ready = { pattern = "DONE: implement" }
+capture = { var = "summary", lines = 1 }
+
+[[step]]
+id = "fan"
+needs = ["impl"]
+foreach = ["alpha", "beta"]
+pane = { cwd = "$SCRATCH/cover-fx/repo", name = "fan-${item}", prompt = "FAN_${item}" }
+ready = { pattern = "FAN_${item}" }
+capture = { var = "fanout", lines = 1 }
+
+[[step]]
+id = "review"
+needs = ["fan"]
+send = { target = "impl", text = "review summary=${summary} alpha=${fanout.alpha}", submit = true }
+
+# gates: ipc.scripting=true
+$ pf flow run flows/unknownkey.flow.toml --dry-run
+paneflow: TOML parse error at line 7, column 1
+  |
+7 | bogus = 1
+  | ^^^^^
+unknown field `bogus`, expected one of `id`, `needs`, `foreach`, `pane`, `send`, `ready`, `capture`, `submit`
+
+[exit=1]
+
+$ pf flow run flows/missingdep.flow.toml --dry-run
+paneflow: step 'a': unknown dependency 'nope' (known: a)
+[exit=1]
+
+$ pf flow run flows/badregex.flow.toml --dry-run
+paneflow: step 'a': invalid ready.pattern: regex parse error:
+    ([
+     ^
+error: unclosed character class
+[exit=1]
+
+$ pf flow run flows/notimeout.flow.toml --dry-run
+paneflow: step 'a': `ready` needs `timeout_secs` (own or [defaults])
+[exit=1]
+
+$ pf flow run flows/budget.flow.toml --dry-run
+paneflow: flow spawns 40 panes, exceeds MAX_PANES (32)
+[exit=1]
+
+$ timeout 60 $SCRATCH/target-fix-t/debug/paneflow flow run flows/timeout.flow.toml
+[2026-11-25T00:46:38Z WARN  paneflow_config::loader] invalid config key agents.claude.grants: unknown right "root", expected one of write, spawn, layout; no grant of the agent profile claude is stored
+[    0.0s] a → RUNNING
+[    3.1s] a → FAILED (timed out after 3s waiting for /NEVER_APPEARS_XYZ/)
+---
+a                        FAILED   timed out after 3s waiting for /NEVER_APPEARS_XYZ/
+[exit=4]
+
+$ timeout 120 $SCRATCH/target-fix-t/debug/paneflow flow run flows/fake.flow.toml --json
+[2026-11-25T00:46:41Z WARN  paneflow_config::loader] invalid config key agents.claude.grants: unknown right "root", expected one of write, spawn, layout; no grant of the agent profile claude is stored
+[    0.0s] impl → RUNNING
+[    5.2s] impl → READY
+[    5.2s] fan[alpha] → RUNNING
+[    5.2s] fan[beta] → RUNNING
+[   35.3s] fan[alpha] → FAILED (timed out after 30s waiting for /(?m)^FAN_alpha/)
+{
+  "flow": "fake-pipeline",
+  "status": "failed",
+  "aborted": null,
+  "steps": [
+    {
+      "id": "impl",
+      "status": "READY",
+      "duration_ms": 5128,
+      "surface_id": 8253,
+      "error": null
+    },
+    {
+      "id": "fan[alpha]",
+      "status": "FAILED",
+      "duration_ms": 30092,
+      "surface_id": 9281,
+      "error": "timed out after 30s waiting for /(?m)^FAN_alpha/"
+    },
+    {
+      "id": "fan[beta]",
+      "status": "RUNNING",
+      "duration_ms": null,
+      "surface_id": 9285,
+      "error": null
+    },
+    {
+      "id": "review",
+      "status": "SKIPPED",
+      "duration_ms": null,
+      "surface_id": null,
+      "error": "fail_fast: an earlier step failed"
+    }
+  ]
+}
+[exit=4]
+
+
+# fake.flow.toml, fan step adjusted: ${item} is documented for cwd, name, ready.pattern, prompts and texts, not for pane.command, so the fan panes get prompt = "FAN_${item}"
+$ timeout 120 $SCRATCH/target-fix-t/debug/paneflow flow run flows/fake.flow.toml --json
+[2026-11-25T00:47:36Z WARN  paneflow_config::loader] invalid config key agents.claude.grants: unknown right "root", expected one of write, spawn, layout; no grant of the agent profile claude is stored
+[    0.0s] impl → RUNNING
+[    5.2s] impl → READY
+[    5.2s] fan[alpha] → RUNNING
+[    5.3s] fan[beta] → RUNNING
+[    7.3s] fan[alpha] → READY
+[    7.3s] fan[beta] → READY
+[    7.3s] review → RUNNING
+{
+  "flow": "fake-pipeline",
+  "status": "aborted",
+  "aborted": "instance unreachable: paneflow error -32602: text contains CR or LF; multiline surface.send_text requires active bracketed paste",
+  "steps": [
+    {
+      "id": "impl",
+      "status": "READY",
+      "duration_ms": 5138,
+      "surface_id": 10313,
+      "error": null
+    },
+    {
+      "id": "fan[alpha]",
+      "status": "READY",
+      "duration_ms": 2109,
+      "surface_id": 11341,
+      "error": null
+    },
+    {
+      "id": "fan[beta]",
+      "status": "READY",
+      "duration_ms": 2078,
+      "surface_id": 11345,
+      "error": null
+    },
+    {
+      "id": "review",
+      "status": "RUNNING",
+      "duration_ms": null,
+      "surface_id": 10313,
+      "error": null
+    }
+  ]
+}
+paneflow: flow aborted: instance unreachable: paneflow error -32602: text contains CR or LF; multiline surface.send_text requires active bracketed paste (partial report above)
+[exit=1]
+
+
+== Ctrl-C (SIGINT after 3 s) stops the flow loop and leaves its panes
+[exit=1]
+[    0.0s] a → RUNNING
+---
+a                        RUNNING  
+paneflow: flow aborted: interrupted (panes left running) (partial report above)
+$ $SCRATCH/target-fix-t/debug/paneflow ls --human | grep fctrlc
+12373  fctrlc                Default           zsh                       $SCRATCH/cover-fx/repo
+[exit=0]
+
+== send step toward an agent pane without bracketed paste, single-line text
+$ timeout 120 $SCRATCH/target-fix-t/debug/paneflow flow run flows/fake1.flow.toml
+[2026-11-25T00:48:06Z WARN  paneflow_config::loader] invalid config key agents.claude.grants: unknown right "root", expected one of write, spawn, layout; no grant of the agent profile claude is stored
+[    0.0s] impl → RUNNING
+[    5.2s] impl → READY
+[    5.2s] fan[alpha] → RUNNING
+paneflow: paneflow error -32070: the layout op was refused: invalid
+[exit=1]
+
+$ $SCRATCH/target-fix-t/debug/paneflow read impl --lines 4
+<untrusted_terminal_output source="surface:8253" total_lines="8" eof="false" id="d83f14c75f25a8a9">
+FAKE_AGENT_READY
+implement then tests passed
+working on: implement then tests passed
+DONE: implement then tests passed
+</untrusted_terminal_output id="d83f14c75f25a8a9">[exit=0]
+
+== retry with a fresh flow name
+$ timeout 120 $SCRATCH/target-fix-t/debug/paneflow flow run flows/fake1.flow.toml
+[2026-11-25T00:48:28Z WARN  paneflow_config::loader] invalid config key agents.claude.grants: unknown right "root", expected one of write, spawn, layout; no grant of the agent profile claude is stored
+[    0.0s] impl → RUNNING
+[    4.7s] impl → READY
+[    4.7s] fan[alpha] → RUNNING
+[    4.7s] fan[beta] → RUNNING
+[    6.8s] fan[alpha] → READY
+[    6.8s] fan[beta] → READY
+[    6.8s] review → RUNNING
+[   13.9s] review → FAILED (submit was written to agent pane 15461, but no turn start was confirmed within 5000ms (no_state_transition))
+---
+impl                     READY    
+fan[alpha]               READY    
+fan[beta]                READY    
+review                   FAILED   submit was written to agent pane 15461, but no turn start was confirmed within 5000ms (no_state_transition)
+[exit=1]
+
+$ $SCRATCH/target-fix-t/debug/paneflow read impl --lines 4
+<untrusted_terminal_output source="surface:8253" total_lines="8" eof="false" id="6d64bb55be14a8dc">
+FAKE_AGENT_READY
+implement then tests passed
+working on: implement then tests passed
+DONE: implement then tests passed
+</untrusted_terminal_output id="6d64bb55be14a8dc">[exit=0]
+
+== run c (review text starts with 'review', which the fake agent treats as a turn)
+$ timeout 120 $SCRATCH/target-fix-t/debug/paneflow flow run flows/fake1.flow.toml
+[2026-11-25T00:48:55Z WARN  paneflow_config::loader] invalid config key agents.claude.grants: unknown right "root", expected one of write, spawn, layout; no grant of the agent profile claude is stored
+[    0.1s] impl → RUNNING
+[    4.8s] impl → READY
+[    4.9s] fan[alpha] → RUNNING
+[    4.9s] fan[beta] → RUNNING
+[    7.0s] fan[alpha] → READY
+[   35.3s] fan[beta] → FAILED (timed out after 30s waiting for /FAN_beta/)
+---
+impl                     READY    
+fan[alpha]               READY    
+fan[beta]                FAILED   timed out after 30s waiting for /FAN_beta/
+review                   SKIPPED  fail_fast: an earlier step failed
+[exit=4]
+
+== run d (review text starts with 'review', which the fake agent treats as a turn)
+$ timeout 120 $SCRATCH/target-fix-t/debug/paneflow flow run flows/fake1.flow.toml
+[2026-11-25T00:49:30Z WARN  paneflow_config::loader] invalid config key agents.claude.grants: unknown right "root", expected one of write, spawn, layout; no grant of the agent profile claude is stored
+[    0.1s] impl → RUNNING
+[    4.8s] impl → READY
+[    4.8s] fan[alpha] → RUNNING
+[    4.9s] fan[beta] → RUNNING
+[    6.9s] fan[alpha] → READY
+[    7.0s] fan[beta] → READY
+[    7.0s] review → RUNNING
+[    9.5s] review → READY
+---
+impl                     READY    
+fan[alpha]               READY    
+fan[beta]                READY    
+review                   READY    
+[exit=0]
+
+== repeat runs e..j (timeout 15 s) to measure the intermittent failures
+-- run e [exit=0]
+review                   READY    
+-- run f [exit=0]
+[   20.5s] fan[beta] → FAILED (timed out after 15s waiting for /FAN_beta/)
+fan[beta]                FAILED   timed out after 15s waiting for /FAN_beta/
+review                   SKIPPED  fail_fast: an earlier step failed
+-- run g [exit=0]
+[   20.6s] fan[beta] → FAILED (timed out after 15s waiting for /FAN_beta/)
+fan[beta]                FAILED   timed out after 15s waiting for /FAN_beta/
+review                   SKIPPED  fail_fast: an earlier step failed
+-- run h [exit=0]
+review                   READY    
+-- run i [exit=0]
+[   20.0s] fan[beta] → FAILED (timed out after 15s waiting for /FAN_beta/)
+fan[beta]                FAILED   timed out after 15s waiting for /FAN_beta/
+review                   SKIPPED  fail_fast: an earlier step failed
+-- run j [exit=0]
+[   20.6s] fan[beta] → FAILED (timed out after 15s waiting for /FAN_beta/)
+fan[beta]                FAILED   timed out after 15s waiting for /FAN_beta/
+review                   SKIPPED  fail_fast: an earlier step failed
+# note: runs e..j print [exit=0] from the shell wrapper, not from the flow; each failing run exited 4.
+== verdict:
+#  pass: validation (unknown key, unknown dependency, invalid regex, ready without timeout, more than 32 panes) refused under --dry-run; a ready timeout exits 4; Ctrl-C stops the loop and leaves the panes; a full run (capture, foreach, ${item} in name, prompt and ready, ${var} and ${var.<item>} in send.text, submit) reaches READY on every step (run d, e, h).
+#  FAIL F-flow-1: in a foreach fan-out of two panes with a prompt, the second pane's prompt is often never typed: fan[beta] times out on 5 of 9 runs (c, f, g, i, j; the pane shows an empty zsh prompt), fan[alpha] always passes.
+#  FAIL F-flow-2: one run (fake-pipeline-1line) failed at fan[alpha] with 'paneflow error -32070: the layout op was refused: invalid' and exit 1, with no reason in the app or worker log; not reproduced in 8 later runs.
+#  FAIL F-flow-3: a send step whose text holds a multiline capture (lines = 3), toward an agent pane that has not enabled bracketed paste, aborts the whole flow with 'instance unreachable: paneflow error -32602: text contains CR or LF; multiline surface.send_text requires active bracketed paste' (exit 1). The documented example sends 'Summarise what changed: ${summary}' with a 20-line capture. Agents that enable bracketed paste (Claude Code) are not affected; the error is misreported as an unreachable instance instead of a step failure.

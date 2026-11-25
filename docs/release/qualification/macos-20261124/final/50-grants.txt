@@ -1,0 +1,256 @@
+# T3: grants on the final build (grant follower per home 7685996d, busy reporting e465f4ae). Home ~/.paneflow-dev-cover, ipc gates closed after 'pf up grants.toml' (opened only for the up). paneflow.json: agents.amp.grants lists the 16 distinct (rights, scope) pairs; agents.claude.grants holds an unknown right. Panes gA and gB run a binary named amp (C launcher running proxy-agent.sh, which executes queued commands inside the pane and logs them). Prompts decided by accessibility press on the window's Allow and Deny options.
+== unknown right logged at config load (app log and worker log)
+[2026-11-25T00:42:21Z WARN  paneflow_config::loader] invalid config key agents.claude.grants: unknown right "root", expected one of write, spawn, layout; no grant of the agent profile claude is stored
+[2026-11-25T00:42:24Z WARN  paneflow_config::loader] invalid config key agents.claude.grants: unknown right "root", expected one of write, spawn, layout; no grant of the agent profile claude is stored
+== profile grants: 16 per amp session (4 amp sessions in fleet and grants)
+# pf grants ls | wc -l -> 64
+
+# in pane gA (surface 3091) 01:42:40
+$ echo $PANEFLOW_SURFACE_ID; $PF api call system.whoami
+3091
+{
+  "principal": "pane",
+  "session": "6cd8b673-2c95-4ce8-a87b-e9359681b0a1",
+  "workspace": "9e7a1027-ae7e-41e5-9885-de7f64f8f11f"
+}
+[exit=0]
+# in pane gA (surface 3091) 01:42:41
+$ $PF send gB "noop from-gA-with-profile-grant"
+{
+  "sent": true,
+  "length": 31,
+  "submitted": false,
+  "paste": false,
+  "submit_mode": null,
+  "agent_target": true,
+  "agent_tool": "amp",
+  "terminal_bracketed_paste": false
+}
+[exit=0]
+# in pane gA (surface 3091) 01:42:42
+$ $PF api call grant.request --args "{\"rights\":[\"write\"],\"scope\":\"workspace\",\"duration_secs\":60}"
+{
+  "granted": false,
+  "reason": "grant_limit"
+}
+[exit=0]
+# in pane gA (surface 3091) 01:42:58
+$ $PF send gB "noop during-unsynced"
+paneflow: paneflow error -32601: Grants are being synchronized; retry the call
+[exit=1]
+# in pane gA (surface 3091) 01:42:59
+$ $PF send gB "noop after-resync"
+{
+  "sent": true,
+  "length": 17,
+  "submitted": false,
+  "paste": false,
+
+== grants_unsynced: bump serve/grants.json revision by 1000 without a push
+# revision 1795566992228 -> 1795566993228
+# in pane gA (surface 3091) 01:42:58
+$ $PF send gB "noop during-unsynced"
+paneflow: paneflow error -32601: Grants are being synchronized; retry the call
+[exit=1]
+== external: revoke one gB grant (forces a persist and push)
+$ pf grants revoke g-1795566992228-64
+revoked g-1795566992228-64 (revision 1795566992229)
+[exit=0]
+
+# in pane gA (surface 3091) 01:42:59
+$ $PF send gB "noop after-resync"
+{
+  "sent": true,
+  "length": 17,
+  "submitted": false,
+  "paste": false,
+  "submit_mode": null,
+  "agent_target": true,
+  "agent_tool": "amp",
+  "terminal_bracketed_paste": false
+}
+[exit=0]
+
+== external grant.request
+$ pf api call grant.request --args '{"rights":["write"],"scope":"workspace","duration_secs":60}'
+paneflow: paneflow error -32001: grant.request does not answer a caller identified as external
+[exit=1]
+
+== free two of gA's 16 slots
+$ pf grants revoke g-1795566992228-49
+revoked g-1795566992228-49 (revision 1795566992230)
+[exit=0]
+
+$ pf grants revoke g-1795566992228-50
+revoked g-1795566992228-50 (revision 1795566992231)
+[exit=0]
+
+== prompts (screenshot 50-grant-prompt.png locally): 'Allow Amp in pane 6cd8b673 to write in its own workspace for 2 min?' with Allow and Deny options; Allow pressed, then an instance-scope request ('to write across every workspace for 1 min?') Denied:
+# in pane gA (surface 3091) 01:43:08
+$ $PF api call grant.request --args "{\"rights\":[\"write\"],\"scope\":\"workspace\",\"duration_secs\":120}"
+{
+  "granted": true,
+  "id": "g-1795566992232-65",
+  "expires_at_ms": 1795567516866
+}
+[exit=0]
+# in pane gA (surface 3091) 01:43:19
+$ $PF api call grant.request --args "{\"rights\":[\"write\"],\"scope\":\"instance\",\"duration_secs\":60}"
+{
+  "granted": false,
+  "reason": "denied"
+}
+[exit=0]
+# in pane gA (surface 3091) 01:43:30
+$ $PF grants ls | wc -l; $PF grants ls | head -2
+      14
+g-1795566992228-51  session 6cd8b673-2c95-4ce8-a87b-e9359681b0a1  write  workspace  no expiry  profile amp
+g-1795566992228-52  session 6cd8b673-2c95-4ce8-a87b-e9359681b0a1  write  instance  no expiry  profile amp
+[exit=0]
+# in pane gA (surface 3091) 01:43:30
+$ $PF grants revoke g-1795566992227-48
+paneflow: paneflow error -32001: grant.revoke refused: grant g-1795566992227-48 was not delegated by the calling pane
+[exit=1]
+# in pane gA (surface 3091) 01:43:37
+$ $PF send gB "noop after-worker-restart"
+{
+  "sent": true,
+  "length": 25,
+
+== from gA: grants ls shows only what it holds or delegated; revoke of a gB grant refused
+# in pane gA (surface 3091) 01:43:30
+$ $PF grants ls | wc -l; $PF grants ls | head -2
+      14
+g-1795566992228-51  session 6cd8b673-2c95-4ce8-a87b-e9359681b0a1  write  workspace  no expiry  profile amp
+g-1795566992228-52  session 6cd8b673-2c95-4ce8-a87b-e9359681b0a1  write  instance  no expiry  profile amp
+[exit=0]
+# in pane gA (surface 3091) 01:43:30
+$ $PF grants revoke g-1795566992227-48
+paneflow: paneflow error -32001: grant.revoke refused: grant g-1795566992227-48 was not delegated by the calling pane
+[exit=1]
+== worker restart while sessions run
+$ pf grants ls | wc -l
+      62
+[exit=0]
+
+$ pf serve stop
+{
+  "home": "~/.paneflow-dev-cover",
+  "endpoint": "$TMPDIR/paneflow-serve-eb02c1d37cbaabf6.sock",
+  "stopped": true,
+  "drain_ms": 5000
+}
+[exit=0]
+
+$ pf serve status | head -5
+{
+  "state": "unreachable",
+  "home": "~/.paneflow-dev-cover",
+  "endpoint": "$TMPDIR/paneflow-serve-eb02c1d37cbaabf6.sock",
+  "error": "No such file or directory (os error 2)",
+[exit=0]
+
+$ pf serve start
+{
+  "home": "~/.paneflow-dev-cover",
+  "started": true,
+  "state": "started",
+  "replaced": null,
+  "identity": {
+    "name": "paneflow-serve",
+    "version": "0.20.0",
+    "build_id": "b162ddc910ba2d95cebad01a2d5cf9d852f7f64a7e2f3b3e6432ab62b8bf39af",
+    "protocol": 1,
+    "required_core_protocol": 1,
+    "pid": 28735,
+    "home": "~/.paneflow-dev-cover",
+    "endpoint": "$TMPDIR/paneflow-serve-eb02c1d37cbaabf6.sock",
+    "started_at_ms": 1795567413922,
+    "capabilities": [
+      "agent.snapshot",
+      "agent.follow",
+      "restart.recommendation",
+      "integrations.refresh",
+      "activity.reducer",
+      "activity.notifications",
+      "agent.unread",
+      "agent.activity_log",
+      "events.follow",
+      "prompt.follow",
+      "layout.authority"
+    ]
+  }
+}
+[exit=0]
+
+$ pf grants ls | wc -l
+      62
+[exit=0]
+
+# in pane gA (surface 3091) 01:43:37
+$ $PF send gB "noop after-worker-restart"
+{
+  "sent": true,
+  "length": 25,
+  "submitted": false,
+  "paste": false,
+  "submit_mode": null,
+  "agent_target": true,
+  "agent_tool": "amp",
+  "terminal_bracketed_paste": false
+}
+[exit=0]
+== a prompt after the worker restart reaches the window and is decided there:
+
+== session end: gB (session 2bf145eb) grants before and after its program ends (ctrl-c sent from gA, which holds a write grant)
+  16 256c5fbd-bc17-45ab-b6db-11c47d72d9a8
+  16 2bf145eb-4761-4cfe-a825-5bd2cdd68d13
+  16 2d0a09dc-cd0f-4298-a9d3-5d91e20c12ec
+  15 6cd8b673-2c95-4ce8-a87b-e9359681b0a1
+# in pane gA (surface 3091) 01:44:15
+$ $PF key gB ctrl-c
+{
+  "sent": true
+}
+[exit=0]
+$ pf read gB --lines 3
+<untrusted_terminal_output source="surface:3092" total_lines="7" eof="false" id="3d1e03afe59fa2a2">
+PROXY_READY gB surface=3092
+noop from-gA-with-profile-grantnoop after-resyncnoop after-worker-restart^C
+user@host repo %
+</untrusted_terminal_output id="3d1e03afe59fa2a2">[exit=0]
+
+# grants per session after:
+  16 256c5fbd-bc17-45ab-b6db-11c47d72d9a8
+  16 2bf145eb-4761-4cfe-a825-5bd2cdd68d13
+  16 2d0a09dc-cd0f-4298-a9d3-5d91e20c12ec
+  15 6cd8b673-2c95-4ce8-a87b-e9359681b0a1
+== the agent left the foreground; the shell's session still runs, so its profile grants stay (doc: 'keeps them until its session ends'). Now end the session: 'exit' submitted from gA
+# in pane gA (surface 3091) 01:44:25
+$ $PF send gB "exit" --submit
+{
+  "sent": true,
+  "length": 4,
+  "submitted": true,
+  "paste": true,
+  "submit_mode": "deferred_paste_cr",
+  "agent_target": false,
+  "agent_tool": null,
+  "terminal_bracketed_paste": true,
+  "delivered": true,
+  "started": null,
+  "reason": "no_signal",
+  "state": "idle"
+}
+[exit=0]
+$ pf read gB --lines 2
+<untrusted_terminal_output source="surface:3092" total_lines="7" eof="false" id="000dc42c2d8d528d">
+noop from-gA-with-profile-grantnoop after-resyncnoop after-worker-restart^C
+user@host repo % exit
+</untrusted_terminal_output id="000dc42c2d8d528d">[exit=0]
+
+# grants per session after the session ended:
+  16 256c5fbd-bc17-45ab-b6db-11c47d72d9a8
+  16 2d0a09dc-cd0f-4298-a9d3-5d91e20c12ec
+  15 6cd8b673-2c95-4ce8-a87b-e9359681b0a1
+== verdict: pass. Profile grants applied, 16 per pane ceiling answers grant_limit with no prompt, unknown right logged, external grant.request refused (-32001), prompt Allow (granted, id, expires_at_ms) and Deny (denied) decided in the window, instance scope named in the title, ls scoped to the pane and revoke of a foreign grant refused, grants_unsynced then recovery, grants survive a worker restart and the window keeps following prompts after it, grants end with their session (not when the agent merely leaves the foreground, as documented).

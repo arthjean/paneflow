@@ -1,0 +1,20 @@
+# Second and third restart: sidebar width, window_backdrop, telemetry. Build fd627b91 (debug), home ~/.paneflow-dev-cover2
+Quit each time with Cmd+Q > (Don't Save for an unsaved note.rs buffer) > Keep sessions running; relaunch with $SCRATCH/cover-fx/launch3.sh (inherited PANEFLOW_* unset).
+
+## Sidebar width across a restart
+Dragged the sidebar edge to 300 px (outline width 300, window-state sidebar_width 300.0). After the relaunch: outline width 300.
+
+## window_backdrop (macOS), live config reloads, 51-window-backdrop.jpg left to right
+macos_chrome_material=true, no window_backdrop -> Blended (grey, translucent chrome).
++ window_backdrop="transparent" -> Themed (opaque dark).
+window_backdrop="opaque" -> Themed.
+window_backdrop removed -> Blended again. ('off' resolves through the same branch in config.rs as 'opaque'.)
+
+## C16: PANEFLOW_WINDOW_BACKDROP has no effect on macOS
+Repro: macos_chrome_material=true, no window_backdrop in paneflow.json; launch with PANEFLOW_WINDOW_BACKDROP=opaque (present in the app's environment, checked with ps -E). Result: Blended chrome (51-backdrop-env-opaque.jpg), while the same value in the config gives Themed. The schema says 'PANEFLOW_WINDOW_BACKDROP overrides it for one launch' without restricting it to Windows; in the code the variable is read only under cfg(windows) (src-app/src/app/constants.rs).
+
+## Telemetry (debug build without a PostHog key, so an opted-in run logs a warning)
+telemetry.enabled=true, no kill switch (first restart): log has 'telemetry is opted-in but POSTHOG_API_KEY was empty at build time'.
+telemetry.enabled=true with PANEFLOW_NO_TELEMETRY=1 (second restart): no telemetry line at all.
+telemetry.enabled=null (third restart): no telemetry line, no consent prompt shown (unanswered stays off, as index.md says: off by default, only enabled with consent).
+Live reload in that run: null -> true logs the opted-in warning; true -> false logs nothing more.

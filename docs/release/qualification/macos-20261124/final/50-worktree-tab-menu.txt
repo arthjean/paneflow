@@ -1,0 +1,20 @@
+# T11: tab context menu in a single-branch repository (f5827d8c) and worktree removal from the tab menu, final build, mouse right-click by AX bounds (agent-desktop --headed mouse-click --button right) and headless presses on the menu items.
+# $F/solo: git init -b main, one commit, branch list: main only. Workspace 'solo' opened with pf new --cwd $F/solo.
+== right-click on the solo tab row: menu = Rename, Close tab (stops its sessions), New branch… (50-tab-menu-solo.jpg)
+== press New branch…: group 'New branch' with textfield 'Branch name (optional)', button 'Base branch: main', switch 'Worktree' [checked], the presets. set-value 'feat-solo' on the field, press Terminal:
+#  sidebar: the tab row is now 'feat-solo'; the tab holds the original shell ($F/solo) and a new pane 36061 in ~/.paneflow-dev-cover/worktrees/solo-b9668ef4/feat-solo; git worktree list shows it [feat-solo] (50-tab-menu-solo-bound.jpg)
+== right-click the feat-solo tab: Rename, Close tab, New branch…, feat-solo, main, Remove worktree (50-tab-menu-worktree.jpg)
+== made the worktree dirty (new-file.txt, an edit to a.txt), pressed Remove worktree: dialog 'Remove the worktree of feat-solo?' naming the running session, with Cancel and Remove (50-tab-menu-remove-dialog.jpg); pressed Remove:
+$F/solo f216b24 [main]
+  feat-solo
+* main
+d85139728f1c076fd8beda94eb610fa47befbdd0 commit	refs/paneflow/snapshots/feat-solo-1795568575
+Paneflow snapshot of feat-solo
+
+ a.txt        | 1 +
+ new-file.txt | 1 +
+ 2 files changed, 2 insertions(+)
+  ID  NAME                  SPACE             CMD                       CWD
+36058  shell@solo            Default           zsh                       $F/solo
+36061  shell@solo-2          Default           zsh                       $F/solo
+== verdict: pass. New branch… is offered in a single-branch repository and binds the clicked tab; Remove worktree from the tab menu asks first, saves the uncommitted work as a snapshot under refs/paneflow/snapshots/, keeps the branch, and removes the checkout. Observations: the pane that ran in the worktree stays open with a fresh shell in the project checkout (new session 0254f2ca) and the tab keeps the title feat-solo; the removal dialog is not exposed as a dialog in the accessibility tree (only its Cancel and Remove buttons appear, flattened into the window).

@@ -1,0 +1,60 @@
+C8 fix: desktop notifications on macOS (Choose Application "use_default" modal and window freeze)
+Build: worktree branch on main 347305f9 + fix(notifications) 2752968c (code identical to the builds tested); macOS 27.2 Apple Silicon; $SCRATCH = the session scratchpad.
+Config of both runs: "agent_panel": {"notify_when_agent_waiting": "PrimaryScreen"}, "ipc": {"scripting": true}, spaces Work (blue) and Play (green).
+Repro: a Work workspace and a Play workspace, Play shown, then the hidden Work pane runs
+  printf '\033]7501;state=blocked:app=qual:message=...\033\\'; sleep 8   (and in run a: blocked, working+blocked, then error)
+Probe: $SCRATCH/c8-tools/windows <pid> lists every CGWindow of the process (the bug showed two layer-8 "Choose Application" windows).
+
+== Cause confirmed in the source (notify-rust 4.18.0, mac-notification-sys 0.6.15 from Cargo.lock)
+mac-notification-sys src/lib.rs:136  ensure_application_set -> get_bundle_identifier_or_default("use_default")
+mac-notification-sys objc/notify.m:9  NSAppleScript "get id of application \"%@\""  -> macOS asks "Where is use_default?"
+Binary before the fix (debug, main): nm shows _getBundleIdentifier and _setApplication (599 mac_notification_sys symbols).
+Binary after the fix (debug):        nm count of getBundleIdentifier|setApplication|mac_notification_sys = 0; UNUserNotificationCenter symbols = 113.
+Release binary after the fix:        strings | grep -c "get id of application" = 0.
+
+== (a) Bare debug binary, scripts/dev.sh --tag notify (PANEFLOW_HOME=~/.paneflow-dev-notify, every inherited PANEFLOW_* unset)
+02:12:49Z blocked, 02:12:52Z working+blocked, 02:13:04Z error, all from hidden pane 1026 (Work) while Play is shown.
+Windows of the app pid after the repro: 1 on-screen layer-0 "Paneflow" window, no layer-8 window, no "Choose Application".
+Log (the only notification lines of the whole run):
+[2026-11-25T02:13:04Z INFO  paneflow::agents::notifications] paneflow: desktop notifications route NoAppBundle for bundle <none> at $SCRATCH/target-fix-y/debug
+[2026-11-25T02:13:04Z WARN  paneflow::agents::notifications] paneflow: desktop notifications are off because this process does not run from an app bundle; macOS only delivers them to a bundled app
+Accessibility read of the window right after: snapshot ok, complete, 0.25 s (the bug timed out with APP_UNRESPONSIVE).
+Screenshot: 128-notifications-debug-no-modal.png (Play shown, red error mark for Work, no dialog).
+Note: the first two blocked lines produced no notification because a printf that returns to the prompt has its
+blocked record purged before the host's 500 ms scan; the error persists, so it was the first delivery. That is
+existing OSC 7501 behavior, unrelated to this fix; run b keeps the program alive with sleep.
+
+== (b) Release .app from scripts/bundle-macos.sh (cargo build --release --target aarch64-apple-darwin, scratch output)
+bundle-macos.sh has no signing step and sign-macos.sh needs a Developer ID identity, so the scratch bundle was
+signed ad hoc with codesign --force --deep --sign - (codesign --verify --deep --strict: OK).
+The shipped Info.plist id is io.github.arthurdev44.paneflow (assets/Info.plist), the installed app's id. The scratch
+copy was set to io.github.arthurdev44.paneflow.notifyqual so its notification permission and click routing could not
+touch the installed app. Launched with open -n --env PANEFLOW_HOME=~/.paneflow-dev-notifyapp.
+
+Run b1, bundle under $SCRATCH (/private/tmp/...):
+[2026-11-25T02:17:32Z INFO  paneflow::agents::notifications] paneflow: desktop notifications route UserNotifications for bundle io.github.arthurdev44.paneflow.notifyqual at $SCRATCH/c8-app/PaneFlow.app
+[2026-11-25T02:17:32Z WARN  gpui_macos::system_notifications] system notification authorization failed: Notifications are not allowed for this application
+usernoted: Failed to find or validate client of identifier io.github.arthurdev44.paneflow.notifyqual with audit token <... PID ...>
+No modal, no freeze (1 on-screen window). macOS refuses UserNotifications clients that run from a temporary directory,
+even after lsregister -f; the shipped app runs from /Applications, so this only concerns scratch builds.
+
+Run b2, same bundle moved to the worktree's ignored dist/ folder (not /Applications, not the installed app):
+[2026-11-25T02:19:41Z INFO  paneflow::agents::notifications] paneflow: desktop notifications route UserNotifications for bundle io.github.arthurdev44.paneflow.notifyqual at <worktree>/dist/PaneFlow.app
+usernoted 03:19:41 (local): permission request "“PaneFlow” Notifications" for req io.github.arthurdev44.paneflow.notifyqual
+Screenshot: 128-notifications-permission-prompt.png (the scratch bundle's own prompt; Options > Allow clicked).
+usernoted 03:20:47: Authorization set for io.github.arthurdev44.paneflow.notifyqual to allow: YES
+02:20:54Z blocked again from hidden pane 8206:
+usernoted 03:20:55: Delivering <NotificationRecord app:"io.github.arthurdev44.paneflow.notifyqual" req:"paneflow-1445-1" alertStyle:"banner"> to [ .alert .lockScreen .notificationCenter ] ... Presenting as banner
+usernoted 03:21:17: same for req "paneflow-1445-2"; DND resolution "interruptionSuppression: silence; resolutionReason: display shared"
+(the display was being shared, so macOS silenced the banners on screen and kept them in Notification Center).
+Notification Center: a PaneFlow stack "qual needs input in ~ / Needs input" (128-notifications-notification-center.png).
+Window during the run: 1 on-screen layer-0 window, no dialog; accessibility snapshot of the window ok, complete (128-notifications-app-window.png).
+
+Click to focus the pane: not documented (docs/user/features.md, settings.md, configuration/schema.md promise native
+OS notifications only), so not tested or implemented. A click activates the posting app, as macOS does by default.
+
+== Cleanup
+serve stop, host stop --force and kill <own pid> for each instance; lsregister -u for the scratch bundle;
+homes ~/.paneflow-dev-notify and ~/.paneflow-dev-notifyapp and the scratch bundle moved to the Trash.
+Left behind by macOS: the notification permission entry and the Notification Center stack for
+io.github.arthurdev44.paneflow.notifyqual (System Settings > Notifications); the installed app's entry was never touched.

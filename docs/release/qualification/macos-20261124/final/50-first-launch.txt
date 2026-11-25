@@ -1,0 +1,14 @@
+# T0: first launch of a fresh home on the final build (index.md 'On first launch, Paneflow opens a workspace with a terminal pane').
+# launch: the debug paneflow binary run from ~/dev/paneflow (a project directory) with PANEFLOW_HOME=~/.paneflow-dev-cover, which did not exist
+# the window shows the welcome screen; the CLI right after:
+$ pf ls
+{
+  "pane_count": 0,
+  "workspace": 0,
+  "scope_workspace_id": null,
+  "surfaces": []
+}
+[exit=0]
+
+# code: src-app/src/app/bootstrap.rs restores session.json; with no saved session the workspace list is empty and the welcome screen opens ('session restore: no restorable workspace; opening the welcome screen' when a saved session has none). No path opens a workspace for the launch directory.
+== verdict: FAIL (docs or product decision): a first launch opens the welcome screen with no workspace and no terminal (as 01-first-launch.jpg and final/40-40-welcome.jpg also show), not 'a workspace with a terminal pane'; running 'paneflow' from a project directory does not open that directory either.

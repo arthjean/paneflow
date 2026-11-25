@@ -1,0 +1,73 @@
+# T4: dropped frames and -32000 at every cap, on the final build (e465f4ae busy reporting). Workspace 'flood' (pf up $SCRATCH/flood.toml): six panes print every 20 ms. Probes: dropped_probe.py, busy_probe.py (as in cli/41), hold.py (holds N idle connections, runs a CLI command, releases them).
+== dropped: slow subscriber on the window socket while six panes flood
+>> [window] {"jsonrpc": "2.0", "id": 1, "method": "events.subscribe", "params": {"types": ["surface_changed"]}}
+<< {"type":"subscribed","id":1}
+# slow reader: 64 bytes per second for 25 s (the server's 5 s send timeout never fires because each send makes progress),
+#   while six panes print every 20 ms (one surface_changed per pane per 50 ms tick, subscriber queue cap 1024)
+# now reading at full speed
+# read 141 surface_changed frames in all
+<< (after 103 surface_changed frames) {"type":"dropped","count":93}
+<< (after 104 surface_changed frames) {"type":"dropped","count":179}
+<< (after 105 surface_changed frames) {"type":"dropped","count":185}
+<< (after 106 surface_changed frames) {"type":"dropped","count":185}
+<< (after 107 surface_changed frames) {"type":"dropped","count":197}
+<< (after 108 surface_changed frames) {"type":"dropped","count":215}
+<< (after 109 surface_changed frames) {"type":"dropped","count":227}
+<< (after 110 surface_changed frames) {"type":"dropped","count":113}
+# a later event: {"type":"surface_changed","surface_id":6182,"output_generation":141,"ts":1795567509392}
+
+== window: 16 subscriptions, then the 17th
+# held 16 subscriptions open; each acknowledged with {"type":"subscribed","id":17}
+>> [window] (subscription 17) {"jsonrpc": "2.0", "id": 1, "method": "events.subscribe", "params": {"types": ["ai.stop"]}}
+<< {"jsonrpc":"2.0","error":{"code":-32000,"message":"server busy: too many event subscriptions"},"id":1}
+# after releasing them: system.ping -> {"jsonrpc":"2.0","result":{"pong":true},"id":9}
+== window: 32 idle connections, then the 33rd
+# held 32 idle connections open (no request sent)
+>> [window] (connection 33) {"jsonrpc": "2.0", "id": 1, "method": "system.ping", "params": {}}
+<< {"jsonrpc":"2.0","error":{"code":-32000,"message":"server busy: too many concurrent connections"},"id":null}
+# after releasing them: system.ping -> {"jsonrpc":"2.0","result":{"pong":true},"id":9}
+== CLI against a full window endpoint (e465f4ae: reported as busy, not as closed)
+# held 32 idle connections to paneflow-ipc-eb02c1d37cbaabf6.sock
+$ paneflow ls
+paneflow: paneflow error -32000: server busy: too many concurrent connections
+[exit=1]
+# after releasing them: {   "pane_count": 6,   "workspace": 3,   "scope_workspace_id": null,   "surfaces": [     {       "surface_id": 6182,       "name": "flood1",       "title": "Terminal",       "cwd": "/private/tmp/claud [exit=0]
+== worker: 128 idle connections, CLI after
+# held 128 idle connections to paneflow-serve-eb02c1d37cbaabf6.sock
+$ paneflow serve status
+{
+  "state": "faulted",
+  "home": "~/.paneflow-dev-cover",
+  "endpoint": "$TMPDIR/paneflow-serve-eb02c1d37cbaabf6.sock",
+  "message": "the endpoint $TMPDIR/paneflow-serve-eb02c1d37cbaabf6.sock is not answering as a worker: paneflow error -32000: worker busy: too many concurrent connections"
+}
+[exit=0]
+# after releasing them: {   "state": "running",   "pid": 28735,   "build_id": "b162ddc910ba2d95cebad01a2d5cf9d852f7f64a7e2f3b3e6432ab62b8bf39af",   "protocol": 1,   "required_core_protocol": 1,   "home": "~/.paneflow [exit=0]
+== host: 128 idle connections, CLI after
+# held 128 idle connections to paneflow-host-eb02c1d37cbaabf6.sock
+$ paneflow host status
+{
+  "state": "faulted",
+  "home": "~/.paneflow-dev-cover",
+  "endpoint": "$TMPDIR/paneflow-host-eb02c1d37cbaabf6.sock",
+  "message": "connection to the local host failed: Broken pipe (os error 32)"
+}
+[exit=0]
+# after releasing them: {   "state": "running",   "home": "~/.paneflow-dev-cover",   "endpoint": "$TMPDIR/paneflow-host-eb02c1d37cbaabf6.sock",   "identity": {     "name": "pa [exit=0]
+== host: raw probe, 128 idle connections then a 129th
+# held 128 idle connections open (no request sent)
+>> [window] (connection 129) {"jsonrpc": "2.0", "id": 1, "method": "system.ping", "params": {}}
+<< {"jsonrpc":"2.0","id":null,"error":{"code":-32000,"message":"host busy: too many concurrent connections"}}
+# after releasing them: system.ping -> {"jsonrpc":"2.0","id":9,"error":{"code":-32010,"message":"host.hello must be the first request on a connection"}}
+== host: 120 idle (streaming limit 120 of 128, 8 reserved for control), CLI after
+# held 120 idle connections to paneflow-host-eb02c1d37cbaabf6.sock
+$ paneflow host status
+{
+  "state": "faulted",
+  "home": "~/.paneflow-dev-cover",
+  "endpoint": "$TMPDIR/paneflow-host-eb02c1d37cbaabf6.sock",
+  "message": "connection to the local host failed: Broken pipe (os error 32)"
+}
+[exit=0]
+# after releasing them: {   "state": "running",   "home": "~/.paneflow-dev-cover",   "endpoint": "$TMPDIR/paneflow-host-eb02c1d37cbaabf6.sock",   "identity": {     "name": "pa [exit=0]
+== verdict: pass for the documented contract: dropped {type, count} frames to a slow subscriber; -32000 at the window's 16 subscriptions and 32 connections, the worker's 128 and the host's 128; paneflow ls against a full window endpoint now says 'server busy' (e465f4ae). FINDING (minor): paneflow host status against a host whose connections are all taken answers state 'faulted' with 'connection to the local host failed: Broken pipe (os error 32)', and paneflow serve status answers state 'faulted' (with the busy message): a full endpoint is reported as a fault, not as busy, by both status commands.

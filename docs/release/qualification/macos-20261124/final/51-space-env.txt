@@ -1,0 +1,27 @@
+Build: fd627b91 debug (target-fix-t), home ~/.paneflow-dev-cover2, 2026-11-25
+
+== Space env and terminals (Work env set in paneflow.json)
+w-one pane (opened while Work env was QUAL_SPACE=from-work): QUAL_SPACE=from-work
+after changing the Work env to from-work-2, the same open pane: QUAL_SPACE=from-work
+new workspace w-three in Work, pane 21564: QUAL_SPACE=from-work-2
+new pane in Work whose shell rc exports QUAL_SPACE=from-rc: QUAL_SPACE=from-rc
+
+== Settings > Spaces > Work > Edit variables: one row typed (AX set-value), Save clicked with the mouse (51-space-env-refusals.jpg, top to bottom)
+1BAD: "'1BAD': Not a valid variable name" | PANEFLOW_X: "PANEFLOW_ variables are reserved for Paneflow" | TERM: "Paneflow sets it for every terminal" | LD_PRELOAD and CLAUDECODE: "It could change how programs load or run agents" | CLAUDE_CONFIG_DIR=rel/dir: "Must be an absolute path" | QUAL_X=$NOPE_UNSET_VAR/x: "NOPE_UNSET_VAR is not set in your environment" | QUAL_SECRET: warning "Stored in plain text in paneflow.json; prefer a config directory".
+ev2 name=PANEFLOW_X value=1 -> editor open: 1, saved env: {'GITHUB_TOKEN': 'ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}
+ev3 name=TERM value=xterm -> editor open: 1, saved env: {'GITHUB_TOKEN': 'ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}
+ev4 name=LD_PRELOAD value=/tmp/x.so -> editor open: 1, saved env: {'GITHUB_TOKEN': 'ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}
+ev5 name=CLAUDECODE value=1 -> editor open: 1, saved env: {'GITHUB_TOKEN': 'ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}
+ev6 name=CLAUDE_CONFIG_DIR value=rel/dir -> editor open: 1, saved env: {'GITHUB_TOKEN': 'ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}
+ev7 name=QUAL_X value=$NOPE_UNSET_VAR/x -> editor open: 1, saved env: {'GITHUB_TOKEN': 'ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}
+ev8 name=QUAL_SECRET value=hunter2 -> editor open: 1, saved env: {'GITHUB_TOKEN': 'ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}
+ev9 name=QUAL_OK value=plain -> editor open: 0, saved env: {'QUAL_OK': 'plain'}
+Each refusal left the editor open and paneflow.json unchanged; QUAL_OK=plain saved and closed the editor.
+Accessibility gap: none of these refusal or warning texts is exposed to accessibility (the AX tree holds only the two text fields and the buttons).
+Note: the first unobserved batch (several invalid rows typed one after another, then GITHUB_TOKEN=ghp_<36 x a>) ended with env {GITHUB_TOKEN: ...} saved, so a valid row replaced the previous QUAL_SPACE row; that value is a fake placeholder.
+
+== Moving a workspace to a space with another env (51-space-env-move-notice.jpg, 1, 3, 6, 10, 14 s after the move)
+"Moved w-three to Play" with Show, then "Open terminals keep their previous environment" as a second toast about 5 s later (the move toast holds first). A capture within 2 s of a move shows only the first toast.
+
+== Space image
+Add image for space Work opens the system Open panel ("Choose image"). Neither Cmd+Shift+G through CGEvent to the panel window nor System Events keystrokes reached it in this session, so no file could be picked; Cancel closed it.

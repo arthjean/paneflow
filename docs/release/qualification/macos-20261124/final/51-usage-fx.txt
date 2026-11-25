@@ -1,0 +1,42 @@
+# Usage page, usage files, fx detection. Build fd627b91 (debug), home ~/.paneflow-dev-cover2
+# The Usage page names the real Claude account by email: it was read through AX only, emails replaced by <email>, never screenshotted.
+
+## Files in the home
+usage/ledger.json, usage/plans.json, usage/probe/ (mode 700, files 600).
+ledger.json key paths: accounts[].agent, days.<date>[].{account, turns, tokens_in, tokens_out, active_ms}, import.{files, finished_at_ms}, imported.<date>[], version, watermarks.<id>[] -> numbers and ids only, no prompt text.
+plans.json key paths: accounts[].{agent, config_dir, label, state, updated_at_ms}, version (values withheld).
+
+## Settings > Usage
+    tabpanel 'Usage' ['focused'] 
+      unknown 'Usage'  
+      button 'Refresh' 
+      group 'Claude Code, <email>'  
+      group 'Codex, Default'  
+      switch 'Claude Code in the sidebar' ['checked']
+      switch 'Codex in the sidebar' ['checked']
+      radiogroup 'Metric'  
+        radiobutton 'Turns' ['checked']
+  table 'Claude Code, <email>, daily turns' with one cell per day, e.g.:
+          cell 'Tuesday, November 24, 2026: 149 turns' 
+          cell 'Wednesday, November 25, 2026: 3 turns' 
+          cell 'Wednesday, November 25, 2026: 4 turns' 
+          cell 'Wednesday, November 25, 2026: 6 turns' ['offscreen']
+Tokens:  cell 'Tuesday, November 24, 2026: 2,853,090 tokens' 
+Active time:  cell 'Wednesday, November 25, 2026: under 1 min' 
+clicked Nov 24 cell, focused:  cell 'Wednesday, November 25, 2026: 3 turns' ['focused']
+Right arrow, focused:  cell 'Wednesday, November 25, 2026: 3 turns' ['focused']
+Left arrow, focused:  cell 'Wednesday, November 18, 2026: no activity' ['focused']
+-> Turns, Tokens and Active time registers switch the cells; the arrow keys move the focused cell (Left went from Wed Nov 25 to Wed Nov 18: columns are weeks).
+
+## Import past activity
+The first start of this home imported 57 transcript files (import.files=57).
+before Import past activity: import/turns = {'finished_at_ms': 1795569880892, 'files': 57} 168
+after: import/turns = {'finished_at_ms': 1795575521304, 'files': 58} 168
+-> the rerun scanned again (58 files, new finished_at) and the turn total stayed 168: no double counting.
+
+## fx counts as the agent only while the pane title starts with 'fx v'
+Pane 'fxpane' in workspace hover runs the fx stand-in ($SCRATCH/cover-fx/sbin/fx).
+fx stand-in running, title untouched: agents rows:  radiobutton '$SCRATCH/cover-fx/repo' ['checked']| radiobutton 'fxpane' ['checked']|
+after OSC 0 title 'fx v1.2.3':  group 'fx, fx, hover, idle' ['selected', 'offscreen']| radiobutton '$SCRATCH/cover-fx/repo' ['checked']| radiobutton 'fxpane' ['checked']|
+after title 'something else':  radiobutton '$SCRATCH/cover-fx/repo' ['checked']| radiobutton 'fxpane' ['checked']|
+-> an Agents row 'fx, fx, hover, idle' exists only while the title is 'fx v1.2.3'.

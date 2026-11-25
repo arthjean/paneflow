@@ -1,0 +1,95 @@
+# Restart round, build fd627b91 (debug), home ~/.paneflow-dev-cover2
+Quit: Cmd+Q -> 'Save changes before quitting?' (main.rs unsaved) -> Don't Save -> 'Quit Paneflow? 25 sessions are running.' -> Keep sessions running. App pid 99740 exited; host and worker kept running. Relaunch: $SCRATCH/cover-fx/launch3.sh (same clean env, PANEFLOW_WINDOW_BACKDROP=blurred for this launch), new pid 45118, window w-2255.
+Config set before the quit: telemetry.enabled=true, window_decorations="server".
+
+pre-restart: Agents list present: 0; window-state: {'agents_section_height': 96.0, 'agents_section_collapsed': True}
+pre-restart dock tabs: radiobutton 'main.rs' radiobutton 'big.txt' radiobutton 'ro.rs' 
+after restart: Agents list present: 0 (collapsed)
+after expanding: list bounds {'height': 60.0, 'width': 432.0, 'x': 360.0, 'y': 764.0}; window-state {'agents_section_height': 96.0}
+dock tabs after restart: radiobutton 'main.rs' radiobutton 'big.txt' radiobutton 'ro.rs' 
+main.rs line 10 after Don't Save + restart: 'fn line_10() { let value_10 = 1000; }'
+-> Agents section collapsed state and height (section 96 px, list 60 px) survived; the three dock tabs came back; Don't Save discarded the edit (disk content kept).
+
+## Startup-only keys
+window_decorations="server": the running window did not change when the key was written; after the restart the macOS window still shows Paneflow's own chrome, identical to client (no native title bar). Observation: on macOS server and client look the same.
+PANEFLOW_WINDOW_BACKDROP=blurred: no visible change on macOS; the variable is read only under cfg(target_os = "windows") (src-app/src/app/constants.rs).
+
+## Telemetry
+Before (telemetry absent from paneflow.json): no telemetry line in any log of this home, and lsof -i on the app pid listed no network socket.
+telemetry.enabled=true, after restart, log:
+[2026-11-25T02:50:59Z WARN  paneflow_telemetry::client] paneflow: telemetry is opted-in but POSTHOG_API_KEY was empty at build time; PostHog will reject every batch. Provide POSTHOG_API_KEY at build time or set PANEFLOW_NO_TELEMETRY=1 to su
+
+## Language servers
+language_servers = {"rust-analyzer": {"args": []}, "bogus-ls": {"command": "nope-ls"}}, editor.semantic_tokens=true. Log at load:
+[2026-11-25T02:50:58Z WARN  paneflow_config::schema::language_servers] skipping language server `bogus-ls`: an entry that is not built in needs `command`, `extensions` and `language_id`
+Opening src/ro.rs (dock root dockrepo with a Cargo.toml) -> banner 'Start rust-analyzer for <root>? A language server can run this project's build scripts.' with Start and Not now (51-language-server-banner.jpg). The two buttons are not in the AX tree; clicked with the mouse.
+Not now -> banner gone, no trust file; main.rs opened in the same session shows no banner; after the restart the banner is back on main.rs.
+after Start: trust file = {
+  "version": 1,
+  "allowed": [
+    {
+      "server": "rust-analyzer",
+      "root": "$SCRATCH/cover-fx/dockrepo"
+    }
+  ]
+}
+rust-analyzer children of the app: 
+after Forget: {"version":1,"allowed":[]}
+[2026-11-25T02:51:49Z WARN  paneflow_lsp::client] rust-analy8b/scratchpad/cover-fx/dockrepo: the server stopped unexpectedly (the server closed its output); restarting it once
+[2026-11-25T02:51:49Z WARN  paneflow_lsp::client] rust-analy8b/scratchpad/cover-fx/dockrepo: the server stopped unexpectedly again (the server closed its output); leaving it stopped
+-> the server was started, then exited twice (closed its output); Paneflow restarted it once and left it stopped, as documented. Why rust-analyzer exits on this fixture was not investigated.
+
+## Usage capsule
+default:  button 'Plan usage: no data yet' |
+sidebar_show.usage=false: 
+usage.sidebar_agents=[]: 
+usage.sidebar_agents=[codex]:  button 'Plan usage: no data yet' |
+(51-usage-capsule.jpg: ring present, gone, gone, present)
+
+## App icon (Dock)
+Dock item of this dev binary captured with screencapture at its Dock bounds: unset -> generic 'exec' tile (a bare binary has no bundle icon, so the default glass is not visible on a dev build); app_icon="black" -> striped black tile; "melon" -> melon tile; key removed -> generic again; each change applied while running, no restart (51-app-icon-dock.jpg). The Settings > Appearance App icon picker could not be opened headlessly (offscreen combobox).
+
+## Settings > Agents (AX labels only; emails never captured)
+    tabpanel 'Agents' ['focused'] 
+      unknown 'Agents'  
+      button 'Update' 
+      button 'Claude Code settings' 
+      switch 'Show Claude Code in the agent picker' ['checked']
+      button 'Show email' 
+      button 'Add account' 
+      button 'Codex settings' 
+      switch 'Show Codex in the agent picker' ['checked']
+      button 'Sign in' 
+      button 'Add account' 
+      button 'Update' 
+      button 'OpenCode settings' 
+      switch 'Show OpenCode in the agent picker' ['checked']
+      button 'Update' 
+      button 'Pi settings' 
+      switch 'Show Pi in the agent picker' ['checked']
+      button 'Hermes Agent settings' 
+      switch 'Show Hermes Agent in the agent picker' ['checked']
+    button 'Hide sidebar' 
+  ... one 'Show <agent> in the agent picker' switch per runtime, plus 'Full access for Claude Code' and 'AI free access'.
+Claude Code settings dialog:
+    dialog 'Claude Code settings' ['focused'] 
+      combobox 'Update method' 
+      button 'Copy command' 
+      button 'Copy path' 
+      switch 'Paneflow hooks for Claude Code' 
+      button 'New preset' 
+after switching off 'Show Pi in the agent picker':  switch 'Show Pi in the agent picker' 
+58c58,59
+<     "window_decorations": "server"
+---
+>     "window_decorations": "server",
+>     "pi_button_visible": false
+New preset -> 'New Claude Code launch preset' (name, variable, extra arguments); Save wrote:
+>     "agent_profiles": [
+>         {
+>             "name": "qa-presetQA_FLAG1--model test",
+>             "agent": "claude_code"
+>         }
+>     ]
+(the headless field clicks did not move focus, so all typed text landed in the name; the write itself is what this checks)
+Not pressed: 'Paneflow hooks for Claude Code' (writes the real ~/.claude), 'Update' (runs the agent's updater), 'Add account' / 'Sign in'.

@@ -1,0 +1,87 @@
+# T2: workspace.restore_layout over raw JSON-RPC on the window socket (rpc.py), external terminal. Build 0cd67ce4, home ~/.paneflow-dev-cover.
+# config: {"ipc":{"scripting":true}}
+$ pf new --name restore --cwd $SCRATCH/cover-fx/repo
+{
+  "index": 1,
+  "title": "restore",
+  "panes": 1
+}
+[exit=0]
+
+$ pf ls --human
+  ID  NAME                  SPACE             CMD                       CWD
+1025  sh1                   Default           zsh                       $SCRATCH/cover-fx/repo
+1026  agentA                Default           amp                       $SCRATCH/cover-fx/repo
+1027  agentB                Default           amp                       $SCRATCH/cover-fx/repo
+1040  shell@repo            Default           bash                      $SCRATCH/cover-fx/repo
+1043  shell@repo-2          Default           bash                      $SCRATCH/cover-fx/repo
+1048  shell@repo-3          Default           bash                      $SCRATCH/cover-fx/repo
+1051  shell@repo-4          Default           bash                      $SCRATCH/cover-fx/repo
+[exit=0]
+
+# config: {"ipc":{"scripting":false,"orchestration":false}}
+== gates closed
+>> [window] {"jsonrpc": "2.0", "id": 1, "method": "workspace.restore_layout", "params": {"layout": {"type": "split", "direction": "vertical", "children": [{"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{}]}]}}}
+<< {"jsonrpc":"2.0","result":{"restored":true,"panes":7},"id":1}
+>> [window] {"jsonrpc": "2.0", "id": 1, "method": "workspace.restore_layout", "params": {"layout": {"type": "split", "direction": "horizontal", "children": [{"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{"command": "echo restored-by-layout-cmd", "name": "rl-cmd"}]}, {"type": "pane", "surfaces": [{"prompt": "prefilled-by-layout", "name": "rl-prompt"}]}]}}}
+<< {"jsonrpc":"2.0","error":{"code":-32601,"message":"workspace.restore_layout orchestration disabled; set PANEFLOW_IPC_ORCHESTRATION=1 or PANEFLOW_IPC_SCRIPTING=1 to enable command, prompt, or env"},"id":1}
+# pane count:
+{"index": 0, "title": "fleet", "cwd": "$SCRATCH/cover-fx/repo", "panes": 7, "space": null, "layout": {"type": "split", "direction": "vertical", "ratios": [0.5, 0.5], "children": [{"type": "pane", "surfaces": [{"sur
+# config: {"ipc":{"scripting":true}}
+== scripting open: command and prompt
+>> [window] {"jsonrpc": "2.0", "id": 1, "method": "workspace.restore_layout", "params": {"layout": {"type": "split", "direction": "horizontal", "children": [{"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{"command": "echo restored-by-layout-cmd", "name": "rl-cmd"}]}, {"type": "pane", "surfaces": [{"prompt": "prefilled-by-layout", "name": "rl-prompt"}]}]}}}
+<< {"jsonrpc":"2.0","result":{"restored":true,"panes":8},"id":1}
+$ pf ls --human
+  ID  NAME                  SPACE             CMD                       CWD
+1025  sh1                   Default           zsh                       $SCRATCH/cover-fx/repo
+1026  agentA                Default           amp                       $SCRATCH/cover-fx/repo
+1027  agentB                Default           amp                       $SCRATCH/cover-fx/repo
+1040  shell@repo            Default           bash                      $SCRATCH/cover-fx/repo
+1043  shell@repo-2          Default           bash                      $SCRATCH/cover-fx/repo
+1048  shell@repo-3          Default           bash                      $SCRATCH/cover-fx/repo
+1051  shell@repo-4          Default           bash                      $SCRATCH/cover-fx/repo
+2076  shell@repo-5          Default           zsh                       $SCRATCH/cover-fx/repo
+[exit=0]
+
+$ pf read rl-cmd --lines 3
+paneflow: no pane matches target 'rl-cmd'
+[exit=3]
+
+$ pf read rl-prompt --lines 3
+paneflow: no pane matches target 'rl-prompt'
+[exit=3]
+
+== limits
+>> [window] {"jsonrpc": "2.0", "id": 1, "method": "workspace.restore_layout", "params": {"layout": {"type": "split", "direction": "vertical", "children": [{"type": "pane", ...
+<< {"jsonrpc":"2.0","error":{"code":-32602,"message":"layout must hold between 1 and 32 panes"},"id":1}
+>> [window] {"jsonrpc": "2.0", "id": 2, "method": "workspace.restore_layout", "params": {"layout": {"type": "split", "direction": "vertical", "children": []}}}...
+<< {"jsonrpc":"2.0","error":{"code":-32602,"message":"layout must hold between 1 and 32 panes"},"id":2}
+>> [window] {"jsonrpc": "2.0", "id": 3, "method": "workspace.restore_layout", "params": {}}...
+<< {"jsonrpc":"2.0","error":{"code":-32602,"message":"missing 'layout' parameter"},"id":3}
+
+# note: the active tab of 'fleet' (team lead 1048 + teammate 1051) was the target; its two panes were reused and one pane added (2076): the prompt was prefilled there; the command sat on a reused pane and did not run, as reuse keeps the running session.
+== scripting open, on workspace 'restore' (one pane): command and prompt in new panes
+$ pf select 1
+{
+  "selected": 1
+}
+[exit=0]
+
+>> [window] {"jsonrpc": "2.0", "id": 1, "method": "workspace.restore_layout", "params": {"layout": {"type": "split", "direction": "horizontal", "children": [{"type": "pane", "surfaces": [{}]}, {"type": "pane", "surfaces": [{"command": "echo restored-by-layout-cmd", "name": "rl-cmd"}]}, {"type": "pane", "surfaces": [{"prompt": "prefilled-by-layout", "name": "rl-prompt"}]}]}}}
+<< {"jsonrpc":"2.0","result":{"restored":true,"panes":3},"id":1}
+$ pf ls --human
+  ID  NAME                  SPACE             CMD                       CWD
+2063  shell@repo-6          Default           zsh                       $SCRATCH/cover-fx/repo
+2081  shell@repo-7          Default           zsh                       $SCRATCH/cover-fx/repo
+2083  shell@repo-8          Default           zsh                       $SCRATCH/cover-fx/repo
+[exit=0]
+
+-- 2063
+user@host repo %
+</untrusted_terminal_output id="e85149637baac91e">-- 2081
+user@host repo % echo restored-by-layout-cmd
+restored-by-layout-cmd
+user@host repo %
+-- 2083
+user@host repo % prefilled-by-layout
+</untrusted_terminal_output id="75bd8c75bcfd5c78">== verdict: pass. Gate refuses a command or prompt with -32601 while orchestration is closed and accepts a plain layout; 1 to 32 panes enforced; existing panes reused; once scripting is open the command runs and the prompt is prefilled in the panes the layout opens. Observation: the layout's surface 'name' (rl-cmd, rl-prompt) is not applied to the pane name ls shows.

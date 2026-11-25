@@ -1,0 +1,7 @@
+# macOS minimum, read only from the installed app (nothing launched or changed)
+defaults read /Applications/PaneFlow.app/Contents/Info.plist LSMinimumSystemVersion -> 13.0 (plutil -extract gives the same)
+CFBundleShortVersionString -> 0.20.0
+lipo -archs Contents/MacOS/paneflow -> arm64 (Apple Silicon only, no Intel slice)
+otool -l: LC_BUILD_VERSION platform 1 (macOS), minos 11.0 (the linker floor; Launch Services enforces the 13.0 above)
+otool -L: links /System/Library/Frameworks/Metal.framework
+Not run on macOS 13 itself: only macOS 27.2.1 on an M4 is available.

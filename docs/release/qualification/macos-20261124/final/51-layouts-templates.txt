@@ -1,0 +1,45 @@
+# Layout presets, commands, workspace templates. Build fd627b91 (debug), home ~/.paneflow-dev-cover2
+
+## Layout presets (workspace hover, 7 panes; focus probed by typing 'echo MARKn' and reading which pane printed it)
+before: V([Terminal*] [Terminal*] [Terminal*] H(V([Terminal*] [somethin*]) [Terminal*] [Terminal*]))
+clicked pane 'nosb', Cmd+Alt+3 (Main vertical): V([Terminal*] H([Terminal*] [Terminal*] [Terminal*] [Terminal*] [somethin*] [Terminal*])); 'echo MARK1' landed in: nosb
+Cmd+Alt+1 (Even horizontal): V([Terminal*] [Terminal*] [Terminal*] [Terminal*] [Terminal*] [somethin*] [Terminal*]); 'echo MARK2' landed in: nosb
+clicked the last pane 'mult5', Cmd+Alt+4 (Tiled): H(V([Terminal*] [Terminal*] [Terminal*]) V([Terminal*] [Terminal*] [somethin*]) [Terminal*]); 'echo MARK3' landed in: nosb
+w-one (1 pane): layout hash before a3f3de4ec1536af8734e6deee9817b19, after Cmd+Alt+1..4 a3f3de4ec1536af8734e6deee9817b19
+-> Main vertical kept focus on the clicked pane; Tiled moved it to the first pane (nosb); on a one-pane workspace all four presets leave the layout tree byte-identical.
+
+## commands[] in paneflow.json
+commands = [{"name":"qa-run","description":"QA simple command","command":"echo qa-command-ran"}, {"name":"qa-tpl","workspace":{"name":"qa-tpl","cwd":"$SCRATCH/cover-fx/repo","layout_preset":"even_v","color":"ff8800","layout":{"type":"split","direction":"horizontal","children":[t-one: "echo one-$QA_ENV" env QA_ENV=x1; t-two: "echo two" focus; t-three: "echo three" cwd $SCRATCH/cover-fx/solo]}}}]
+Config reloaded ('config reloaded successfully').
+
+### C11: a simple command entry has no UI
+Command palette (Cmd+Shift+P): 'qa-' -> 'No matching command'; 'qa' lists Equalize panes, Interface style, Show pull requests in the sidebar, Quit Paneflow. qa-run is nowhere: not in the palette, not in Settings > Workspaces (which lists only 'Open template qa-tpl'). In the source, config.commands is read only by settings/tabs/workspaces (templates). The schema says commands entries back 'Command palette entries and workspace templates'.
+Custom command buttons are a different feature and work: workspace context menu > 'Manage custom buttons…' > New button (name 'QA Echo', command 'echo custom-button-ran') stores the button in session.json; it then appears at the end of the pane '+' chooser (the list scrolls), and choosing it opened pane 32911 that printed 'custom-button-ran'. The New button dialog is not exposed to accessibility.
+
+### Template page
+    tabpanel 'Workspaces' ['focused'] 
+      button 'Back to all templates' 
+      button 'Launch' 
+      textfield 'Template name' 
+      button 'Choose the project folder' 
+      radiogroup 'Layout'  
+        radiobutton 'Side by side' 
+        radiobutton 'Stacked' ['checked']
+        radiobutton 'Main left' 
+        radiobutton 'Tiled' 
+      button 'Add pane' 
+      radiobutton 't-one, echo one-$QA_ENV' ['checked']
+      radiobutton 't-two, echo two' 
+      radiobutton 't-three, echo three' 
+      button 'Remove pane' 
+      radiogroup 'Pane type'  
+-> layout_preset even_v shows as 'Stacked'.
+
+### C12: Launch replaces the open workspace's tab and hides its running panes
+First Launch, with w-one active (1 pane, cwd repo): no 'qa-tpl' workspace appeared; w-one now holds t-one, t-two, t-three, stacked (51-template-launch-stacked.jpg), with outputs one-x1, two, three and t-three in solo/. w-one's previous pane is gone from the UI.
+before: [('hover', 7), ('other', 1), ('scope-send', 1), ('agents', 6), ('worker1', 1), ('w-one', 3), ('w-two', 1, 'active'), ('w-three', 2), ('dock', 3)]; w-two surfaces [20536]
+after Launch from Settings with w-two active: [('hover', 3, 'active'), ('other', 1), ('scope-send', 1), ('agents', 6), ('worker1', 1), ('w-one', 3), ('w-two', 1), ('w-three', 2), ('dock', 3)]
+current: hover 3; surfaces now [(32904, 't-one', 0), (32905, 't-two', 0), (32906, 't-three', 0)]
+Second Launch, with w-two active (cwd solo): the template went into 'hover' (the first workspace whose folder is repo), replacing its 7 panes (left, right, granted, shell@repo, nosb, mult5, and fxpane running the fx stand-in) with the 3 template panes. No confirmation was shown.
+pf read 1025 / 1033 / nosb / fxpane -> 'no pane matches target'. Host status: 29 sessions, all running and owned, while the window shows 21 panes: the 8 replaced sessions (7 from hover, 1 from w-one) keep running with no pane, e.g. the fx stand-in session titled 'something else' (fake-agent pid 55031) is still alive.
+Code path: settings/tabs/workspaces/mod.rs launch_workspace_template -> open_workspace_index_for_project -> launch_workspace_params_in_open_workspace -> Op::LaunchTemplate (layout_bridge/arrange.rs), which stages a new root for that workspace. Docs: settings.md 'Templates run through the same workspace launch path as paneflow up'; scripting.md 'paneflow up <file> creates a workspace'.

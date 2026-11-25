@@ -1,0 +1,7 @@
+# C15 re-test. Build 1825a6fc (debug, current main, includes 9cc22b78), home ~/.paneflow-dev-cover3
+Dry check first: `which claude` on the app process PATH gives $SCRATCH/cover-fx/sbin/claude (the stand-in). No real agent ran.
+Repro of C15: workspace on $SCRATCH/cover-fx/repo (space Work), pane tab bar '+' > 'Claude Code (team)'.
+Result: the lead pane printed FAKE_AGENT_READY; in it, the stand-in ran
+  echo TEAM=${PANEFLOW_TMUX_TEAM:+set}; tmux display-message -p "#{pane_id}"; tmux split-window -h "bash -c 'echo TEAMMATE_C15; exec bash'"; tmux list-panes -F "#{pane_id}"
+and printed TEAM=set, %0, then %0 %1. A teammate pane (TMUX_PANE=%1) opened beside the lead and printed TEAMMATE_C15 (52-team-tabbar-token.jpg).
+Verdict: C15 no longer reproduces on 1825a6fc: the tab bar entry gives the lead its team token.

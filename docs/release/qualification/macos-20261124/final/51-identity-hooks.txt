@@ -1,0 +1,27 @@
+Build: fd627b91 debug (target-fix-t), home ~/.paneflow-dev-cover2, 2026-11-25
+
+== 1. Forged claims on the host endpoint from python3 (not a Paneflow executable)
+python3 hello client=paneflow-desktop-forged  -> whoami {"principal": "external"}
+python3 hello client=paneflow-serve-forged    -> whoami {"principal": "external"}
+python3 hello client=coverage-plain           -> whoami {"principal": "external"}
+[2026-11-25T01:37:46Z WARN  paneflow_host::genuine] paneflow host: a caller running <python3> claimed the window principal; it is an executable that is not Paneflow's, so it is treated as external
+[2026-11-25T01:37:46Z WARN  paneflow_host::genuine] paneflow host: a caller running <python3> claimed the worker principal; it is an executable that is not Paneflow's, so it is treated as external
+
+== 2. Worker started from a byte-identical copy of the binary, then from an altered copy (one byte appended, ad hoc re-signed)
+=== worker started from copyA
+"pid": 27470
+serve status: running pid 27470 core_connected None sessions 6
+bootstrap core_connected: True sessions: 6
+host log since:
+=== worker started from copyB
+"pid": 27593
+serve status: running pid 27593 core_connected None sessions 6
+bootstrap core_connected: True sessions: 6
+host log since:
+[2026-11-25T01:38:13Z WARN  paneflow_host::genuine] paneflow host: a caller running $SCRATCH/copyB/paneflow claimed the worker principal; it is an executable that is not Pane
+Identical copy: no claim warning, vouched as the worker. Altered copy: logged and treated as external. The original worker was restored afterwards.
+
+== 3. Hook delivery (agent.event) from a control client with ipc.scripting false (ungated), into pane right's session
+session.inspect: generation=1 runtime_generation=None runtime=null
+agent.event runtime_generation=1 -> {"jsonrpc": "2.0", "id": 3, "result": {"accepted": true, "durable": true, "persistence_error": null, "revision": 1}}
+agent.event runtime_generation=8 -> {"jsonrpc": "2.0", "id": 4, "result": {"accepted": false, "reason": "the event names a generation this session has not reached", "revision": 1}}

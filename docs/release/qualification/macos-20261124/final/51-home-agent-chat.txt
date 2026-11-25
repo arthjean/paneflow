@@ -1,0 +1,5 @@
+# Agent chat from ~. Build fd627b91 (debug), home ~/.paneflow-dev-cover2
+Dry check first: the app process PATH starts with $SCRATCH/cover-fx/sbin, and 'which claude' on that PATH gives the stand-in; in a pane, 'type claude' resolves to the Paneflow shim, which launched the stand-in (FAKE_AGENT_READY) before.
+paneflow api call workspace.create cwd=~ -> new workspace (index 9, titled 'Terminal'; the title= key was ignored), shell pane in ~.
+Pane '+' > Claude Code -> pane 'claude@<home>' (cmd claude, cwd ~), the stand-in printed FAKE_AGENT_READY; 'run pwd' printed ~ and RUN_DONE (51-home-agent-chat.jpg).
+No real agent binary ran.

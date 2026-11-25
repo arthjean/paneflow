@@ -1,0 +1,15 @@
+# jump_next_waiting (Cmd+Shift+J). Build fd627b91 (debug), home ~/.paneflow-dev-cover2
+Stand-ins (fake agents resolved from $C/sbin, no real agent binary): workspace 'agents' in space Default holds a-gemini (sent 'ask' -> waiting for input, 'Allow rm?'), a-codex (OSC 7501 state=error then sleep 600 -> error); workspace 'dock' holds d-agent (finished 'x-dagent', done not yet seen); workspace w-two in space Work holds a Claude Code stand-in (done, not yet seen).
+Agents section with Default active: Need you (Gemini, agents) / Error (Codex, agents) / Done (Claude Code, dock, not yet seen).
+
+## Order observed (51-jump-next-waiting.jpg, one frame per press, starting from w-one)
+Press 1 -> dock, d-agent (the cursor carried over from an earlier round that ended on the error agent, so the cycle continued after it).
+Press 2 -> agents, a-gemini pane focused (waiting).
+Press 3 -> agents, a-codex pane focused (error).
+Press 4 -> space switched to Work, workspace w-two (the inactive space comes last).
+An earlier 11-press round gave the period waiting, error, one unseen finished agent, with the finished ones in the order dock (most recent), worker1, then w-two in space Work, and it wrapped. Waiting first, then error, then unseen finished, active space first, all workspaces, wrap: as documented.
+
+## C14: the jump to an agent in another tab does not show that agent
+Repro: space Work, workspace w-two with two tabs: 'Tab 1' holds the Claude Code stand-in (done, not yet seen), 'qa-wt' (a worktree shell tab) is selected. Press Cmd+Shift+J -> w-two stays on tab qa-wt; Tab 1 is not selected and the agent row still reads 'Claude Code, Claude Code, w-two, done, not yet seen'. From space Default the same press switches to space Work and w-two but again leaves tab qa-wt selected. The agent is never shown, so it stays unseen and keeps coming back in the cycle.
+The jump inside the 'agents' and 'dock' workspaces (one tab each) did focus the right pane.
+Side note: a Ctrl+C sent to the a-codex stand-in ended it (back to the shell).

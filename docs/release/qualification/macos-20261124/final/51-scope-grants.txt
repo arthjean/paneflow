@@ -1,0 +1,93 @@
+Build: fd627b91 debug (target-fix-t), home ~/.paneflow-dev-cover2, 2026-11-25
+Workspaces: hover (panes left, right, shell) and other (pane o1). Sessions: left=46fdcefd-cc07-4f5d-84de-d68a7153db94 right=6945ec14-8155-4ac2-9fd1-f5b958e5d2f9 o1=9aa9eed8-fbd4-4c48-8463-bf50aa4fa915
+
+== 1. Probes run inside pane left (pane principal), ipc.scripting true
+# caller: pane 'left' (surface 1025, workspace hover); own session 46fdcefd-cc07-4f5d-84de-d68a7153db94
+== whoami
+{  "principal": "pane",  "session": "46fdcefd-cc07-4f5d-84de-d68a7153db94",  "workspace": "b3d7a4b8-f6dd-45c4-8675-d0f5b7e72c0b"}
+== surface.list with scope_session = o1's session (workspace other)
+surfaces: [('left', 0), ('right', 0), ('shell', 0)]
+== pane.write with source_session = right's session (not the caller's)
+paneflow: paneflow error -32602: pane.write refused: source_session must be the calling pane's own session
+[exit=1]
+== send into o1 (other workspace) from this pane
+paneflow: paneflow error -32602: surface 6155 belongs to workspace "other" (id 6158), outside the workspace of the calling pane; to write across workspaces, set ipc.orchestration to true in paneflow.json and pass --scope all (PANEFLOW_MCP_SCOPE=all for the MCP bridge)
+[exit=1]
+== flow whose send step targets o1, a pane it did not spawn
+paneflow: step 'poke': a `send` step needs at least one dependency
+[exit=0]
+== send with an unknown PANEFLOW_SESSION_ID
+{
+  "sent": true,
+  "length": 7,
+  "submitted": false,
+  "paste": false,
+  "submit_mode": null,
+  "agent_target": false,
+  "agent_tool": null,
+  "terminal_bracketed_paste": false
+}
+[exit=0]
+== DONE
+(the flow above failed validation: a send step needs a dependency; rerun below with a spawned step first)
+
+== 2. Flow run inside pane left: step mine spawns a pane, step poke sends to o1 (workspace other), which the flow did not spawn
+# in pane left, session 46fdcefd-cc07-4f5d-84de-d68a7153db94
+[    0.5s] mine → READY
+[    0.5s] poke → RUNNING
+---
+mine                     READY    
+poke                     RUNNING  
+paneflow: flow aborted: instance unreachable: paneflow error -32602: surface 6155 belongs to workspace "other" (id 6158), outside the workspace of the calling pane; to write across workspaces, set ipc.orchestration to true in paneflow.json and pass --scope all (PANEFLOW_MCP_SCOPE=all for the MCP bridge) (partial report above)
+[exit=0]
+Note: the refusal is reported as 'instance unreachable' (same mislabel as C3).
+
+== 3. External caller (a shell outside every pane)
+== external caller (my shell, outside every pane) with an unknown PANEFLOW_SESSION_ID
+paneflow: paneflow error -32602: unknown caller session 00000000-0000-4000-8000-000000000000: no workspace of this window holds it, so the write is refused
+[exit=1]
+== external caller with the session of o1 (workspace other), sending to right (workspace hover)
+paneflow: paneflow error -32602: surface 1026 belongs to workspace "hover" (id 1030), outside the workspace of the calling pane; to write across workspaces, set ipc.orchestration to true in paneflow.json and pass --scope all (PANEFLOW_MCP_SCOPE=all for the MCP bridge)
+[exit=1]
+
+== 4. Spawn grant with workspace scope, probes inside pane right, ipc.scripting false and ipc.orchestration false
+# caller: pane 'right' (surface 1026, workspace hover), session 6945ec14-8155-4ac2-9fd1-f5b958e5d2f9; gates: {"default_shell":"/bin/bash","ipc":{"scripting":false}}
+== 02:36:08 split own pane with a command, no grant
+paneflow: paneflow error -32601: surface.split orchestration disabled; set PANEFLOW_IPC_ORCHESTRATION=1 or PANEFLOW_IPC_SCRIPTING=1 to enable command, prompt, or env [exit=1]
+== 02:36:08 grant.request spawn, workspace scope (Allow clicked in the window)
+{  "granted": true,  "id": "g-1795570366879-1",  "expires_at_ms": 1795570877223}
+== 02:36:17 split own pane with a command, with the grant
+{  "split": true,  "new_tab": false,  "tab_id": 1029,  "direction": "vertical",  "panes": 4,  "surface_id": 8211}
+== 02:36:17 split a pane of workspace other (surface 6155) with a command
+paneflow: paneflow error -32602: surface.split refused: the calling pane's spawn grant covers its own workspace; launching a command, a prompt or an env in another workspace needs an instance grant
+== 02:36:17 session.create with a command under the workspace grant
+paneflow: Method not found: session.create
+== DONE
+The window prompt read 'Allow an agent in pane 6945ec14 to spawn in its own workspace for 5 min?' with Allow / Deny; Allow was chosen with Return.
+The refusal message names the rule; the reply carries no literal scope_refused token in its message.
+
+== 5. Host session.create from a control client (host.hello client=coverage-control, principal external), per gate setting
+=== ipc = {"scripting":false,"orchestration":false}
+hello: {"jsonrpc": "2.0", "id": 1, "result": {"name": "paneflow-host", "version": "0.20.0", "protocol": 1, "build_id": "0.20.0+108cacb17ed8", "host_instance": "48fa5af9-f230-4efa-b4c4-2b19dcfb04c9", "engine"
+whoami: {"jsonrpc": "2.0", "id": 2, "result": {"principal": "external"}}
+session.create plain: {"jsonrpc": "2.0", "id": 3, "error": {"code": -32601, "message": "session.create disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable"}}
+session.create with command: {"jsonrpc": "2.0", "id": 4, "error": {"code": -32601, "message": "session.create orchestration disabled; set PANEFLOW_IPC_ORCHESTRATION=1 or PANEFLOW_IPC_SCRIPTING=1 to launch a command, prompt, or env"}}
+session.create with env: {"jsonrpc": "2.0", "id": 5, "error": {"code": -32601, "message": "session.create orchestration disabled; set PANEFLOW_IPC_ORCHESTRATION=1 or PANEFLOW_IPC_SCRIPTING=1 to launch a command, prompt, or env"}}
+=== ipc = {"scripting":true,"orchestration":false}
+hello: {"jsonrpc": "2.0", "id": 1, "result": {"name": "paneflow-host", "version": "0.20.0", "protocol": 1, "build_id": "0.20.0+108cacb17ed8", "host_instance": "48fa5af9-f230-4efa-b4c4-2b19dcfb04c9", "engine"
+whoami: {"jsonrpc": "2.0", "id": 2, "result": {"principal": "external"}}
+session.create plain: {"jsonrpc": "2.0", "id": 3, "result": {"schema": 1, "session": "7682fb19-c554-46a6-8bd5-b65dc5310817", "generation": 1, "host_instance": "48fa5af9-f230-4efa-b4c4-2b19dcfb04c9", "cwd": "$SCRATCH/...
+  remove: {"jsonrpc": "2.0", "id": 103, "result": {"schema": 1, "session": "7682fb19-c554-46a6-8bd5-b65dc5310817", "generation": 1 {"jsonrpc": "2.0", "id": 203, "result": {"removed": {"schema": 1, "session": "7682fb19-c554-46a6-8bd5-b65dc5310817", "ge
+session.create with command: {"jsonrpc": "2.0", "id": 4, "result": {"schema": 1, "session": "56032589-8bed-4c0f-b33b-ffee18491beb", "generation": 1, "host_instance": "48fa5af9-f230-4efa-b4c4-2b19dcfb04c9", "cwd": "$SCRATCH/...
+  remove: {"jsonrpc": "2.0", "id": 104, "result": {"schema": 1, "session": "56032589-8bed-4c0f-b33b-ffee18491beb", "generation": 1 {"jsonrpc": "2.0", "id": 204, "result": {"removed": {"schema": 1, "session": "56032589-8bed-4c0f-b33b-ffee18491beb", "ge
+session.create with env: {"jsonrpc": "2.0", "id": 5, "result": {"schema": 1, "session": "b8a95ee7-46d2-432d-ad7f-1cc929646337", "generation": 1, "host_instance": "48fa5af9-f230-4efa-b4c4-2b19dcfb04c9", "cwd": "$SCRATCH/...
+  remove: {"jsonrpc": "2.0", "id": 105, "result": {"schema": 1, "session": "b8a95ee7-46d2-432d-ad7f-1cc929646337", "generation": 1 {"jsonrpc": "2.0", "id": 205, "result": {"removed": {"schema": 1, "session": "b8a95ee7-46d2-432d-ad7f-1cc929646337", "ge
+=== ipc = {"scripting":false,"orchestration":true}
+hello: {"jsonrpc": "2.0", "id": 1, "result": {"name": "paneflow-host", "version": "0.20.0", "protocol": 1, "build_id": "0.20.0+108cacb17ed8", "host_instance": "48fa5af9-f230-4efa-b4c4-2b19dcfb04c9", "engine"
+whoami: {"jsonrpc": "2.0", "id": 2, "result": {"principal": "external"}}
+session.create plain: {"jsonrpc": "2.0", "id": 3, "error": {"code": -32601, "message": "session.create disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable"}}
+session.create with command: {"jsonrpc": "2.0", "id": 4, "result": {"schema": 1, "session": "3bde22e3-d125-44a8-8308-2c5ced07e922", "generation": 1, "host_instance": "48fa5af9-f230-4efa-b4c4-2b19dcfb04c9", "cwd": "$SCRATCH/...
+  remove: {"jsonrpc": "2.0", "id": 104, "result": {"schema": 1, "session": "3bde22e3-d125-44a8-8308-2c5ced07e922", "generation": 1 {"jsonrpc": "2.0", "id": 204, "result": {"removed": {"schema": 1, "session": "3bde22e3-d125-44a8-8308-2c5ced07e922", "ge
+session.create with env: {"jsonrpc": "2.0", "id": 5, "result": {"schema": 1, "session": "ecc92da7-ea32-468c-b5a8-ae755a999b69", "generation": 1, "host_instance": "48fa5af9-f230-4efa-b4c4-2b19dcfb04c9", "cwd": "$SCRATCH/...
+  remove: {"jsonrpc": "2.0", "id": 105, "result": {"schema": 1, "session": "ecc92da7-ea32-468c-b5a8-ae755a999b69", "generation": 1 {"jsonrpc": "2.0", "id": 205, "result": {"removed": {"schema": 1, "session": "ecc92da7-ea32-468c-b5a8-ae755a999b69", "ge
+Each created session was stopped and removed at once. ipc.scripting implies ipc.orchestration (reference.md), which is why command and env are allowed under scripting alone. A non-empty shell or args also counts as a launch.

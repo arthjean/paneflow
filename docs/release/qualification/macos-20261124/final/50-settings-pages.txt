@@ -1,0 +1,53 @@
+# T12: Settings pages on the final build, driven by headless accessibility presses (agent-desktop click), set-value, physical key presses on the dev window, and a raw AXPress ($SCRATCH/a11yq/axpress) for switches drawn below the window edge, which agent-desktop refuses by policy. paneflow.json read after each step.
+== Settings > Keyboard Shortcuts
+# rows are buttons 'Change <action>, now <keys>'. Press 'Change Toggle zoom, now ⌘⇧Z' (mouse click to take the keyboard) -> 'Press a shortcut'; Cmd+Alt+Y pressed:
+#   paneflow.json shortcuts: {"alt-cmd-y": "toggle_zoom"}; row now 'Change Toggle zoom, now ⌥⌘Y' with a 'Reset Toggle zoom to its default' button
+#   press Reset -> shortcuts: {} and the row reads 'now ⌘⇧Z' again
+== Settings > Spaces
+# with no spaces: 'Create a Work space', 'Create a Personal space', 'Create a Client space', 'New space'. New space -> spaces: [{id: <uuid>, name: 'Space 1'}] and its page opens
+# set-value on 'Space name' + Return: 'default' -> refused (config keeps 'Space 1', field reverts); a 33-character name -> refused; 'Client A' -> written
+# eight more presses on New space: config holds 9 spaces; the list then ends with a disabled 'Space limit reached' row and no New space button (50-settings-spaces-nine.jpg)
+# pf new --space 'Space 1' --name insp1; Space 1 page > Delete -> inline confirmation (Cancel, Delete space) -> Delete space: Space 1 leaves paneflow.json, workspace insp1 moves to Default (workspace.list space null), its terminal 37086 keeps running
+== Settings > Appearance
+start: {'theme': None, 'theme_mode': None, 'workspace_icon': None, 'comfortable_density': None, 'reduce_motion': None}
+after press Light: {'theme': 'Paneflow Light', 'theme_mode': 'light', 'workspace_icon': None, 'comfortable_density': None, 'reduce_motion': None}
+after press Comfortable density: {'theme': 'Paneflow Light', 'theme_mode': 'light', 'workspace_icon': None, 'comfortable_density': None, 'reduce_motion': None}
+after press Reduce motion: {'theme': 'Paneflow Light', 'theme_mode': 'light', 'workspace_icon': None, 'comfortable_density': None, 'reduce_motion': None}
+after press Reset to default (theme section): {'theme': None, 'theme_mode': None, 'workspace_icon': None, 'comfortable_density': None, 'reduce_motion': None}
+      radiobutton 'Light'  
+      radiobutton 'Dark' ['checked'] 
+      switch 'Reduce motion' ['offscreen'] 
+      switch 'Comfortable density' ['checked', 'offscreen'] 
+press False ACTION_FAILED Target is not actionable: visible (live offscreen state is true)
+after press Comfortable density: {'theme': None, 'comfortable_density': None, 'reduce_motion': None} |       switch 'Comfortable density' ['checked', 'offscreen'] 
+press False ACTION_FAILED Target is not actionable: visible (live offscreen state is true)
+after press Reduce motion: {'theme': None, 'comfortable_density': None, 'reduce_motion': None} |       switch 'Reduce motion' ['offscreen'] 
+== raw AXPress on 'Comfortable density' (offscreen)
+window frame: (360.0, 110.0, 1200.0, 800.0)
+target frame: (1375.0, 1209.0, 40.0, 24.0) inside window: false
+value before: 1
+AXPress result: 0
+value after: 0
+config: {'comfortable_density': False, 'reduce_motion': None, 'workspace_icon': None}
+== raw AXPress on 'Reduce motion' (offscreen)
+window frame: (360.0, 110.0, 1200.0, 800.0)
+target frame: (1375.0, 1140.0, 40.0, 24.0) inside window: false
+value before: 0
+AXPress result: 0
+value after: 1
+config: {'comfortable_density': False, 'reduce_motion': True, 'workspace_icon': None}
+# both switches pressed again afterwards to restore them
+== Settings > Terminal
+start: {'font_size': None, 'line_height': None, 'cursor_shape': None, 'integrated_glyphs': None}
+after Increase font size: {'font_size': 14.0, 'line_height': None, 'cursor_shape': None, 'integrated_glyphs': None}
+after Increase line height: {'font_size': 14.0, 'line_height': 1.1, 'cursor_shape': None, 'integrated_glyphs': None}
+after Integrated glyphs: {'font_size': 14.0, 'line_height': 1.1, 'cursor_shape': None, 'integrated_glyphs': False}
+      menuitem 'Vintage (_▂)'  
+      menuitem 'Bar (|)'  
+      menuitem 'Underline (_)'  
+      menuitem 'Double underline (‿)'  
+      menuitem 'Filled box (█)'  
+      menuitem 'Empty box (□)'  
+after Cursor shape choice: {'font_size': 14.0, 'line_height': 1.1, 'cursor_shape': None, 'integrated_glyphs': False}
+after choosing Bar (|): {'cursor_shape': 'beam'}
+== verdict: pass for every control above. Doc drift (docs only): settings.md's Settings map lists a 'Notifications' page that does not exist (the 'Native OS notifications' switch is on General, final/09 lists the 11 pages), and the map has no row for the Editor and Usage pages. Note: the Spaces page screenshots with an account picker show the signed-in account's email, so only the list view is kept.

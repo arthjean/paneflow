@@ -1,0 +1,77 @@
+C10 - option_as_meta: Option+B sent ESC b AND the composed character (macOS)
+Date: 2026-11-25. Worktree branch worktree-agent-a98f5d9304670d1f4, based on main 1825a6fc, debug build ($SCRATCH/target-fix-a2).
+
+Cause (code read, GPUI rev 703b5ac, crates/gpui_macos/src/window.rs handle_key_event):
+- Option+B arrives as Keystroke { key: "b", key_char: "∫", alt }. It is not composing and has a key_char, so GPUI runs
+  the KeyDown callback first. TerminalView::handle_key_down encoded Meta-b and wrote it, but never stopped propagation,
+  so the callback reported "not handled". GPUI then passed the NSEvent to the input context (handleEvent:), which called
+  insertText: "∫" -> TerminalView::commit_text -> a second key input carrying "∫". Held keys had the same flaw (the
+  press-and-hold branch inserts key_char when the keydown is not handled).
+Fix: src-app/src/terminal/input.rs, handle_key_down calls cx.stop_propagation() after it writes a sequence for a
+keystroke that carries a character (key_char is Some). Keys it does not encode (plain text, dead keys, IME, characters
+Option composes when option_as_meta is false) still reach commit_text. Keys without a character (Option+arrows,
+Alt+F4 on Windows) keep their previous propagation.
+
+Tests (red without the fix, green with it):
+- terminal::view::tests::option_as_meta_sends_option_b_as_meta_without_the_composed_character
+  red: panicked at view.rs:2518 "the composed character must not follow the Meta key"; green after the fix.
+- terminal::view::tests::without_option_as_meta_option_b_types_the_composed_character (green before and after).
+
+Live check: scripts/dev.sh --tag c10, home ~/.paneflow-dev-c10, paneflow.json {"option_as_meta": true, "ipc": {"scripting": true}}.
+Keys: System Events key code with option down, each step sent only after checking that the frontmost process was the
+dev PID (the script aborts otherwise). Inside cat -v: Option+B, Return, Option+F, Return, Option+Shift+B, Return,
+Ctrl+D; then at the prompt: 'echo aaa bbb', Option+B, 'X'.
+Pane tail (cat -v; each key line appears twice, once echoed by the tty and once printed by cat; the setup line was typed
+into a cat -v already started with paneflow send, so it appears twice as well):
+
+  claude is ~/.local/bin/claude
+  clear; type -a claude; cat -v
+  clear; type -a claude; cat -v
+  ^[b
+  ^[b
+  ^[f
+  ^[f
+  ^[b
+  ^[b
+  user@host c10-cwd % echo aaa Xbbb
+
+Reading:
+- Option+B -> ^[b only (before the fix: ^[b followed by the bytes of ∫). Option+F -> ^[f only (before: ^[f + ƒ).
+- At the prompt, 'echo aaa bbb' + Option+B + 'X' gives 'echo aaa Xbbb' (before: 'echo aaa ∫Xbbb'): Meta-b moved the
+  cursor back a word and nothing was inserted.
+- Option+Shift+B -> ^[b, not ^[B. Pre-existing and separate from C10: handle_key_down hands Ghostty a key input with
+  empty text, so Ghostty's Alt prefix uses the unshifted codepoint, while keys::to_esc_str (the legacy table) says ESC B.
+  Not fixed here.
+- option_as_meta has no left/right variant in Paneflow (boolean/null in configuration/schema.md), unlike Ghostty's
+  macos-option-as-alt = left | right. Adding one is a product decision.
+- option_as_meta=false keeps typing ∫: covered by the GPUI test above (the audit's 51-config-hot-reload.txt shows the
+  default unchanged).
+
+Cleanup: the window stopped by the PID started, then `paneflow serve stop` and `paneflow host stop --force` (one live
+zsh session) with PANEFLOW_HOME=~/.paneflow-dev-c10; the home was moved to the Trash. Agent stand-ins were first on the
+launch PATH, but the pane's login shell put ~/.local/bin ahead of them; no agent launcher was pressed and no agent ran.
+
+== Follow-up: Option+Shift+letter sends ESC + capital letter (2026-11-25) ==
+Cause: handle_key_down gave Ghostty a key input for Meta keys with empty text, so Ghostty's Alt prefix used the
+unshifted codepoint and dropped Shift (Option+Shift+B -> ESC b). Encoder probe with option_as_alt on: text "" -> ESC b,
+text "B" -> ESC B; the kitty encoding (CSI 98;4u) is the same either way.
+Fix: src-app/src/terminal/input.rs ghostty_key_input fills text with the capital letter (and marks Shift consumed) when
+Alt and Shift are held on a single ASCII letter key without Ctrl or Cmd. GPUI reports Alt+Shift+B as key "b" with shift on
+macOS, Linux (keystroke_from_xkb lowercases) and Windows, so the same path covers Linux and Windows (code read only).
+Test: terminal::view::tests::option_as_meta_sends_option_shift_b_as_meta_capital_b, red before the fix
+(left: [[27, 98]] right: [[27, 66]]), green after; it encodes the queued key with the real libghostty encoder.
+Live check: fresh home ~/.paneflow-dev-c10b (option_as_meta true), cat -v started with paneflow send. osascript
+activation of the dev PID was refused (macOS cooperative activation: frontmost stayed on another app), so the dev window
+was moved with agent-desktop move-window to where no other window covered it (checked with CGWindowListCopyWindowInfo,
+front to back) and clicked there; each key was sent only after checking that the dev PID was frontmost.
+Option+Shift+B, Option+B, Option+Shift+F, Option+F, each followed by Return, then Ctrl+D:
+  user@host c10-cwd % clear; cat -v
+  ^[B
+  ^[B
+  ^[b
+  ^[b
+  ^[F
+  ^[F
+  ^[f
+  ^[f
+Instance stopped by its PID, serve stop, host stop --force; home moved to the Trash. Left/right Option left as is.

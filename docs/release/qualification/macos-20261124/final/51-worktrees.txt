@@ -1,0 +1,19 @@
+# Worktrees: checkout switch guard, snapshot, fresh worktree. Build fd627b91 (debug), home ~/.paneflow-dev-cover2
+Fixture: workspace w-two (moved to space Work, whose env sets GIT_AUTHOR_NAME=Space Author) on $SCRATCH/cover-fx/solo, branch main, a.txt modified and untracked.txt.
+
+## C13: the Changes dock branch picker switches the checkout under a working agent
+A Claude Code stand-in pane in w-two ran 'run sleep 90' (Agents section: 'Claude Code, Claude Code, w-two, working'; the shim resolved to the stand-in, which printed FAKE_AGENT_READY).
+Changes dock > 'Branch main' > qa-other (a branch created for the test) -> the checkout moved to qa-other at once (git rev-parse: qa-other), no refusal, while the agent was still working (51-checkout-switch-guard.jpg, left).
+Same moment, documented path: pane palette > Branch > New branch… 'qa-switch', Worktree toggle off ('switch this checkout'), Terminal -> refused with 'An agent is working in this checkout; create a worktree instead' (right). That message is not exposed to accessibility.
+Docs (worktrees.md): 'Switching a checkout moves the files under every pane that uses it, so Paneflow refuses the switch while an agent is working in that checkout.'
+The branch was switched back to main and qa-other deleted with the git CLI afterwards.
+
+## Snapshot reads disk files, not unsaved editor text
+New branch… 'qa-wt' with Worktree on, Terminal -> ~/.paneflow-dev-cover2/worktrees/solo-b9668ef4/qa-wt [qa-wt].
+On disk in the worktree: 'disk-change' appended to a.txt; new note.rs = 'fn disk_version() {}'. note.rs opened in the dock by Cmd+click on 'note.rs:1' in the worktree terminal, then '// UNSAVED-EDITOR-TEXT' typed and not saved (51-worktree-snapshot.jpg, top).
+Tab menu > Remove worktree -> 'Remove the worktree of qa-wt? 1 running session is using it ... Uncommitted changes in the worktree are saved as a snapshot you can restore, and the branch itself is kept.' (bottom; it does not mention the unsaved note.rs buffer) -> Remove.
+Result: worktree directory gone, branch qa-wt kept, new ref refs/paneflow/snapshots/qa-wt-1795576375 'Paneflow snapshot of qa-wt' with a.txt (+1, ends 'disk-change') and note.rs = 'fn disk_version() {}' only: the unsaved editor line is not in it. The note.rs dock tab stayed open with its unsaved text.
+The snapshot commit reads 'author Space Author <paneflow@localhost>': the space's GIT_AUTHOR_NAME reached Paneflow's own git process.
+
+## Picking the branch again
+Pane palette > Branch > qa-wt > Terminal -> a new worktree at the same path, branch qa-wt at f216b24, files: a.txt only, a.txt ends 'a', git status clean: fresh from the committed state, without the snapshot's changes.

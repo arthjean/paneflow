@@ -1,0 +1,107 @@
+# T8: spaces from paneflow.json and the CLI on the final build (configuration/schema.md#spaces, configuration.md, features.md).
+# paneflow.json: one valid space Work (env below), then entries that must be skipped: 'default' (reserved), 'work' (duplicate ignoring case), a 33-character name, Img with avatar '../x.png' (avatar ignored, space kept), a malformed id, a reused id, then S6..S15 (only up to the ninth valid space loads)
+{"QUAL_SPACE": "from-space", "DYLD_X": "1", "PANEFLOW_X": "1", "TERM": "x", "CLAUDE_CONFIG_DIR": "$SCRATCH/cover-fx/space-claude", "CODEX_HOME": "rel/dir", "GH_CONFIG_DIR": "$NOPE_UNSET_VAR/x", "QUAL_HOME": "~/qual", "QUAL_EXP": "$HOME/exp"}
+{"env": {"QUAL_SPACE": "from-terminal", "QUAL_T": "t"}}
+# warnings logged at load:
+# every space warning the app logged at load:
+skipping space entry at index 0: invalid name "default": Default is reserved
+skipping space entry at index 1: invalid name "default": Default is reserved
+skipping space entry at index 12: at most 9 spaces are allowed
+skipping space entry at index 13: at most 9 spaces are allowed
+skipping space entry at index 14: at most 9 spaces are allowed
+skipping space entry at index 15: at most 9 spaces are allowed
+skipping space entry at index 16: at most 9 spaces are allowed
+skipping space entry at index 2: invalid name "work": Name already used
+skipping space entry at index 2: invalid name "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx": 32 characters maximum
+skipping space entry at index 3: invalid name "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx": 32 characters maximum
+skipping space entry at index 4: space id must be a hyphenated lowercase UUID, got "not-a-uuid"
+skipping space entry at index 5: space id must be a hyphenated lowercase UUID, got "not-a-uuid"
+skipping space entry at index 6: duplicate id 550e8400-e29b-41d4-a716-446655440001
+space 550e8400-e29b-41d4-a716-446655440005: ignoring avatar "../x.png": expected a PNG file name
+
+$ pf select 3
+{
+  "selected": 3
+}
+[exit=0]
+
+$ pf ls --human
+  ID  NAME                  SPACE             CMD                       CWD
+34002  shell@repo-9          Work              zsh                       $SCRATCH/cover-fx/repo
+[exit=0]
+
+$ pf send 34002 'env | grep -E "^(QUAL_|DYLD_X|PANEFLOW_X|TERM=|CLAUDE_CONFIG_DIR|CODEX_HOME|GH_CONFIG_DIR)" | sort' --submit | grep -E 'delivered|sent'
+  "sent": true,
+  "delivered": true,
+[exit=0]
+
+$ pf read 34002 --lines 14
+<untrusted_terminal_output source="surface:34002" total_lines="10" eof="true" id="27bb2962d802b863">
+user@host repo % env | grep -E "^(QUAL_|DYLD_X|PANEFLOW_X|TERM=
+|CLAUDE_CONFIG_DIR|CODEX_HOME|GH_CONFIG_DIR)" | sort
+CLAUDE_CONFIG_DIR=$SCRATCH
+c364368b/scratchpad/cover-fx/space-claude
+QUAL_EXP=~/exp
+QUAL_HOME=~/qual
+QUAL_SPACE=from-space
+QUAL_T=t
+TERM=xterm-256color
+user@host repo %
+</untrusted_terminal_output id="27bb2962d802b863">[exit=0]
+
+# env warnings logged when the space's terminal started:
+paneflow: ignoring CODEX_HOME=rel/dir: it must be an absolute path
+spaces: env 'GH_CONFIG_DIR' references 'NOPE_UNSET_VAR', which is not set; passing the value through unchanged
+spaces: space 550e8400-e29b-41d4-a716-446655440001: ignoring env "CODEX_HOME"="rel/dir": Must be an absolute path
+spaces: space 550e8400-e29b-41d4-a716-446655440001: ignoring env "DYLD_X": It could change how programs load or run agents
+spaces: space 550e8400-e29b-41d4-a716-446655440001: ignoring env "GH_CONFIG_DIR"="$NOPE_UNSET_VAR/x": Must be an absolute path
+spaces: space 550e8400-e29b-41d4-a716-446655440001: ignoring env "PANEFLOW_X": PANEFLOW_ variables are reserved for Paneflow
+spaces: space 550e8400-e29b-41d4-a716-446655440001: ignoring env "TERM": Paneflow sets it for every terminal
+$ stat -f '%Sp' $F/space-claude   (CLAUDE_CONFIG_DIR created by Paneflow before the terminal started)
+drwx------
+
+== hot removal of the active space Work
+$ pf api call workspace.list | python3 -c 'import sys,json; [print(w["index"],w["title"],w["space"],w["active"]) for w in json.load(sys.stdin)["workspaces"]]'
+0 fleet None False
+1 restore None False
+2 grants None False
+3 spacework {'id': '550e8400-e29b-41d4-a716-446655440001', 'name': 'Work'} True
+[exit=0]
+
+$ pf api call workspace.list | python3 -c 'import sys,json; [print(w["index"],w["title"],w["space"],w["active"]) for w in json.load(sys.stdin)["workspaces"]]'
+0 fleet None False
+1 restore None False
+2 grants None False
+3 spacework {'id': '550e8400-e29b-41d4-a716-446655440001', 'name': 'DupId'} True
+[exit=0]
+
+$ pf ls --human
+  ID  NAME                  SPACE             CMD                       CWD
+34002  shell@repo-9          DupId             zsh                       $SCRATCH/cover-fx/repo
+[exit=0]
+
+# note: the entry 'DupId' reused Work's id, so with Work gone it became valid and the space was renamed, as the id rule implies. Remove it too:
+$ pf api call workspace.list | python3 -c 'import sys,json; [print(w["index"],w["title"],w["space"],w["active"]) for w in json.load(sys.stdin)["workspaces"]]'
+0 fleet None True
+1 restore None False
+2 grants None False
+3 spacework None False
+[exit=0]
+
+$ pf ls --human
+  ID  NAME                  SPACE             CMD                       CWD
+1025  sh1                   Default           zsh                       $SCRATCH/cover-fx/repo
+1026  agentA                Default           amp                       $SCRATCH/cover-fx/repo
+1027  agentB                Default           amp                       $SCRATCH/cover-fx/repo
+1040  shell@repo            Default           bash                      $SCRATCH/cover-fx/repo
+1043  shell@repo-2          Default           bash                      $SCRATCH/cover-fx/repo
+1048  shell@repo-3          Default           bash                      $SCRATCH/cover-fx/repo
+1051  shell@repo-4          Default           bash                      $SCRATCH/cover-fx/repo
+2076  shell@repo-5          Default           zsh                       $SCRATCH/cover-fx/repo
+[exit=0]
+
+$ pf read 34002 --lines 1 | sed -n 2p
+user@host repo %
+[exit=0]
+
+== verdict: pass. Reserved, duplicate, too long, malformed-id and reused-id entries skipped with a warning, at most 9 spaces, a bad avatar ignored with the space kept; new --space; precedence terminal env below the space env; ~/ and $HOME expanded; PANEFLOW_*, TERM, DYLD_* and a relative CODEX_HOME ignored with a warning; an unset $NAME passed through with a warning; a missing CLAUDE_CONFIG_DIR created 0700; removing the active space while running moves its workspace to Default, which becomes active, and its terminal keeps running.

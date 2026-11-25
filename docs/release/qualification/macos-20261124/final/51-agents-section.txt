@@ -1,0 +1,51 @@
+Build: fd627b91 debug (target-fix-t), home ~/.paneflow-dev-cover2, 2026-11-25
+Agents are the coverage stand-ins (proven in 51-launcher-dry-check.txt): workspace "agents" started with `paneflow up` and pane commands claude, codex, gemini, amp, which resolve through the Paneflow shim to the stand-in running cover-fx/fake-agent.sh (emits OSC 7501). Two silent stand-ins (opencode, claude) emit nothing.
+
+== Status reduction (AX names of the Agents rows)
+- silent opencode: 'OpenCode, agents, starting' at +1.5 s, 'OpenCode, agents, no status' at +5 s.
+- claude typed "ask" -> 'waiting for input' (pane header: "blocked: permission · Allow rm?", base64 msg decoded).
+- codex emitted state=error:msg=<base64 "Build failed"> -> 'error', header "error · Build failed".
+- amp then gemini finished while another workspace was shown -> Done group lists Gemini (most recent) above Amp (51-agents-groups.jpg).
+- Group order in the section: Need you 1, Error 1, Done 2, No status 1 (Working 1 and Idle appear when present); each row is one line: logo, title, workspace, status.
+- A real click on a Done row, or opening the agents workspace, moved the result to Idle.
+- No status badge tooltip on the silent claude row: "No OSC 7501 status received. Claude Code reports it from version 2.1.295." (51-agents-no-status-tooltip.jpg). The row's own tooltip is "Claude Code · agents"; the version sits on the badge.
+
+== Collapse and resize
+-- Agents list bounds before: 360 530 432 294
+  target center 396,512
+mouse-click at 396,512: pointer_click/physical_synthetic/succeeded | delivered_unverified
+after a real click on the Agents header:
+    button 'Agents'  @srjocd93zvxj1:e20
+    button 'Customize agent rows'  @srjocd93zvxj1:e21
+list rows visible: 0
+  target center 396,806
+mouse-click at 396,806: pointer_click/physical_synthetic/succeeded | delivered_unverified
+after a second click: list rows visible: 6
+
+Keyboard (Cmd+Alt+S, Tab to the edge, then keys), list bounds:
+start: y=530 h=294
+focused after Cmd+Alt+S, Tab: 
+after 3x Up: y=504 h=320
+after Home: y=764 h=60
+after End: y=504 h=320
+after Enter: y=530 h=294
+before drag: y=530 h=294
+after a mouse drag from y=492 down 120 px: y=650 h=174
+after a mouse drag from y=494 down 120 px: y=650 h=174
+after a mouse drag from y=490 down 120 px: y=650 h=174
+(Up grows the section, Home gives the minimum, End the maximum, Enter returns to the content height; a mouse drag of the top edge down 120 px shrank it.)
+
+== Keyboard cursor into the section
+Cmd+Alt+S then Down x9 from the other workspace: the cursor walked the tree rows, then Claude Code and Codex rows, skipping the group headers; Enter opened workspace agents with the Codex pane focused (51-agents-keyboard-enter.jpg).
+
+== sidebar_show and grouping (hot reload, 51-sidebar-show-keys.jpg left to right)
+default | agents=false: section gone, tree badge kept | agent_logo=false, agent_workspace=false: rows "Claude Code" without logo or workspace | status=false: tree "Need you" badge gone.
+51-sidebar-status-folded-hidden.jpg: status=false with the section open (no tree badge) | section folded (badge back) | agents=false (badge back).
+Customize sidebar > Show (51-customize-sidebar-show.jpg): Branch, Diffstat, PR, Status, Shimmer, Indent guide, Agents, Usage; clicking Agents wrote sidebar_show.agents=false. Group by > Folder wrote sidebar_group_by="folder".
+branch, diffstat, indent_guide=true (51-sidebar-branch-diffstat-indent.jpg): "main" after each folder name, +2 -0 for the checkout with two added lines, hairline under the folder icon.
+sidebar_group_by="status" (51-sidebar-group-by-status.jpg): "Need you 1: Tab 1 · agents", "Idle 3: ..."; the Agents section is hidden; a + New tab button in the header opens a menu "New tab in hover / scope-send / agents / other".
+Observation: after Show > Agents the Customize menu stayed open; Escape and a click into a terminal pane did not close it, a click in the sidebar did.
+
+== OSC 7501 lifetimes in a plain bash pane (51-osc-lifetimes.jpg, pane header badge, left to right)
+working during a 6 s sleep | cleared once the prompt returned | done after the prompt | done still shown after `paneflow send` injected "x" | error after the prompt | cleared by state=clear | blocked during a sleep | cleared after the prompt.
+51-osc-keystroke-clears.jpg: done | cleared by a real key press | error | cleared by a real key press. Text injected with `paneflow send` does not count as typing.

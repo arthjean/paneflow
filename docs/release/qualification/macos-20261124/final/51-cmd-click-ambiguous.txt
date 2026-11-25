@@ -1,0 +1,10 @@
+# C9 candidate: Cmd+click on a path that ends two project files does nothing. Build fd627b91 (debug), home ~/.paneflow-dev-cover2
+
+Workspace 'hover', root $SCRATCH/cover-fx/repo (workspace.list cwd). Files created:
+  repo/deep/inner/uniq.rs (2 lines), repo/p/q/helpers.rs, repo/r/q/helpers.rs
+Shell pane in that workspace: cd repo; clear; echo open inner/uniq.rs:2; echo open q/helpers.rs:3
+
+Control: Cmd+click 'inner/uniq.rs:2' -> underlined on hover, dock opens uniq.rs at 'Ln 2, Col 1' (suffix lookup works).
+Test: hover then Cmd+click 'q/helpers.rs:3' (two project files end with it) -> no underline, no file finder, no dock tab, nothing in AX. Repeated 3 times; same with bare 'twin.rs:1' (lib/a/twin.rs, lib/b/twin.rs) in workspace 'dock' and repo/x/twin.rs, repo/y/twin.rs in 'hover'.
+Docs: 'When several files match, the click opens the file finder filled with the path.' Unit test several_candidates_keep_the_typed_path_for_the_file_picker (src-app/src/terminal/link_fallback.rs) covers the zone, so the gap is in the live hover/click path.
+Evidence: final/51-cmd-click-ambiguous.jpg (top: control opened uniq.rs; bottom: after Cmd+click on the q/helpers.rs line, nothing changed).

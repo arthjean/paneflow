@@ -1,0 +1,9 @@
+# T14: theme names on the final build (themes.md). A theme.json was placed in the home first (it must be ignored). paneflow.json 'theme' written in turn; a screenshot after each; the sidebar and terminal background sampled from it.
+theme="Claude Light" -> log: 
+theme="Nope" -> log: Unknown theme 'Nope', using default
+theme="claude light" -> log: Unknown theme 'Nope', using default
+theme="Vercel" -> log: Unknown theme 'Nope', using default
+theme="PaneFlow Light" -> log: Unknown theme 'Nope', using default
+# sampled backgrounds (sidebar, main): Claude Light #f9f9f9/#ffffff; Nope #141414/#171717 (Paneflow Dark, not the previous Claude Light); 'claude light' #f9f9f9/#ffffff; Vercel #000000/#000000; 'PaneFlow Light' #f1f2f8/#ffffff
+# 50-theme-a.jpg (Claude Light), 50-theme-b.jpg (after 'Nope')
+== verdict: pass. Names are case-insensitive, aliases resolve, theme.json in the home is not loaded, and an unknown name falls back to Paneflow Dark with the warning 'Unknown theme 'Nope', using default', as themes.md says. The report's themes row ('an unknown theme logs a warning and keeps the previous one') misdescribes this: it is the report wording, not the product, that is wrong.

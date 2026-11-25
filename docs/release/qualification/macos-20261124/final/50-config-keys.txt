@@ -1,0 +1,55 @@
+# T9: paneflow.json keys on the final build (configuration.md, configuration/schema.md, keybindings.md).
+# paneflow.json:
+{"$schemaVersion":"9.9.9","ipc":{"scripting":true},"default_shell":"/bin/bash","submit_paste_delay_ms":1500,"font_size":40,
+ "terminal":{"scrollback_lines":100,"osc52_clipboard":"off","xt_checksum_report":true,"xt_checksum_extension":32,"env":{"TERM":"x","QUAL_T":"~/notexpanded"}},
+ "shortcuts":{"cmd+shift+y":"no_such_action","secondary+alt+9":"layout_tiled","ctrl+alt+w":"open_workspace_in_windsurf"},
+ "agents":{"default_accounts":{"claude-code":"~/qual-acct"}}}
+# warnings logged at reload:
+config schema version `9.9.9` is not recognized; loading leniently
+font_size 40pt out of range [8.0, 32.0]; using default 13pt
+shortcuts: unknown action 'no_such_action' for key 'cmd+shift+y', skipping
+shortcuts: unknown action 'open_workspace_in_windsurf' for key 'ctrl+alt+w', skipping
+terminal.xt_checksum_extension must be an integer from 0 to 31, ignoring value and using 0 value=32
+
+== a terminal opened after the reload (workspace cfg1)
+$ pf new --name cfg1 --cwd $SCRATCH/cover-fx/repo
+{
+  "index": 4,
+  "title": "cfg1",
+  "panes": 1
+}
+[exit=0]
+
+# new terminal 35030
+$ pf send 35030 'echo shell=$0 TERM=$TERM QUAL_T=$QUAL_T CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR' --submit; pf read 35030
+shell=/bin/bash TERM=xterm-256color QUAL_T=~/notexpanded CLAUDE_CONFIG_DIR=~/qual-acct
+# terminal.env TERM ignored and logged:
+terminal.env: ignoring "TERM": Paneflow sets it for every terminal
+# ~/qual-acct did not exist before; Paneflow created it (drwx------) when the pane started
+
+== terminal.scrollback_lines=100
+$ seq 1 500 -> pf read --lines 1000: total_lines=509, the first lines still on screen when scrolled to the top (50-scrollback-100-top.jpg): the engine trims whole pages, so 500 lines fit under a 100-line setting
+$ seq 1 20000 -> pf read --lines 100000: total_lines=114, top line 19888, and scrolled to the top the view starts at 19888 (50-scrollback-100-after-20000.jpg)
+
+== terminal.osc52_clipboard=off: printf ']52;c;%s' $(printf qual-osc52-probe | base64) -> the pasteboard did not receive qual-osc52-probe (pbpaste unchanged, empty before and after)
+== terminal.xt_checksum_report=true (xt_checksum_extension=32 logged and ignored above): printf '[1;1;1;1;2;2*y'; read -d '\' r -> reply=$'\EP1!~FF2C\E' (a DECRPCRA answer)
+
+# delay1500: submit_mode=deferred_paste_cr send returned 0.03 s, command output seen 1.56 s after the call
+# delay70: submit_mode=deferred_paste_cr send returned 0.02 s, command output seen 0.11 s after the call
+# delay3000: submit_mode=deferred_paste_cr send returned 0.02 s, command output seen 3.04 s after the call
+# (time until the submitted command's output appears in the pane: about the configured delay plus 50 ms)
+
+# config shortcuts: {"cmd+shift+y":"no_such_action","secondary+alt+9":"layout_tiled","ctrl+alt+w":"open_workspace_in_windsurf"}; workspace 'grants', 3 panes; keys sent to the dev window with agent-desktop --headed press
+after cmd+alt+1: grants h(v(pane,pane),pane)
+after cmd+alt+9: grants h(v(pane,pane),pane)
+after cmd+alt+1: grants v(pane,pane,pane)
+after cmd+alt+4: grants v(pane,pane,pane)
+after cmd+alt+2: grants h(pane,pane,pane)
+== second sequence, 1.5 s between keys
+start: grants h(pane,pane,pane)
+after cmd+alt+2: grants h(pane,pane,pane)
+after cmd+alt+9: grants h(v(pane,pane),pane)
+after cmd+alt+2: grants h(pane,pane,pane)
+after cmd+alt+4: grants h(pane,pane,pane)
+after cmd+alt+3: grants v(pane,h(pane,pane))
+== verdict: pass. $schemaVersion 9.9.9 loads leniently with a warning; font_size 40 falls back to 13 with a warning; unknown shortcut actions (including open_workspace_in_windsurf) skipped with a warning; default_shell, terminal.env verbatim with TERM ignored, agents.default_accounts as CLAUDE_CONFIG_DIR; scrollback_lines caps the history (page granular); osc52 off refuses the write; DECRQCRA answered when enabled; submit_paste_delay_ms sets the delay before Enter; secondary+alt+9 bound to layout_tiled works and frees Cmd+Alt+4, other presets keep their keys.

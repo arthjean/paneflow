@@ -1,0 +1,18 @@
+# T17: Stop everything and quit, then the hook with no host, final build.
+== Quit PaneFlow > Stop everything and quit
+# window process 88224: exited
+$ pf host status | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["state"], d.get("resources",{}).get("live_runtimes"))'
+unreachable None
+[exit=0]
+
+$ pf serve status | head -4
+{
+  "state": "running",
+  "pid": 28735,
+  "build_id": "b162ddc910ba2d95cebad01a2d5cf9d852f7f64a7e2f3b3e6432ab62b8bf39af",
+[exit=0]
+
+== paneflow-ai-hook with Paneflow's host stopped, from a pane's environment (PANEFLOW_SESSION_ID of gA)
+[exit=0] in 0.017 s
+# afterwards: no process of the cover-fx fixtures or of the cover home's sessions remained; the worker (pid 28735, the one restarted by hand in 50-grants.txt) was still running and was stopped with pf serve stop; pf host stop --force then reported no host.
+== verdict: pass. Stop everything and quit ends the window and the session host with every session; paneflow-ai-hook exits 0 at once when the host is gone.

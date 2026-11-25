@@ -1,0 +1,66 @@
+# T16: quit with Keep sessions running, the windowless worker and host, relaunch with an invalid paneflow.json, and the launcher keys, on the final build.
+== PaneFlow > Quit PaneFlow (accessibility press on the menu bar item): dialog with 'Remember my choice', 'Stop everything and quit', 'Cancel', 'Keep sessions running' (50-quit-dialog.jpg); pressed Keep sessions running
+== after 'Keep sessions running': window process 23104 exited
+$ pf host status | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d["state"], "live_runtimes", d["resources"]["live_runtimes"])'
+running live_runtimes 19
+[exit=0]
+
+$ pf serve status | head -3
+{
+  "state": "running",
+  "pid": 28735,
+[exit=0]
+
+$ pf ps
+    PID  TOOL        STATE               WS  PANE
+  23877  amp         finished             0  agentA
+  23878  amp         finished             0  agentB
+  26784  amp         finished             1  gA
+[exit=0]
+
+== windowless: write_pane from gA (MCP) to g-sh
+# in pane gA (surface 3091) 02:11:20
+$ python3 -I $SCRATCH/cover-fx/mcpclient.py '[{"name":"write_pane","arguments":{"target":"g-sh","text":"hello"}}]' | grep -i text
+== write_pane {"target": "g-sh", "text": "hello"}
+    "text": "no Paneflow window is open to approve this write; nothing was written and the request expires in 120 s",
+    "type": "text"
+[exit=0]
+== windowless: grant.request from gA
+# in pane gA (surface 3091) 02:11:20
+$ $PF api call grant.request --args "{\"rights\":[\"write\"],\"scope\":\"workspace\",\"duration_secs\":60}"
+{
+  "granted": false,
+  "reason": "unanswered"
+}
+[exit=0]
+
+== relaunch after Keep sessions running, with a truncated paneflow.json
+invalid config ~/.paneflow-dev-cover/paneflow.json: invalid config document: EOF while parsing an object at line 3 column 0; using defaults
+IPC policy: invalid config ~/.paneflow-dev-cover/paneflow.json: invalid config document: EOF while parsing an object at line 3 column 0; every gate stays closed for callers in a pane
+restoring session: 4 workspace(s)
+$ pf ls --human
+  ID  NAME                  SPACE             CMD                       CWD
+3090  g-sh                  Default           zsh                       $SCRATCH/cover-fx/repo
+3091  gA                    Default           amp                       $SCRATCH/cover-fx/repo
+3092  gB                    Default           zsh                       $SCRATCH/cover-fx/repo
+[exit=0]
+
+$ pf read 1025 --lines 3
+<untrusted_terminal_output source="surface:1025" total_lines="13" eof="false" id="96e9c12cef25518f">
+user@host repo % echo delay3000-$((1+1))
+delay3000-2
+user@host repo %
+</untrusted_terminal_output id="96e9c12cef25518f">[exit=0]
+
+$ pf grants ls | wc -l
+      45
+[exit=0]
+
+
+== launcher keys (paneflow.json: claude_code_bypass_permissions true, agents.claude_preassign_session_id true, agent_profiles 'Claude perso' with args --model opus and 'Bad args' with ';rm', codex_button_visible false)
+# logged: agent_profiles: skipping 'Bad args': argument ';rm' may only contain letters, digits, '-', '_', '.', and '='
+# New pane palette: Codex is gone, 'Claude perso' is listed after the built-in agents
+# Claude Code pressed in the palette -> process: claude --session-id <uuid> --permission-mode bypassPermissions
+# Claude perso pressed -> process: claude --session-id <uuid> --permission-mode bypassPermissions --model opus
+# both stopped at once by their PIDs (SIGTERM) before any input; the launcher ran the installed Claude Code, not the stand-in placed first on the app's PATH
+== verdict: pass. A window-less write_pane says no window can approve it; a window-less grant.request answers unanswered; the relaunch reconnects to the kept sessions; a truncated paneflow.json at startup falls back to the defaults with a warning and closes every gate for panes; launcher keys apply as documented.
