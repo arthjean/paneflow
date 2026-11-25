@@ -218,6 +218,40 @@ fn the_structural_methods_build_a_layout_with_running_terminals_and_no_window() 
 }
 
 #[test]
+fn a_surface_name_of_a_restored_layout_names_the_pane_it_opens() {
+    let home = tempfile::tempdir().unwrap();
+    let worker = common::open_starting_terminals(home.path());
+    let mut cli = Client::connect(home.path());
+    cli.ok("workspace.up", json!({"name": "api", "panes": [{}]}));
+    let before: Vec<u64> = surfaces(&cli.ok("layout.view", json!({})))
+        .iter()
+        .map(|known| known["id"].as_u64().unwrap())
+        .collect();
+
+    let restored = cli.ok(
+        "workspace.restore_layout",
+        json!({"layout": {"type": "split", "direction": "vertical", "children": [
+            {"type": "pane", "surfaces": [{"type": "terminal", "name": "kept-pane"}]},
+            {"type": "pane", "surfaces": [{"type": "terminal", "name": "  rl-logs  "}]},
+            {"type": "pane", "surfaces": [{"type": "terminal", "name": "title", "custom_name": "chosen"}]},
+            {"type": "pane", "surfaces": [{"type": "terminal"}]}
+        ]}}),
+    );
+    assert_eq!(restored["restored"], true, "{restored}");
+
+    let view = cli.ok("layout.view", json!({}));
+    let reused = surface(&view, before[0]);
+    assert_eq!(reused["definition"]["custom_name"], Value::Null, "{reused}");
+    let opened: Vec<Value> = surfaces(&view)
+        .into_iter()
+        .filter(|known| !before.contains(&known["id"].as_u64().unwrap()))
+        .map(|known| known["definition"]["custom_name"].clone())
+        .collect();
+    assert_eq!(opened, [json!("rl-logs"), json!("chosen"), Value::Null]);
+    worker.stop();
+}
+
+#[test]
 fn a_structural_method_that_carries_a_command_needs_orchestration_with_no_window() {
     if std::env::var_os("PANEFLOW_IPC_ORCHESTRATION").is_some()
         || std::env::var_os("PANEFLOW_IPC_SCRIPTING").is_some()

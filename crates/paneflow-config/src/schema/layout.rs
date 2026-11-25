@@ -139,6 +139,17 @@ pub enum LayoutNode {
 }
 
 impl LayoutNode {
+    pub fn adopt_surface_names(&mut self) {
+        match self {
+            LayoutNode::Pane { surfaces } => {
+                surfaces.iter_mut().for_each(SurfaceDefinition::adopt_name)
+            }
+            LayoutNode::Split { children, .. } => children
+                .iter_mut()
+                .for_each(LayoutNode::adopt_surface_names),
+        }
+    }
+
     pub fn leaf_count(&self) -> usize {
         match self {
             LayoutNode::Pane { .. } => 1,
@@ -363,6 +374,18 @@ impl AgentSessionRef {
 }
 
 impl SurfaceDefinition {
+    pub fn adopt_name(&mut self) {
+        let named = |name: &Option<String>| {
+            name.as_deref()
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(str::to_string)
+        };
+        if let Some(label) = named(&self.custom_name).or_else(|| named(&self.name)) {
+            self.custom_name = Some(label);
+        }
+    }
+
     pub fn is_terminal(&self) -> bool {
         matches!(self.surface_type.as_deref(), None | Some("terminal"))
     }

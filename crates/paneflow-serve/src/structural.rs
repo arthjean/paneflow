@@ -1093,7 +1093,8 @@ pub(crate) fn workspace_restore_layout(
     if layout_needs_orchestration(&layout) && !call.authority.may_spawn() {
         return Err(orchestration_refused("workspace.restore_layout"));
     }
-    let layout = inherit_sandbox_in_layout(worker, &call.authority.principal, layout);
+    let mut layout = inherit_sandbox_in_layout(worker, &call.authority.principal, layout);
+    layout.adopt_surface_names();
     let needed = layout.leaf_count();
     if needed == 0 || needed > paneflow_layout::MAX_PANES {
         return Err(invalid(format!(

@@ -809,6 +809,7 @@ impl PaneFlowApp {
                 return JsonRpcError::confirmation_required(refusal.message()).into_value();
             }
         }
+        layout.adopt_surface_names();
         match self.apply_layout_from_json(&mut layout, cx) {
             Ok(()) => {
                 let panes = self.active_workspace().map_or(0, |ws| ws.pane_count());

@@ -13,7 +13,7 @@ use crate::{
     SplitHorizontally, SplitVertically, ToggleZoom,
 };
 
-pub(super) const PINS: usize = 27;
+pub(super) const PINS: usize = 28;
 
 fn split_v(rig: &mut Rig<'_>) {
     rig.act(|app, window, cx| app.handle_split_v(&SplitVertically, window, cx));
@@ -448,6 +448,42 @@ fn pin_restore_layout_with_more_leaves_spawns_the_missing_ones(cx: &mut TestAppC
     assert_eq!(reply["result"]["restored"], json!(true), "{reply}");
     assert_eq!(rig.shape(0, 0), "V(0.500 a, 0.500 b)");
     assert_eq!(rig.requests(), ["create b"]);
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_a_surface_name_of_a_restored_layout_names_the_pane_it_opens(cx: &mut TestAppContext) {
+    let mut rig = Rig::mount(cx);
+    rig.workspace("alpha");
+    rig.requests();
+    let reply = rig.ipc(
+        "workspace.restore_layout",
+        json!({"layout": {"type": "split", "direction": "vertical", "children": [
+            {"type": "pane", "surfaces": [{"name": "kept-pane"}]},
+            {"type": "pane", "surfaces": [{"name": "  rl-logs  "}]},
+            {"type": "pane", "surfaces": [{"name": "title", "custom_name": "chosen"}]},
+            {"type": "pane", "surfaces": [{}]}]}}),
+    );
+    assert_eq!(reply["result"]["restored"], json!(true), "{reply}");
+    assert_eq!(rig.requests(), ["create b", "create c", "create d"]);
+    let names: Vec<Option<String>> = ["a", "b", "c", "d"]
+        .into_iter()
+        .map(|pane| {
+            let terminal = rig.terminal(pane);
+            rig.cx
+                .read(|cx| terminal.read(cx).terminal.custom_name.clone())
+        })
+        .collect();
+    assert_eq!(
+        names,
+        [
+            None,
+            Some("rl-logs".to_string()),
+            Some("chosen".to_string()),
+            None
+        ],
+        "a reused pane keeps its name, a new one takes the layout's name, a custom name wins"
+    );
 }
 
 fn wait_for_typed(rig: &mut Rig<'_>, name: &str, expected: &str) {
