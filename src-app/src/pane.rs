@@ -66,10 +66,13 @@ impl SplitFocus {
     }
 }
 
-fn hide_until_hover<E: Styled + InteractiveElement>(element: E, group: &SharedString) -> E {
+pub(crate) fn hide_until_hover<E: Styled + InteractiveElement>(
+    element: E,
+    group: &SharedString,
+) -> E {
     element
-        .invisible()
-        .group_hover(group.clone(), |style| style.visible())
+        .opacity(0.)
+        .group_hover(group.clone(), |style| style.opacity(1.))
 }
 
 fn pane_colors() -> crate::theme::UiColors {
@@ -1954,8 +1957,7 @@ impl Pane {
                         unified && chip_radius.is_none(),
                         &title,
                     )
-                    .invisible()
-                    .group_hover(group, |style| style.visible())
+                    .map(|button| hide_until_hover(button, &group))
                     .on_activate(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                         this.close_surface(index, cx);
                         cx.stop_propagation();
@@ -3312,5 +3314,64 @@ mod tests {
             assert_eq!(node.is_expanded(), Some(open));
             assert!(node.supports_action(Action::Click));
         }
+    }
+
+    struct HiddenCloseHarness {
+        selected: usize,
+        closed: usize,
+    }
+
+    impl gpui::Render for HiddenCloseHarness {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            cx: &mut gpui::Context<Self>,
+        ) -> impl gpui::IntoElement {
+            use crate::ui_primitives::AccessibleControlExt as _;
+            use gpui::{InteractiveElement as _, ParentElement as _, Styled as _, div, px};
+            let group: gpui::SharedString = "harness-tab-group".into();
+            div().size_full().p(px(40.)).child(
+                super::unified_tab_chip("chip".into(), group.clone(), false, None)
+                    .w(px(200.))
+                    .on_activate(cx.listener(|this, _, _, cx| {
+                        this.selected += 1;
+                        cx.notify();
+                    }))
+                    .child(div().flex_1())
+                    .child(
+                        super::hide_until_hover(
+                            super::tab_close_button("close".into(), false, "zsh"),
+                            &group,
+                        )
+                        .debug_selector(|| "hidden-close".into())
+                        .on_activate(cx.listener(|this, _, _, cx| {
+                            this.closed += 1;
+                            cx.stop_propagation();
+                            cx.notify();
+                        })),
+                    ),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn a_close_button_hidden_until_hover_still_answers_a_press_at_its_center(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = cx.add_window_view(|_, _| HiddenCloseHarness {
+            selected: 0,
+            closed: 0,
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let close = cx
+            .debug_bounds("hidden-close")
+            .expect("the close button is laid out while hidden");
+        cx.simulate_click(close.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert_eq!(
+            view.read_with(cx, |harness, _| (harness.selected, harness.closed)),
+            (0, 1),
+            "a click synthesized at the hidden close button closes the tab and does not select it"
+        );
     }
 }

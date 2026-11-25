@@ -381,9 +381,7 @@ fn render_diff_tab(
                 &title,
             )
             .when(!dirty && !close_armed, |button| {
-                button
-                    .invisible()
-                    .group_hover(group.clone(), |style| style.visible())
+                crate::pane::hide_until_hover(button, &group)
             })
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
