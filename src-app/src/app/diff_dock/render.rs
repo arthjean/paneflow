@@ -159,34 +159,21 @@ pub(super) fn render_diff_tab_strip(
                 )),
         )
         .child(
-            squircle_skin(
-                div()
-                    .id("diff-dock-tab-new")
-                    .flex_none()
-                    .size(px(28.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor(CursorStyle::PointingHand),
-                "diff-dock-tab-new-group",
-                ROW_RADIUS,
-                open.then_some(rail_hover),
-                Some(rail_hover),
-            )
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-                this.toggle_diff_new_tab_menu(!open, cx);
-            }))
-            .child(
-                svg()
-                    .size(px(14.))
-                    .flex_none()
-                    .path("icons/dock/add-01.svg")
-                    .text_color(ui.muted),
-            )
-            .when(open, |trigger| {
-                trigger.child(render_diff_new_tab_menu(ui, can_reopen, cx))
-            }),
+            new_tab_trigger(open, rail_hover)
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                    this.toggle_diff_new_tab_menu(!open, cx);
+                }))
+                .child(
+                    svg()
+                        .size(px(14.))
+                        .flex_none()
+                        .path("icons/dock/add-01.svg")
+                        .text_color(ui.muted),
+                )
+                .when(open, |trigger| {
+                    trigger.child(render_diff_new_tab_menu(ui, can_reopen, cx))
+                }),
         )
         .child(render_diff_header_icon_button(
             "diff-dock-agent-sessions",
@@ -219,6 +206,28 @@ pub(super) fn render_diff_tab_strip(
             ui.muted,
         ))
         .into_any_element()
+}
+
+pub(super) const NEW_TAB_LABEL: &str = "New dock tab";
+
+fn new_tab_trigger(open: bool, rail_hover: Hsla) -> gpui::Stateful<gpui::Div> {
+    squircle_skin(
+        div()
+            .id("diff-dock-tab-new")
+            .flex_none()
+            .size(px(28.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor(CursorStyle::PointingHand),
+        "diff-dock-tab-new-group",
+        ROW_RADIUS,
+        open.then_some(rail_hover),
+        Some(rail_hover),
+    )
+    .role(gpui::accesskit::Role::Button)
+    .aria_label(NEW_TAB_LABEL)
+    .aria_expanded(open)
 }
 
 fn render_diff_tab(
@@ -762,6 +771,23 @@ mod tests {
                     crate::pane::pane_card_background(&theme, blended, true)
                 );
             }
+        }
+    }
+
+    #[test]
+    fn the_dock_plus_is_a_named_button_that_reports_its_menu() {
+        use crate::ui_primitives::AccessibleControlExt as _;
+        use gpui::accesskit::{Action, Node, Role};
+        for open in [false, true] {
+            let button =
+                new_tab_trigger(open, crate::theme::ui_colors().subtle).on_activate(|_, _, _| {});
+            let role = gpui::Element::a11y_role(&button).expect("a role");
+            let mut node = Node::new(role);
+            gpui::Element::write_a11y_info(&button, &mut node);
+            assert_eq!(role, Role::Button);
+            assert_eq!(node.label(), Some(NEW_TAB_LABEL));
+            assert_eq!(node.is_expanded(), Some(open));
+            assert!(node.supports_action(Action::Click));
         }
     }
 
