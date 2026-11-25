@@ -214,6 +214,14 @@ pub(crate) struct AnimatedHover {
     element_animator: Option<Box<ElementAnimator>>,
     driven_by: Option<bool>,
     span: Duration,
+    has_popup: Option<gpui::accesskit::HasPopup>,
+}
+
+impl AnimatedHover {
+    pub(crate) fn aria_has_popup(mut self, popup: gpui::accesskit::HasPopup) -> Self {
+        self.has_popup = Some(popup);
+        self
+    }
 }
 
 pub(crate) struct AnimatedStyle<'a>(&'a mut StyleRefinement);
@@ -285,6 +293,7 @@ impl AnimatedHoverExt for Stateful<Div> {
             element_animator: None,
             driven_by: None,
             span: HOVER_ANIMATION_DURATION,
+            has_popup: None,
         }
     }
 
@@ -298,6 +307,7 @@ impl AnimatedHoverExt for Stateful<Div> {
             element_animator: Some(Box::new(animator)),
             driven_by: None,
             span: HOVER_ANIMATION_DURATION,
+            has_popup: None,
         }
     }
 
@@ -312,6 +322,7 @@ impl AnimatedHoverExt for Stateful<Div> {
             element_animator: Some(Box::new(animator)),
             driven_by: Some(on),
             span: TOGGLE_ANIMATION_DURATION,
+            has_popup: None,
         }
     }
 
@@ -360,6 +371,9 @@ impl Element for AnimatedHover {
 
     fn write_a11y_info(&self, node: &mut gpui::accesskit::Node) {
         self.element.write_a11y_info(node);
+        if let Some(popup) = self.has_popup {
+            node.set_has_popup(popup);
+        }
     }
 
     fn a11y_synthetic_children(

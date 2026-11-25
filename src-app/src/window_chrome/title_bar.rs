@@ -30,6 +30,8 @@ pub struct TitleBar {
     pub detached: bool,
     pub brand_extent: Rc<Cell<f32>>,
     pub trailing_origin: Rc<Cell<f32>>,
+    files_trigger_center: Rc<Cell<f32>>,
+    help_trigger_center: Rc<Cell<f32>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -209,6 +211,8 @@ impl TitleBar {
             detached: false,
             brand_extent: Rc::default(),
             trailing_origin: Rc::default(),
+            files_trigger_center: Rc::default(),
+            help_trigger_center: Rc::default(),
         }
     }
 
@@ -228,28 +232,6 @@ impl TitleBar {
             control_hover_bg.opacity(0.0)
         } else {
             control_hover_bg
-        };
-        let files_menu_open = self.files_menu_open;
-        let help_menu_open = self.help_menu_open;
-        let files_menu_resting_bg = if self.files_menu_open {
-            control_hover_bg
-        } else {
-            control_hover_bg.opacity(0.0)
-        };
-        let files_menu_resting_text = if self.files_menu_open {
-            ui.text
-        } else {
-            ui.muted
-        };
-        let help_menu_resting_bg = if self.help_menu_open {
-            control_hover_bg
-        } else {
-            control_hover_bg.opacity(0.0)
-        };
-        let help_menu_resting_text = if self.help_menu_open {
-            ui.text
-        } else {
-            ui.muted
         };
         let sidebar_tooltip: gpui::SharedString = if self.sidebar_visible {
             "Hide sidebar"
@@ -285,68 +267,40 @@ impl TitleBar {
                     }
                 },
             ))
-            .child(
-                div()
-                    .id("title-bar-files-menu-trigger")
-                    .flex_none()
-                    .h(TITLE_BAR_CONTROL_SIZE)
-                    .px(px(6.))
-                    .flex()
-                    .items_center()
-                    .rounded(px(8.))
-                    .text_size(px(12.))
-                    .font_weight(gpui::FontWeight::NORMAL)
-                    .text_color(files_menu_resting_text)
-                    .animated_hover(move |style, delta| {
-                        style
-                            .bg(lerp_color(files_menu_resting_bg, control_hover_bg, delta))
-                            .text_color(lerp_color(files_menu_resting_text, ui.text, delta));
-                    })
-                    .on_mouse_down(MouseButton::Left, move |event, _, cx| {
-                        cx.stop_propagation();
+            .child(title_bar_menu_trigger(
+                "title-bar-files-menu-trigger",
+                FILES_MENU_LABEL,
+                self.files_menu_open,
+                self.files_trigger_center.clone(),
+                height,
+                {
+                    let was_open = self.files_menu_open;
+                    move |anchor, cx| {
                         if let Some(entity) = toggle_files_menu_handle.upgrade() {
-                            let anchor = gpui::point(event.position.x, height);
                             entity.update(cx, |_this, cx| {
-                                cx.emit(TitleBarEvent::ToggleFilesMenu {
-                                    anchor,
-                                    was_open: files_menu_open,
-                                });
+                                cx.emit(TitleBarEvent::ToggleFilesMenu { anchor, was_open });
                             });
                         }
-                    })
-                    .child("Files"),
-            )
-            .child(
-                div()
-                    .id("title-bar-help-menu-trigger")
-                    .flex_none()
-                    .h(TITLE_BAR_CONTROL_SIZE)
-                    .px(px(6.))
-                    .flex()
-                    .items_center()
-                    .rounded(px(8.))
-                    .text_size(px(12.))
-                    .font_weight(gpui::FontWeight::NORMAL)
-                    .text_color(help_menu_resting_text)
-                    .animated_hover(move |style, delta| {
-                        style
-                            .bg(lerp_color(help_menu_resting_bg, control_hover_bg, delta))
-                            .text_color(lerp_color(help_menu_resting_text, ui.text, delta));
-                    })
-                    .on_mouse_down(MouseButton::Left, move |event, _, cx| {
-                        cx.stop_propagation();
+                    }
+                },
+            ))
+            .child(title_bar_menu_trigger(
+                "title-bar-help-menu-trigger",
+                HELP_MENU_LABEL,
+                self.help_menu_open,
+                self.help_trigger_center.clone(),
+                height,
+                {
+                    let was_open = self.help_menu_open;
+                    move |anchor, cx| {
                         if let Some(entity) = toggle_help_menu_handle.upgrade() {
-                            let anchor = gpui::point(event.position.x, height);
                             entity.update(cx, |_this, cx| {
-                                cx.emit(TitleBarEvent::ToggleHelpMenu {
-                                    anchor,
-                                    was_open: help_menu_open,
-                                });
+                                cx.emit(TitleBarEvent::ToggleHelpMenu { anchor, was_open });
                             });
                         }
-                    })
-                    .child("Help"),
-            );
+                    }
+                },
+            ));
         brand
             .child(position_probe(self.brand_extent.clone()))
             .into_any_element()
@@ -633,6 +587,69 @@ impl Render for TitleBar {
     }
 }
 
+pub(crate) const FILES_MENU_LABEL: &str = "Files";
+pub(crate) const HELP_MENU_LABEL: &str = "Help";
+
+fn title_bar_menu_trigger(
+    id: &'static str,
+    label: &'static str,
+    open: bool,
+    center_x: Rc<Cell<f32>>,
+    anchor_y: gpui::Pixels,
+    on_toggle: impl Fn(gpui::Point<gpui::Pixels>, &mut gpui::App) + 'static,
+) -> crate::ui_primitives::AnimatedHover {
+    let ui = crate::theme::ui_colors();
+    let hover_bg = crate::app::constants::sidebar_tab_active_background();
+    let resting_bg = if open {
+        hover_bg
+    } else {
+        hover_bg.opacity(0.0)
+    };
+    let resting_text = if open { ui.text } else { ui.muted };
+    let on_toggle = Rc::new(on_toggle);
+    let pointer = on_toggle.clone();
+    let probe = center_x.clone();
+    div()
+        .id(id)
+        .relative()
+        .flex_none()
+        .h(TITLE_BAR_CONTROL_SIZE)
+        .px(px(6.))
+        .flex()
+        .items_center()
+        .rounded(px(8.))
+        .text_size(px(12.))
+        .font_weight(gpui::FontWeight::NORMAL)
+        .text_color(resting_text)
+        .role(gpui::accesskit::Role::Button)
+        .aria_label(label)
+        .aria_expanded(open)
+        .animated_hover(move |style, delta| {
+            style
+                .bg(lerp_color(resting_bg, hover_bg, delta))
+                .text_color(lerp_color(resting_text, ui.text, delta));
+        })
+        .aria_has_popup(gpui::accesskit::HasPopup::Menu)
+        .on_mouse_down(MouseButton::Left, move |event, _, cx| {
+            cx.stop_propagation();
+            pointer(gpui::point(event.position.x, anchor_y), cx);
+        })
+        .on_a11y_action(gpui::accesskit::Action::Click, move |_, _, cx| {
+            on_toggle(gpui::point(px(center_x.get()), anchor_y), cx);
+        })
+        .child(center_probe(probe))
+        .child(label)
+}
+
+fn center_probe(center: Rc<Cell<f32>>) -> impl IntoElement {
+    gpui::canvas(
+        move |bounds, _, _| center.set(f32::from(bounds.center().x)),
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .inset_0()
+}
+
 fn title_bar_toggle(
     id: &'static str,
     label: gpui::SharedString,
@@ -807,6 +824,109 @@ mod tests {
             cx.read(|cx| host_bar.read(cx).trailing_origin.get()),
             300.,
             "the bar reports where its trailing controls start"
+        );
+    }
+
+    #[test]
+    fn the_files_and_help_triggers_are_menu_buttons_that_report_their_menu() {
+        use gpui::accesskit::{Action, HasPopup, Node, Role};
+        for label in [FILES_MENU_LABEL, HELP_MENU_LABEL] {
+            for open in [false, true] {
+                let trigger = title_bar_menu_trigger(
+                    "trigger",
+                    label,
+                    open,
+                    Rc::default(),
+                    px(28.),
+                    |_, _| {},
+                );
+                let role = gpui::Element::a11y_role(&trigger);
+                assert_eq!(role, Some(Role::Button), "{label}");
+                let mut node = Node::new(Role::Button);
+                gpui::Element::write_a11y_info(&trigger, &mut node);
+                assert_eq!(node.label(), Some(label));
+                assert_eq!(node.is_expanded(), Some(open), "{label}");
+                assert_eq!(node.has_popup(), Some(HasPopup::Menu), "{label}");
+                assert!(
+                    node.supports_action(Action::Click),
+                    "{label} must advertise an accessibility press"
+                );
+            }
+        }
+    }
+
+    struct MenuHost {
+        bar: gpui::Entity<TitleBar>,
+        files_center: Rc<Cell<f32>>,
+        presses: Rc<std::cell::RefCell<Vec<gpui::Point<gpui::Pixels>>>>,
+    }
+
+    impl Render for MenuHost {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let brand = self.bar.update(cx, |bar, cx| bar.render_brand(window, cx));
+            let presses = self.presses.clone();
+            div()
+                .size_full()
+                .flex()
+                .flex_row()
+                .items_start()
+                .child(brand)
+                .child(
+                    div()
+                        .debug_selector(|| "files-probe".into())
+                        .child(title_bar_menu_trigger(
+                            "title-bar-files-menu-probe",
+                            FILES_MENU_LABEL,
+                            false,
+                            self.files_center.clone(),
+                            px(28.),
+                            move |anchor, _| presses.borrow_mut().push(anchor),
+                        )),
+                )
+        }
+    }
+
+    #[gpui::test]
+    fn a_menu_trigger_knows_where_it_is_drawn_so_a_press_anchors_its_menu_there(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let files_center = Rc::new(Cell::new(0.));
+        let (host, cx) = cx.add_window_view({
+            let files_center = files_center.clone();
+            move |_, cx| MenuHost {
+                bar: cx.new(TitleBar::new),
+                files_center,
+                presses: Rc::default(),
+            }
+        });
+        cx.simulate_resize(size(px(1400.), px(40.)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let bar = cx.read(|cx| host.read(cx).bar.clone());
+        let drawn = cx
+            .debug_bounds("files-probe")
+            .expect("the probe trigger paints");
+        assert!(drawn.size.width > px(0.));
+        assert_eq!(files_center.get(), f32::from(drawn.center().x));
+        cx.simulate_mouse_down(
+            drawn.center(),
+            gpui::MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        assert_eq!(
+            cx.read(|cx| host.read(cx).presses.borrow().clone()),
+            [point(drawn.center().x, px(28.))],
+            "a pointer press still anchors the menu under the pointer"
+        );
+        let (files, help) = cx.read(|cx| {
+            let bar = bar.read(cx);
+            (
+                bar.files_trigger_center.get(),
+                bar.help_trigger_center.get(),
+            )
+        });
+        assert!(
+            files > 0. && help > files,
+            "the brand records both trigger centers, Files before Help: {files} {help}"
         );
     }
 }
