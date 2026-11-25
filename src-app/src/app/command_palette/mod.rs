@@ -38,6 +38,7 @@ const SHORTCUT_SIZE: f32 = 13.;
 const PALETTE_TOP_MARGIN: f32 = 96.;
 const LUA_CATEGORY_ICON: &str = "icons/palette/source-code.svg";
 const LUA_ACTION_ICON: &str = "icons/palette/command-line.svg";
+const CONFIG_COMMAND_ICON: &str = "icons/palette/computer-terminal-01.svg";
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct PaletteContext {
@@ -66,6 +67,7 @@ enum Source {
     Section(Section),
     LuaCategory(usize),
     LuaAction(usize),
+    ConfigCommand(usize),
 }
 
 struct PaletteRow {
@@ -308,6 +310,7 @@ impl PaneFlowApp {
                 }
                 if section.is_none() && !browsing {
                     self.push_lua_action_rows(None, query, &mut ranked);
+                    self.push_config_command_rows(query, &mut ranked);
                 }
                 if browsing {
                     for (idx, category) in self.lua_config.categories().into_iter().enumerate() {
@@ -393,6 +396,78 @@ impl PaneFlowApp {
                 },
             ));
         }
+    }
+
+    fn push_config_command_rows(&self, query: &str, ranked: &mut Vec<(matcher::Rank, PaletteRow)>) {
+        if self.shown_workspace_idx().is_none() {
+            return;
+        }
+        for (idx, command) in self.cached_config.commands.iter().enumerate() {
+            let Some(shell) = command.shell_command() else {
+                continue;
+            };
+            let value = command
+                .description
+                .as_deref()
+                .map(str::trim)
+                .filter(|description| !description.is_empty())
+                .map(str::to_string);
+            let keywords = command
+                .keywords
+                .iter()
+                .map(String::as_str)
+                .chain(std::iter::once(shell))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let Some(matched) =
+                matcher::match_entry(&command.name, value.as_deref(), &keywords, query)
+            else {
+                continue;
+            };
+            ranked.push((
+                matched.rank,
+                PaletteRow {
+                    source: Source::ConfigCommand(idx),
+                    icon: Some(CONFIG_COMMAND_ICON),
+                    label: command.name.clone(),
+                    highlights: matched.highlights,
+                    value,
+                    shortcut: None,
+                    trailing: Trailing::None,
+                },
+            ));
+        }
+    }
+
+    fn run_config_palette_command(
+        &mut self,
+        idx: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((name, shell)) = self.cached_config.commands.get(idx).and_then(|command| {
+            command
+                .shell_command()
+                .map(|shell| (command.name.clone(), shell.to_string()))
+        }) else {
+            return;
+        };
+        self.close_command_palette(window, cx);
+        let Some(ws_idx) = self.shown_workspace_idx() else {
+            return;
+        };
+        self.open_tab_with_surface(
+            ws_idx,
+            name,
+            paneflow_config::schema::TerminalSurfaceProfile::Normal,
+            crate::app::workspace_ops::SurfaceLaunch {
+                command: Some(shell),
+                env: None,
+                cwd: None,
+            },
+            window,
+            cx,
+        );
     }
 
     fn enter_lua_category(&mut self, idx: usize, cx: &mut Context<Self>) {
@@ -616,6 +691,10 @@ impl PaneFlowApp {
             }
             (Source::LuaAction(idx), _) => {
                 self.run_lua_palette_action(idx, window, cx);
+                return;
+            }
+            (Source::ConfigCommand(idx), _) => {
+                self.run_config_palette_command(idx, window, cx);
                 return;
             }
             (Source::Command(command), _) => command,
@@ -894,7 +973,10 @@ impl PaletteRow {
             Source::Command(idx) => COMMANDS
                 .get(idx)
                 .is_some_and(|command| matches!(command.kind, Kind::Toggle { .. })),
-            Source::Section(_) | Source::LuaCategory(_) | Source::LuaAction(_) => false,
+            Source::Section(_)
+            | Source::LuaCategory(_)
+            | Source::LuaAction(_)
+            | Source::ConfigCommand(_) => false,
         };
         checkable.then_some(self.trailing == Trailing::Check)
     }

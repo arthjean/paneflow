@@ -13,7 +13,7 @@ use crate::{
     SplitHorizontally, SplitVertically, ToggleZoom,
 };
 
-pub(super) const PINS: usize = 29;
+pub(super) const PINS: usize = 30;
 
 fn split_v(rig: &mut Rig<'_>) {
     rig.act(|app, window, cx| app.handle_split_v(&SplitVertically, window, cx));
@@ -608,6 +608,46 @@ fn pin_a_template_launched_from_settings_opens_its_own_workspace_beside_the_proj
     assert_eq!(rig.shape(0, 0), "V(0.500 a, 0.500 b)");
     assert_eq!(rig.tabs(1), ["*=H(0.500 c, 0.500 d)"]);
     assert_eq!(rig.requests(), ["create c", "create d"]);
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_a_shell_command_of_the_config_joins_the_palette_and_runs_in_a_new_tab(
+    cx: &mut TestAppContext,
+) {
+    let mut rig = Rig::mount(cx);
+    rig.workspace("alpha");
+    rig.focus("a");
+    rig.requests();
+    let command: paneflow_config::schema::CommandDefinition = serde_json::from_value(json!({
+        "name": "qa-run",
+        "description": "QA simple command",
+        "keywords": ["smoke"],
+        "command": "echo qa-command-ran"
+    }))
+    .expect("a shell command");
+    rig.act(|app, window, cx| {
+        app.cached_config.commands = vec![command];
+        app.open_command_palette(window, cx);
+        app.command_palette_filter("qa-", cx);
+    });
+    let listed = rig.act(|app, _, cx| app.command_palette_entries(cx));
+    assert_eq!(
+        listed,
+        [("qa-run".to_string(), Some("QA simple command".to_string()))]
+    );
+    rig.act(|app, _, cx| app.command_palette_filter("smoke", cx));
+    let by_keyword = rig.act(|app, _, cx| app.command_palette_entries(cx));
+    assert!(
+        by_keyword.iter().any(|(label, _)| label == "qa-run"),
+        "{by_keyword:?}"
+    );
+    rig.act(|app, window, cx| app.command_palette_choose("qa-run", window, cx));
+    assert!(!rig.act(|app, _, _| app.command_palette_is_open()));
+    assert_eq!(rig.tabs(0), ["=a", "*qa-run=b"]);
+    assert_eq!(rig.focused().as_deref(), Some("b"));
+    assert_eq!(rig.requests(), ["create b"]);
+    wait_for_typed(&mut rig, "b", "echo qa-command-ran\r");
 }
 
 #[gpui::test]
