@@ -232,13 +232,25 @@ impl HostControl {
         Ok(control)
     }
 
+    fn pending_refusal(&mut self) -> Option<String> {
+        match self.wire.read_line(SHORTEST_PROBE) {
+            Ok(LineRead::Line(line)) => serde_json::from_str::<Value>(line.trim())
+                .ok()
+                .and_then(|value| connection_refusal(&value)),
+            _ => None,
+        }
+    }
+
     fn hello_within(&mut self, client: &str, answer: Duration) -> Result<Value, ControlProbeError> {
         let id = self.next_id;
         self.next_id += 1;
         let hello = request_frame(id, METHOD_HOST_HELLO, control_hello(client));
-        self.wire
-            .write_json_with_timeout(&hello, answer)
-            .map_err(|error| probe_io_failure("sending host.hello", error))?;
+        if let Err(error) = self.wire.write_json_with_timeout(&hello, answer) {
+            if let Some(message) = self.pending_refusal() {
+                return Err(ControlProbeError::Faulted(message));
+            }
+            return Err(probe_io_failure("sending host.hello", error));
+        }
         loop {
             let line = match self.wire.read_line(answer) {
                 Ok(LineRead::Line(line)) => line,
@@ -263,6 +275,9 @@ impl HostControl {
             let value: Value = serde_json::from_str(line.trim()).map_err(|error| {
                 ControlProbeError::Faulted(format!("invalid host.hello answer: {error}"))
             })?;
+            if let Some(message) = connection_refusal(&value) {
+                return Err(ControlProbeError::Faulted(message));
+            }
             if value.get("id").and_then(Value::as_u64) != Some(id) {
                 continue;
             }
@@ -325,6 +340,9 @@ impl HostControl {
             let mut value: Value = serde_json::from_str(line.trim()).map_err(|error| {
                 format!("invalid JSON-RPC response from the local Paneflow host: {error}")
             })?;
+            if let Some(message) = connection_refusal(&value) {
+                return Err(message);
+            }
             if value.get("id").and_then(Value::as_u64) != Some(id) {
                 continue;
             }
@@ -462,6 +480,13 @@ impl IpcTransport for HostTransport {
     }
 }
 
+fn connection_refusal(value: &Value) -> Option<String> {
+    if value.get("id").is_some_and(|id| !id.is_null()) {
+        return None;
+    }
+    jsonrpc_error_message_from_value(value)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -514,6 +539,33 @@ mod tests {
             Err(ControlProbeError::Unanswered(_))
         ));
         closer.join().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_full_endpoint_refusing_the_connection_is_reported_as_busy_not_as_closed() {
+        use std::io::Write;
+
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = home.path().join("full.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&endpoint).unwrap();
+        let refuser = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .write_all(
+                    b"{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32000,\"message\":\"worker busy: too many concurrent connections\"}}\n",
+                )
+                .unwrap();
+        });
+        let refused = HostControl::probe_open(&endpoint, "probe-test", REQUEST_DEADLINE);
+        refuser.join().unwrap();
+        match refused {
+            Err(ControlProbeError::Faulted(message)) => {
+                assert!(message.contains("worker busy"), "{message}");
+            }
+            Err(other) => panic!("expected the busy refusal, got {other:?}"),
+            Ok(_) => panic!("a full endpoint cannot open a control connection"),
+        }
     }
 
     #[cfg(unix)]
