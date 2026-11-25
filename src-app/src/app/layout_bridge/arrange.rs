@@ -323,6 +323,14 @@ impl PaneFlowApp {
             .get(ws_idx)
             .and_then(|ws| self.layout.workspace_id(ws.id))
             .ok_or(OpError::NotFound)?;
+        let replaced = {
+            let state = self.layout.model.state();
+            state
+                .workspace_index(workspace)
+                .and_then(|idx| state.workspaces[idx].active_tab())
+                .filter(|tab| tab.root.is_some())
+                .map(|tab| tab.id)
+        };
         let root = self.layout.stage_tree(tree, cx);
         let focus = focus.and_then(|pane| self.layout.pane_id(pane));
         self.apply_layout_op(
@@ -333,7 +341,14 @@ impl PaneFlowApp {
                 cwd,
             },
             cx,
-        )
-        .map(|_| ())
+        )?;
+        if let Some(closed) =
+            replaced.filter(|tab| self.layout.model.state().find_tab(*tab).is_none())
+        {
+            self.prune_parked_diff_docks(cx);
+            self.prune_worktree_states();
+            self.show_tab_closed_toast(closed.get(), cx);
+        }
+        Ok(())
     }
 }

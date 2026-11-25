@@ -335,11 +335,43 @@ impl PaneFlowApp {
         params: &serde_json::Value,
         cx: &mut Context<Self>,
     ) -> IpcReply {
-        let request = match workspace_up_request(params, self.ipc_gates) {
-            Ok(request) => request,
-            Err(error) => return IpcReply::Ready(error.into_value()),
-        };
-        IpcReply::Async(cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
+        match workspace_up_request(params, self.ipc_gates) {
+            Ok(request) => IpcReply::Async(self.spawn_workspace_up(request, cx)),
+            Err(error) => IpcReply::Ready(error.into_value()),
+        }
+    }
+
+    pub(crate) fn launch_workspace_up_for_user(
+        &mut self,
+        params: &serde_json::Value,
+        cx: &mut Context<Self>,
+    ) -> Result<gpui::Task<Result<usize, String>>, String> {
+        let request = workspace_up_request(params, paneflow_api::Gates::OPEN)
+            .map_err(|error| error.message)?;
+        let reply = self.spawn_workspace_up(request, cx);
+        Ok(cx.spawn(async move |_, _| {
+            let reply = reply.await;
+            match reply.get(JSONRPC_ERROR_KEY) {
+                Some(error) => Err(error
+                    .get("message")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("the workspace could not be created")
+                    .to_string()),
+                None => reply
+                    .get("index")
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|idx| usize::try_from(idx).ok())
+                    .ok_or_else(|| "the workspace could not be created".to_string()),
+            }
+        }))
+    }
+
+    fn spawn_workspace_up(
+        &mut self,
+        request: WorkspaceUpRequest,
+        cx: &mut Context<Self>,
+    ) -> gpui::Task<serde_json::Value> {
+        cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
             let (request, prepared) = match smol::unblock(move || request.prepare_worktrees()).await
             {
                 Ok(prepared) => prepared,
@@ -367,7 +399,7 @@ impl PaneFlowApp {
                 reply["notices"] = serde_json::json!(prepared.notices);
             }
             reply
-        }))
+        })
     }
 
     pub(super) fn workspace_create_reply(

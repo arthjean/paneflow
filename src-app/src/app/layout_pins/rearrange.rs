@@ -13,7 +13,7 @@ use crate::{
     SplitHorizontally, SplitVertically, ToggleZoom,
 };
 
-pub(super) const PINS: usize = 28;
+pub(super) const PINS: usize = 29;
 
 fn split_v(rig: &mut Rig<'_>) {
     rig.act(|app, window, cx| app.handle_split_v(&SplitVertically, window, cx));
@@ -538,7 +538,7 @@ fn pin_a_command_and_a_prompt_of_a_layout_are_typed_into_the_panes_it_opens(
 
 #[gpui::test]
 #[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
-fn pin_a_template_replaces_the_tab_and_is_refused_while_zoomed(cx: &mut TestAppContext) {
+fn pin_a_template_closes_the_tab_it_replaces_and_is_refused_while_zoomed(cx: &mut TestAppContext) {
     let mut rig = Rig::mount(cx);
     rig.workspace("alpha");
     rig.focus("a");
@@ -556,8 +556,57 @@ fn pin_a_template_replaces_the_tab_and_is_refused_while_zoomed(cx: &mut TestAppC
     let launched =
         rig.act(|app, _, cx| app.launch_workspace_params_in_open_workspace(&params, 0, cx));
     assert_eq!(launched, Ok(()));
+    assert_eq!(rig.tabs(0).len(), 1);
     assert_eq!(rig.shape(0, 0), "H(0.500 c, 0.500 d)");
     assert_eq!(rig.focused().as_deref(), Some("c"));
+    assert_eq!(rig.requests(), ["create c", "create d", "hold a", "hold b"]);
+    assert!(
+        rig.toasts()
+            .iter()
+            .any(|toast| toast.starts_with("Tab closed")),
+        "{:?}",
+        rig.toasts()
+    );
+    rig.expire_holds();
+    assert_eq!(rig.requests(), ["stop a", "stop b"]);
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_a_template_launched_from_settings_opens_its_own_workspace_beside_the_project(
+    cx: &mut TestAppContext,
+) {
+    let mut rig = Rig::mount(cx);
+    rig.workspace("alpha");
+    rig.focus("a");
+    split_v(&mut rig);
+    rig.requests();
+    let project = tempfile::tempdir().expect("a project folder");
+    let cwd = project.path().to_string_lossy().into_owned();
+    let template: paneflow_config::schema::CommandDefinition = serde_json::from_value(json!({
+        "name": "qa-tpl",
+        "workspace": {"name": "qa-space", "cwd": cwd, "layout_preset": "even_v",
+            "layout": {"type": "split", "direction": "horizontal", "children": [
+                {"type": "pane", "surfaces": [{"name": "t-one"}]},
+                {"type": "pane", "surfaces": [{"name": "t-two"}]}]}}
+    }))
+    .expect("a template");
+    rig.act(|app, window, cx| {
+        app.workspaces[0].cwd.clone_from(&cwd);
+        app.cached_config.commands = vec![template];
+        app.launch_workspace_template(0, window, cx);
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while rig.act(|app, _, _| app.workspaces.len()) < 2 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the template never opened a workspace"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert_eq!(rig.workspaces(), ["alpha", "*qa-space"]);
+    assert_eq!(rig.shape(0, 0), "V(0.500 a, 0.500 b)");
+    assert_eq!(rig.tabs(1), ["*=H(0.500 c, 0.500 d)"]);
     assert_eq!(rig.requests(), ["create c", "create d"]);
 }
 

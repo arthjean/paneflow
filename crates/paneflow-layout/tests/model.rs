@@ -1409,9 +1409,68 @@ fn launching_a_template_replaces_the_active_tab_tree() {
         cwd: Some("/work/template".into()),
     });
     assert_eq!(fx.shape(0, 0), "V(0.500 left, 0.500 right)");
-    assert_eq!(effects(&applied, &fx), ["spawn left", "spawn right"]);
+    assert_eq!(
+        effects(&applied, &fx),
+        ["spawn left", "spawn right", "hold a"]
+    );
     assert_eq!(applied.focus, Some(focus));
     assert_eq!(fx.model.state().workspaces[0].cwd, "/work/template");
+}
+
+#[test]
+fn a_template_closes_the_tab_it_replaces_as_closing_that_tab_would() {
+    let mut fx = Fixture::new();
+    let ws = fx.workspace("alpha", "a");
+    fx.split("a", Direction::Vertical, "b");
+    let replaced = fx.tab_id(0, 0);
+    let fresh = fx.pane(&["fresh"]);
+    let applied = fx.apply(Op::LaunchTemplate {
+        workspace: ws,
+        root: NewNode::Pane(fresh),
+        focus: None,
+        cwd: None,
+    });
+    assert_eq!(effects(&applied, &fx), ["spawn fresh", "hold a", "hold b"]);
+    assert!(
+        applied
+            .events
+            .iter()
+            .any(|event| matches!(event, Event::TabClosed { tab, .. } if *tab == replaced))
+    );
+    let state = fx.model.state();
+    assert_eq!(state.workspaces[0].tabs.len(), 1);
+    assert_ne!(state.workspaces[0].tabs[0].id, replaced);
+    assert_eq!(fx.shape(0, 0), "fresh");
+    assert_eq!(fx.model.held_sessions().len(), 2);
+    assert_eq!(fx.model.undo_history().len(), 1);
+
+    let applied = fx.apply(Op::UndoClose {
+        tab: Some(replaced),
+    });
+    assert_eq!(effects(&applied, &fx), ["reattach a", "reattach b"]);
+    assert_eq!(fx.model.state().workspaces[0].tabs.len(), 2);
+}
+
+#[test]
+fn a_template_fills_an_empty_active_tab_in_place() {
+    let mut fx = Fixture::new();
+    let ws = fx.workspace("alpha", "a");
+    let tab = fx.tab_id(0, 0);
+    fx.apply(Op::CloseTab {
+        tab,
+        keep_sessions: false,
+    });
+    let empty = fx.tab_id(0, 0);
+    let fresh = fx.pane(&["fresh"]);
+    let applied = fx.apply(Op::LaunchTemplate {
+        workspace: ws,
+        root: NewNode::Pane(fresh),
+        focus: None,
+        cwd: None,
+    });
+    assert_eq!(effects(&applied, &fx), ["spawn fresh"]);
+    assert_eq!(fx.tab_id(0, 0), empty);
+    assert_eq!(fx.model.state().workspaces[0].tabs.len(), 1);
 }
 
 #[test]

@@ -54,21 +54,6 @@ impl PaneFlowApp {
         }
     }
 
-    pub(crate) fn open_workspace_index_for_project(&self, project: &str) -> Option<usize> {
-        let project = canonicalize_workspace_cwd(project).ok()?;
-        if let Some(active) = self.shown_workspace_idx()
-            && workspace_cwd_matches(&self.workspaces[active].cwd, &project)
-        {
-            return Some(active);
-        }
-        self.workspaces
-            .iter()
-            .enumerate()
-            .find_map(|(idx, workspace)| {
-                workspace_cwd_matches(&workspace.cwd, &project).then_some(idx)
-            })
-    }
-
     pub(crate) fn launch_workspace_params_in_open_workspace(
         &mut self,
         params: &Value,
@@ -267,12 +252,6 @@ impl PaneFlowApp {
             "panes": pane_values,
         }))
     }
-}
-
-fn workspace_cwd_matches(cwd: &str, project: &std::path::Path) -> bool {
-    canonicalize_workspace_cwd(cwd)
-        .ok()
-        .is_some_and(|cwd| paths_equal(&cwd, project))
 }
 
 fn paths_equal(left: &std::path::Path, right: &std::path::Path) -> bool {

@@ -1653,18 +1653,36 @@ fn launch_template(
         return Err(OpError::PaneLimit);
     }
     let root = build_node(s, root)?;
+    let focus = focus
+        .filter(|focus| root.contains(*focus))
+        .or_else(|| first_docked(&root));
+    let ws = &s.state.workspaces[idx];
+    let active = ws.active_tab.min(ws.tabs.len() - 1);
+    let replaced = ws.tabs[active].root.is_some().then_some(ws.tabs[active].id);
+    let fresh = replaced.map(|_| TabId(s.counter.allocate()));
     let ws = &mut s.state.workspaces[idx];
     if let Some(cwd) = cwd {
         ws.cwd = cwd;
     }
-    let active = ws.active_tab.min(ws.tabs.len() - 1);
-    let tab = &mut ws.tabs[active];
-    let focus = focus
-        .filter(|focus| root.contains(*focus))
-        .or_else(|| first_docked(&root));
-    tab.focused = None;
-    tab.root = Some(root);
-    tab.zoomed = None;
+    match (replaced, fresh) {
+        (Some(replaced), Some(fresh)) => {
+            let old = &ws.tabs[active];
+            let mut tab = empty_tab(fresh);
+            tab.title.clone_from(&old.title);
+            tab.title_source = old.title_source;
+            tab.worktree.clone_from(&old.worktree);
+            tab.root = Some(root);
+            ws.tabs.insert(active, tab);
+            ws.active_tab = active;
+            close_tab(s, replaced, true)?;
+        }
+        _ => {
+            let tab = &mut ws.tabs[active];
+            tab.focused = None;
+            tab.root = Some(root);
+            tab.zoomed = None;
+        }
+    }
     if shown_index(&s.state) != Some(idx) {
         point_at(&mut s.state, idx);
     }

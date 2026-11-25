@@ -448,7 +448,7 @@ impl PaneFlowApp {
         cx.notify();
     }
 
-    fn launch_workspace_template(
+    pub(crate) fn launch_workspace_template(
         &mut self,
         idx: usize,
         window: &mut Window,
@@ -478,14 +478,10 @@ impl PaneFlowApp {
             );
             return;
         };
-        if let Some(target) = self.open_workspace_index_for_project(&project) {
-            self.finish_template_launch(&params, target, window, cx);
-            return;
-        }
         let path = std::path::PathBuf::from(&project);
         cx.spawn_in(window, async move |this: gpui::WeakEntity<Self>, cx| {
             let state = crate::fs_probe::probe_dirs(
-                vec![path.clone()],
+                vec![path],
                 crate::app::recents::RECENT_PROBE_TIMEOUT,
                 std::path::Path::is_dir,
             )
@@ -494,15 +490,7 @@ impl PaneFlowApp {
             .map(|(_, state)| state);
             let _ = this.update_in(cx, |app, window, cx| match state {
                 Some(crate::fs_probe::DirProbe::Dir) => {
-                    app.open_workspace_folders(std::slice::from_ref(&path), cx);
-                    match app.open_workspace_index_for_project(&project) {
-                        Some(target) => app.finish_template_launch(&params, target, window, cx),
-                        None => app.set_template_notice(
-                            TemplateNoticeAt::Launch,
-                            format!("Paneflow could not open {project}."),
-                            cx,
-                        ),
-                    }
+                    app.start_template_workspace(&params, window, cx)
                 }
                 Some(crate::fs_probe::DirProbe::Missing) => app.set_template_notice(
                     TemplateNoticeAt::Launch,
@@ -519,22 +507,32 @@ impl PaneFlowApp {
         .detach();
     }
 
-    fn finish_template_launch(
+    fn start_template_workspace(
         &mut self,
         params: &serde_json::Value,
-        target: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match self.launch_workspace_params_in_open_workspace(params, target, cx) {
-            Ok(()) => {
-                self.close_settings(cx);
-                self.select_workspace(target, window, cx);
-            }
+        let launched = match self.launch_workspace_up_for_user(params, cx) {
+            Ok(launched) => launched,
             Err(message) => {
                 self.set_template_notice(TemplateNoticeAt::Launch, sentence(&message), cx);
+                return;
             }
-        }
+        };
+        cx.spawn_in(window, async move |this: gpui::WeakEntity<Self>, cx| {
+            let outcome = launched.await;
+            let _ = this.update_in(cx, |app, window, cx| match outcome {
+                Ok(idx) => {
+                    app.close_settings(cx);
+                    app.select_workspace(idx, window, cx);
+                }
+                Err(message) => {
+                    app.set_template_notice(TemplateNoticeAt::Launch, sentence(&message), cx);
+                }
+            });
+        })
+        .detach();
     }
 
     fn set_template_notice(
