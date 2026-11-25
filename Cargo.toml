@@ -4,6 +4,7 @@ members = [
     "crates/paneflow-agent-config",
     "crates/paneflow-ai-hook",
     "crates/paneflow-api",
+    "crates/paneflow-browser-proto",
     "crates/paneflow-colrv1",
     "crates/paneflow-config",
     "crates/paneflow-dock-tile",
@@ -78,6 +79,7 @@ widestring = "1"
 # Internal crates
 paneflow-agent-config = { path = "crates/paneflow-agent-config", default-features = false }
 paneflow-api = { path = "crates/paneflow-api" }
+paneflow-browser-proto = { path = "crates/paneflow-browser-proto" }
 paneflow-config = { path = "crates/paneflow-config" }
 paneflow-highlights = { path = "crates/paneflow-highlights" }
 paneflow-git = { path = "crates/paneflow-git" }

@@ -1,0 +1,20 @@
+[package]
+name = "paneflow-browser-proto"
+version.workspace = true
+edition = "2024"
+rust-version.workspace = true
+license.workspace = true
+description = "Neutral types, limits and framing of the private protocol between the Paneflow window and its browser host"
+publish = false
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+url = "2.5"
+
+[dev-dependencies]
+toml = "0.8"
+
+[lints]
+workspace = true
