@@ -14,6 +14,7 @@ use super::types::{HyperlinkZone, Line};
 
 pub(crate) const LOOSE_LINK_DEADLINE: Duration = Duration::from_millis(200);
 const INDEX_LIFETIME: Duration = Duration::from_secs(30);
+const RECHECK_AFTER: Duration = Duration::from_secs(2);
 
 #[derive(Default)]
 pub(crate) struct WorkspaceRoots(HashMap<u64, PathBuf>);
@@ -88,6 +89,12 @@ impl LinkIndex {
         (files.root == root).then(|| (files.clone(), built.elapsed() < INDEX_LIFETIME))
     }
 
+    fn built_at(&self, files: &Arc<ProjectFiles>) -> Option<Instant> {
+        let state = self.0.lock().ok()?;
+        let (kept, built) = state.files.as_ref()?;
+        Arc::ptr_eq(kept, files).then_some(*built)
+    }
+
     fn begin_walk(&self) -> bool {
         let Ok(mut state) = self.0.lock() else {
             return false;
@@ -131,16 +138,40 @@ impl LinkIndex {
         if let Some((files, _)) = known {
             return Some(files);
         }
-        let deadline = Box::pin(executor.timer(LOOSE_LINK_DEADLINE));
-        match walked {
-            Some(walked) => {
-                if let Either::Right(_) = select(walked, deadline).await {
-                    return None;
-                }
-            }
-            None => deadline.await,
+        if !walk_within_deadline(walked, executor).await {
+            return None;
         }
         self.known(root).map(|(files, _)| files)
+    }
+
+    async fn walked_after(
+        &self,
+        root: &Path,
+        since: Instant,
+        executor: &BackgroundExecutor,
+    ) -> Option<Arc<ProjectFiles>> {
+        let walked = self.begin_walk().then(|| self.walk(root, executor));
+        if !walk_within_deadline(walked, executor).await {
+            return None;
+        }
+        let (files, _) = self.known(root)?;
+        self.built_at(&files)
+            .is_some_and(|built| built > since)
+            .then_some(files)
+    }
+}
+
+async fn walk_within_deadline(
+    walked: Option<oneshot::Receiver<()>>,
+    executor: &BackgroundExecutor,
+) -> bool {
+    let deadline = Box::pin(executor.timer(LOOSE_LINK_DEADLINE));
+    match walked {
+        Some(walked) => matches!(select(walked, deadline).await, Either::Left(_)),
+        None => {
+            deadline.await;
+            true
+        }
     }
 }
 
@@ -150,16 +181,24 @@ pub(crate) struct LooseLinkScope {
     pub(crate) index: LinkIndex,
 }
 
+pub(crate) struct LooseLinks {
+    pub(crate) zones: Vec<HyperlinkZone>,
+    pub(crate) settled: bool,
+}
+
 pub(crate) async fn loose_link_zones(
     line_text: &str,
     line: Line,
     char_to_column: &[usize],
     scope: LooseLinkScope,
     executor: BackgroundExecutor,
-) -> Vec<HyperlinkZone> {
+) -> LooseLinks {
     let candidates = loose_code_paths(line_text, scope.cwd.as_deref());
     if candidates.is_empty() {
-        return Vec::new();
+        return LooseLinks {
+            zones: Vec::new(),
+            settled: true,
+        };
     }
     let mut zones = Vec::new();
     let mut unresolved = Vec::new();
@@ -176,12 +215,54 @@ pub(crate) async fn loose_link_zones(
         }
     }
     let Some(root) = scope.root.as_deref().filter(|_| !unresolved.is_empty()) else {
-        return zones;
+        return LooseLinks {
+            zones,
+            settled: true,
+        };
     };
     let Some(files) = scope.index.files(root, &executor).await else {
-        return zones;
+        return LooseLinks {
+            zones,
+            settled: false,
+        };
     };
+    let mut missing = Vec::new();
     for candidate in unresolved {
+        let project = Some((files.root.as_path(), files.paths.as_slice()));
+        match match_loose_path(&candidate.path, None, project) {
+            Some(found) => zones.extend(loose_code_zone(
+                line_text,
+                line,
+                char_to_column,
+                &candidate,
+                &found,
+            )),
+            None => missing.push(candidate),
+        }
+    }
+    if missing.is_empty() {
+        return LooseLinks {
+            zones,
+            settled: true,
+        };
+    }
+    let Some(built) = scope
+        .index
+        .built_at(&files)
+        .filter(|built| built.elapsed() >= RECHECK_AFTER)
+    else {
+        return LooseLinks {
+            zones,
+            settled: false,
+        };
+    };
+    let Some(files) = scope.index.walked_after(root, built, &executor).await else {
+        return LooseLinks {
+            zones,
+            settled: false,
+        };
+    };
+    for candidate in missing {
         let project = Some((files.root.as_path(), files.paths.as_slice()));
         if let Some(found) = match_loose_path(&candidate.path, None, project) {
             zones.extend(loose_code_zone(
@@ -193,7 +274,10 @@ pub(crate) async fn loose_link_zones(
             ));
         }
     }
-    zones
+    LooseLinks {
+        zones,
+        settled: true,
+    }
 }
 
 pub(crate) fn link_is_ambiguous(link: &HyperlinkZone) -> bool {
@@ -229,7 +313,7 @@ mod tests {
         (dir, root)
     }
 
-    async fn zones(cx: &mut gpui::TestAppContext, text: &str, root: &Path) -> Vec<HyperlinkZone> {
+    async fn links(cx: &mut gpui::TestAppContext, text: &str, root: &Path) -> LooseLinks {
         let scope = LooseLinkScope {
             cwd: Some(root.join("elsewhere")),
             root: Some(root.to_path_buf()),
@@ -239,6 +323,10 @@ mod tests {
         let map = ascii_map(text);
         let text = text.to_owned();
         loose_link_zones(&text, Line(0), &map, scope, executor).await
+    }
+
+    async fn zones(cx: &mut gpui::TestAppContext, text: &str, root: &Path) -> Vec<HyperlinkZone> {
+        links(cx, text, root).await.zones
     }
 
     #[gpui::test]
@@ -284,9 +372,46 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn twin_files_created_after_the_index_was_walked_still_open_the_file_picker(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let (_dir, root) = project();
+        let index = LinkIndex::default();
+        let executor = cx.executor();
+        let walked = index.files(&root, &executor).await.expect("first walk");
+        if let Ok(mut state) = index.0.lock() {
+            state.files = Instant::now()
+                .checked_sub(INDEX_LIFETIME / 2)
+                .map(|built| (walked.clone(), built));
+        }
+        for file in ["p/q/twin.rs", "r/q/twin.rs"] {
+            let path = root.join(file);
+            std::fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+            std::fs::write(&path, "fn main() {}\n").expect("write");
+        }
+        let text = "open q/twin.rs:3".to_owned();
+        let map = ascii_map(&text);
+        let scope = LooseLinkScope {
+            cwd: Some(root.clone()),
+            root: Some(root.clone()),
+            index,
+        };
+        let found = loose_link_zones(&text, Line(0), &map, scope, executor).await;
+        assert!(found.settled);
+        assert_eq!(found.zones.len(), 1, "{:?}", found.zones);
+        assert_eq!(found.zones[0].uri, "q/twin.rs");
+        assert!(link_is_ambiguous(&found.zones[0]));
+    }
+
+    #[gpui::test]
     async fn a_path_no_project_file_ends_with_is_not_a_link(cx: &mut gpui::TestAppContext) {
         let (_dir, root) = project();
-        assert!(zones(cx, "missing/nowhere.rs:3", &root).await.is_empty());
+        let missing = links(cx, "missing/nowhere.rs:3", &root).await;
+        assert!(missing.zones.is_empty());
+        assert!(
+            !missing.settled,
+            "a path missing from an index walked moments ago is checked again on the next hover"
+        );
         assert!(zones(cx, "../core/lib.rs", &root).await.is_empty());
     }
 
@@ -303,11 +428,9 @@ mod tests {
         let executor = cx.executor();
         let text = "terminal/view.rs:7".to_owned();
         let map = ascii_map(&text);
-        assert!(
-            loose_link_zones(&text, Line(0), &map, scope, executor)
-                .await
-                .is_empty()
-        );
+        let links = loose_link_zones(&text, Line(0), &map, scope, executor).await;
+        assert!(links.zones.is_empty());
+        assert!(!links.settled);
     }
 
     #[gpui::test]

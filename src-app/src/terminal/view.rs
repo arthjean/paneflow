@@ -265,6 +265,7 @@ pub(super) struct HoverLinkCache {
     cwd: Option<String>,
     line_text: String,
     zones: Vec<HyperlinkZone>,
+    settled: bool,
 }
 
 pub(super) type HoverLinkResolver =
@@ -1192,9 +1193,12 @@ impl TerminalView {
             && cache.line_text == line_text
         {
             self.ctrl_hovered_link = link_under(&cache.zones, hover_point);
-            return;
+            if cache.settled {
+                return;
+            }
+        } else {
+            self.ctrl_hovered_link = None;
         }
-        self.ctrl_hovered_link = None;
         let resolver = self.hover_link_resolver;
         let root = super::link_fallback::workspace_root(self.launch_workspace_id(), cx);
         let scope = super::link_fallback::LooseLinkScope {
@@ -1213,28 +1217,28 @@ impl TerminalView {
                     &char_to_col,
                     cwd.as_deref().map(std::path::Path::new),
                 );
-                zones.extend(
-                    super::link_fallback::loose_link_zones(
-                        &line_text,
-                        line,
-                        &char_to_col,
-                        scope,
-                        executor,
-                    )
-                    .await,
-                );
-                zones
+                let loose = super::link_fallback::loose_link_zones(
+                    &line_text,
+                    line,
+                    &char_to_col,
+                    scope,
+                    executor,
+                )
+                .await;
+                zones.extend(loose.zones);
+                (zones, loose.settled)
             }
         });
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                let zones = resolved.await;
+                let (zones, settled) = resolved.await;
                 let _ = this.update(cx, |view, cx| {
                     view.hover_link_cache = Some(HoverLinkCache {
                         line,
                         cwd,
                         line_text,
                         zones,
+                        settled,
                     });
                     if !view.link_modifier_held || view.hovered_cell != Some(hover_point) {
                         return;
