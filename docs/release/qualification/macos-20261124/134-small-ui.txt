@@ -1,0 +1,70 @@
+# Small UI fixes from the coverage observations: live headless checks
+Branch worktree-agent-a2d89fee188b4ca91, debug build, `scripts/dev.sh --tag smallui`, home
+~/.paneflow-dev-smallui, 2026-11-25. Local evidence, untracked.
+Input: no physical mouse or keyboard. Every action was a headless accessibility press or set-value on the dev
+window by --window-id, an IPC call (`paneflow api call client.dispatch_action`, `paneflow new`), or a
+screenshot of that window by id. $L below is a scratch fixture directory.
+Fixture: $L/repo (Cargo project) with src/main.rs, src/ro.rs (chmod 444), notes.md (title, 120 paragraphs, then
+a code block holding one 28,000-character line), p/q/helpers.rs and r/q/helpers.rs.
+paneflow.json: space Work (CLAUDE_CONFIG_DIR=$L/claude-work, existing; CODEX_HOME=$L/codex-work, absent),
+space Play (CLAUDE_CONFIG_DIR=$L/claude-work), editor.semantic_tokens=true.
+
+## 1. Markdown find-next scrolls the match into view
+Not checked live: the markdown find field opens only when the rendered view holds keyboard focus, and a headless
+press cannot give it (client.dispatch_action markdown_find_open with the dock tab active opened nothing).
+Covered by markdown::view::tests::find_next_scrolls_each_match_into_the_viewport (red before the fix: match 2 of
+11, block 70, below the viewport; green after), on the same layout shape as the fixture.
+
+## 2. Read-only banner
+Opened src/ro.rs from the file finder (set-value "src/ro.rs", press the option).
+The banner reads in full on two lines in the dock: "This file is read-only on disk, so editing is disabled.
+Nothing you type is discarded - it simply is not applied." (134-small-ui-ro-banner.png, cropped to the dock)
+
+## 3. Accessibility: language server banner, Cmd+click file finder
+Opened src/main.rs: the consent banner "Start rust-analyzer for $L/repo? A language server can run this
+project's build scripts." (134-small-ui-ls-banner.png). AX:
+    button 'Start'    [Click, SetFocus]
+    button 'Not now'  [Click, SetFocus]
+Headless press on 'Not now' -> the banner left the AX tree and the screen; the dev build started no
+rust-analyzer (the only rust-analyzer process running predates the instance and belongs to another tool).
+File finder: client.dispatch_action open_file_finder, set-value "q/helpers.rs" in 'Search files' (the query a
+Cmd+click on an ambiguous q/helpers.rs:3 fills in). AX:
+    search 'Search files'
+      textfield 'Search files' [focused]
+      button 'Clear search files'
+    list 'Files'
+      option 'p/q/helpers.rs' [selected]   (agent-desktop prints the option role as statictext, with refs)
+      option 'r/q/helpers.rs'
+Headless press on 'r/q/helpers.rs' -> the dock opened helpers.rs (tab 'helpers.rs', 'Close helpers.rs').
+The finder was already exposed (05576323); the observation came from C9, where the finder never opened.
+
+## 4. Space Codex row stuck on "Checking <dir>..."
+Settings > Spaces > Work, before the folder exists (134-small-ui-space-codex-before.png):
+    Claude Code: "No account is signed in to $L/claude-work"  [Sign in]
+    Codex:       "Checking $L/codex-work…"
+mkdir $L/codex-work (what Add hooks or the space's first terminal does), then Agents > Spaces > Open space Work
+by headless presses (134-small-ui-space-codex-after.png):
+    Codex:       "No account is signed in to $L/codex-work"  [Sign in]
+Add hooks itself was not pressed live: it is offered only once the agent's global integration is installed,
+which would write into the real ~/.claude and ~/.codex. Its completion path is covered by
+app::layout_pins::accounts::pin_a_space_folder_its_agent_setup_creates_gets_its_account_row (red, green).
+
+## 5. One account shared by two spaces
+Settings > Usage, AX groups:
+    group 'Claude Code, <email>'        (default account)
+    group 'Codex, Default'
+    group 'Claude Code, Work and Play'  (Work and Play share $L/claude-work: one card, both names)
+    group 'Codex, Work'
+
+## Real configuration
+~/.claude/settings.json sha256 3f0eeca00eea6958, 7552 bytes, before and after: byte-identical.
+Deviation: the worker's usage probe ran the real Claude Code CLI (2.1.332, ~/.local/bin/claude) to read account
+identity and limits, for $L/claude-work (it wrote first-run files there: .claude.json, backups/, plugins/,
+sessions/) and for the default ~/.claude account (plans.json: agent_version 2.1.332). The stand-in directory was
+first on the launch PATH, but the app adopts PATH from the login shell ($SHELL -l -i, zsh here), whose rc puts
+~/.local/bin first. The coverage recipe (final/51-launcher-dry-check.txt) launched with SHELL=/bin/bash; this run
+did not. No real Codex ran (only Paneflow shims, which the probe skips: state no_codex_data).
+
+## Shutdown
+paneflow serve stop, paneflow host stop --force (one idle zsh session of this home), the window by its PID;
+no process of the home left; ~/.paneflow-dev-smallui moved to the Trash.
