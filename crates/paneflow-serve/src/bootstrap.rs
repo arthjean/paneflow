@@ -439,11 +439,19 @@ mod tests {
         let held: Vec<_> = (0..crate::server::MAX_CONNECTIONS)
             .map(|_| std::os::unix::net::UnixStream::connect(&endpoint).unwrap())
             .collect();
-        let outcome = probe_within(
-            home.path(),
-            &endpoint,
-            Instant::now() + Duration::from_secs(5),
-        );
+        let backlog_drained_by = Instant::now() + Duration::from_secs(10);
+        let outcome = loop {
+            match probe_within(
+                home.path(),
+                &endpoint,
+                Instant::now() + Duration::from_secs(5),
+            ) {
+                Probe::Unreachable(_) if Instant::now() < backlog_drained_by => {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                outcome => break outcome,
+            }
+        };
         match outcome {
             Probe::Busy(message) => assert!(message.contains("worker busy"), "{message}"),
             other => panic!("a full worker must probe as busy, got {other:?}"),
