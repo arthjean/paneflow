@@ -98,3 +98,4 @@ LOG_*.text
 # CEF archives: fetched from the URLs pinned by native/cef/manifest.toml
 # (scripts/fetch-cef.sh), never tracked.
 /native/cef/prebuilt/
+/native/cef/sdk/

@@ -845,6 +845,57 @@ libghostty_archive_cases() {
     "$compare" x86_64-unknown-linux-gnu
 }
 
+cef_sdk_fixture_archive() {
+  local dir="$1" name="$2"
+  local tree="$dir/tree/${name%.tar.bz2}"
+  mkdir -p "$tree/Release/locales" "$tree/Resources" "$tree/include" "$tree/libcef_dll" "$tree/cmake"
+  printf 'lib' > "$tree/Release/libcef.so"
+  printf 'pak' > "$tree/Release/locales/en-US.pak"
+  printf 'icu' > "$tree/Resources/icudtl.dat"
+  printf 'h' > "$tree/include/cef_version.h"
+  printf 'cc' > "$tree/libcef_dll/wrapper.cc"
+  printf 'cmake' > "$tree/cmake/cef_variables.cmake"
+  printf 'project()' > "$tree/CMakeLists.txt"
+  printf 'credits' > "$tree/CREDITS.html"
+  tar -cjf "$dir/$name" -C "$dir/tree" "${name%.tar.bz2}"
+}
+
+fetch_cef_unpack_cases() {
+  local fetch="$1" dir="$2/unpack"
+  local name="cef_binary_fixture_linux64_minimal.tar.bz2"
+  mkdir -p "$dir/source"
+  cef_sdk_fixture_archive "$dir/source" "$name"
+  local sha
+  sha="$(sha256sum "$dir/source/$name" | awk '{print $1}')"
+  cef_fixture_manifest "$dir/good" "$dir/source/$name" "$sha"
+  local sdk="$dir/good/sdk/1.0.0/cef_linux_x86_64"
+  local host
+  host="$(rustc -vV 2>/dev/null | sed -n 's/^host: //p')"
+  if [ "$host" != "x86_64-unknown-linux-gnu" ]; then
+    echo "skip the CEF unpack cases: they unpack the host target, $host"
+    return
+  fi
+  expect "the host target's CEF archive is unpacked into the cef-dll-sys layout" 0 \
+    "x86_64-unknown-linux-gnu: unpacked .*sdk/1\.0\.0/cef_linux_x86_64" \
+    "$fetch" --manifest "$dir/good/manifest.toml"
+  cases=$((cases + 1))
+  if [ -f "$sdk/libcef.so" ] && [ -f "$sdk/icudtl.dat" ] && [ -f "$sdk/locales/en-US.pak" ] \
+    && [ -f "$sdk/include/cef_version.h" ] && [ -f "$sdk/CMakeLists.txt" ] \
+    && grep -q "\"name\": \"$name\"" "$sdk/archive.json" \
+    && grep -q "\"sha1\": \"$(sha1sum "$dir/source/$name" | awk '{print $1}')\"" "$sdk/archive.json"; then
+    echo "ok   the unpacked SDK merges Release and Resources and records archive.json"
+  else
+    echo "FAIL the unpacked SDK layout is wrong: $(find "$dir/good/sdk" -type f | sort | tr '\n' ' ')"
+    failures=$((failures + 1))
+  fi
+  expect "an SDK already unpacked from the same archive is left alone" 0 \
+    "x86_64-unknown-linux-gnu: CEF SDK already unpacked" \
+    "$fetch" --manifest "$dir/good/manifest.toml"
+  expect "--no-unpack places the archive without unpacking it" 0 \
+    "already in place" \
+    "$fetch" --manifest "$dir/good/manifest.toml" --no-unpack
+}
+
 cef_fixture_manifest() {
   local dir="$1" archive="$2" sha="$3"
   mkdir -p "$dir"
@@ -874,17 +925,17 @@ fetch_cef_cases() {
   cef_fixture_manifest "$dir/good" "$archive" "$good"
   expect "a CEF archive whose hash matches the manifest is placed" 0 \
     "x86_64-unknown-linux-gnu: placed .*$placed \($good\)" \
-    "$fetch" --manifest "$dir/good/manifest.toml" --target x86_64-unknown-linux-gnu
+    "$fetch" --manifest "$dir/good/manifest.toml" --target x86_64-unknown-linux-gnu --no-unpack
   expect "a CEF archive already in place is left alone" 0 \
     "x86_64-unknown-linux-gnu: CEF 1\.0\.0\+gfixture\+chromium-1\.0\.0\.0 already in place" \
-    "$fetch" --manifest "$dir/good/manifest.toml" --target x86_64-unknown-linux-gnu
+    "$fetch" --manifest "$dir/good/manifest.toml" --target x86_64-unknown-linux-gnu --no-unpack
 
   cef_fixture_manifest "$dir/bad" "$archive" "$(printf '0%.0s' {1..64})"
   mkdir -p "$dir/bad/prebuilt/x86_64-unknown-linux-gnu"
   printf 'stale' > "$dir/bad/$placed"
   expect "a CEF archive whose hash differs from the manifest is refused" 1 \
     "downloaded archive hash $good does not match manifest archive_sha256 0{64}" \
-    "$fetch" --manifest "$dir/bad/manifest.toml" --target x86_64-unknown-linux-gnu
+    "$fetch" --manifest "$dir/bad/manifest.toml" --target x86_64-unknown-linux-gnu --no-unpack
   cases=$((cases + 1))
   if [ -n "$(find "$dir/bad/prebuilt" -type f)" ]; then
     echo "FAIL a refused CEF archive left files in place: $(find "$dir/bad/prebuilt" -type f)"
@@ -896,6 +947,8 @@ fetch_cef_cases() {
   expect "a target the CEF manifest does not declare is refused" 1 \
     "manifest declares no target aarch64-apple-darwin" \
     "$fetch" --manifest "$dir/good/manifest.toml" --target aarch64-apple-darwin
+
+  fetch_cef_unpack_cases "$fetch" "$dir"
   expect "the tracked CEF manifest pins all four shipping targets" 0 "" \
     bash -c "for t in x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu aarch64-apple-darwin x86_64-pc-windows-msvc; do
       awk -v t=\"\$t\" '\$0 == \"[targets.\\\"\" t \"\\\"]\" { f = 1; next } f && /^\\[/ { exit } f && /^archive_sha256 = \"[0-9a-f]{64}\"\$/ { s = 1 } f && /^archive_url = \"https:\\/\\// { u = 1 } END { exit !(s && u) }' '$ROOT/native/cef/manifest.toml' || { echo \"missing pin for \$t\"; exit 1; }

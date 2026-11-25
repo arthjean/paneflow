@@ -1,0 +1,2 @@
+[env]
+CEF_PATH = { value = "native/cef/sdk", relative = true }
