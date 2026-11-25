@@ -359,6 +359,14 @@ KeyDownEvent
   → GPU (Vulkan on Linux, Metal on macOS, DirectX on Windows)
 ```
 
+Text has a second way in: the platform input handler, which calls
+`TerminalView::commit_text` for a key `handle_key_down` left alone. That is how
+plain characters, dead keys, IME commits and, with `option_as_meta` off, the
+characters Option composes on macOS arrive. A key `handle_key_down` encodes
+itself (Option as Meta, Enter, a control key) stops the event when it carries a
+character, so the platform never also inserts that character: with
+`option_as_meta` on, Option+B sends `ESC b` and not `ESC b∫`.
+
 The leading Ghostty wakeup notifies GPUI immediately. Presentation follows the
 platform frame scheduler, under the frame policy that `frame_policy.rs` states
 for every Paneflow window (`paced_window_options`): an unfocused window

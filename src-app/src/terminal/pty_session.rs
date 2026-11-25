@@ -837,6 +837,22 @@ impl TerminalState {
     }
 
     #[cfg(test)]
+    pub(crate) fn queued_key_input_for_test(&self) -> Vec<paneflow_terminal_ghostty::KeyInput> {
+        self.pending_input
+            .lock()
+            .map(|queued| {
+                queued
+                    .iter()
+                    .filter_map(|input| match input {
+                        PendingTerminalInput::Key(key) => Some(key.clone()),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[cfg(test)]
     pub(crate) fn queued_raw_input_for_test(&self) -> Vec<Vec<u8>> {
         self.pending_input
             .lock()

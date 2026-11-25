@@ -2478,6 +2478,59 @@ mod tests {
         }
     }
 
+    fn type_option_b_composing(
+        option_as_meta: bool,
+        cx: &mut gpui::TestAppContext,
+    ) -> Vec<paneflow_terminal_ghostty::KeyInput> {
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        focus_terminal(&terminal, cx);
+        terminal.update(cx, |view, _| view.set_option_as_meta(option_as_meta));
+        cx.update(|window, cx| {
+            window.refresh();
+            window.draw(cx).clear(cx);
+        });
+        let option_b = gpui::Keystroke {
+            modifiers: gpui::Modifiers {
+                alt: true,
+                ..Default::default()
+            },
+            key: "b".into(),
+            key_char: Some("\u{222b}".into()),
+        };
+        cx.update(|window, cx| window.dispatch_keystroke(option_b, cx));
+        cx.run_until_parked();
+        terminal.read_with(cx, |view, _| view.terminal.queued_key_input_for_test())
+    }
+
+    #[gpui::test]
+    fn option_as_meta_sends_option_b_as_meta_without_the_composed_character(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let keys = type_option_b_composing(true, cx);
+        assert!(
+            keys.iter().any(
+                |key| key.action == paneflow_terminal_ghostty::KeyAction::Press
+                    && key.key == paneflow_terminal_ghostty::Key::Character('b')
+                    && key.modifiers == paneflow_terminal_ghostty::Modifiers::ALT
+                    && key.text.is_empty()
+            ),
+            "Option+B must reach the encoder as Meta-b: {keys:?}"
+        );
+        assert!(
+            keys.iter().all(|key| !key.text.contains('\u{222b}')),
+            "the composed character must not follow the Meta key: {keys:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn without_option_as_meta_option_b_types_the_composed_character(cx: &mut gpui::TestAppContext) {
+        let keys = type_option_b_composing(false, cx);
+        assert!(
+            keys.iter().any(|key| key.text == "\u{222b}"),
+            "Option+B must type the composed character: {keys:?}"
+        );
+    }
+
     #[gpui::test]
     fn osc_22_drives_the_pane_pointer_below_the_scrollbar_and_link_priorities(
         cx: &mut gpui::TestAppContext,

@@ -159,6 +159,10 @@ fn key_escape_sequence(
     Some(sequence)
 }
 
+fn platform_would_also_deliver_text(keystroke: &gpui::Keystroke) -> bool {
+    keystroke.key_char.is_some()
+}
+
 pub(super) use paneflow_ipc_client::send_text::normalize_paste_text;
 
 fn ghostty_modifiers(modifiers: gpui::Modifiers) -> ghostty::Modifiers {
@@ -469,6 +473,9 @@ impl TerminalView {
                         self.terminal.write_to_pty(s.into_bytes());
                     }
                 },
+            }
+            if platform_would_also_deliver_text(keystroke) {
+                cx.stop_propagation();
             }
         } else {
             if ghostty_key(&keystroke.key, keystroke.key_char.as_deref()).is_some() {
