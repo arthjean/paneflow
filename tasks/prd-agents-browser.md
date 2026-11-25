@@ -7,6 +7,7 @@
 |---------|------|--------|---------|
 | 1.0 | 2026-09-05 | Arthur Jean | Initial PRD (French): CEF and GPU qualification, native browser in the dock, distribution on four targets, agent interactions as the last delivery. 32 stories, none started. |
 | 2.0 | 2026-11-24 | Arthur Jean | Full rewrite from the research of 2026-11-24 (`tasks/research/agent-browser-architecture-2026-11-24.md`, local evidence) and a reading of Zeron and t3code. Same engine choice (CEF in its own host process, off-screen rendering), four changes: agent control is proven before the GPU path, an explicit CPU presentation path exists, the engine ships as a separately signed runtime, and Windows is recognised as the most expensive GPUI integration. The GPUI pin cited by v1.0 (`fecc3273`) is replaced by the current one (`c016f436`; the research read `703b5ac3`, and R1 to R3 were re-read at `c016f436` after `main` moved the same day). Every macOS test and validation story sits in a final epic, EP-008; every Windows test and validation story sits in a final epic after it, EP-009. 9 epics, 57 stories. Version 1.0 is in git history. |
+| 2.1 | 2026-11-25 | Arthur Jean | EP-001 run: "Kill test report" added. GO for the control plane; GO to build for the CPU and Linux GPU paths, which regress terminal latency on a native Wayland window (A3 failed there, holds on X11). A3 requires a revision; the external-Chrome fallback it names is rejected on the diagnostic evidence, pending Arthur's ratification (Open Questions), and US-025 and US-035 gain a latency gate on a native Wayland window with nine no-browser runs. Assumptions A1 to A5, A7, A8 and A15 marked. No story cancelled. |
 
 ## Problem Statement
 
@@ -100,23 +101,23 @@ Not confirmed on a primary page: the exact size of the CEF distribution per targ
 
 ### Assumptions to validate
 
-| ID | Assumption | Risk | Validated by | If it fails |
-|----|-----------|------|--------------|-------------|
-| A1 | CEF delivers dmabuf frames under native Wayland and under X11 on the development machine. | High | US-002 | The Linux GPU path is NO-GO for this version; EP-005 is cancelled and the CPU path ships alone. |
-| A2 | A frame exported by the host can be imported by the vendored `gpui_wgpu` through the atlas seam of TD-7, clipped to its rectangle and covered by a popup drawn above it. | High | US-003 | US-007 records the failure; the alternative (patching `gpui` core) is put to Arthur as an open question before EP-005. |
-| A3 | Playing video in a browser tab causes no terminal latency regression, as TD-17 defines one, on either path. | High | US-003, US-005 | The path that regresses does not ship. If both regress, the display falls back to the external Chrome of TD-1 and the PRD is revised. |
-| A4 | Every CDP domain the tools need (Accessibility, DOM, Input, Runtime, Network, Page, Log) answers in windowless mode with no port open and with the tab not displayed. | High | US-004 | The missing capability is listed in US-007; if a core one is missing, control moves to an external Chrome over a pipe and the PRD is revised. |
-| A5 | The Chromium sandbox starts on the Linux install formats Paneflow ships. | High | US-006 | The formats that fail refuse to start the browser (TD-11) and are documented. |
-| A6 | The CEF distribution contains no component whose license forbids distribution next to a GPL-3.0-or-later program. | Medium | US-040 | The offending component is removed from the runtime or the runtime is not published. |
-| A7 | A snapshot bounded at 32 KiB of text is enough for an agent to locate the defects of the fixture application. The bound comes from no measurement (t3code truncates near 20 KB). | Medium | US-004, US-016 | The bound changes to the value US-004 measures. |
-| A8 | The runtime archive fits under the 500 MiB download cap that application artifacts already respect. | Medium | US-001 | The cap for the runtime is set from the measured size and recorded. |
-| A9 | The CEF sandbox can run on Windows from a bootstrap executable placed outside the application's install directory. It cannot be tested earlier: Windows validation is last by decision. | High | US-053 | The browser is disabled on Windows (TD-11) until it can. |
-| A10 | An IOSurface can be transferred from the host to the window and painted by `paint_surface` on macOS. | Medium | US-051 | macOS ships the CPU path only. |
-| A11 | The initial limits of the "Limits" table below suit real use. Only the URL length has a source. | Low | US-004, US-022 | A limit changes to the measured need and the table is updated. |
-| A12 | The `cef` crate 156.7.0 builds for all four shipping targets. | Medium | US-009, US-036, EP-007's Definition of Done | The target that fails has no runtime until the binding is fixed or replaced by the C API. |
-| A13 | The CPU path causes no latency regression on macOS and Windows. It is measured on Linux only before the final epics. | Medium | US-051, US-056 | The CPU path is not the default on that platform; if the GPU path also fails there, the browser is agent-only on it. |
-| A14 | The Linux paths behave on `aarch64-unknown-linux-gnu` as on x86_64. CI builds the aarch64 runtime; no story tests it on aarch64 hardware. | Medium | Not validated in this PRD | The automatic fallback of US-033 and US-034 applies; a defect report opens a follow-up. |
-| A15 | Three no-browser runs bound run-to-run noise well enough for TD-17 to discriminate. | Low | US-003 | If the three medians spread wider than the difference being judged, the report says so and the number of runs is raised and recorded. |
+| ID | Assumption | Risk | Validated by | If it fails | Result |
+|----|-----------|------|--------------|-------------|--------|
+| A1 | CEF delivers dmabuf frames under native Wayland and under X11 on the development machine. | High | US-002 | The Linux GPU path is NO-GO for this version; EP-005 is cancelled and the CPU path ships alone. | Confirmed: Wayland, and X11 with `--use-angle=vulkan` ([US-002](#us-002-result)) |
+| A2 | A frame exported by the host can be imported by the vendored `gpui_wgpu` through the atlas seam of TD-7, clipped to its rectangle and covered by a popup drawn above it. | High | US-003 | US-007 records the failure; the alternative (patching `gpui` core) is put to Arthur as an open question before EP-005. | Confirmed ([US-003](#us-003-result)) |
+| A3 | Playing video in a browser tab causes no terminal latency regression, as TD-17 defines one, on either path. | High | US-003, US-005 | The path that regresses does not ship. If both regress, the display falls back to the external Chrome of TD-1 and the PRD is revised. | Confirmed on an X11 window at 60 and 144 Hz; failed on a native Wayland window for both paths ([Latency A/B](#latency-ab)) |
+| A4 | Every CDP domain the tools need (Accessibility, DOM, Input, Runtime, Network, Page, Log) answers in windowless mode with no port open and with the tab not displayed. | High | US-004 | The missing capability is listed in US-007; if a core one is missing, control moves to an external Chrome over a pipe and the PRD is revised. | Confirmed; agent-driven tabs must not be marked hidden ([US-004](#us-004-result)) |
+| A5 | The Chromium sandbox starts on the Linux install formats Paneflow ships. | High | US-006 | The formats that fail refuse to start the browser (TD-11) and are documented. | Confirmed on Fedora 45, Ubuntu 22.04, Debian 13, Arch, openSUSE Leap 16; failed on Ubuntu 24.04 without an AppArmor profile ([US-006](#us-006-result)) |
+| A6 | The CEF distribution contains no component whose license forbids distribution next to a GPL-3.0-or-later program. | Medium | US-040 | The offending component is removed from the runtime or the runtime is not published. | Open |
+| A7 | A snapshot bounded at 32 KiB of text is enough for an agent to locate the defects of the fixture application. The bound comes from no measurement (t3code truncates near 20 KB). | Medium | US-004, US-016 | The bound changes to the value US-004 measures. | Confirmed for the fixture (at most 1,881 bytes); real pages need the truncation ([US-004](#us-004-result)) |
+| A8 | The runtime archive fits under the 500 MiB download cap that application artifacts already respect. | Medium | US-001 | The cap for the runtime is set from the measured size and recorded. | Confirmed: largest runtime 162 MiB compressed ([US-001](#us-001-result)) |
+| A9 | The CEF sandbox can run on Windows from a bootstrap executable placed outside the application's install directory. It cannot be tested earlier: Windows validation is last by decision. | High | US-053 | The browser is disabled on Windows (TD-11) until it can. | Open |
+| A10 | An IOSurface can be transferred from the host to the window and painted by `paint_surface` on macOS. | Medium | US-051 | macOS ships the CPU path only. | Open |
+| A11 | The initial limits of the "Limits" table below suit real use. Only the URL length has a source. | Low | US-004, US-022 | A limit changes to the measured need and the table is updated. | Open |
+| A12 | The `cef` crate 156.7.0 builds for all four shipping targets. | Medium | US-009, US-036, EP-007's Definition of Done | The target that fails has no runtime until the binding is fixed or replaced by the C API. | Open |
+| A13 | The CPU path causes no latency regression on macOS and Windows. It is measured on Linux only before the final epics. | Medium | US-051, US-056 | The CPU path is not the default on that platform; if the GPU path also fails there, the browser is agent-only on it. | Open |
+| A14 | The Linux paths behave on `aarch64-unknown-linux-gnu` as on x86_64. CI builds the aarch64 runtime; no story tests it on aarch64 hardware. | Medium | Not validated in this PRD | The automatic fallback of US-033 and US-034 applies; a defect report opens a follow-up. | Open |
+| A15 | Three no-browser runs bound run-to-run noise well enough for TD-17 to discriminate. | Low | US-003 | If the three medians spread wider than the difference being judged, the report says so and the number of runs is raised and recorded. | Failed: three runs did not discriminate; raised to nine ([Latency A/B](#latency-ab)) |
 
 ### Limits
 
@@ -199,6 +200,191 @@ When `vendor/**` changes:
 When a CI script changes:
 - `bash scripts/test-ci-scripts.sh` - runs the scripts against fixtures
 
+## Kill test report
+
+Raw evidence, logs, screenshots and spike code are in `tasks/evidence/agents-browser/` (local evidence, not tracked; `NOTES.md` there indexes it). Every run below used the same machine unless a row says otherwise.
+
+**Machine.** Fedora 45 Workstation, kernel 7.3.4-300.fc45.x86_64, GNOME Shell 51.1 (mutter 51.1, Wayland session), XWayland 24.1.15. GPU: NVIDIA GeForce RTX 4070 Ti SUPER, driver 620.70.06 (open kernel module), driving both monitors; an AMD Radeon 610M iGPU (Mesa 26.2.7) is present and unused. **CEF** 156.0.31+ge603d97+chromium-156.0.8078.100, Rust binding `cef` 156.7.0+156.0.31, wgpu 30.0.2 on the spike's import side.
+
+### Verdict (US-007)
+
+| Path | Verdict | Deciding evidence |
+|------|---------|-------------------|
+| Control plane (internal CDP, no port) | **GO** | Every needed domain answers in a windowless browser with no port open, and a real agent found both planted defects and the element from text alone (US-004). One constraint: agent-driven tabs are never marked hidden. |
+| CPU path | **GO to build; not shippable as measured on a native Wayland window** | The page displays at the dock's default width at 30 frames per second (US-005). Terminal latency does not regress when Paneflow's window is an X11 client, at 60 or 144 Hz; it regresses when the window is a native Wayland client (A3 failed there). |
+| Linux GPU path | **GO to build; not shippable as measured on a native Wayland window** | A1 and A2 hold: frames are shared under Wayland and X11 (X11 needs `--use-angle=vulkan`), cross two processes as dmabuf into the vendored atlas without a copy, clip and stack correctly (US-002, US-003). Latency: same result as the CPU path, for the same causes. |
+| Linux sandbox | Confirmed on 5 of 6 systems | Ubuntu 24.04 refuses without an AppArmor profile; the remedy is known (US-006). |
+
+A GPU NO-GO in the sense of US-007 (the path cannot work: A1 or A2 failed) did not happen, so US-031 to US-035 stay. A3 failed for both paths on a native Wayland window. Its rule says the path that regresses does not ship and, when both regress, the display falls back to the external Chrome of TD-1 and the PRD is revised. The fallback is rejected on evidence: the diagnostic runs below split the regression into Chromium's own load, which an external Chrome would carry too, and the window redrawing at the video's frame rate, which a screencast display would need too. The revision made instead (changelog 2.1): US-025 and US-035 carry the latency gate on a native Wayland window, with nine no-browser runs, and a path that fails it is off by default. Agent control has no display and is not affected.
+
+US-007 therefore cancels no story and blocks no epic. The GPU path was tested on one NVIDIA GPU only; AMD and Intel GPUs rely on the automatic fallback of US-034 until a machine with one runs it.
+
+### US-001 result
+
+Run 2026-11-24, re-checked 2026-11-25.
+
+- `native/cef/manifest.toml` pins CEF 156.0.31+ge603d97+chromium-156.0.8078.100 (stable channel), the crate `cef` 156.7.0+156.0.31 (tag `cef-v156.7.0+156.0.31` of tauri-apps/cef-rs), and the `minimal` archive of each shipping target by URL and SHA-256. Each archive's SHA-1 equals the one published in the CDN index (`cef-builds.spotifycdn.com/index.json`).
+- `scripts/fetch-cef.sh` run against an empty copy of the manifest downloaded the x86_64 Linux archive, checked its hash and placed it under `prebuilt/x86_64-unknown-linux-gnu/` (exit 0). A wrong hash exits 1 and leaves no archive in place; `scripts/test-ci-scripts.sh` runs both cases on a fixture (6 CEF cases, 208 in total, all pass).
+- `/native/cef/prebuilt/` is ignored: `git status` after a fetch lists no file under it.
+- Sizes, in bytes. "Archive" is the pinned download; "runtime" is what a runtime archive would carry (the `Release` and `Resources` directories, no static libraries, `libcef.so` stripped of debug information), compressed with `tar | zstd -12`. The host binary is not included.
+
+| Target | Archive | Unpacked archive | Runtime unpacked | Runtime compressed |
+|--------|---------|------------------|------------------|--------------------|
+| x86_64-unknown-linux-gnu | 333,321,290 | 1,597,439,662 | 578,777,850 | 157,943,294 (151 MiB) |
+| aarch64-unknown-linux-gnu | 431,212,107 | 2,740,632,426 | 672,830,622 | 169,784,001 (162 MiB) |
+| aarch64-apple-darwin | 134,916,866 | 353,036,893 | 341,808,663 | 129,024,162 (123 MiB) |
+| x86_64-pc-windows-msvc | 175,156,160 | 444,778,709 | 433,391,819 | 165,970,221 (158 MiB) |
+
+The Linux archives are large because `libcef.so` ships with debug information (1,480,586,408 bytes on x86_64; 473,033,808 without debug information, as measured above; 278,330,520 with every symbol stripped, so the table is an upper bound). The largest runtime is 162 MiB, under the 500 MiB cap: A8 confirmed.
+
+### US-002 result
+
+Run 2026-11-24.
+
+Spike `spike-gpu`: the `cef` crate's off-screen example with `accelerated_osr`, loading a WebGL animation, importing each frame into a wgpu Vulkan device and saving two screenshots one second apart.
+
+| Backend | `OnAcceleratedPaint` | Frames | Screenshots one second apart |
+|---------|----------------------|--------|------------------------------|
+| `--ozone-platform=wayland` | Called, about 53 per second | 1 plane, BGRA_8888, DRM modifier `0x300000000606014` (NVIDIA block-linear); 0 import errors, 0 software paints | Frame 221 then 264: 0 black pixels, 24.1 % of pixels differ (animation advanced); `us002/wayland/wayland-shot1.png`, `wayland-shot2.png` |
+| `--ozone-platform=x11`, default flags | Never called; `OnPaint` never called either | None in 8 seconds | None |
+| `--ozone-platform=x11 --use-angle=vulkan`, sandbox on | Called, about 50 per second | Same format and modifier | Frame 219 then 261: 0 black pixels, 24.2 % of pixels differ (animation advanced); `us002/x11-angle-vulkan/x11-shot1.png`, `x11-shot2.png` |
+| `--ozone-platform=x11`, shared textures off | Not requested | 346 software paints in 6 seconds | Not taken (CPU path control) |
+
+The X11 failure with default flags is not a software fallback: no frame of any kind arrives. The GPU process logs `MESA-LOADER: failed to open dri: /usr/lib64/gbm/dri_gbm.so: ... Permission denied` (the GPU sandbox forbids the GBM driver) and then `gbm_support_x11.cc:133 Can't create buffer -- gbm device is missing.` A diagnostic run with the GPU sandbox disabled (never a shipping configuration) still produced no frame (`OzoneImageBacking::ProduceSkiaGanesh failed to create GL representation`). With `--use-angle=vulkan` the GL path through GBM is not used and frames arrive with every sandbox on.
+
+Fixes in the pin: #4237 is fixed by commit `3adefb829c` on branch 8078 and #4313 by `57389f04a6` on branch 8078; both are ancestors of the pinned `e603d97`.
+
+A1: confirmed under Wayland; confirmed under X11 on the condition that the host passes `--use-angle=vulkan` there (the default flags give no frame). Tested under XWayland, not under an Xorg server.
+
+Side finding: CEF's Chrome runtime loaded the system-installed KDE Plasma Integration extension (`cimiefiiaegbelhefglklhhakcgmhkai`) into a fresh profile, and its content script made requests from fixture pages.
+
+### US-003 result
+
+Run 2026-11-24, latency re-measured 2026-11-25.
+
+Spike: `spike-share` (host) and a throwaway copy of Paneflow at GPUI `703b5ac3` (window). The host copies each CEF shared texture into a pool of three Vulkan images it owns, exported as dmabuf with a DRM modifier from the driver's list, waits for the copy to complete, sends each slot's file descriptor once over a Unix socket (`SCM_RIGHTS`), then one "frame k is ready" message per frame; the window releases slots.
+
+- **Import.** The window's copy of `vendor/gpui_wgpu` carries the seam of TD-7: `external_texture::register_dmabuf(ImageId, frame)` registers an image id; `WgpuAtlas::get_or_insert_with` returns, for a registered id, a polychrome tile covering the whole imported texture (index at or above `1 << 30`), and `get_texture_info` resolves it. The device requests `VULKAN_EXTERNAL_MEMORY_DMA_BUF`. Each slot is imported once and sampled in place: no copy per frame in the window. 0 import failures.
+- **Clip and popup.** The page paints inside a rectangle smaller than the window, clipped by a content mask; a GPUI element drawn after it covers it (`us003/gpu-window-1.png`). A2 confirmed.
+- **Resize while a video plays.** Six window resizes produced 7 pool generations and 11 stale-size frames in total (about two per resize), each drawn at its own size, clipped or with a gap, never stretched. No tearing in 12 captures (`us003/resize-sheet.png`). A fully black capture 50 ms after a resize is GPUI's own X11 resize, also seen without a browser.
+- **Frame rate.** The clip is 30 frames per second; 30 arrive and 30 are painted per second.
+- **Spike shortcuts** that product code must not keep: no queue-family ownership transfer on the exported images, and the window wraps an import with an initial state of `RESOURCE`.
+
+Latency: see "Latency A/B" below.
+
+### US-004 result
+
+Run 2026-11-24.
+
+Spike `spike-cdp`: a windowless browser created on `about:blank`, `WasHidden(true)`, then navigated to the fixture with `Page.navigate`; CDP through `SendDevToolsMessage` and a `DevToolsMessageObserver` (the same machinery as `ExecuteDevToolsMethod`); a Unix socket to a throwaway Python MCP server exposing five tools (open, snapshot, console, network, click).
+
+- **Domains, tab hidden.** Accessibility (`getFullAXTree`), DOM (`getDocument`), Input (`dispatchMouseEvent`), Runtime (`evaluate`), Network (`getCookies`), Page (`getNavigationHistory`) and Log (`clear`) all answer. Events arrive: `Runtime.exceptionThrown`, `Runtime.consoleAPICalled`, `Log.entryAdded`, `Network.*`, `Page.*`.
+- **Input gap.** On a tab marked hidden with `WasHidden(true)`, `Input.dispatchMouseEvent` answers `{}` but the page receives nothing: a press and release on the submit button, whose listener adds 100 to a counter, leaves the counter at 0, and `document.visibilityState` is `hidden`. The same tab not marked hidden, still never displayed and with no frame consumer, reads 100. Every other domain behaves the same either way.
+- **Ports.** Process tree of 10 processes, 0 listening TCP sockets, no remote-debugging switch in any command line, no `DevToolsActivePort` file.
+- **Real agent.** Claude Code 2.1.331 (model `claude-opus-5-5`), headless (`-p`), built-in tools disabled, only the five spike tools. Run 1 (tab hidden) named the `/api/prices` 500, the `TypeError` at line 14 and the paragraph "Total: unknown"; it also reported a false defect ("links do nothing") caused by the input gap. Run 2 (tab not hidden) named the same two defects and the element, navigated to Checkout and Video, found that "Refresh cart" does nothing (a true consequence: the `TypeError` stops the script before the listener is attached), and recognised the KDE extension's request as not the application's. It also reported "Save for later does nothing": that button calls `alert()`, which CEF cancels in a windowless browser with no dialog handler (`javascript_dialog_manager.cc:331`), the case US-027 handles. No screenshot tool was offered.
+- **Snapshot size.** Fixture pages: 391 to 1,881 bytes in total, of which 27 to 1,206 bytes of accessibility tree. Real pages, full tree including static text: a GitHub repository page 60,279 bytes (172 references), the Wikipedia "Rust" article 649,495 bytes (1,694), an MDN reference page 685,304 bytes (1,666).
+- **Unexpected traffic.** With only loopback pages loaded, the network service held 6 outbound connections to Google addresses (`2a00:1450::/32`, `2600:1900::/28`).
+
+A4 confirmed, with one constraint: a tab an agent drives must not be marked hidden; the host keeps it visible to Chromium whether or not it is displayed. A7 confirmed for the fixture (the largest snapshot is 6 % of the 32 KiB bound); real pages exceed it by 2 to 21 times, so the truncation the PRD already specifies (Edge Cases, "Oversized snapshot") is required, not optional.
+
+### Latency A/B
+
+For US-003 and US-005, by the method of TD-17, run 2026-11-25.
+
+Method: a debug build of the spike window with `PANEFLOW_LATENCY_PROBE=1`, a terminal pane beside the browser rectangle, the video fixture playing at 30 frames per second in the rectangle at the dock's default width (`DIFF_DOCK_PANEL_WIDTH`, 540 logical pixels), 3 × 104 letters typed at 45 ms intervals plus `ctrl-u`; one latency sample per keystroke, from the terminal's key handler to its paint (n = 315 per run). Each round interleaves three no-browser runs with one run per path. A third mode, "GPU, not painted", runs the host on the GPU path and still wakes the window for every frame, but paints none, to separate the host's GPU load from the window's import. The host is windowless and uses Chromium's Wayland backend in every run; the window is an X11 client unless a campaign says otherwise.
+
+For an X11 window, the probe span ends at the next frame that GPUI's X11 refresh timer schedules, and that timer follows the display's RandR refresh rate. The rate therefore sets the baseline: about 10.7 ms at 60 Hz and about 6.3 ms at 144 Hz.
+
+**Campaign on the development desktop, window as an X11 client, 143.9 Hz, no synthetic X input.** The window typed into itself through `Window::dispatch_keystroke` (focus on the terminal, then the same keystrokes), so no input could reach any other window. This method was checked against real X input on an isolated display at 144 Hz: median 6.173 ms against 6.021 to 6.169 ms. Rounds l, m and n used a rule written down before they ran (A15): the nine no-browser medians form the reference, and a path regresses if any of its three medians exceeds the largest of them.
+
+| Round | No-browser medians (ms) | CPU path | GPU path | GPU, not painted |
+|-------|-------------------------|----------|----------|------------------|
+| i | 6.451, 6.404, 6.507 | 6.070 | 6.445 | 6.293 |
+| j | 6.479, 6.323, 6.292 | 6.187 | 6.428 | 6.355 |
+| k | 6.414, 6.197, 6.417 | 6.069 | 6.463 | 6.233 |
+| l | 6.397, 6.152, 6.602 | 6.074 | 6.336 | 6.357 |
+| m | 6.203, 6.254, 6.355 | 6.085 | 6.395 | 6.377 |
+| n | 6.360, 6.376, 6.328 | 6.164 | 6.399 | 6.414 |
+
+- With TD-17 applied per round of three, the CPU path never regresses. The GPU path regresses only in round k, by 0.046 ms, while that round's three no-browser medians spread over 0.220 ms. Three runs therefore do not discriminate, so A15 fails as written, and the number of no-browser runs was raised to nine.
+- With the pre-registered rule on rounds l to n (reference 6.602 ms), neither path regresses: CPU 6.074 to 6.164 ms, GPU 6.336 to 6.399 ms. A3 holds for an X11 window.
+- The GPU path costs about 0.3 ms more than the CPU path, and "GPU, not painted" costs the same as the GPU path: the difference comes from Chromium's GPU work in the host, not from importing or sampling frames in the window.
+- Frames: 30 per second arrive and 30 are painted on both paths, 0 import failures, 0 slots dropped.
+
+**Campaign on the development desktop, window as a native Wayland client** (how Paneflow runs under GNOME), same self-typing method, rule written down before the run. GPUI paces a Wayland window by the compositor's frame callbacks, so the baseline drops to about 2.9 ms and the noise between runs to about 0.05 ms.
+
+| Round | No-browser medians (ms) | CPU path | GPU path | GPU, not painted |
+|-------|-------------------------|----------|----------|------------------|
+| wa | 2.936, 2.923, 2.913 | 2.995 | 3.029 | 3.031 |
+| wb | 2.909, 2.930, 2.903 | 3.048 | 3.009 | 3.035 |
+| wc | 2.950, 2.897, 2.933 | 3.025 | 3.004 | 3.018 |
+
+**Both paths regress** (reference 2.950 ms): every with-browser median is above every no-browser median, by 0.05 to 0.10 ms. The 99th percentile rises from 3.97 to 5.05 ms without the browser to 7.21 to 11.01 ms on the GPU path and 8.14 to 12.23 ms on the CPU path. **A3 fails on a native Wayland window, for both paths.**
+
+**Diagnostic campaign, native Wayland window**, rule and hypothesis written down before the run (rounds da, db, dc; reference = nine no-browser medians, largest 2.940 ms). Two modes separate the causes. In "redraw only" there is no browser: the window redraws an empty rectangle 30 times per second. In "Chromium only", the host plays the video on the GPU path and sends frames, but the window is never woken for them.
+
+| Mode | Medians (ms) | 99th percentiles (ms) |
+|------|--------------|-----------------------|
+| No browser (9 runs) | 2.892 to 2.940 | 4.10 to 4.59 |
+| Redraw only, no browser | 3.026, 2.980, 2.978 | 10.63, 8.74, 11.31 |
+| Chromium only, no redraw | 2.976, 2.980, 2.973 | 4.36, 4.08, 4.12 |
+| GPU path | 3.040, 3.031, 2.991 | 10.12, 12.21, 10.11 |
+
+- Redrawing the window at the video's frame rate, **with no browser at all**, reproduces the whole tail and most of the median shift. It is the cost of any 30 frames per second animation in Paneflow's window today: on each frame GPUI renders the root view again, and every child view not marked cached with it.
+- Chromium playing the video while the window ignores its frames shifts the median by 0.03 to 0.05 ms and leaves the tail unchanged: load that Chromium adds whether or not its page is displayed, as when only an agent drives it.
+- The hypothesis "the regression is only the redraw" is therefore only partly true. The transport is not the cause: copying or importing frames adds nothing measurable beyond these two effects ("GPU, not painted" equals the GPU path).
+
+**Supporting campaigns, isolated rootful Xwayland, real X input into it only.** At 60 Hz (rounds c, d, e) the no-browser medians are 10.500 to 11.242 ms; CPU 9.601, 10.965, 10.274; GPU 9.569, 11.026, 10.215; round d exceeds its largest no-browser median by 0.05 ms (CPU) and 0.11 ms (GPU) within a 0.41 ms spread, and with the nine no-browser medians pooled (reference 11.242 ms, applied after the run) neither path regresses. At 144 Hz (rounds f, g, h) the no-browser medians are 6.021 to 6.169 ms; CPU 5.789, 5.883, 5.791; GPU 5.968, 6.047, 6.049: no regression.
+
+**Superseded run of 2026-11-24.** The first runs, on the shared desktop with XTEST input, gave GPU medians of 11.430 and 10.428 ms against no-browser maxima of 6.713 and 6.549 ms, and CPU 5.561 and 7.053 ms. That XTEST input also reached other Paneflow windows, the installed application among them, and one run lost keystrokes. Twelve later GPU-path runs with clean input and an X11 window, six of them on the same desktop, did not reproduce it. Its cause was not established; those runs are not used for the verdict.
+
+### US-005 result
+
+**The CPU path regresses terminal latency on a native Wayland window** (median +0.05 to +0.10 ms, 99th percentile ×2 to ×3) and does not on an X11 window (see "Latency A/B").
+
+Run 2026-11-25.
+
+- **Display.** The host paints through `OnPaint` into a pool of three `memfd` slots shared once with the window (`SCM_RIGHTS`); the window copies each frame into a `RenderImage` and paints it with `paint_image`. At the dock's default width the page arrives at 540 × 738 pixels and fills the rectangle (`ab/smoke-cpu540/window.png`); 30 frames per second in and painted.
+- **Copy cost.** The window's copy out of shared memory, on its receive thread, totals 39.9 to 41.2 ms for about 836 frames per run in the decisive campaign: 0.05 ms per 540 × 738 frame.
+- **Profile.** `perf record` (cycles in user space, frame-pointer call graphs on a build with `-C force-frame-pointers=yes`; kernel call chains are not allowed at `perf_event_paranoid = 2`) of the window process on the desktop while the video played and the keystrokes ran: 4,980 samples, rendered with `flamegraph` 0.6.14 (`ab/prof-cpu-fp/flamegraph.svg`). Uploading frames takes **6.0 %** of the window's user-space CPU time: 4.1 % in `flush_uploads` (wgpu's `write_texture` staging copy), 1.4 % in the receive thread's copy out of shared memory, 0.5 % in `upload_texture` (staging and swizzle), under 0.1 % in dropping old frames. On the GPUI main thread alone the share is 6.05 % (229 of 3,787 samples). This is a debug build; a release build changes the absolute cost, not the order.
+
+### US-006 result
+
+Run 2026-11-25.
+
+Spike: `spike-cdp` built in an `ubuntu:22.04` container (glibc 2.34 floor), unpacked with the CEF runtime in the guest user's home, started headless, observed 15 seconds; each child process's user namespace, PID namespace and seccomp mode read from `/proc`. Virtual machines: the cached cloud images of `scripts/sandbox-matrix.sh`, booted by `tasks/evidence/agents-browser/us006/sbx-vm.sh` (the product script is unchanged). The AppImage row starts the same host from inside a probe AppImage built with `appimagetool`, the runtime staying outside the AppImage as TD-10 places it.
+
+| System | Kernel | Sandbox | Mechanism | Started from an AppImage |
+|--------|--------|---------|-----------|--------------------------|
+| Fedora 45 (development machine) | 7.3.4 | Started | Unprivileged user namespaces; renderers under seccomp-BPF | Same |
+| Ubuntu 22.04 | 5.15.0 | Started | User namespaces | Same |
+| Ubuntu 24.04 | 6.8.0 | **Refused** | None: AppArmor restricts unprivileged user namespaces | Same refusal |
+| Debian 13 | 6.12.118 | Started | User namespaces | Same (after installing `fuse3`, which the cloud image lacks) |
+| Arch Linux | 7.3.4 | Started | User namespaces | Same (after installing `fuse3`) |
+| openSUSE Leap 16.0 | 6.12.0 | Started | User namespaces | Same |
+
+On Ubuntu 24.04 (`kernel.apparmor_restrict_unprivileged_userns=1`) the host aborts with exit status 134: `FATAL:sandbox/linux/suid/client/setuid_sandbox_host.cc:172] The SUID sandbox helper binary was found, but is not configured correctly. Rather than run without sandboxing I'm aborting now. You need to make sure that .../chrome-sandbox is owned by root and has mode 4755.` Two remedies were each tested alone, and each started the sandbox:
+
+1. An AppArmor profile for the host binary granting `userns` (`profile ... <path> flags=(unconfined) { userns, }` in `/etc/apparmor.d/`): sandbox by user namespaces, as on the other systems. A `.deb` can install this profile; because the runtime lives under each user's Paneflow home, the profile has to match that path with `@{HOME}`.
+2. `chrome-sandbox` owned by root with mode 4755: sandbox by the setuid helper and a PID namespace. This needs root on a file in the user's home and fails on a home mounted `nosuid`, so it suits no install format Paneflow ships.
+
+No run used a flag that disables the sandbox. A5 confirmed on five systems, failed on Ubuntu 24.04 without a remedy.
+
+### What the later stories inherit
+
+These findings change how later stories are built, not what they must achieve; apart from the latency gates the verdict adds to US-025 and US-035, no acceptance criterion was edited.
+
+- **US-010 (supervise the host).** The spike host crashes at shutdown when its reader thread calls `process::exit` while CEF and Vulkan are alive. The product host shuts CEF down on its UI thread before exiting.
+- **US-012 (one profile per workspace).** A fresh profile still loaded a system-wide extension (KDE Plasma Integration) and its content script ran in fixture pages. The host must refuse external and component extensions, or the profile is not clean.
+- **US-013 (origins and permissions).** With only loopback pages open, the network service held six connections to Google. The host turns off Chromium's background traffic (component updates, safe-browsing lookups and similar) unless a decision keeps one of them; the loopback-by-default policy is not met otherwise.
+- **US-015 and US-017 (tabs and actions).** A tab an agent drives is never marked hidden: Chromium drops input to hidden pages.
+- **US-016 (snapshot).** Real pages produce 60 to 685 KB of tree, so the 32 KiB truncation with the dropped amount stated is load-bearing.
+- **US-027 (dialogs).** Without a dialog handler, CEF cancels `alert()` in a windowless browser, and an agent reads that as a dead button.
+- **US-032 and US-033 (GPU transport).** On X11 the host passes `--use-angle=vulkan`. The product transport adds the queue-family ownership transfer and the explicit synchronisation the spike skipped.
+- **US-025 and US-035 (latency).** A displayed video makes the window redraw at its frame rate, and today each redraw re-renders the root view and every uncached child. That redraw, not the transport, is what the terminal pays for. The surface has to keep a browser frame from re-rendering the rest of the window, or the gate added to both stories fails.
+- **US-036 (runtime archive).** Expect 123 to 162 MiB per target, compressed, before the host binary.
+- **US-039 (sandbox verdict).** Ubuntu 24.04 and later need an AppArmor profile granting `userns` to the host at its path under the Paneflow home; a `.deb` can ship it. Without root (tarball, AppImage), the browser refuses to start there and names that remedy.
+
 ## Epics & User Stories
 
 ### EP-001: Kill tests on Linux
@@ -214,11 +400,11 @@ Three experiments, a fallback measurement and a sandbox survey, run outside prod
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given the repository, when `native/cef/manifest.toml` is read, then it names one CEF version, one `cef` crate version, and for each of the four shipping targets an archive URL and a SHA-256.
-- [ ] Given a clean checkout, when `scripts/fetch-cef.sh` runs for the host target, then the archive is placed under `native/cef/prebuilt/<target>/` after its hash matches the manifest.
-- [ ] Given an archive whose hash differs from the manifest, when `scripts/fetch-cef.sh` runs, then it exits non-zero and leaves no archive in place.
-- [ ] Given the fetched archive for each target, when its size is measured, then the four sizes are written in the "Kill test report" and assumption A8 is marked.
-- [ ] Given `.gitignore`, when `git status` runs after a fetch, then `native/cef/prebuilt/` shows no untracked file.
+- [x] Given the repository, when `native/cef/manifest.toml` is read, then it names one CEF version, one `cef` crate version, and for each of the four shipping targets an archive URL and a SHA-256.
+- [x] Given a clean checkout, when `scripts/fetch-cef.sh` runs for the host target, then the archive is placed under `native/cef/prebuilt/<target>/` after its hash matches the manifest.
+- [x] Given an archive whose hash differs from the manifest, when `scripts/fetch-cef.sh` runs, then it exits non-zero and leaves no archive in place.
+- [x] Given the fetched archive for each target, when its size is measured, then the four sizes are written in the "Kill test report" and assumption A8 is marked.
+- [x] Given `.gitignore`, when `git status` runs after a fetch, then `native/cef/prebuilt/` shows no untracked file.
 
 #### US-002: Kill test 1, shared textures under Wayland and X11
 **Description:** As a maintainer, I want to know whether CEF hands out GPU frames on my Linux machine so that the GPU path is not built on a belief.
@@ -227,10 +413,10 @@ Three experiments, a fallback measurement and a sandbox survey, run outside prod
 **Dependencies:** Blocked by US-001
 
 **Acceptance Criteria:**
-- [ ] Given the off-screen rendering example of the `cef` crate built with `accelerated_osr`, when it loads an animated WebGL page with `--ozone-platform=wayland`, then the report states whether `OnAcceleratedPaint` was called and carries two screenshots taken one second apart showing the animation advanced with no black region.
-- [ ] Given the same build, when it runs with `--ozone-platform=x11`, then the report states the same two facts for X11.
-- [ ] Given either run, when CEF falls back to software painting, then the report records the fallback and the log line that explains it, and A1 is marked failed for that backend.
-- [ ] Given the pinned CEF version, when its source or release notes are checked for the fixes of CEF issues #4237 and #4313, then the report states for each whether the pinned version contains it.
+- [x] Given the off-screen rendering example of the `cef` crate built with `accelerated_osr`, when it loads an animated WebGL page with `--ozone-platform=wayland`, then the report states whether `OnAcceleratedPaint` was called and carries two screenshots taken one second apart showing the animation advanced with no black region.
+- [x] Given the same build, when it runs with `--ozone-platform=x11`, then the report states the same two facts for X11.
+- [x] Given either run, when CEF falls back to software painting, then the report records the fallback and the log line that explains it, and A1 is marked failed for that backend.
+- [x] Given the pinned CEF version, when its source or release notes are checked for the fixes of CEF issues #4237 and #4313, then the report states for each whether the pinned version contains it.
 
 #### US-003: Kill test 2, a frame crosses two processes into a GPUI rectangle
 **Description:** As a maintainer, I want a host process to send GPU frames to a minimal GPUI window so that the cross-process path and the atlas seam are proven before product code depends on them.
@@ -239,11 +425,11 @@ Three experiments, a fallback measurement and a sandbox survey, run outside prod
 **Dependencies:** Blocked by US-002
 
 **Acceptance Criteria:**
-- [ ] Given a spike host that copies each CEF frame into a texture it owns, when it sends the dmabuf descriptor over a Unix socket, then a second process imports it into the wgpu device of a GPUI window.
-- [ ] Given a copy of `vendor/gpui_wgpu` patched in the spike with the atlas seam of TD-7, when the window paints the frame inside a rectangle smaller than the window, then the page is clipped to the rectangle and a GPUI popup drawn above it covers it.
-- [ ] Given the window being resized while a video plays, when frames are observed, then the report states whether tearing or stale-size frames appeared.
-- [ ] Given a terminal pane beside the rectangle and the video fixture playing, when the A/B method of TD-17 is run, then the three no-browser medians, the with-browser median and the clip's frame rate are written in the report and A3 is marked for the GPU path.
-- [ ] Given the atlas seam cannot return a tile over an imported texture, when the spike ends, then the report states the exact obstacle and A2 is marked failed.
+- [x] Given a spike host that copies each CEF frame into a texture it owns, when it sends the dmabuf descriptor over a Unix socket, then a second process imports it into the wgpu device of a GPUI window.
+- [x] Given a copy of `vendor/gpui_wgpu` patched in the spike with the atlas seam of TD-7, when the window paints the frame inside a rectangle smaller than the window, then the page is clipped to the rectangle and a GPUI popup drawn above it covers it.
+- [x] Given the window being resized while a video plays, when frames are observed, then the report states whether tearing or stale-size frames appeared.
+- [x] Given a terminal pane beside the rectangle and the video fixture playing, when the A/B method of TD-17 is run, then the three no-browser medians, the with-browser median and the clip's frame rate are written in the report and A3 is marked for the GPU path.
+- [x] Given the atlas seam cannot return a tile over an imported texture, when the spike ends, then the report states the exact obstacle and A2 is marked failed.
 
 #### US-004: Kill test 3, an agent finds planted defects with no port open
 **Description:** As a maintainer, I want an agent to find a console error and a failed request through internal CDP only so that the control plane is proven without any display.
@@ -252,11 +438,11 @@ Three experiments, a fallback measurement and a sandbox survey, run outside prod
 **Dependencies:** Blocked by US-001
 
 **Acceptance Criteria:**
-- [ ] Given a spike host with a windowless browser that is not displayed, when it calls `ExecuteDevToolsMethod` for the Accessibility, DOM, Input, Runtime, Network, Page and Log domains, then the report lists each domain as answering or not.
-- [ ] Given the host running, when the listening TCP sockets of its process tree are listed, then none belongs to a DevTools endpoint.
-- [ ] Given the fixture application served on loopback, when a real agent drives a throwaway MCP tool connected to the host, then the agent names both defects and the element involved without a screenshot.
-- [ ] Given the accessibility snapshot of that page serialised as text with element references, when its size is measured, then the size is written in the report and A7 is marked or its bound is replaced.
-- [ ] Given a domain that does not answer in windowless mode, when the spike ends, then A4 is marked failed and the missing capability is named.
+- [x] Given a spike host with a windowless browser that is not displayed, when it calls `ExecuteDevToolsMethod` for the Accessibility, DOM, Input, Runtime, Network, Page and Log domains, then the report lists each domain as answering or not.
+- [x] Given the host running, when the listening TCP sockets of its process tree are listed, then none belongs to a DevTools endpoint.
+- [x] Given the fixture application served on loopback, when a real agent drives a throwaway MCP tool connected to the host, then the agent names both defects and the element involved without a screenshot.
+- [x] Given the accessibility snapshot of that page serialised as text with element references, when its size is measured, then the size is written in the report and A7 is marked or its bound is replaced.
+- [x] Given a domain that does not answer in windowless mode, when the spike ends, then A4 is marked failed and the missing capability is named.
 
 #### US-005: Measure the CPU path
 **Description:** As a maintainer, I want the cost of the shared-memory path measured so that the fallback is a known quantity and not a hope.
@@ -265,10 +451,10 @@ Three experiments, a fallback measurement and a sandbox survey, run outside prod
 **Dependencies:** Blocked by US-003
 
 **Acceptance Criteria:**
-- [ ] Given the spike host painting through `OnPaint` into a shared-memory segment, when the window uploads each frame through `paint_image`, then the page displays at the viewport size of the dock at its default width.
-- [ ] Given the video fixture playing on the CPU path, when the A/B method of TD-17 is run, then the three no-browser medians and the with-browser median are written in the report and A3 is marked for the CPU path.
-- [ ] Given the same run, when a `cargo flamegraph` profile of the window process is taken, then the share of time spent uploading frames is written in the report.
-- [ ] Given the CPU path shows a regression as TD-17 defines one, when the report is written, then it says so in its first line.
+- [x] Given the spike host painting through `OnPaint` into a shared-memory segment, when the window uploads each frame through `paint_image`, then the page displays at the viewport size of the dock at its default width.
+- [x] Given the video fixture playing on the CPU path, when the A/B method of TD-17 is run, then the three no-browser medians and the with-browser median are written in the report and A3 is marked for the CPU path.
+- [x] Given the same run, when a `cargo flamegraph` profile of the window process is taken, then the share of time spent uploading frames is written in the report.
+- [x] Given the CPU path shows a regression as TD-17 defines one, when the report is written, then it says so in its first line.
 
 #### US-006: Survey the Chromium sandbox on Linux install formats
 **Description:** As a maintainer, I want to know where the Chromium sandbox starts so that the browser never ships unsandboxed by accident.
@@ -277,11 +463,11 @@ Three experiments, a fallback measurement and a sandbox survey, run outside prod
 **Dependencies:** Blocked by US-001
 
 **Acceptance Criteria:**
-- [ ] Given the spike host unpacked in a user's home directory, when it starts on the Fedora development machine and in a virtual machine of each cloud image `scripts/sandbox-matrix.sh` names (ubuntu-22.04, ubuntu-24.04, debian-13, arch, opensuse-leap-16), then the report has one row per system stating whether the sandbox started and which mechanism it used.
-- [ ] Given the product script `scripts/sandbox-matrix.sh`, when the survey is done, then it is unchanged; the survey boots the images from a spike script kept in the evidence directory.
-- [ ] Given a distribution where unprivileged user namespaces are restricted, when the host starts, then the report records the exact refusal and what a package would have to install to lift it.
-- [ ] Given the host started from inside an AppImage-launched application, when the sandbox state is read, then the report records it.
-- [ ] Given any row where the sandbox did not start, when the report is written, then A5 is marked failed for that row and no flag disabling the sandbox was used to continue.
+- [x] Given the spike host unpacked in a user's home directory, when it starts on the Fedora development machine and in a virtual machine of each cloud image `scripts/sandbox-matrix.sh` names (ubuntu-22.04, ubuntu-24.04, debian-13, arch, opensuse-leap-16), then the report has one row per system stating whether the sandbox started and which mechanism it used.
+- [x] Given the product script `scripts/sandbox-matrix.sh`, when the survey is done, then it is unchanged; the survey boots the images from a spike script kept in the evidence directory.
+- [x] Given a distribution where unprivileged user namespaces are restricted, when the host starts, then the report records the exact refusal and what a package would have to install to lift it.
+- [x] Given the host started from inside an AppImage-launched application, when the sandbox state is read, then the report records it.
+- [x] Given any row where the sandbox did not start, when the report is written, then A5 is marked failed for that row and no flag disabling the sandbox was used to continue.
 
 #### US-007: Record the verdict
 **Description:** As Arthur, I want one GO or NO-GO per path with its evidence so that the rest of the PRD is engaged or revised knowingly.
@@ -290,11 +476,11 @@ Three experiments, a fallback measurement and a sandbox survey, run outside prod
 **Dependencies:** Blocked by US-002, US-003, US-004, US-005, US-006
 
 **Acceptance Criteria:**
-- [ ] Given the five results, when the "Kill test report" is read, then it states GO or NO-GO for the control plane, for the CPU path and for the Linux GPU path.
-- [ ] Given a NO-GO for the Linux GPU path, when the status file is read, then US-031, US-032, US-033 and US-035 are `CANCELLED`, US-034 stays because the macOS and Windows paths depend on it, and the Changelog says so.
-- [ ] Given a NO-GO for the control plane, when the status file is read, then every epic after EP-001 is `BLOCKED` and an Open Question names the alternative of TD-1.
-- [ ] Given any assumption A1 to A5, A7 or A8, when the assumptions table is read, then it is marked confirmed or failed with a link to its report line.
-- [ ] Given the spike code, when the tracked tree is listed, then nothing from `tasks/evidence/agents-browser/` is tracked.
+- [x] Given the five results, when the "Kill test report" is read, then it states GO or NO-GO for the control plane, for the CPU path and for the Linux GPU path.
+- [x] Given a NO-GO for the Linux GPU path, when the status file is read, then US-031, US-032, US-033 and US-035 are `CANCELLED`, US-034 stays because the macOS and Windows paths depend on it, and the Changelog says so.
+- [x] Given a NO-GO for the control plane, when the status file is read, then every epic after EP-001 is `BLOCKED` and an Open Question names the alternative of TD-1.
+- [x] Given any assumption A1 to A5, A7 or A8, when the assumptions table is read, then it is marked confirmed or failed with a link to its report line.
+- [x] Given the spike code, when the tracked tree is listed, then nothing from `tasks/evidence/agents-browser/` is tracked.
 
 ---
 
@@ -563,6 +749,7 @@ A browser tab in the right dock and as a pane, drawn through the CPU path on Lin
 - [ ] Given a tab that is not displayed, when the host is observed, then it produces no frames for that tab.
 - [ ] Given a frame arriving while the main thread is busy, when it is handled, then only the most recent frame is uploaded and none is queued without bound.
 - [ ] Given the shared-memory segment cannot be created, when the tab is displayed, then the page area shows the failure and the tab stays drivable by agents.
+- [ ] Given the video fixture playing in the dock of a native Wayland window, when the A/B method of TD-17 is run with nine no-browser runs (A15), then the medians are recorded in this PRD, and if the CPU path regresses, the display of browser tabs is off by default while agents keep full control.
 
 #### US-026: Route input, focus and shortcuts
 **Description:** As a user, I want to click, scroll and type in the page, including with an input method, without losing Paneflow's own shortcuts.
@@ -696,10 +883,11 @@ The shared-texture path under Wayland and X11, with the CPU path as its explicit
 **Dependencies:** Blocked by US-033
 
 **Acceptance Criteria:**
-- [ ] Given the video fixture playing in the dock on the GPU path, when the A/B method of TD-17 is run in a debug build on a tagged home, then the three no-browser medians and the with-browser median are recorded in this PRD.
+- [ ] Given the video fixture playing in the dock on the GPU path, when the A/B method of TD-17 is run in a debug build on a tagged home, then the nine no-browser medians (A15) and the with-browser medians are recorded in this PRD.
 - [ ] Given the same video on the CPU path, when the method is run, then its medians are recorded beside the first.
 - [ ] Given either run shows a regression, when the section is written, then the regression is stated in its first line and the affected path is disabled by default.
 - [ ] Given the measurement, when the test tree is searched, then no unit test asserts a duration for it.
+- [ ] Given both runs, when they are made, then each runs once with Paneflow's window as a native Wayland client and once as an X11 client, with nine no-browser runs each (A15).
 
 ---
 
@@ -1050,6 +1238,7 @@ Everything that needs Windows, run in one pass on Windows 11 x64 after EP-008. N
 - **Runtime host location.** TD-10 assumes runtime archives are published as assets of GitHub releases in this repository, under their own tags. Whether Arthur wants a separate repository or a CDN for them changes only US-036 and the update check of US-038.
 - **Upstreaming the external-texture seam to Zed.** TD-9 does not depend on it. Whether to propose it, and when, is Arthur's call once US-031 and US-045 exist.
 - **The NO-GO fallback.** If US-007 records NO-GO for the control plane, the alternative is an external Chrome over a pipe (TD-1). That would be a new PRD version, not a story swap.
+- **A3's external-Chrome fallback.** A3 failed for both display paths on a native Wayland window, and its rule sends the display to the external Chrome of TD-1. The EP-001 run rejected that fallback because the diagnostic campaign attributes the regression to the window redrawing at the video's frame rate and to Chromium's own load, both of which a screencast display from an external Chrome would also carry, and moved the decision into latency gates on US-025 and US-035 instead. Arthur ratifies this revision or restores the fallback before EP-004 starts.
 - **Link routing default.** US-029 keeps the system browser as the default for loopback links. Changing the default once the browser has been used for a release is a product decision.
 
 ## Files NOT to Modify
