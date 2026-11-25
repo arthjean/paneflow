@@ -350,8 +350,8 @@ impl PaneFlowApp {
                     reveal,
                     close_trailing_space,
                     ui,
-                )
-                .on_activate(close_tab);
+                    close_tab,
+                );
                 let title_row = sidebar_title_row(
                     content_width,
                     title_main,

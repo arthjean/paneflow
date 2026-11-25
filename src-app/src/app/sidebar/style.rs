@@ -333,30 +333,41 @@ pub(super) fn sidebar_hover_revealed_glyph_button(
     reveal: f32,
     trailing_space: f32,
     ui: crate::theme::UiColors,
-) -> gpui::Stateful<gpui::Div> {
+    on_press: impl Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static,
+) -> gpui::Div {
     let group = SharedString::from(format!("{id}-hover"));
+    let full_width = SIDEBAR_LANE_GLYPH_SIZE + trailing_space;
+    let selector = id.to_string();
     div()
-        .id(id)
-        .group(group.clone())
         .flex_none()
-        .w(px((SIDEBAR_LANE_GLYPH_SIZE + trailing_space) * reveal))
+        .w(px(full_width * reveal))
         .h(px(SIDEBAR_ROW_LINE_HEIGHT))
         .overflow_hidden()
-        .opacity(reveal)
-        .flex()
-        .items_start()
-        .justify_start()
-        .role(Role::Button)
-        .aria_label(label.clone())
-        .delayed_tooltip(crate::ui_primitives::text_tooltip(label))
         .child(
-            svg()
-                .size(px(SIDEBAR_LANE_GLYPH_SIZE))
-                .mt(px(sidebar_lane_glyph_top()))
+            div()
+                .id(id)
+                .debug_selector(|| selector)
+                .group(group.clone())
                 .flex_none()
-                .path(icon)
-                .text_color(ui.muted)
-                .group_hover(group, move |style| style.text_color(ui.text)),
+                .w(px(full_width))
+                .h(px(SIDEBAR_ROW_LINE_HEIGHT))
+                .opacity(reveal)
+                .flex()
+                .items_start()
+                .justify_start()
+                .role(Role::Button)
+                .aria_label(label.clone())
+                .delayed_tooltip(crate::ui_primitives::text_tooltip(label))
+                .on_activate(on_press)
+                .child(
+                    svg()
+                        .size(px(SIDEBAR_LANE_GLYPH_SIZE))
+                        .mt(px(sidebar_lane_glyph_top()))
+                        .flex_none()
+                        .path(icon)
+                        .text_color(ui.muted)
+                        .group_hover(group, move |style| style.text_color(ui.text)),
+                ),
         )
 }
 
@@ -597,6 +608,7 @@ mod tests {
                     self.reveal,
                     SIDEBAR_TITLE_ROW_GAP,
                     crate::theme::ui_colors(),
+                    |_, _, _| {},
                 ))
                 .child(
                     div()
@@ -605,6 +617,82 @@ mod tests {
                         .debug_selector(|| "lane".into()),
                 )
         }
+    }
+
+    struct HiddenGlyphHarness {
+        pressed: usize,
+        lane_clicked: usize,
+    }
+
+    impl gpui::Render for HiddenGlyphHarness {
+        fn render(
+            &mut self,
+            _window: &mut gpui::Window,
+            cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            div()
+                .flex()
+                .flex_row()
+                .p(px(20.))
+                .child(sidebar_hover_revealed_glyph_button(
+                    "hidden-new-tab".into(),
+                    "icons/plus.svg",
+                    "New tab in api".into(),
+                    0.,
+                    SIDEBAR_TITLE_ROW_GAP,
+                    crate::theme::ui_colors(),
+                    cx.listener(|this, _, _, cx| {
+                        this.pressed += 1;
+                        cx.notify();
+                    }),
+                ))
+                .child(
+                    div()
+                        .id("lane")
+                        .flex_none()
+                        .size(px(SIDEBAR_LANE_GLYPH_SIZE))
+                        .debug_selector(|| "lane".into())
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.lane_clicked += 1;
+                            cx.notify();
+                        })),
+                )
+        }
+    }
+
+    #[gpui::test]
+    fn a_glyph_hidden_until_hover_keeps_a_pressable_size_without_taking_the_pointer(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = cx.add_window_view(|_, _| HiddenGlyphHarness {
+            pressed: 0,
+            lane_clicked: 0,
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let button = cx
+            .debug_bounds("hidden-new-tab")
+            .expect("the hidden button is laid out");
+        assert_eq!(
+            button.size,
+            size(
+                px(SIDEBAR_LANE_GLYPH_SIZE + SIDEBAR_TITLE_ROW_GAP),
+                px(SIDEBAR_ROW_LINE_HEIGHT)
+            ),
+            "an accessibility client sees the hidden button at its revealed size"
+        );
+        let lane = cx.debug_bounds("lane").expect("lane not painted");
+        assert_eq!(
+            lane.left(),
+            button.left(),
+            "the hidden button still takes no room in the row"
+        );
+        cx.simulate_click(lane.center(), gpui::Modifiers::default());
+        cx.run_until_parked();
+        assert_eq!(
+            view.read_with(cx, |harness, _| (harness.pressed, harness.lane_clicked)),
+            (0, 1),
+            "a pointer over the hidden button reaches what the row shows there"
+        );
     }
 
     #[gpui::test]

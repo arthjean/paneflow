@@ -170,8 +170,8 @@ impl PaneFlowApp {
                     reveal,
                     new_tab_trailing_space,
                     ui,
-                )
-                .on_activate(open_new_tab);
+                    open_new_tab,
+                );
                 row.extend([sidebar_title_row(
                     row_content_width,
                     title_main,
