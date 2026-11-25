@@ -3,7 +3,7 @@
     "file": "tasks/prd-agents-browser.md",
     "title": "Navigateur intégré au dock Agents",
     "created_at": "2026-09-05",
-    "status": "WITHDRAWN"
+    "status": "READY"
   },
   "epics": [
     {
