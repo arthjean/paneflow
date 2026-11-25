@@ -32,6 +32,21 @@ fn request_refusal(error: &str) -> Option<&str> {
     Some(message)
 }
 
+fn send_refusal_reason(sid: u64, text: &str, refusal: &str) -> String {
+    if !paneflow_ipc_client::send_text::text_contains_submit_byte(text)
+        || !refusal.contains("bracketed paste")
+    {
+        return format!("pane {sid} refused the text: {refusal}");
+    }
+    let lines = text.lines().count();
+    format!(
+        "pane {sid} refused the text: it spans {lines} lines and the program in that pane has \
+         not turned on bracketed paste, so the lines cannot arrive as one paste and each \
+         newline would submit on its own; target an agent that turns on bracketed paste or \
+         capture a single line ({refusal})"
+    )
+}
+
 pub fn run(
     client: &impl IpcTransport,
     file: &str,
@@ -648,7 +663,14 @@ impl<T: IpcTransport> Engine<'_, T> {
                 "text injection is disabled on the instance: {}",
                 paneflow_api::policy::OPEN_SCRIPTING
             )),
-            Err(e) => Err(format!("instance unreachable: {e}")),
+            Err(e) => match request_refusal(&e) {
+                Some(refusal) => {
+                    let reason = send_refusal_reason(sid, &text, refusal);
+                    self.fail(i, &reason, false);
+                    Ok(())
+                }
+                None => Err(format!("instance unreachable: {e}")),
+            },
         }
     }
 
@@ -1398,6 +1420,63 @@ mod tests {
             fan.error.as_deref(),
             Some("surface.split refused: the layout op split was refused: pane_limit")
         );
+        let code = run_flow(&fake, &file);
+        assert_eq!(
+            code, EXIT_RUNTIME,
+            "the report is printed and the run fails"
+        );
+    }
+
+    #[test]
+    fn a_refused_multiline_send_fails_its_step_with_the_reason_instead_of_aborting() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let _root = crate::workspace::worktree::test_support::scoped_root(dir.path().join("wt"));
+        let file = flow_file(
+            &dir,
+            "[defaults]\ntimeout_secs = 30\n\n[[step]]\nid = \"impl\"\npane = { command = \"true\" }\nready = { pattern = \"tests passed\" }\ncapture = { var = \"sum\", lines = 3 }\n\n[[step]]\nid = \"review\"\nneeds = [\"impl\"]\nsend = { target = \"impl\", text = \"summary: ${sum}\", submit = true }\n",
+        );
+        let fake = FakeInstance::new(true);
+        fake.push_reads(1, &["edited a\nedited b\ntests passed"]);
+        fake.refuse(
+            "surface.send_text",
+            "paneflow error -32602: text contains CR or LF; multiline surface.send_text requires active bracketed paste",
+        );
+        let plan = flow_spec::load(&std::fs::read_to_string(&file).unwrap()).expect("valid");
+        let runs = prepare_runs(&plan, &PaneFlowConfig::default(), |_| true).expect("runs");
+        let mut engine = Engine {
+            client: &fake,
+            on_failure: plan.on_failure,
+            name: plan.name.clone(),
+            layout: plan.layout.as_ipc(),
+            runs,
+            vars: HashMap::new(),
+            started: Instant::now(),
+            json_out: true,
+            split_count: 0,
+            anchor: None,
+            caller: None,
+            scope_all: false,
+            created: HashSet::new(),
+            shown: HashSet::new(),
+        };
+        engine.bootstrap_wave0().expect("impl spawns");
+        engine.progress().expect("impl reaches its pattern");
+        assert_eq!(engine.vars["sum"], "edited a\nedited b\ntests passed");
+        engine.propagate_and_schedule().expect("review starts");
+
+        engine
+            .fire_feed(1)
+            .expect("a refused write is a step failure, not an unreachable instance");
+
+        let review = &engine.runs[1];
+        assert!(matches!(review.state, State::Failed { timeout: false }));
+        let error = review.error.as_deref().expect("a reason");
+        assert!(
+            error.contains("spans 3 lines") && error.contains("bracketed paste"),
+            "{error}"
+        );
+        assert!(!error.contains("unreachable"), "{error}");
+        assert_eq!(engine.runs[0].state.label(), "READY");
         let code = run_flow(&fake, &file);
         assert_eq!(
             code, EXIT_RUNTIME,
