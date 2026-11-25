@@ -28,10 +28,9 @@ impl Language {
 }
 
 pub fn language_for_key(key: &str) -> Option<Language> {
-    let key = key.to_ascii_lowercase();
     LANGUAGE_KEYS
         .iter()
-        .find(|(known, _)| *known == key)
+        .find(|(known, _)| known.eq_ignore_ascii_case(key))
         .and_then(|(_, id)| Language::from_id(*id))
 }
 
@@ -142,6 +141,16 @@ mod tests {
                 language.name()
             );
         }
+    }
+
+    #[test]
+    fn every_language_key_is_ascii_lowercase_so_a_case_insensitive_match_finds_it() {
+        for (key, _) in LANGUAGE_KEYS {
+            assert_eq!(*key, key.to_ascii_lowercase(), "{key}");
+        }
+        assert_eq!(language_for_key("RS"), language_for_key("rs"));
+        assert_eq!(language_for_key("Rust"), language_for_key("rust"));
+        assert!(language_for_key("rust").is_some());
     }
 
     #[test]
