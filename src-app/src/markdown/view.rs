@@ -28,6 +28,10 @@ const SCROLL_POLL_CADENCE: Duration = Duration::from_millis(250);
 
 const COPY_MAX_BYTES: usize = 64 * 1024;
 
+const MATCH_REVEAL_LINE_PX: f32 = 20.0;
+
+const MATCH_REVEAL_MARGIN_PX: f32 = 40.0;
+
 const RENDER_PATH_ROOT: u64 = 14_695_981_039_346_656_037;
 const MAX_RENDERED_TABLE_COLUMNS: u16 = 64;
 
@@ -52,6 +56,7 @@ pub struct MarkdownView {
     search_corpus: String,
     search_corpus_lower: String,
     search_lower_to_source: Vec<usize>,
+    search_block_starts: Vec<usize>,
     search_matches: Vec<usize>,
     search_current: usize,
     scroll_drag: Option<crate::widgets::scrollbar::ScrollDragState>,
@@ -125,6 +130,7 @@ impl MarkdownView {
             search_corpus: String::new(),
             search_corpus_lower: String::new(),
             search_lower_to_source: Vec::new(),
+            search_block_starts: Vec::new(),
             search_matches: Vec::new(),
             search_current: 0,
             scroll_drag: None,
@@ -157,18 +163,33 @@ impl MarkdownView {
         self.ast = ast;
         self.error = error;
         if self.search_active {
-            self.search_corpus = self.ast.as_deref().map(harvest_text).unwrap_or_default();
-            let (lower, map) = lowercase_with_byte_map(&self.search_corpus);
-            self.search_corpus_lower = lower;
-            self.search_lower_to_source = map;
+            self.harvest_search_corpus();
             self.recompute_matches();
         } else {
-            self.search_corpus.clear();
-            self.search_corpus_lower.clear();
-            self.search_lower_to_source.clear();
+            self.clear_search_corpus();
             self.search_matches.clear();
             self.search_current = 0;
         }
+    }
+
+    fn harvest_search_corpus(&mut self) {
+        let (corpus, starts) = self
+            .ast
+            .as_deref()
+            .map(harvest_text_with_block_starts)
+            .unwrap_or_default();
+        let (lower, map) = lowercase_with_byte_map(&corpus);
+        self.search_corpus = corpus;
+        self.search_corpus_lower = lower;
+        self.search_lower_to_source = map;
+        self.search_block_starts = starts;
+    }
+
+    fn clear_search_corpus(&mut self) {
+        self.search_corpus.clear();
+        self.search_corpus_lower.clear();
+        self.search_lower_to_source.clear();
+        self.search_block_starts.clear();
     }
 
     fn recompute_matches(&mut self) {
@@ -198,14 +219,39 @@ impl MarkdownView {
         let Some(byte_offset) = self.search_matches.get(self.search_current).copied() else {
             return;
         };
-        let total = self.search_corpus.len();
-        if total == 0 {
+        let block = self
+            .search_block_starts
+            .partition_point(|&start| start <= byte_offset)
+            .saturating_sub(1);
+        let Some(block_bounds) = self.scroll_handle.bounds_for_item(block) else {
             return;
-        }
-        let fraction = byte_offset as f32 / total as f32;
-        let max = self.scroll_handle.max_offset();
-        let target = max.y * fraction;
-        self.scroll_handle.set_offset(point(px(0.0), -target));
+        };
+        let block_start = self.search_block_starts.get(block).copied().unwrap_or(0);
+        let block_end = self
+            .search_block_starts
+            .get(block + 1)
+            .copied()
+            .unwrap_or(self.search_corpus.len());
+        let within = if block_end > block_start {
+            (byte_offset - block_start) as f32 / (block_end - block_start) as f32
+        } else {
+            0.0
+        };
+        let viewport = self.scroll_handle.bounds();
+        let block_height = f32::from(block_bounds.size.height);
+        let block_top = f32::from(block_bounds.top() - viewport.top());
+        let match_y = within * block_height;
+        let match_top = block_top + (match_y - MATCH_REVEAL_LINE_PX).max(0.0);
+        let match_bottom = block_top + (match_y + MATCH_REVEAL_LINE_PX).min(block_height);
+        let current = self.scroll_handle.offset();
+        let top = reveal_top(
+            match_top,
+            match_bottom,
+            f32::from(viewport.size.height),
+            -f32::from(current.y),
+            f32::from(self.scroll_handle.max_offset().y),
+        );
+        self.scroll_handle.set_offset(point(current.x, px(-top)));
     }
 
     fn maybe_apply_pending_restore(&self, cx: &mut Context<Self>) {
@@ -301,16 +347,7 @@ impl MarkdownView {
         self.search_active = true;
         let input_focus = self.search_input.read(cx).focus_handle(cx);
         input_focus.focus(window, cx);
-        if let Some(ast) = self.ast.as_deref() {
-            self.search_corpus = harvest_text(ast);
-            let (lower, map) = lowercase_with_byte_map(&self.search_corpus);
-            self.search_corpus_lower = lower;
-            self.search_lower_to_source = map;
-        } else {
-            self.search_corpus.clear();
-            self.search_corpus_lower.clear();
-            self.search_lower_to_source.clear();
-        }
+        self.harvest_search_corpus();
         self.recompute_matches();
         cx.notify();
     }
@@ -325,9 +362,7 @@ impl MarkdownView {
         self.search_query.clear();
         self.search_input.update(cx, |input, cx| input.clear(cx));
         self.focus_handle.clone().focus(window, cx);
-        self.search_corpus.clear();
-        self.search_corpus_lower.clear();
-        self.search_lower_to_source.clear();
+        self.clear_search_corpus();
         self.search_matches.clear();
         self.search_current = 0;
         cx.notify();
@@ -514,20 +549,26 @@ impl Render for MarkdownView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = MarkdownPalette::from_active();
 
-        let body = if let Some(msg) = &self.error {
-            div()
-                .p(px(16.))
-                .text_color(palette.body)
-                .child(msg.clone())
-                .into_any_element()
+        let blocks: Vec<AnyElement> = if let Some(msg) = &self.error {
+            vec![
+                div()
+                    .text_color(palette.body)
+                    .child(msg.clone())
+                    .into_any_element(),
+            ]
         } else if let Some(ast) = &self.ast {
-            let mut col = div().flex().flex_col().gap(px(12.)).p(px(16.)).w_full();
-            for (idx, node) in ast.iter().enumerate() {
-                col = col.child(render_node(RENDER_PATH_ROOT, idx, node, palette));
-            }
-            col.into_any_element()
+            ast.iter()
+                .enumerate()
+                .map(|(idx, node)| {
+                    div()
+                        .flex_none()
+                        .w_full()
+                        .child(render_node(RENDER_PATH_ROOT, idx, node, palette))
+                        .into_any_element()
+                })
+                .collect()
         } else {
-            div().p(px(16.)).child("(empty)").into_any_element()
+            vec![div().child("(empty)").into_any_element()]
         };
 
         let mut key_ctx = KeyContext::default();
@@ -542,9 +583,13 @@ impl Render for MarkdownView {
             .bg(palette.background)
             .text_color(palette.body)
             .text_size(BODY_TEXT_SIZE)
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .p(px(16.))
             .overflow_y_scroll()
             .track_scroll(&self.scroll_handle)
-            .child(body);
+            .children(blocks);
 
         let bar = crate::widgets::scrollbar::render(
             &self.scroll_handle,
@@ -667,6 +712,37 @@ fn harvest_text(nodes: &[MdNode]) -> String {
     let mut buf = String::new();
     walk_text(nodes, &mut buf);
     buf
+}
+
+fn harvest_text_with_block_starts(nodes: &[MdNode]) -> (String, Vec<usize>) {
+    let mut buf = String::new();
+    let mut starts = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        starts.push(buf.len());
+        walk_text(std::slice::from_ref(node), &mut buf);
+    }
+    (buf, starts)
+}
+
+fn reveal_top(
+    target_top: f32,
+    target_bottom: f32,
+    viewport_height: f32,
+    current_top: f32,
+    max_top: f32,
+) -> f32 {
+    if viewport_height <= 0.0 {
+        return current_top;
+    }
+    let slack = (viewport_height - (target_bottom - target_top)).max(0.0);
+    let margin = MATCH_REVEAL_MARGIN_PX.min(slack / 2.0);
+    let mut top = current_top;
+    if target_top - margin < top {
+        top = target_top - margin;
+    } else if target_bottom + margin > top + viewport_height {
+        top = target_bottom + margin - viewport_height;
+    }
+    top.clamp(0.0, max_top.max(0.0))
 }
 
 fn lowercase_with_byte_map(input: &str) -> (String, Vec<usize>) {
@@ -1210,6 +1286,121 @@ mod tests {
         assert_eq!(matches, 2);
     }
 
+    fn block_index_of(view: &MarkdownView, prefix: &str) -> usize {
+        view.ast
+            .as_deref()
+            .and_then(|nodes| {
+                nodes.iter().position(|node| match node {
+                    MdNode::Paragraph { spans } => spans
+                        .iter()
+                        .map(|span| span.text.as_str())
+                        .collect::<String>()
+                        .starts_with(prefix),
+                    _ => false,
+                })
+            })
+            .expect("the paragraph is rendered")
+    }
+
+    fn block_is_in_viewport(view: &MarkdownView, block: usize) -> bool {
+        let handle = &view.scroll_handle;
+        let Some(item) = handle.bounds_for_item(block) else {
+            return false;
+        };
+        let viewport = handle.bounds();
+        let offset = handle.offset().y;
+        item.top() + offset >= viewport.top() && item.bottom() + offset <= viewport.bottom()
+    }
+
+    #[gpui::test]
+    fn find_next_scrolls_each_match_into_the_viewport(cx: &mut gpui::TestAppContext) {
+        cx.executor().allow_parking();
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("notes.md");
+        let mut source = String::from("# Notes\n\n");
+        for n in 1..=120 {
+            source.push_str(&format!("Paragraph {n} mentions alpha and beta.\n\n"));
+        }
+        source.push_str("```\n");
+        source.push_str(&"wide-log-line ".repeat(2_000));
+        source.push_str("\n```\n");
+        fs::write(&path, source).expect("markdown file");
+        let (view, cx) = cx.add_window_view(|_window, cx| MarkdownView::open(path, cx));
+        cx.simulate_resize(gpui::size(px(600.), px(400.)));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while view.read_with(cx, |view, _| view.ast.is_none()) {
+            assert!(Instant::now() < deadline, "the markdown never loaded");
+            cx.run_until_parked();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let focus = view.read_with(cx, |view, _| view.focus_handle.clone());
+        cx.update(|window, cx| focus.focus(window, cx));
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+
+        cx.dispatch_action(crate::MarkdownFindOpen);
+        cx.simulate_input("Paragraph 7");
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        let (matches, first) = view.read_with(cx, |view, _| {
+            (
+                view.search_matches.len(),
+                block_index_of(view, "Paragraph 7 "),
+            )
+        });
+        assert_eq!(matches, 11);
+        assert!(
+            view.read_with(cx, |view, _| block_is_in_viewport(view, first)),
+            "match 1 of 11 is on screen"
+        );
+
+        cx.dispatch_action(crate::MarkdownFindNext);
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        let (current, second, visible) = view.read_with(cx, |view, _| {
+            let second = block_index_of(view, "Paragraph 70 ");
+            (
+                view.search_current,
+                second,
+                block_is_in_viewport(view, second),
+            )
+        });
+        assert_eq!(current, 1);
+        assert!(
+            visible,
+            "match 2 of 11 (block {second}) is scrolled into view"
+        );
+
+        for _ in 0..9 {
+            cx.dispatch_action(crate::MarkdownFindNext);
+            cx.update(|window, cx| {
+                window.draw(cx).clear(cx);
+            });
+        }
+        let (current, last, visible) = view.read_with(cx, |view, _| {
+            let last = block_index_of(view, "Paragraph 79 ");
+            (view.search_current, last, block_is_in_viewport(view, last))
+        });
+        assert_eq!(current, 10);
+        assert!(
+            visible,
+            "match 11 of 11 (block {last}) is scrolled into view"
+        );
+
+        cx.dispatch_action(crate::MarkdownFindNext);
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+        });
+        assert!(
+            view.read_with(cx, |view, _| block_is_in_viewport(view, first)),
+            "wrapping to match 1 brings it back into view"
+        );
+    }
+
     #[cfg(unix)]
     fn mkfifo(path: &std::path::Path) {
         let made = std::process::Command::new("mkfifo")
@@ -1418,6 +1609,34 @@ mod tests {
                 corpus
             );
         }
+    }
+
+    #[test]
+    fn block_starts_index_the_same_corpus_the_search_reads() {
+        let nodes = parse_with_limit("# Title\n\nfirst para\n\n- a\n- b\n\n```\ncode\n```\n")
+            .expect("parse");
+        let (corpus, starts) = harvest_text_with_block_starts(&nodes);
+        assert_eq!(corpus, harvest_text(&nodes));
+        assert_eq!(starts.len(), nodes.len());
+        assert_eq!(starts[0], 0);
+        assert_eq!(&corpus[starts[1]..starts[2]], "first para\n");
+        assert!(corpus[starts[3]..].starts_with("code"));
+    }
+
+    #[test]
+    fn reveal_top_moves_only_when_the_match_leaves_the_viewport() {
+        assert_eq!(reveal_top(100.0, 120.0, 400.0, 0.0, 2_000.0), 0.0);
+        assert_eq!(
+            reveal_top(900.0, 920.0, 400.0, 0.0, 2_000.0),
+            920.0 + MATCH_REVEAL_MARGIN_PX - 400.0
+        );
+        assert_eq!(
+            reveal_top(100.0, 120.0, 400.0, 600.0, 2_000.0),
+            100.0 - MATCH_REVEAL_MARGIN_PX
+        );
+        assert_eq!(reveal_top(10.0, 30.0, 400.0, 600.0, 2_000.0), 0.0);
+        assert_eq!(reveal_top(2_390.0, 2_400.0, 400.0, 0.0, 2_000.0), 2_000.0);
+        assert_eq!(reveal_top(900.0, 920.0, 0.0, 50.0, 2_000.0), 50.0);
     }
 
     #[test]
