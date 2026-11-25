@@ -1783,7 +1783,21 @@ stopped worker and doubled by a second one. An endpoint at its connection cap
 answers an id-less `-32000` refusal and closes, often before the hello is
 written; both probes read that refusal after a failed hello write and report
 it as busy, never as faulted, and `paneflow host status` and `paneflow serve
-status` print `state: busy` and exit 1. The worker being replaced still
+status` print `state: busy` and exit 1. A refused connect is not always
+an absent endpoint: on macOS a Unix socket whose accept backlog is full
+refuses the next connect with `ECONNREFUSED`, the same error as a socket file
+left by a crash. Both probes therefore retry a refusal every 25 ms until their
+deadline while the socket file exists and the home's `instance.json` names
+that endpoint and a live process with the same kernel start time
+(`process_started_at`, written beside the identity by
+`bootstrap::instance_record_json`); a refusal still standing at the deadline
+is reported busy ("connection queue is full"). No record, a dead or reused
+PID, a record without a start time, or no socket file stays unreachable at
+once, so a stale socket never blocks a new owner. Windows named pipes never
+take this path: a pipe with every instance taken returns `ERROR_PIPE_BUSY`,
+which the connect waits out with `WaitNamedPipe` until its window ends and
+then reports as a timeout, an unanswered connection rather than an absent
+one. The worker being replaced still
 runs the previous release, which closes its listener without draining, so this
 client side is what covers the first upgrade.
 

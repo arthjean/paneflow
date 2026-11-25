@@ -708,7 +708,7 @@ impl SessionHost {
 
     fn write_instance_record(&self) -> Result<(), HostError> {
         let path = paneflow_home::host_instance_record_path_in(&self.home);
-        let json = serde_json::to_vec_pretty(&self.identity)
+        let json = crate::bootstrap::instance_record_json(&self.identity, self.identity.pid)
             .map_err(|e| HostError::Storage(e.to_string()))?;
         self.persistence
             .run_exclusive(CRITICAL_DEADLINE, move || {

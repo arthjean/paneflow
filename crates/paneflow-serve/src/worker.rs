@@ -225,7 +225,9 @@ pub fn open_with(home: &Path, launching: Launching) -> Result<RunningWorker, Wor
 
 fn write_instance_record(worker: &Worker) {
     let path = paneflow_home::serve_instance_record_path_in(&worker.home);
-    let Ok(bytes) = serde_json::to_vec_pretty(&worker.identity) else {
+    let Ok(bytes) =
+        paneflow_host::bootstrap::instance_record_json(&worker.identity, worker.identity.pid)
+    else {
         return;
     };
     if let Err(error) = paneflow_host::manifest::write_atomically(&path, &bytes) {

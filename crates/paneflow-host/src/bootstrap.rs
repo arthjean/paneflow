@@ -25,6 +25,7 @@ const BOOTSTRAP_LOCK_WAIT: Duration = Duration::from_secs(15);
 const LOCK_RETRY: Duration = Duration::from_millis(25);
 const OWNER_LOCK_WAIT: Duration = Duration::from_millis(500);
 const STARTUP_POLL: Duration = Duration::from_millis(50);
+const FULL_QUEUE_RETRY: Duration = Duration::from_millis(25);
 pub const PROBE_PATIENCE: Duration = crate::protocol::REQUEST_DEADLINE;
 pub const MAX_INSTANCE_RECORD_BYTES: u64 = 64 * 1024;
 
@@ -128,6 +129,34 @@ pub fn probe_within(home: &Path, endpoint: &Path, hello: &ClientHello, deadline:
                     window.as_millis()
                 );
             }
+            Err(HostClientError::Unreachable {
+                endpoint: shown,
+                source,
+            }) => {
+                match after_refused_connect(
+                    &paneflow_home::host_instance_record_path_in(home),
+                    endpoint,
+                    &source,
+                    deadline,
+                ) {
+                    RefusedConnect::RetryNow => {
+                        windows =
+                            answer_windows(deadline.saturating_duration_since(Instant::now()))
+                                .peekable();
+                    }
+                    RefusedConnect::QueueFull(message) => return Probe::Busy(message),
+                    RefusedConnect::Absent => {
+                        return classify_probe(
+                            home,
+                            endpoint,
+                            Err(HostClientError::Unreachable {
+                                endpoint: shown,
+                                source,
+                            }),
+                        );
+                    }
+                }
+            }
             connected => return classify_probe(home, endpoint, connected),
         }
     }
@@ -185,6 +214,86 @@ pub fn read_json_record<T: serde::de::DeserializeOwned>(path: &Path, cap: u64) -
     let mut bytes = Vec::new();
     file.take(cap).read_to_end(&mut bytes).ok()?;
     serde_json::from_slice(&bytes).ok()
+}
+
+#[derive(Serialize)]
+struct InstanceRecord<'a, T> {
+    #[serde(flatten)]
+    identity: &'a T,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    process_started_at: Option<u64>,
+}
+
+pub fn instance_record_json<T: Serialize>(identity: &T, pid: u32) -> serde_json::Result<Vec<u8>> {
+    serde_json::to_vec_pretty(&InstanceRecord {
+        identity,
+        process_started_at: crate::process::process_start_time(pid),
+    })
+}
+
+#[derive(Deserialize)]
+struct RecordedOwner {
+    pid: u32,
+    endpoint: String,
+    #[serde(default)]
+    process_started_at: Option<u64>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum RefusedConnect {
+    Absent,
+    RetryNow,
+    QueueFull(String),
+}
+
+pub fn after_refused_connect(
+    record: &Path,
+    endpoint: &Path,
+    refusal: &io::Error,
+    deadline: Instant,
+) -> RefusedConnect {
+    let Some(pid) = live_owner_of_refused_endpoint(record, endpoint, refusal) else {
+        return RefusedConnect::Absent;
+    };
+    let left = deadline.saturating_duration_since(Instant::now());
+    if left.is_zero() {
+        return RefusedConnect::QueueFull(format!(
+            "the endpoint {} is running (pid {pid}) but its connection queue is full: {refusal}",
+            endpoint.display()
+        ));
+    }
+    std::thread::sleep(FULL_QUEUE_RETRY.min(left));
+    RefusedConnect::RetryNow
+}
+
+fn live_owner_of_refused_endpoint(
+    record: &Path,
+    endpoint: &Path,
+    refusal: &io::Error,
+) -> Option<u32> {
+    if refusal.kind() != io::ErrorKind::ConnectionRefused || !socket_file_present(endpoint) {
+        return None;
+    }
+    let owner: RecordedOwner = read_json_record(record, MAX_INSTANCE_RECORD_BYTES)?;
+    let process = crate::process::ProcessIdentity {
+        pid: owner.pid,
+        started_at: owner.process_started_at,
+    };
+    (Path::new(&owner.endpoint) == endpoint
+        && process.started_at.is_some()
+        && process.verify() == crate::process::ProcessVerdict::Live)
+        .then_some(owner.pid)
+}
+
+#[cfg(unix)]
+fn socket_file_present(endpoint: &Path) -> bool {
+    use std::os::unix::fs::FileTypeExt;
+    std::fs::symlink_metadata(endpoint).is_ok_and(|metadata| metadata.file_type().is_socket())
+}
+
+#[cfg(not(unix))]
+fn socket_file_present(_endpoint: &Path) -> bool {
+    false
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -802,6 +911,97 @@ mod tests {
             matches!(outcome, Probe::Unreachable(_)),
             "a probe stuck on its first connection never saw the host leave: {outcome:?}"
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    fn fill_accept_backlog(endpoint: &Path) -> Vec<std::os::unix::net::UnixStream> {
+        let mut queued = Vec::new();
+        loop {
+            match std::os::unix::net::UnixStream::connect(endpoint) {
+                Ok(stream) => queued.push(stream),
+                Err(error) if error.kind() == io::ErrorKind::ConnectionRefused => return queued,
+                Err(error) => panic!("cannot queue on {}: {error}", endpoint.display()),
+            }
+            assert!(queued.len() <= 4096, "the accept backlog never filled");
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_live_host_whose_accept_backlog_is_full_probes_as_busy_rather_than_absent() {
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = home.path().join("full.sock");
+        let host = crate::SessionHost::open(home.path(), &endpoint).unwrap();
+        let listener = std::os::unix::net::UnixListener::bind(&endpoint).unwrap();
+        let queued = fill_accept_backlog(&endpoint);
+        let outcome = probe_within(
+            home.path(),
+            &endpoint,
+            &ClientHello::local("full-queue-probe"),
+            Instant::now() + Duration::from_secs(1),
+        );
+        drop(queued);
+        drop(listener);
+        drop(host);
+        match outcome {
+            Probe::Busy(message) => {
+                assert!(message.contains("connection queue is full"), "{message}");
+            }
+            other => panic!("a live host with a full queue must probe as busy, got {other:?}"),
+        }
+    }
+
+    #[cfg(unix)]
+    fn exited_process() -> (u32, Option<u64>) {
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let started = crate::process::process_start_time(pid);
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert!(started.is_some(), "no start time for the live child {pid}");
+        (pid, started)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_refused_endpoint_left_by_a_dead_or_replaced_host_probes_as_unreachable() {
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = home.path().join("stale.sock");
+        drop(std::os::unix::net::UnixListener::bind(&endpoint).unwrap());
+        assert!(
+            endpoint.exists(),
+            "the stale socket file was not left behind"
+        );
+        let hello = ClientHello::local("stale-probe");
+        assert!(matches!(
+            probe(home.path(), &endpoint, &hello),
+            Probe::Unreachable(_)
+        ));
+        let record = paneflow_home::host_instance_record_path_in(home.path());
+        std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+        let this_process = std::process::id();
+        let (dead, dead_started) = exited_process();
+        let reused_started = crate::process::process_start_time(this_process).map(|at| at + 1);
+        for (pid, started) in [
+            (dead, dead_started),
+            (this_process, reused_started),
+            (this_process, None),
+        ] {
+            let owner = serde_json::json!({
+                "pid": pid,
+                "endpoint": endpoint.display().to_string(),
+                "process_started_at": started,
+            });
+            std::fs::write(&record, serde_json::to_vec(&owner).unwrap()).unwrap();
+            let outcome = probe(home.path(), &endpoint, &hello);
+            assert!(
+                matches!(outcome, Probe::Unreachable(_)),
+                "{owner}: {outcome:?}"
+            );
+        }
     }
 
     #[test]

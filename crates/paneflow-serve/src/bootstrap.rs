@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use paneflow_host::bootstrap::{
-    BootstrapError, MAX_INSTANCE_RECORD_BYTES, read_json_record, release_child, spawn_detached,
+    BootstrapError, MAX_INSTANCE_RECORD_BYTES, RefusedConnect, after_refused_connect,
+    read_json_record, release_child, spawn_detached,
 };
 use paneflow_ipc_client::host_control::{
     ControlProbeError, HostControl, REQUEST_DEADLINE, SHORTEST_PROBE, answer_windows,
@@ -37,7 +38,19 @@ pub fn probe_within(home: &Path, endpoint: &Path, deadline: Instant) -> Probe {
         let window = windows.next().unwrap_or(SHORTEST_PROBE);
         match HostControl::probe_open(endpoint, CLIENT_NAME, window) {
             Ok(control) => return identify(home, endpoint, &control),
-            Err(ControlProbeError::Absent(error)) => return Probe::Unreachable(error.to_string()),
+            Err(ControlProbeError::Absent(error)) => match after_refused_connect(
+                &paneflow_home::serve_instance_record_path_in(home),
+                endpoint,
+                &error,
+                deadline,
+            ) {
+                RefusedConnect::RetryNow => {
+                    windows = answer_windows(deadline.saturating_duration_since(Instant::now()))
+                        .peekable();
+                }
+                RefusedConnect::QueueFull(message) => return Probe::Busy(message),
+                RefusedConnect::Absent => return Probe::Unreachable(error.to_string()),
+            },
             Err(ControlProbeError::Unanswered(reason)) if windows.peek().is_some() => {
                 log::debug!(
                     "paneflow-serve: {} gave no answer within {} ms ({reason}); probing again",
@@ -439,25 +452,111 @@ mod tests {
         let held: Vec<_> = (0..crate::server::MAX_CONNECTIONS)
             .map(|_| std::os::unix::net::UnixStream::connect(&endpoint).unwrap())
             .collect();
-        let backlog_drained_by = Instant::now() + Duration::from_secs(10);
-        let outcome = loop {
-            match probe_within(
-                home.path(),
-                &endpoint,
-                Instant::now() + Duration::from_secs(5),
-            ) {
-                Probe::Unreachable(_) if Instant::now() < backlog_drained_by => {
-                    std::thread::sleep(Duration::from_millis(20));
-                }
-                outcome => break outcome,
-            }
-        };
+        let outcome = probe_within(
+            home.path(),
+            &endpoint,
+            Instant::now() + Duration::from_secs(5),
+        );
         match outcome {
-            Probe::Busy(message) => assert!(message.contains("worker busy"), "{message}"),
+            Probe::Busy(message) => assert!(
+                message.contains("worker busy") || message.contains("connection queue is full"),
+                "{message}"
+            ),
             other => panic!("a full worker must probe as busy, got {other:?}"),
         }
         drop(held);
         worker.stop();
+    }
+
+    #[cfg(target_os = "macos")]
+    fn fill_accept_backlog(endpoint: &Path) -> Vec<std::os::unix::net::UnixStream> {
+        let mut queued = Vec::new();
+        loop {
+            match std::os::unix::net::UnixStream::connect(endpoint) {
+                Ok(stream) => queued.push(stream),
+                Err(error) if error.kind() == io::ErrorKind::ConnectionRefused => return queued,
+                Err(error) => panic!("cannot queue on {}: {error}", endpoint.display()),
+            }
+            assert!(queued.len() <= 4096, "the accept backlog never filled");
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_live_worker_whose_accept_backlog_is_full_probes_as_busy_rather_than_absent() {
+        let home = tempfile::tempdir().unwrap();
+        let record = paneflow_home::serve_instance_record_path_in(home.path());
+        let worker = crate::open(home.path()).unwrap();
+        let written = std::fs::read(&record).unwrap();
+        worker.stop();
+        std::fs::write(&record, written).unwrap();
+        let stalled = SilentWorker::bind(home.path());
+        let queued = fill_accept_backlog(&stalled.endpoint);
+        let outcome = probe_within(
+            home.path(),
+            &stalled.endpoint,
+            Instant::now() + Duration::from_secs(1),
+        );
+        drop(queued);
+        match outcome {
+            Probe::Busy(message) => {
+                assert!(message.contains("connection queue is full"), "{message}");
+            }
+            other => panic!("a live worker with a full queue must probe as busy, got {other:?}"),
+        }
+    }
+
+    #[cfg(unix)]
+    fn exited_process() -> (u32, Option<u64>) {
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let started = paneflow_peer::process_start_time(pid);
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert!(started.is_some(), "no start time for the live child {pid}");
+        (pid, started)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_refused_endpoint_left_by_a_dead_or_replaced_worker_probes_as_unreachable() {
+        let home = tempfile::tempdir().unwrap();
+        let endpoint = paneflow_home::serve_endpoint_path(home.path());
+        std::fs::create_dir_all(endpoint.parent().unwrap()).unwrap();
+        drop(std::os::unix::net::UnixListener::bind(&endpoint).unwrap());
+        assert!(
+            endpoint.exists(),
+            "the stale socket file was not left behind"
+        );
+        assert!(matches!(
+            probe(home.path(), &endpoint),
+            Probe::Unreachable(_)
+        ));
+        let record = paneflow_home::serve_instance_record_path_in(home.path());
+        std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+        let this_process = std::process::id();
+        let (dead, dead_started) = exited_process();
+        let reused_started = paneflow_peer::process_start_time(this_process).map(|at| at + 1);
+        for (pid, started) in [
+            (dead, dead_started),
+            (this_process, reused_started),
+            (this_process, None),
+        ] {
+            let owner = json!({
+                "pid": pid,
+                "endpoint": endpoint.display().to_string(),
+                "process_started_at": started,
+            });
+            std::fs::write(&record, serde_json::to_vec(&owner).unwrap()).unwrap();
+            let outcome = probe(home.path(), &endpoint);
+            assert!(
+                matches!(outcome, Probe::Unreachable(_)),
+                "{owner}: {outcome:?}"
+            );
+        }
     }
 
     #[cfg(unix)]
