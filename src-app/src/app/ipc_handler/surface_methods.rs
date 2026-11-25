@@ -809,14 +809,17 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn schedule_deferred_submit(
+        &mut self,
         terminal: &Entity<TerminalView>,
         floor: Duration,
         cx: &mut Context<Self>,
     ) {
         let weak = terminal.downgrade();
+        let surface = terminal.read(cx).surface_id();
         let gen_before = terminal.read(cx).terminal.output_generation;
         let cap = floor + SUBMIT_ECHO_EXTRA;
-        cx.spawn(async move |_, cx: &mut gpui::AsyncApp| {
+        *self.deferred_submits.entry(surface).or_default() += 1;
+        cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
             smol::Timer::after(floor).await;
             let gen_now = |cx: &mut gpui::AsyncApp| -> Option<u64> {
                 cx.update(|cx| {
@@ -825,23 +828,37 @@ impl PaneFlowApp {
                 })
             };
             let mut waited = floor;
-            loop {
+            let submit = loop {
                 match submit_echo_tick(gen_before, gen_now(cx), waited, cap) {
-                    SubmitTick::Abort => return,
-                    SubmitTick::Submit => break,
+                    SubmitTick::Abort => break false,
+                    SubmitTick::Submit => break true,
                     SubmitTick::Wait => {
                         smol::Timer::after(SUBMIT_ECHO_POLL).await;
                         waited += SUBMIT_ECHO_POLL;
                     }
                 }
-            }
-            cx.update(|cx| {
-                if let Some(t) = weak.upgrade() {
+            };
+            let _ = this.update(cx, |app, cx| {
+                if submit && let Some(t) = weak.upgrade() {
                     t.read(cx).send_text("\r");
                 }
+                app.finish_deferred_submit(surface);
             });
         })
         .detach();
+    }
+
+    fn finish_deferred_submit(&mut self, surface: u64) {
+        if let Some(pending) = self.deferred_submits.get_mut(&surface) {
+            *pending = pending.saturating_sub(1);
+            if *pending == 0 {
+                self.deferred_submits.remove(&surface);
+            }
+        }
+    }
+
+    pub(crate) fn deferred_submit_pending(&self, surface: u64) -> bool {
+        self.deferred_submits.contains_key(&surface)
     }
 
     pub(super) fn surface_list(
@@ -1059,7 +1076,7 @@ impl PaneFlowApp {
                 let floor = std::time::Duration::from_millis(
                     self.cached_config.resolved_submit_paste_delay_ms(),
                 );
-                Self::schedule_deferred_submit(&terminal, floor, cx);
+                self.schedule_deferred_submit(&terminal, floor, cx);
             } else if let Err(reason) = terminal.read(cx).write_program_text("\r") {
                 return input_rejected_error(reason).into_value();
             }

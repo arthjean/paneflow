@@ -318,27 +318,170 @@ fn format_variable(name: &str, pane: &PaneContext<'_>) -> String {
     }
 }
 
-pub(crate) fn keys_to_text(keys: &[String], literal: bool) -> String {
-    if literal {
-        return keys.concat();
-    }
-    keys.iter().map(|key| key_text(key)).collect()
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum KeyStep {
+    Type { text: String, submit: bool },
+    Press(String),
 }
 
-fn key_text(key: &str) -> String {
-    match key {
-        "Enter" | "C-m" | "KPEnter" => "\r".to_string(),
-        "Escape" | "Esc" => "\u{1b}".to_string(),
-        "Tab" | "C-i" => "\t".to_string(),
-        "Space" => " ".to_string(),
-        "BSpace" => "\u{7f}".to_string(),
-        _ => match key.strip_prefix("C-").map(str::as_bytes) {
-            Some([letter]) if letter.is_ascii_alphabetic() => {
-                char::from(letter.to_ascii_lowercase() - b'a' + 1).to_string()
-            }
-            _ => key.to_string(),
-        },
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct Modifiers {
+    ctrl: bool,
+    alt: bool,
+    shift: bool,
+}
+
+impl Modifiers {
+    const CTRL: Self = Self {
+        ctrl: true,
+        alt: false,
+        shift: false,
+    };
+
+    fn any(self) -> bool {
+        self.ctrl || self.alt || self.shift
     }
+
+    fn chord(self, key: &str) -> String {
+        let mut chord = String::new();
+        for (held, name) in [
+            (self.ctrl, "ctrl-"),
+            (self.alt, "alt-"),
+            (self.shift, "shift-"),
+        ] {
+            if held {
+                chord.push_str(name);
+            }
+        }
+        chord.push_str(key);
+        chord
+    }
+}
+
+enum TmuxKey<'a> {
+    Text(&'a str),
+    Submit,
+    Press(String),
+}
+
+const NAMED_KEYS: [(&str, &str); 24] = [
+    ("enter", "enter"),
+    ("kpenter", "enter"),
+    ("escape", "escape"),
+    ("esc", "escape"),
+    ("tab", "tab"),
+    ("btab", "shift-tab"),
+    ("space", "space"),
+    ("bspace", "backspace"),
+    ("dc", "delete"),
+    ("delete", "delete"),
+    ("ic", "insert"),
+    ("insert", "insert"),
+    ("home", "home"),
+    ("end", "end"),
+    ("npage", "pagedown"),
+    ("pagedown", "pagedown"),
+    ("pgdn", "pagedown"),
+    ("ppage", "pageup"),
+    ("pageup", "pageup"),
+    ("pgup", "pageup"),
+    ("up", "up"),
+    ("down", "down"),
+    ("left", "left"),
+    ("right", "right"),
+];
+
+fn named_key(base: &str) -> Option<String> {
+    let lower = base.to_ascii_lowercase();
+    if let Some((_, key)) = NAMED_KEYS.iter().find(|(name, _)| *name == lower) {
+        return Some((*key).to_string());
+    }
+    let digits = lower.strip_prefix('f')?;
+    let number: u8 = digits.parse().ok()?;
+    ((1..=12).contains(&number) && !digits.starts_with('0')).then(|| format!("f{number}"))
+}
+
+fn split_modifiers(key: &str) -> (Modifiers, &str) {
+    let mut modifiers = Modifiers::default();
+    let mut rest = key;
+    loop {
+        let bytes = rest.as_bytes();
+        if bytes.len() > 2 && bytes[1] == b'-' {
+            match bytes[0].to_ascii_uppercase() {
+                b'C' => modifiers.ctrl = true,
+                b'M' => modifiers.alt = true,
+                b'S' => modifiers.shift = true,
+                _ => break,
+            }
+            rest = &rest[2..];
+        } else if bytes.len() > 1 && bytes[0] == b'^' {
+            modifiers.ctrl = true;
+            rest = &rest[1..];
+        } else {
+            break;
+        }
+    }
+    (modifiers, rest)
+}
+
+fn tmux_key(key: &str) -> TmuxKey<'_> {
+    let (mut modifiers, base) = split_modifiers(key);
+    if let Some(named) = named_key(base) {
+        return match (named.as_str(), modifiers.any()) {
+            ("enter", false) => TmuxKey::Submit,
+            ("space", false) => TmuxKey::Text(" "),
+            _ => TmuxKey::Press(modifiers.chord(&named)),
+        };
+    }
+    let mut chars = base.chars();
+    let (Some(letter), None) = (chars.next(), chars.next()) else {
+        return TmuxKey::Text(key);
+    };
+    if !modifiers.any() || !letter.is_ascii_graphic() {
+        return TmuxKey::Text(key);
+    }
+    if modifiers == Modifiers::CTRL && letter.eq_ignore_ascii_case(&'m') {
+        return TmuxKey::Submit;
+    }
+    if !modifiers.ctrl && letter.is_ascii_uppercase() {
+        modifiers.shift = true;
+    }
+    TmuxKey::Press(modifiers.chord(&letter.to_ascii_lowercase().to_string()))
+}
+
+pub(crate) fn key_steps(keys: &[String], literal: bool) -> Vec<KeyStep> {
+    let mut steps = Vec::new();
+    let mut typed = String::new();
+    for key in keys {
+        let key = if literal {
+            TmuxKey::Text(key)
+        } else {
+            tmux_key(key)
+        };
+        match key {
+            TmuxKey::Text(text) => typed.push_str(text),
+            TmuxKey::Submit => steps.push(KeyStep::Type {
+                text: std::mem::take(&mut typed),
+                submit: true,
+            }),
+            TmuxKey::Press(chord) => {
+                if !typed.is_empty() {
+                    steps.push(KeyStep::Type {
+                        text: std::mem::take(&mut typed),
+                        submit: false,
+                    });
+                }
+                steps.push(KeyStep::Press(chord));
+            }
+        }
+    }
+    if !typed.is_empty() {
+        steps.push(KeyStep::Type {
+            text: typed,
+            submit: false,
+        });
+    }
+    steps
 }
 
 #[cfg(test)]
@@ -465,11 +608,107 @@ mod tests {
         assert_eq!(parse_target("%x"), Target::Unknown("%x".to_string()));
     }
 
+    fn typed(text: &str, submit: bool) -> KeyStep {
+        KeyStep::Type {
+            text: text.to_string(),
+            submit,
+        }
+    }
+
+    fn press(chord: &str) -> KeyStep {
+        KeyStep::Press(chord.to_string())
+    }
+
     #[test]
-    fn send_keys_translates_key_names_unless_literal() {
-        let keys = argv("echo Space hi Enter C-c");
-        assert_eq!(keys_to_text(&keys, false), "echo hi\r\u{3}");
-        assert_eq!(keys_to_text(&argv("Enter"), true), "Enter");
+    fn send_keys_types_words_and_submits_on_enter_in_order() {
+        assert_eq!(
+            key_steps(&argv("echo Space hi Enter C-c"), false),
+            vec![typed("echo hi", true), press("ctrl-c")]
+        );
+        assert_eq!(key_steps(&argv("x Enter"), false), vec![typed("x", true)]);
+        assert_eq!(
+            key_steps(&argv("a Enter b C-m"), false),
+            vec![typed("a", true), typed("b", true)]
+        );
+        assert_eq!(
+            key_steps(&argv("ab Escape cd"), false),
+            vec![typed("ab", false), press("escape"), typed("cd", false)]
+        );
+        assert_eq!(
+            key_steps(&["hello world".to_string(), "Enter".to_string()], false),
+            vec![typed("hello world", true)]
+        );
+    }
+
+    #[test]
+    fn a_bare_enter_or_c_m_is_a_submit_with_no_text() {
+        for key in ["Enter", "C-m", "c-M", "^M", "KPEnter", "enter"] {
+            assert_eq!(key_steps(&argv(key), false), vec![typed("", true)], "{key}");
+        }
+    }
+
+    #[test]
+    fn tmux_key_names_become_paneflow_keystrokes() {
+        for (key, chord) in [
+            ("Escape", "escape"),
+            ("Tab", "tab"),
+            ("BTab", "shift-tab"),
+            ("BSpace", "backspace"),
+            ("C-c", "ctrl-c"),
+            ("C-C", "ctrl-c"),
+            ("^C", "ctrl-c"),
+            ("C-d", "ctrl-d"),
+            ("C-Space", "ctrl-space"),
+            ("M-x", "alt-x"),
+            ("M-X", "alt-shift-x"),
+            ("C-M-a", "ctrl-alt-a"),
+            ("Up", "up"),
+            ("Down", "down"),
+            ("Left", "left"),
+            ("S-Right", "shift-right"),
+            ("Home", "home"),
+            ("End", "end"),
+            ("PageUp", "pageup"),
+            ("PPage", "pageup"),
+            ("NPage", "pagedown"),
+            ("PgDn", "pagedown"),
+            ("DC", "delete"),
+            ("IC", "insert"),
+            ("F1", "f1"),
+            ("F12", "f12"),
+            ("M-Enter", "alt-enter"),
+        ] {
+            assert_eq!(key_steps(&argv(key), false), vec![press(chord)], "{key}");
+        }
+    }
+
+    #[test]
+    fn words_that_only_look_like_keys_stay_text() {
+        for word in [
+            "C-3PO",
+            "F13",
+            "F01",
+            "Enterprise",
+            "C-",
+            "^",
+            "S-",
+            "hello",
+        ] {
+            assert_eq!(
+                key_steps(&argv(word), false),
+                vec![typed(word, false)],
+                "{word}"
+            );
+        }
+    }
+
+    #[test]
+    fn literal_mode_types_every_argument_verbatim() {
+        assert_eq!(
+            key_steps(&argv("Enter C-c x"), true),
+            vec![typed("EnterC-cx", false)]
+        );
+        assert_eq!(key_steps(&[], false), Vec::<KeyStep>::new());
     }
 
     #[test]

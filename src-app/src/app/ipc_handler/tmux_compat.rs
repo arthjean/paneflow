@@ -1,8 +1,10 @@
 use super::*;
 use crate::app::close_policy::{CloseIntent, CloseTarget};
-use crate::tmux_compat::command::{self, PaneContext, TmuxCommand};
+use crate::tmux_compat::command::{self, KeyStep, PaneContext, TmuxCommand};
 use crate::tmux_compat::teams::{LEADER, Team, TeamError};
 use crate::tmux_compat::{TEAM_ENV, compat_dir, teammate_command};
+use paneflow_ipc_client::send_text::SUBMIT_ECHO_POLL;
+use std::collections::VecDeque;
 
 const MAX_ARGV: usize = 256;
 const MAX_ARGV_BYTES: usize = 256 * 1024;
@@ -63,6 +65,30 @@ fn pane_line(team: &Team, local: u32, caller: u32, format: &str) -> String {
             active: local == caller,
         },
     )
+}
+
+struct KeyDelivery {
+    surface: u64,
+    scope_session: Option<String>,
+    caller_pid: Option<i64>,
+    gates: paneflow_api::Gates,
+}
+
+fn key_step_call(delivery: &KeyDelivery, step: KeyStep) -> (&'static str, serde_json::Value) {
+    let (method, mut params) = match step {
+        KeyStep::Type { text, submit } => (
+            "surface.send_text",
+            serde_json::json!({"surface_id": delivery.surface, "text": text, "submit": submit}),
+        ),
+        KeyStep::Press(chord) => (
+            "surface.send_keystroke",
+            serde_json::json!({"surface_id": delivery.surface, "keystroke": chord}),
+        ),
+    };
+    if let Some(session) = &delivery.scope_session {
+        params["scope_session"] = serde_json::Value::String(session.clone());
+    }
+    (method, params)
 }
 
 fn error_message(value: &serde_json::Value) -> String {
@@ -252,33 +278,14 @@ impl PaneFlowApp {
                         "paneflow tmux-compat: pane %{local} has not started"
                     )));
                 };
-                let mut params = serde_json::json!({
-                    "surface_id": surface,
-                    "text": command::keys_to_text(&keys, literal),
-                    "paste": false,
-                });
-                if let Some(session) = &request.scope_session {
-                    params["scope_session"] = serde_json::Value::String(session.clone());
-                }
-                let reply = match registry().serve(
-                    self,
-                    "surface.send_text",
-                    &params,
+                let delivery = KeyDelivery {
+                    surface,
+                    scope_session: request.scope_session.clone(),
                     caller_pid,
-                    self.ipc_gates,
-                    cx,
-                ) {
-                    IpcReply::Ready(reply) => reply,
-                    IpcReply::Deferred(_) | IpcReply::Async(_) => {
-                        return ready(failure(
-                            "paneflow tmux-compat: send-keys was not answered at once".to_string(),
-                        ));
-                    }
+                    gates: self.ipc_gates,
                 };
-                if reply.get(JSONRPC_ERROR_KEY).is_some() {
-                    return ready(failure(error_message(&reply)));
-                }
-                ready(success(String::new()))
+                let steps = command::key_steps(&keys, literal).into();
+                Ok(self.deliver_key_steps(delivery, steps, cx))
             }
             TmuxCommand::Unsupported(verb) => {
                 log::warn!(
@@ -372,6 +379,70 @@ impl PaneFlowApp {
                 (Some(_), Ok(())) => success(printed),
                 (None, _) => failure(format!("paneflow tmux-compat: {}", error_message(&result))),
                 (Some(_), Err(_)) => app_shutting_down(),
+            }
+        }))
+    }
+
+    fn deliver_key_steps(
+        &mut self,
+        delivery: KeyDelivery,
+        mut steps: VecDeque<KeyStep>,
+        cx: &mut Context<Self>,
+    ) -> IpcReply {
+        while let Some(step) = steps.pop_front() {
+            if self.deferred_submit_pending(delivery.surface) {
+                steps.push_front(step);
+                return self.deliver_key_steps_after_submit(delivery, steps, cx);
+            }
+            let (method, params) = key_step_call(&delivery, step);
+            let reply = match registry().serve(
+                self,
+                method,
+                &params,
+                delivery.caller_pid,
+                delivery.gates,
+                cx,
+            ) {
+                IpcReply::Ready(reply) => reply,
+                IpcReply::Deferred(_) | IpcReply::Async(_) => {
+                    return IpcReply::Ready(failure(
+                        "paneflow tmux-compat: send-keys was not answered at once".to_string(),
+                    ));
+                }
+            };
+            if reply.get(JSONRPC_ERROR_KEY).is_some() {
+                return IpcReply::Ready(failure(error_message(&reply)));
+            }
+        }
+        IpcReply::Ready(success(String::new()))
+    }
+
+    fn deliver_key_steps_after_submit(
+        &mut self,
+        delivery: KeyDelivery,
+        steps: VecDeque<KeyStep>,
+        cx: &mut Context<Self>,
+    ) -> IpcReply {
+        let surface = delivery.surface;
+        IpcReply::Async(cx.spawn(async move |this, cx: &mut gpui::AsyncApp| {
+            loop {
+                smol::Timer::after(SUBMIT_ECHO_POLL).await;
+                match this.update(cx, |app, _| app.deferred_submit_pending(surface)) {
+                    Ok(true) => {}
+                    Ok(false) => break,
+                    Err(_) => return app_shutting_down(),
+                }
+            }
+            let next = match this.update(cx, |app, cx| app.deliver_key_steps(delivery, steps, cx)) {
+                Ok(next) => next,
+                Err(_) => return app_shutting_down(),
+            };
+            match next {
+                IpcReply::Ready(value) => value,
+                IpcReply::Async(task) => task.await,
+                IpcReply::Deferred(_) => {
+                    failure("paneflow tmux-compat: send-keys was not answered at once".to_string())
+                }
             }
         }))
     }

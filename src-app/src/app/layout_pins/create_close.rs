@@ -11,7 +11,7 @@ use crate::{
     SplitVertically, ToggleZoom, UndoClosePane,
 };
 
-pub(super) const PINS: usize = 26;
+pub(super) const PINS: usize = 28;
 
 fn split_v(rig: &mut Rig<'_>) {
     rig.act(|app, window, cx| app.handle_split_v(&SplitVertically, window, cx));
@@ -119,6 +119,174 @@ fn pin_a_team_answers_tmux_only_to_a_process_in_the_pane_it_names(cx: &mut TestA
         listed["result"],
         json!({"stdout": "%1", "stderr": "", "exit": 0})
     );
+}
+
+struct TeamRig {
+    token: String,
+    leader: paneflow_api::Principal,
+    lead: u64,
+}
+
+fn team_with_one_teammate(rig: &mut Rig<'_>) -> TeamRig {
+    rig.workspace("alpha");
+    rig.focus("a");
+    split_v(rig);
+    rig.requests();
+    let lead = rig.surface_id("a");
+    let token = rig.act(|app, _, _| app.tmux_teams.issue());
+    let leader = pane_principal(rig, "a");
+    let opened = rig.ipc_as(
+        "tmux.compat",
+        json!({"team": token, "surface_id": lead, "argv": [
+            "split-window", "-h", "-P", "-F", "#{pane_id}", "echo teammate-1-started; cat"
+        ]}),
+        paneflow_api::Gates::CLOSED,
+        &leader,
+    );
+    assert_eq!(
+        opened["result"],
+        json!({"stdout": "%1", "stderr": "", "exit": 0})
+    );
+    assert_eq!(rig.requests(), ["create c"]);
+    TeamRig {
+        token,
+        leader,
+        lead,
+    }
+}
+
+fn send_keys(
+    rig: &mut Rig<'_>,
+    team: &TeamRig,
+    keys: &[&str],
+    gates: paneflow_api::Gates,
+) -> serde_json::Value {
+    let mut argv = vec!["send-keys", "-t", "%1"];
+    argv.extend_from_slice(keys);
+    let reply = rig.ipc_as(
+        "tmux.compat",
+        json!({"team": team.token, "surface_id": team.lead, "argv": argv}),
+        gates,
+        &team.leader,
+    );
+    reply["result"].clone()
+}
+
+fn scripting_open() -> paneflow_api::Gates {
+    paneflow_api::Gates {
+        scripting: true,
+        ..paneflow_api::Gates::CLOSED
+    }
+}
+
+fn without_the_launch_command(queued: &str) -> String {
+    const LAUNCH_START: &str = "CLAUDE_CODE_TMUX_TRUECOLOR=1 ";
+    const LAUNCH_END: &str = "sh -c 'echo teammate-1-started; cat'\r";
+    let Some(start) = queued.find(LAUNCH_START) else {
+        return queued.to_string();
+    };
+    match queued[start..].find(LAUNCH_END) {
+        Some(end) => format!(
+            "{}{}",
+            &queued[..start],
+            &queued[start + end + LAUNCH_END.len()..]
+        ),
+        None => queued.to_string(),
+    }
+}
+
+fn wait_for_queued(rig: &mut Rig<'_>, name: &str, expected: &str) {
+    let terminal = rig.terminal(name);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let queued = rig
+            .cx
+            .read(|cx| without_the_launch_command(&terminal.read(cx).terminal.queued_input_text()));
+        if queued == expected {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{name} received {queued:?}, expected {expected:?}"
+        );
+        rig.cx.run_until_parked();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_send_keys_types_words_then_presses_enter_in_a_teammate(cx: &mut TestAppContext) {
+    let mut rig = Rig::mount(cx);
+    let team = team_with_one_teammate(&mut rig);
+    let ok = json!({"stdout": "", "stderr": "", "exit": 0});
+
+    let refused = send_keys(
+        &mut rig,
+        &team,
+        &["x", "Enter"],
+        paneflow_api::Gates::CLOSED,
+    );
+    assert_eq!(refused["exit"], json!(1), "{refused}");
+    assert!(
+        refused["stderr"]
+            .as_str()
+            .is_some_and(|stderr| stderr.contains("surface.send_text disabled")),
+        "{refused}"
+    );
+    let refused = send_keys(&mut rig, &team, &["C-c"], paneflow_api::Gates::CLOSED);
+    assert!(
+        refused["stderr"]
+            .as_str()
+            .is_some_and(|stderr| stderr.contains("surface.send_keystroke disabled")),
+        "{refused}"
+    );
+    wait_for_queued(&mut rig, "c", "");
+
+    assert_eq!(
+        send_keys(&mut rig, &team, &["x", "Enter"], scripting_open()),
+        ok
+    );
+    wait_for_queued(&mut rig, "c", "x\r");
+    for keys in [
+        &["-l", "typed-by-send-keys"][..],
+        &["Enter"],
+        &["C-m"],
+        &["echo", "Space", "hi", "C-c"],
+        &["-l", "Enter"],
+    ] {
+        assert_eq!(
+            send_keys(&mut rig, &team, keys, scripting_open()),
+            ok,
+            "{keys:?}"
+        );
+    }
+    wait_for_queued(&mut rig, "c", "x\rtyped-by-send-keys\r\recho hi\u{3}Enter");
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_send_keys_to_an_agent_teammate_submits_each_prompt_before_the_next(cx: &mut TestAppContext) {
+    let mut rig = Rig::mount(cx);
+    let team = team_with_one_teammate(&mut rig);
+    let teammate = rig.surface_id("c");
+    rig.act(|app, _, _| {
+        let mut agent = crate::ai_types::AgentSession::new(
+            crate::agent_launcher::TerminalAgent::ClaudeCode,
+            crate::ai_types::AgentState::WaitingForInput,
+        );
+        agent.surface_id = Some(teammate);
+        app.workspaces[0].agent_sessions.insert(1, agent);
+    });
+
+    let sent = send_keys(
+        &mut rig,
+        &team,
+        &["first prompt", "Enter", "second prompt", "Enter", "Escape"],
+        scripting_open(),
+    );
+    assert_eq!(sent, json!({"stdout": "", "stderr": "", "exit": 0}));
+    wait_for_queued(&mut rig, "c", "first prompt\rsecond prompt\r\u{1b}");
 }
 
 #[gpui::test]

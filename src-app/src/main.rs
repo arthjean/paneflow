@@ -235,6 +235,7 @@ struct PaneFlowApp {
     event_bus: std::sync::Arc<ipc_events::EventBus>,
     last_broadcast_gen: std::collections::HashMap<u64, u64>,
     tmux_teams: tmux_compat::teams::TmuxTeams,
+    deferred_submits: std::collections::HashMap<u64, usize>,
     title_bar: Entity<title_bar::TitleBar>,
     primary_sidebar_visible: bool,
     primary_sidebar_animation: Option<SidebarWidthAnimation>,

@@ -384,6 +384,7 @@ impl PaneFlowApp {
             event_bus,
             last_broadcast_gen: std::collections::HashMap::new(),
             tmux_teams: crate::tmux_compat::teams::TmuxTeams::default(),
+            deferred_submits: std::collections::HashMap::new(),
             title_bar,
             primary_sidebar_visible: true,
             primary_sidebar_animation: None,
