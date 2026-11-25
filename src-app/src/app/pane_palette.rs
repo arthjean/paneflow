@@ -94,7 +94,7 @@ impl Preset {
         }
     }
 
-    pub(crate) fn command(&self, config: &PaneFlowConfig) -> Option<String> {
+    fn command(&self, config: &PaneFlowConfig) -> Option<String> {
         match &self.source {
             PresetSource::Shell => None,
             PresetSource::Agent(launch) => Some(launch.launch_command(config)),
@@ -102,7 +102,7 @@ impl Preset {
         }
     }
 
-    pub(crate) fn env(
+    fn env(
         &self,
         config: &PaneFlowConfig,
     ) -> Result<Option<std::collections::HashMap<String, String>>, String> {
@@ -112,7 +112,7 @@ impl Preset {
         }
     }
 
-    pub(crate) fn opens_a_team(&self) -> bool {
+    fn opens_a_team(&self) -> bool {
         matches!(&self.source, PresetSource::Agent(launch) if launch.tmux_compat())
     }
 
@@ -129,6 +129,13 @@ impl Preset {
             _ => Ok(()),
         }
     }
+}
+
+pub(crate) struct PresetLaunch {
+    pub(crate) title: String,
+    pub(crate) profile: TerminalSurfaceProfile,
+    pub(crate) command: Option<String>,
+    pub(crate) env: Option<std::collections::HashMap<String, String>>,
 }
 
 pub(crate) struct NewBranchDraft {
@@ -153,6 +160,23 @@ pub(crate) struct PanePaletteState {
 }
 
 impl PaneFlowApp {
+    pub(crate) fn launch_preset(&mut self, preset: &Preset) -> Result<PresetLaunch, String> {
+        preset.ensure_launchable()?;
+        let mut env = preset.env(&self.cached_config)?;
+        if preset.opens_a_team() {
+            env.get_or_insert_with(Default::default).insert(
+                crate::tmux_compat::TEAM_ENV.to_string(),
+                self.tmux_teams.issue(),
+            );
+        }
+        Ok(PresetLaunch {
+            title: preset.label.clone(),
+            profile: preset.profile(),
+            command: preset.command(&self.cached_config),
+            env,
+        })
+    }
+
     pub(crate) fn pane_palette_presets(&self, ws_idx: usize) -> Vec<Preset> {
         let mut presets = vec![Preset {
             label: "Terminal".to_string(),
@@ -431,19 +455,18 @@ impl PaneFlowApp {
         if self.pane_palette_create_branch_then_launch(idx, cx) {
             return;
         }
-        let mut env = match preset.env(&self.cached_config) {
-            Ok(env) => env,
+        let PresetLaunch {
+            title,
+            profile,
+            command,
+            env,
+        } = match self.launch_preset(&preset) {
+            Ok(launch) => launch,
             Err(message) => {
                 self.pane_palette_set_error(message, cx);
                 return;
             }
         };
-        if preset.opens_a_team() {
-            env.get_or_insert_with(Default::default).insert(
-                crate::tmux_compat::TEAM_ENV.to_string(),
-                self.tmux_teams.issue(),
-            );
-        }
         let rebound_cwd = self
             .pane_palette
             .as_ref()
@@ -458,12 +481,10 @@ impl PaneFlowApp {
                     .or_else(|| (!ws.cwd.is_empty()).then(|| std::path::PathBuf::from(&ws.cwd)))
             });
         let launch = SurfaceLaunch {
-            command: preset.command(&self.cached_config),
+            command,
             env,
             cwd: rebound_cwd,
         };
-        let profile = preset.profile();
-        let title = preset.label.clone();
         let placement = match self.pane_palette.as_ref() {
             Some(palette) => match &palette.placement {
                 PalettePlacement::Tab { .. } => None,

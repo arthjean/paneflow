@@ -194,20 +194,19 @@ impl PaneFlowApp {
                     );
                     return;
                 }
-                if let Err(message) = preset.ensure_launchable() {
-                    self.show_toast(message, cx);
-                    return;
-                }
-                let env = match preset.env(&self.cached_config) {
-                    Ok(env) => env,
+                let crate::app::pane_palette::PresetLaunch {
+                    profile,
+                    command,
+                    env,
+                    ..
+                } = match self.launch_preset(preset) {
+                    Ok(launch) => launch,
                     Err(message) => {
                         self.show_toast(message, cx);
                         return;
                     }
                 };
                 let cwd = self.new_surface_cwd(&pane, ws_id, cx);
-                let command = preset.command(&self.cached_config);
-                let profile = preset.profile();
                 let added = self.add_surface_through_model(
                     &pane,
                     Box::new(move |_, ws_id, cx| {

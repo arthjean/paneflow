@@ -6,6 +6,7 @@ mod parity;
 mod prompts;
 mod rearrange;
 mod sidebar;
+mod team_tokens;
 mod worker;
 mod worktree_flows;
 mod worktrees;
@@ -54,9 +55,18 @@ pub(crate) fn isolated_child(home: &std::path::Path, args: &[&str]) -> Command {
 #[test]
 fn every_layout_pin_holds_in_an_isolated_home() {
     let home = tempfile::tempdir().expect("a pin home");
-    let output = isolated_child(home.path(), &["--ignored", "--test-threads=1", PIN_FILTER])
-        .output()
-        .expect("the pin runner starts");
+    let output = isolated_child(
+        home.path(),
+        &[
+            "--ignored",
+            "--test-threads=1",
+            PIN_FILTER,
+            "--skip",
+            team_tokens::FILTER,
+        ],
+    )
+    .output()
+    .expect("the pin runner starts");
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
