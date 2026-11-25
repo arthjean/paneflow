@@ -26,14 +26,27 @@ pub enum Gate {
     Open,
     Scripting { refusal: &'static str },
     OrchestrationWhenSpawning,
+    Browser { refusal: &'static str },
 }
 
 impl Gate {
+    pub const fn closed_refusal(self, gates: &crate::policy::Gates) -> Option<&'static str> {
+        match self {
+            Self::Scripting { refusal } if !gates.scripting => Some(refusal),
+            Self::Browser { refusal } if !gates.browser => Some(refusal),
+            Self::Open
+            | Self::Scripting { .. }
+            | Self::Browser { .. }
+            | Self::OrchestrationWhenSpawning => None,
+        }
+    }
+
     pub const fn label(self) -> &'static str {
         match self {
             Self::Open => "none",
             Self::Scripting { .. } => "scripting",
             Self::OrchestrationWhenSpawning => "orchestration",
+            Self::Browser { .. } => "browser",
         }
     }
 
@@ -47,6 +60,9 @@ impl Gate {
                 "A request that sets a command, a prompt or an env is refused with -32601 unless \
                  ipc.orchestration, ipc.scripting or ai_unrestricted is true in paneflow.json, or a \
                  spawn or layout grant covers the calling pane.",
+            ),
+            Self::Browser { .. } => Some(
+                "Refused with -32601 unless ipc.scripting or ai_unrestricted is true in paneflow.json, or a browser grant covers the calling pane.",
             ),
         }
     }

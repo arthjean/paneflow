@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::limits::HOST_IDLE_EXIT;
 
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Hello {
@@ -34,6 +34,10 @@ impl Hello {
 pub struct Welcome {
     pub protocol_version: u32,
     pub host_pid: u32,
+    #[serde(default)]
+    pub engine: String,
+    #[serde(default)]
+    pub sandbox: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]

@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use super::PaneFlowConfig;
 
-pub const AGENT_GRANT_RIGHTS: [&str; 3] = ["write", "spawn", "layout"];
+pub const AGENT_GRANT_RIGHTS: [&str; 4] = ["write", "spawn", "layout", "browser"];
 pub const AGENT_GRANT_SCOPES: [&str; 2] = ["workspace", "instance"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]

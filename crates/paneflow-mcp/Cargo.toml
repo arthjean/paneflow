@@ -15,5 +15,8 @@ paneflow-ipc-client.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
+[dev-dependencies]
+paneflow-api.workspace = true
+
 [lints]
 workspace = true

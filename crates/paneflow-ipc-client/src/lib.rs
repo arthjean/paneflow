@@ -58,8 +58,30 @@ impl std::fmt::Display for IpcCallError {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CallLimits {
+    pub deadline: Duration,
+    pub max_bytes: u64,
+}
+
+impl CallLimits {
+    pub const DEFAULT: Self = Self {
+        deadline: IPC_TIMEOUT,
+        max_bytes: MAX_RESPONSE_LEN,
+    };
+}
+
 pub trait IpcTransport {
     fn call(&self, method: &str, params: Value) -> Result<Value, String>;
+
+    fn call_with_limits(
+        &self,
+        method: &str,
+        params: Value,
+        _limits: CallLimits,
+    ) -> Result<Value, String> {
+        self.call(method, params)
+    }
 
     fn try_call(&self, method: &str, params: Value) -> Result<Value, IpcCallError> {
         self.call(method, params).map_err(IpcCallError::Failed)
@@ -88,7 +110,18 @@ impl IpcTransport for IpcClient {
 
     fn try_call(&self, method: &str, params: Value) -> Result<Value, IpcCallError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        self.exchange_request(&build_request(id, method, params))
+        self.exchange_request(&build_request(id, method, params), CallLimits::DEFAULT)
+    }
+
+    fn call_with_limits(
+        &self,
+        method: &str,
+        params: Value,
+        limits: CallLimits,
+    ) -> Result<Value, String> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        self.exchange_request(&build_request(id, method, params), limits)
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -97,11 +130,11 @@ impl IpcClient {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let mut request = build_request(id, method, params);
         request[GRANT_FIELD] = Value::from(grant);
-        self.exchange_request(&request)
+        self.exchange_request(&request, CallLimits::DEFAULT)
             .map_err(|error| error.to_string())
     }
 
-    fn exchange_request(&self, request: &Value) -> Result<Value, IpcCallError> {
+    fn exchange_request(&self, request: &Value, limits: CallLimits) -> Result<Value, IpcCallError> {
         let unreachable = |e: io::Error| {
             IpcCallError::Unreachable(format!(
                 "paneflow IPC unreachable at {} ({e}); is Paneflow running?",
@@ -109,11 +142,11 @@ impl IpcClient {
             ))
         };
         let stream = connect_request_stream(&self.socket).map_err(unreachable)?;
-        let line = exchange(stream, request).map_err(|e| {
+        let line = exchange(stream, request, limits).map_err(|e| {
             if e.kind() == io::ErrorKind::TimedOut {
                 IpcCallError::TimedOut(format!(
                     "paneflow did not respond within {}s",
-                    IPC_TIMEOUT.as_secs()
+                    limits.deadline.as_secs()
                 ))
             } else {
                 unreachable(e)
@@ -186,10 +219,10 @@ fn tolerate_unsupported(r: io::Result<()>) -> io::Result<()> {
 }
 
 #[cfg_attr(windows, allow(unused_mut))]
-fn exchange(mut stream: Stream, request: &Value) -> io::Result<String> {
+fn exchange(mut stream: Stream, request: &Value, limits: CallLimits) -> io::Result<String> {
     #[cfg(not(windows))]
     {
-        tolerate_unsupported(stream.set_recv_timeout(Some(IPC_TIMEOUT)))?;
+        tolerate_unsupported(stream.set_recv_timeout(Some(limits.deadline)))?;
         tolerate_unsupported(stream.set_send_timeout(Some(IPC_TIMEOUT)))?;
     }
 
@@ -200,7 +233,7 @@ fn exchange(mut stream: Stream, request: &Value) -> io::Result<String> {
     #[cfg(windows)]
     {
         write_all_with_deadline(&mut stream, &payload, IPC_TIMEOUT)?;
-        read_line_with_deadline(&mut stream, IPC_TIMEOUT)
+        read_line_with_deadline(&mut stream, limits.deadline, limits.max_bytes)
     }
 
     #[cfg(not(windows))]
@@ -210,8 +243,8 @@ fn exchange(mut stream: Stream, request: &Value) -> io::Result<String> {
 
         let mut reader = BufReader::new(stream);
         let mut line = String::new();
-        match reader.by_ref().take(MAX_RESPONSE_LEN).read_line(&mut line) {
-            Ok(n) if n as u64 >= MAX_RESPONSE_LEN && !line.ends_with('\n') => Err(io::Error::new(
+        match reader.by_ref().take(limits.max_bytes).read_line(&mut line) {
+            Ok(n) if n as u64 >= limits.max_bytes && !line.ends_with('\n') => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "paneflow response exceeded the size cap",
             )),
@@ -224,7 +257,10 @@ fn exchange(mut stream: Stream, request: &Value) -> io::Result<String> {
             {
                 Err(io::Error::new(
                     io::ErrorKind::TimedOut,
-                    "paneflow did not respond within 10s",
+                    format!(
+                        "paneflow did not respond within {}s",
+                        limits.deadline.as_secs()
+                    ),
                 ))
             }
             Err(e) => Err(e),
@@ -432,12 +468,16 @@ fn write_all_with_deadline(
 }
 
 #[cfg(windows)]
-fn read_line_with_deadline(stream: &mut Stream, timeout: Duration) -> io::Result<String> {
+fn read_line_with_deadline(
+    stream: &mut Stream,
+    timeout: Duration,
+    max_bytes: u64,
+) -> io::Result<String> {
     let deadline = Instant::now() + timeout;
     let mut out = Vec::new();
     let mut chunk = [0u8; 4096];
     loop {
-        let capacity = (MAX_RESPONSE_LEN as usize).saturating_sub(out.len());
+        let capacity = (max_bytes as usize).saturating_sub(out.len());
         if capacity == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -456,7 +496,8 @@ fn read_line_with_deadline(stream: &mut Stream, timeout: Duration) -> io::Result
             }
             Ok(0) => break,
             Ok(n) => {
-                if let Some(line) = append_capped_response_chunk(&mut out, &chunk[..n])? {
+                if let Some(line) = append_capped_response_chunk(&mut out, &chunk[..n], max_bytes)?
+                {
                     return Ok(line);
                 }
             }
@@ -474,12 +515,16 @@ fn read_line_with_deadline(stream: &mut Stream, timeout: Duration) -> io::Result
 }
 
 #[cfg(windows)]
-fn append_capped_response_chunk(out: &mut Vec<u8>, chunk: &[u8]) -> io::Result<Option<String>> {
+fn append_capped_response_chunk(
+    out: &mut Vec<u8>,
+    chunk: &[u8],
+    max_bytes: u64,
+) -> io::Result<Option<String>> {
     let frame_len = chunk
         .iter()
         .position(|byte| *byte == b'\n')
         .map_or(chunk.len(), |position| position + 1);
-    if out.len().saturating_add(frame_len) > MAX_RESPONSE_LEN as usize {
+    if out.len().saturating_add(frame_len) > max_bytes as usize {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "paneflow response exceeded the size cap",
@@ -492,7 +537,7 @@ fn append_capped_response_chunk(out: &mut Vec<u8>, chunk: &[u8]) -> io::Result<O
             .map(Some)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error));
     }
-    if out.len() as u64 >= MAX_RESPONSE_LEN {
+    if out.len() as u64 >= max_bytes {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "paneflow response exceeded the size cap",
@@ -956,7 +1001,7 @@ mod tests {
     #[test]
     fn windows_response_cap_accepts_exactly_capped_line() {
         let mut out = vec![b'x'; MAX_RESPONSE_LEN as usize - 1];
-        let line = append_capped_response_chunk(&mut out, b"\n")
+        let line = append_capped_response_chunk(&mut out, b"\n", MAX_RESPONSE_LEN)
             .expect("exact cap is valid")
             .expect("newline completes the frame");
         assert_eq!(line.len(), MAX_RESPONSE_LEN as usize);
@@ -966,7 +1011,7 @@ mod tests {
     #[test]
     fn windows_response_cap_rejects_newline_beyond_limit() {
         let mut out = vec![b'x'; MAX_RESPONSE_LEN as usize - 1];
-        let error = append_capped_response_chunk(&mut out, b"y\n")
+        let error = append_capped_response_chunk(&mut out, b"y\n", MAX_RESPONSE_LEN)
             .expect_err("newline beyond the cap must be rejected");
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     }

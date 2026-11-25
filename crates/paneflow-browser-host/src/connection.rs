@@ -106,10 +106,12 @@ pub fn refuse(accepted: &mut Accepted, refusal: Refusal) {
     let _ = accepted.stream.shutdown(std::net::Shutdown::Both);
 }
 
-pub fn start(mut accepted: Accepted) -> Result<Running, String> {
+pub fn start(mut accepted: Accepted, sandbox: bool) -> Result<Running, String> {
     let welcome = HostMessage::Welcome(Welcome {
         protocol_version: paneflow_browser_proto::PROTOCOL_VERSION,
         host_pid: std::process::id(),
+        engine: crate::app::engine_version(),
+        sandbox,
     });
     write_message(&mut accepted.stream, &welcome)
         .map_err(|error| format!("cannot welcome the window: {error}"))?;

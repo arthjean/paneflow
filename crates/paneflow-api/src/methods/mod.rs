@@ -63,6 +63,7 @@ macro_rules! method {
     };
 }
 
+pub mod browser;
 pub mod config;
 pub mod events;
 pub mod grant;
@@ -219,7 +220,7 @@ impl Catalog {
 }
 
 pub fn window_declarations() -> Vec<Descriptor> {
-    vec![
+    let mut descriptors = vec![
         Descriptor::of::<system::Ping>(),
         Descriptor::of::<system::Capabilities>(),
         Descriptor::of::<system::Identify>(),
@@ -247,7 +248,9 @@ pub fn window_declarations() -> Vec<Descriptor> {
         Descriptor::of::<config::DispatchAction>(),
         Descriptor::of::<system::Describe>(),
         Descriptor::of::<system::WhoAmI>(),
-    ]
+    ];
+    descriptors.extend(browser::declarations());
+    descriptors
 }
 
 pub fn host_declarations() -> Vec<Descriptor> {

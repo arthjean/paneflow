@@ -336,8 +336,10 @@ fn every_handshake_answer_survives_a_round_trip() {
         assert_round_trip(&HostMessage::Refused(refusal));
     }
     assert_round_trip(&HostMessage::Welcome(Welcome {
-        protocol_version: 1,
+        protocol_version: 2,
         host_pid: 4242,
+        engine: "CEF 156.0.31+ge603d97+chromium-156.0.8078.100".to_string(),
+        sandbox: true,
     }));
 }
 

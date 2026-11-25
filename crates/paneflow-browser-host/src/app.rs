@@ -21,6 +21,12 @@ pub const BROWSER_SWITCHES: &[&str] = &[
     "use-mock-keychain",
 ];
 
+pub fn engine_version() -> String {
+    let raw = sys::CEF_VERSION;
+    let text = std::str::from_utf8(raw).unwrap_or_default();
+    format!("CEF {}", text.trim_end_matches('\0'))
+}
+
 pub fn headless_display() -> bool {
     std::env::var_os("WAYLAND_DISPLAY").is_none() && std::env::var_os("DISPLAY").is_none()
 }

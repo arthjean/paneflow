@@ -144,10 +144,11 @@ fn needs_unsynced_grant(descriptor: &Descriptor, params: &Value, gates: &Gates) 
     }
     let spec = &descriptor.spec;
     let scripting_closed = matches!(spec.gate, Gate::Scripting { .. }) && !gates.scripting;
+    let browser_closed = matches!(spec.gate, Gate::Browser { .. }) && !gates.browser;
     let reach_closed = !gates.reach
         && spec.scope == ScopeRule::WorkspaceUnlessAll
         && param_str(params, "scope") == Some("all");
-    scripting_closed || reach_closed
+    scripting_closed || browser_closed || reach_closed
 }
 
 fn decide(
@@ -182,9 +183,8 @@ fn decide(
             reason: Refusal::GrantsUnsynced,
         };
     }
-    if let Gate::Scripting { refusal } = spec.gate
+    if let Some(refusal) = spec.gate.closed_refusal(&gates)
         && check_gate
-        && !gates.scripting
     {
         return Decision::Refused {
             reason: Refusal::GateClosed { refusal },
@@ -554,6 +554,52 @@ mod tests {
                 reason: Refusal::GateClosed { .. }
             }
         ));
+    }
+
+    #[test]
+    fn only_a_browser_grant_lets_a_pane_drive_the_browser_and_an_unverified_caller_never_does() {
+        use crate::grants::{GrantScope, GrantView, Right};
+        use crate::methods::browser;
+        let open = Descriptor::of::<browser::Open>();
+        let view = |grants| GrantView {
+            grants,
+            now_ms: 10,
+            generation: Some(3),
+            synced: true,
+        };
+        let browser_grant = [held(&[Right::Browser], GrantScope::Workspace)];
+        let Decision::Allowed { gates, .. } =
+            authorize_with(&pane(), &open, &json!({}), &closed(), &view(&browser_grant))
+        else {
+            panic!("a browser grant opens browser.open");
+        };
+        assert!(gates.browser && !gates.scripting);
+        let write_grant = [held(&[Right::Write], GrantScope::Workspace)];
+        for grants in [&write_grant[..], &[]] {
+            assert!(matches!(
+                authorize_with(&pane(), &open, &json!({}), &closed(), &view(grants)),
+                Decision::Refused {
+                    reason: Refusal::GateClosed { .. }
+                }
+            ));
+        }
+        let unverified = Principal::Unverified {
+            reason: "the peer exited".into(),
+        };
+        assert!(matches!(
+            authorize_with(
+                &unverified,
+                &open,
+                &json!({}),
+                &closed(),
+                &view(&browser_grant)
+            ),
+            Decision::Refused { .. }
+        ));
+        let Some(refusal) = open.spec.gate.closed_refusal(&crate::policy::Gates::CLOSED) else {
+            panic!("the browser gate is closed by default");
+        };
+        assert_eq!(refusal, browser::BROWSER_REFUSAL);
     }
 
     #[test]

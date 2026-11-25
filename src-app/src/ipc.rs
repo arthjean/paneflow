@@ -23,6 +23,7 @@ pub struct IpcRequest {
     pub response_tx: mpsc::Sender<Value>,
     pub state: Arc<RequestState>,
     pub caller_pid: Option<i64>,
+    pub caller: paneflow_api::Principal,
     pub grant: Option<String>,
     pub gates: paneflow_api::Gates,
 }
@@ -1075,7 +1076,10 @@ fn handle_connection(
                                 method,
                                 params,
                                 response_id,
-                                caller_pid,
+                                Caller {
+                                    pid: caller_pid,
+                                    principal: caller,
+                                },
                                 grant,
                                 gates,
                             ),
@@ -1414,18 +1418,21 @@ fn dispatch_to_gpui(
     method: String,
     params: Value,
     id: Value,
-    caller_pid: Option<i64>,
+    caller: Caller,
     grant: Option<String>,
     gates: paneflow_api::Gates,
 ) -> Value {
     let (resp_tx, resp_rx) = mpsc::channel();
     let state = Arc::new(RequestState::default());
+    let started_reply_timeout =
+        paneflow_api::methods::config::window_reply_deadline(&method, IPC_STARTED_REPLY_TIMEOUT);
     let ipc_req = IpcRequest {
-        method: method.clone(),
+        method,
         params,
         response_tx: resp_tx,
         state: Arc::clone(&state),
-        caller_pid,
+        caller_pid: caller.pid,
+        caller: caller.principal,
         grant,
         gates,
     };
@@ -1444,9 +1451,14 @@ fn dispatch_to_gpui(
         &resp_rx,
         &state,
         IPC_DISPATCH_TIMEOUT,
-        IPC_STARTED_REPLY_TIMEOUT,
+        started_reply_timeout,
         id,
     )
+}
+
+struct Caller {
+    pid: Option<i64>,
+    principal: paneflow_api::Principal,
 }
 
 fn await_or_cancel(
@@ -1971,7 +1983,7 @@ mod singleton_guard_tests {
 
 #[cfg(test)]
 mod dispatch_tests {
-    use super::{IpcRequest, RequestState, await_or_cancel, dispatch_to_gpui};
+    use super::{Caller, IpcRequest, RequestState, await_or_cancel, dispatch_to_gpui};
     use serde_json::json;
     use std::sync::{Arc, mpsc};
     use std::time::Duration;
@@ -1986,6 +1998,7 @@ mod dispatch_tests {
             response_tx,
             state: Arc::new(RequestState::default()),
             caller_pid: None,
+            caller: paneflow_api::Principal::Window,
             grant: None,
             gates: paneflow_api::Gates::CLOSED,
         }
@@ -2001,7 +2014,10 @@ mod dispatch_tests {
             "surface.read".to_string(),
             json!({ "surface_id": 1 }),
             json!("req-overload"),
-            None,
+            Caller {
+                pid: None,
+                principal: paneflow_api::Principal::Window,
+            },
             None,
             paneflow_api::Gates::CLOSED,
         );
@@ -2021,7 +2037,10 @@ mod dispatch_tests {
             "surface.read".to_string(),
             json!({ "surface_id": 1 }),
             json!("req-closed"),
-            None,
+            Caller {
+                pid: None,
+                principal: paneflow_api::Principal::Window,
+            },
             None,
             paneflow_api::Gates::CLOSED,
         );
@@ -2532,6 +2551,23 @@ mod caller_identity_tests {
         serde_json::from_str(&line).expect("a JSON reply")
     }
 
+    const BROWSER_REQUEST_TEST: &str =
+        "ipc::caller_identity_tests::send_the_window_socket_a_browser_request_from_this_pane";
+
+    #[test]
+    #[ignore = "runs inside a pane of the parent test"]
+    fn send_the_window_socket_a_browser_request_from_this_pane() {
+        let Some(path) = std::env::var_os(REQUEST_ENV) else {
+            return;
+        };
+        let reply = request_over(
+            std::path::Path::new(&path),
+            r#"{"jsonrpc":"2.0","id":1,"method":"browser.open","params":{"url":"http://127.0.0.1:5173/"}}"#,
+        );
+        println!("window reply {} end", reply["result"]);
+        std::thread::sleep(Duration::from_secs(30));
+    }
+
     #[test]
     #[ignore = "runs inside a pane of the parent test"]
     fn send_the_window_socket_a_request_from_this_pane() {
@@ -2547,6 +2583,10 @@ mod caller_identity_tests {
     }
 
     fn pane_request_under(config: &str) -> (IpcRequest, paneflow_host::SessionId) {
+        pane_request_from(config, REQUEST_TEST)
+    }
+
+    fn pane_request_from(config: &str, child_test: &str) -> (IpcRequest, paneflow_host::SessionId) {
         let home = tempfile::tempdir().expect("a home");
         let config_path = home.path().join("paneflow.json");
         std::fs::write(&config_path, config).expect("the config is written");
@@ -2593,7 +2633,7 @@ mod caller_identity_tests {
                     .to_string(),
             ),
             args: [
-                REQUEST_TEST,
+                child_test,
                 "--exact",
                 "--ignored",
                 "--nocapture",
@@ -2657,7 +2697,7 @@ mod caller_identity_tests {
         assert_eq!(closed.params["scope_session"], session.as_str());
         let refusal = crate::app::ipc_handler::gate_refusal(
             <paneflow_api::methods::surface::SendText as paneflow_api::Method>::SPEC.gate,
-            closed.gates.scripting,
+            closed.gates,
         )
         .expect("the closed gate refuses the write");
         assert_eq!(refusal.code, -32601);
@@ -2670,6 +2710,66 @@ mod caller_identity_tests {
         assert!(open.gates.scripting && open.gates.orchestration);
         assert!(!open.gates.from_deprecated_environment);
         assert_eq!(open.params["scope_session"], session.as_str());
+    }
+
+    #[test]
+    fn a_pane_browser_call_is_refused_without_the_browser_right_and_reaches_the_engine_with_it() {
+        let (closed, session) = pane_request_from(
+            r#"{"ipc": {"scripting": false, "orchestration": false}}"#,
+            BROWSER_REQUEST_TEST,
+        );
+        assert_eq!(closed.method, "browser.open");
+        assert!(
+            matches!(&closed.caller, paneflow_api::Principal::Pane { session: caller, .. } if caller == session.as_str()),
+            "{:?}",
+            closed.caller
+        );
+        let gate = <paneflow_api::methods::browser::Open as paneflow_api::Method>::SPEC.gate;
+        let refusal = crate::app::ipc_handler::gate_refusal(gate, closed.gates)
+            .expect("no browser right refuses the call");
+        assert_eq!(refusal.code, -32601);
+        assert_eq!(
+            refusal.message,
+            paneflow_api::methods::browser::BROWSER_REFUSAL
+        );
+
+        let (open, session) =
+            pane_request_from(r#"{"ipc": {"scripting": true}}"#, BROWSER_REQUEST_TEST);
+        assert!(crate::app::ipc_handler::gate_refusal(gate, open.gates).is_none());
+        let home = tempfile::tempdir().expect("a home");
+        let mut config = paneflow_browser_client::HostConfig::for_home(home.path().to_path_buf());
+        config.binary = home.path().join("absent").join("paneflow-browser-host");
+        let (client, events) = paneflow_browser_client::BrowserClient::new(config);
+        let control = paneflow_browser_control::Control::new(
+            Arc::new(client),
+            events,
+            Arc::new(paneflow_browser_control::Refuse),
+            paneflow_browser_control::Limits::default(),
+        );
+        let context = paneflow_browser_control::CallContext {
+            identity: paneflow_browser_control::Identity::Agent {
+                session: session.to_string(),
+                agent: None,
+            },
+            workspace: paneflow_browser_proto::ProfileName::new(
+                paneflow_config::schema::WorkspaceId::new().to_string(),
+            )
+            .ok(),
+            visible: None,
+            live_sessions: None,
+        };
+        let reply = crate::browser_control::answer(&control, &open.method, open.params, &context);
+        let error = &reply[crate::app::ipc_handler::JSONRPC_ERROR_KEY];
+        assert_eq!(
+            error["code"],
+            paneflow_api::methods::browser::ERR_NOT_INSTALLED
+        );
+        assert!(
+            error["message"]
+                .as_str()
+                .is_some_and(|message| message.starts_with("The browser engine is not installed")),
+            "{error}"
+        );
     }
 
     #[test]

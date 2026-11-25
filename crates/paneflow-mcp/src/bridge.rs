@@ -361,6 +361,10 @@ impl<'a, T: IpcTransport + ?Sized> Bridge<'a, T> {
         }
     }
 
+    pub fn transport(&self) -> &T {
+        self.transport
+    }
+
     pub fn scope(&self) -> &BridgeScope {
         &self.scope
     }

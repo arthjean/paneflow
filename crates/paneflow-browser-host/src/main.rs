@@ -119,7 +119,8 @@ fn browser_main(args: &args::Args, app: &mut App) -> Result<(), Failure> {
     }
 
     let idle_exit = accepted.hello.idle_exit();
-    let running = connection::start(accepted).map_err(|message| Failure::new(69, message))?;
+    let running = connection::start(accepted, settings.no_sandbox == 0)
+        .map_err(|message| Failure::new(69, message))?;
     let mut host = host::Host::new(running.out.clone(), options.profiles.clone(), idle_exit);
     host.schedule_idle();
     ui::install(host);

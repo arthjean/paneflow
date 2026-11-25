@@ -3122,6 +3122,2485 @@
       "audience": "anyone",
       "examples": [
         {
+          "params": {},
+          "result": {
+            "binary": "/home/u/.paneflow/browser/runtime/current/paneflow-browser-host",
+            "host_pid": 4242,
+            "installed": true,
+            "running": true,
+            "runtime_version": "CEF 156.0.31, Chromium 156.0.8078.100",
+            "sandbox": "enabled",
+            "tabs": [
+              {
+                "drivable": true,
+                "owner": {
+                  "kind": "agent",
+                  "session": "a9e52660-0000-4000-8000-000000000001"
+                },
+                "presentation": "none",
+                "state": "loaded",
+                "tab": 1,
+                "title": "Shop",
+                "url": "http://127.0.0.1:5173/",
+                "workspace": "0b6d6713-5706-4af6-8061-06e40f757cb9"
+              }
+            ]
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "browser",
+      "gate_note": "Refused with -32601 unless ipc.scripting or ai_unrestricted is true in paneflow.json, or a browser grant covers the calling pane.",
+      "in_capabilities": false,
+      "name": "browser.status",
+      "owner": "window",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "scope": {
+            "description": "workspace by default; all needs orchestration",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "title": "StatusParams",
+        "type": "object"
+      },
+      "reply": "deferred",
+      "result": {
+        "$defs": {
+          "BrowserTab": {
+            "additionalProperties": false,
+            "properties": {
+              "drivable": {
+                "description": "True when the caller owns the tab and may drive it",
+                "type": "boolean"
+              },
+              "owner": {
+                "$ref": "#/$defs/TabOwner"
+              },
+              "presentation": {
+                "$ref": "#/$defs/Presentation",
+                "description": "none while the tab is shown in no pane or dock"
+              },
+              "state": {
+                "$ref": "#/$defs/TabState"
+              },
+              "tab": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "title": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "url": {
+                "type": "string"
+              },
+              "workspace": {
+                "description": "The durable id of the workspace whose browser profile the tab uses",
+                "type": "string"
+              }
+            },
+            "required": [
+              "tab",
+              "workspace",
+              "url",
+              "state",
+              "owner",
+              "drivable",
+              "presentation"
+            ],
+            "type": "object"
+          },
+          "Presentation": {
+            "enum": [
+              "none",
+              "cpu",
+              "gpu"
+            ],
+            "type": "string"
+          },
+          "TabOwner": {
+            "oneOf": [
+              {
+                "properties": {
+                  "agent": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "kind": {
+                    "const": "agent",
+                    "type": "string"
+                  },
+                  "session": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "session"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "human",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "unclaimed",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "TabState": {
+            "enum": [
+              "starting",
+              "loading",
+              "loaded",
+              "awaiting_decision",
+              "refused",
+              "crashed",
+              "failed"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "binary": {
+            "description": "The browser host binary this window starts",
+            "type": "string"
+          },
+          "host_pid": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "installed": {
+            "type": "boolean"
+          },
+          "running": {
+            "type": "boolean"
+          },
+          "runtime_version": {
+            "description": "The engine the running host reports, such as CEF and Chromium versions",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sandbox": {
+            "description": "enabled when the running host starts Chromium with its sandbox, unknown when no host runs",
+            "type": "string"
+          },
+          "tabs": {
+            "items": {
+              "$ref": "#/$defs/BrowserTab"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "running",
+          "installed",
+          "binary",
+          "sandbox",
+          "tabs"
+        ],
+        "title": "BrowserStatus",
+        "type": "object"
+      },
+      "scope": "workspace_unless_all",
+      "scope_note": "A caller in a pane reaches only its own workspace unless it sends scope \"all\" with orchestration open for it.",
+      "stream": false,
+      "summary": "Report whether a browser host runs, its engine, its sandbox and the tabs the caller may see."
+    },
+    {
+      "audience": "anyone",
+      "examples": [
+        {
+          "params": {},
+          "result": {
+            "binary": "/home/u/dev/paneflow/crates/paneflow-browser-host/target/debug/paneflow-browser-host",
+            "installed": true,
+            "message": "The browser engine is installed."
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "browser",
+      "gate_note": "Refused with -32601 unless ipc.scripting or ai_unrestricted is true in paneflow.json, or a browser grant covers the calling pane.",
+      "in_capabilities": false,
+      "name": "browser.install",
+      "owner": "window",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "NoParams",
+        "type": "object"
+      },
+      "reply": "deferred",
+      "result": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "binary": {
+            "type": "string"
+          },
+          "installed": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "installed",
+          "binary",
+          "message"
+        ],
+        "title": "InstallResult",
+        "type": "object"
+      },
+      "scope": "none",
+      "scope_note": null,
+      "stream": false,
+      "summary": "Report whether the browser engine is installed where this window looks for it."
+    },
+    {
+      "audience": "anyone",
+      "examples": [
+        {
+          "params": {
+            "url": "http://127.0.0.1:5173/"
+          },
+          "result": {
+            "http_status": 200,
+            "owner": {
+              "kind": "agent",
+              "session": "a9e52660-0000-4000-8000-000000000001"
+            },
+            "state": "loaded",
+            "tab": 1,
+            "title": "Shop",
+            "url": "http://127.0.0.1:5173/"
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "browser",
+      "gate_note": "Refused with -32601 unless ipc.scripting or ai_unrestricted is true in paneflow.json, or a browser grant covers the calling pane.",
+      "in_capabilities": false,
+      "name": "browser.open",
+      "owner": "window",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "url": {
+            "description": "An http or https URL of at most 2048 characters",
+            "type": "string"
+          },
+          "workspace": {
+            "description": "The durable id of the workspace whose profile the tab uses, for a caller outside every pane; a pane always opens in its own workspace",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "OpenParams",
+        "type": "object"
+      },
+      "reply": "deferred",
+      "result": {
+        "$defs": {
+          "TabOwner": {
+            "oneOf": [
+              {
+                "properties": {
+                  "agent": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "kind": {
+                    "const": "agent",
+                    "type": "string"
+                  },
+                  "session": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "session"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "human",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "unclaimed",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "TabState": {
+            "enum": [
+              "starting",
+              "loading",
+              "loaded",
+              "awaiting_decision",
+              "refused",
+              "crashed",
+              "failed"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "http_status": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "owner": {
+            "$ref": "#/$defs/TabOwner"
+          },
+          "state": {
+            "$ref": "#/$defs/TabState"
+          },
+          "tab": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "description": "The URL the tab shows once the call ends",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tab",
+          "url",
+          "state",
+          "owner"
+        ],
+        "title": "Navigated",
+        "type": "object"
+      },
+      "scope": "workspace",
+      "scope_note": "A caller in a pane reaches only sessions of its own workspace unless orchestration is open for it.",
+      "stream": false,
+      "summary": "Open a tab owned by the caller on an http or https URL, in its workspace's profile, and wait for the page."
+    },
+    {
+      "audience": "anyone",
+      "examples": [
+        {
+          "params": {},
+          "result": {
+            "tabs": []
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "browser",
+      "gate_note": "Refused with -32601 unless ipc.scripting or ai_unrestricted is true in paneflow.json, or a browser grant covers the calling pane.",
+      "in_capabilities": false,
+      "name": "browser.list",
+      "owner": "window",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "scope": {
+            "description": "workspace by default; all needs orchestration",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "title": "StatusParams",
+        "type": "object"
+      },
+      "reply": "deferred",
+      "result": {
+        "$defs": {
+          "BrowserTab": {
+            "additionalProperties": false,
+            "properties": {
+              "drivable": {
+                "description": "True when the caller owns the tab and may drive it",
+                "type": "boolean"
+              },
+              "owner": {
+                "$ref": "#/$defs/TabOwner"
+              },
+              "presentation": {
+                "$ref": "#/$defs/Presentation",
+                "description": "none while the tab is shown in no pane or dock"
+              },
+              "state": {
+                "$ref": "#/$defs/TabState"
+              },
+              "tab": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "title": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "url": {
+                "type": "string"
+              },
+              "workspace": {
+                "description": "The durable id of the workspace whose browser profile the tab uses",
+                "type": "string"
+              }
+            },
+            "required": [
+              "tab",
+              "workspace",
+              "url",
+              "state",
+              "owner",
+              "drivable",
+              "presentation"
+            ],
+            "type": "object"
+          },
+          "Presentation": {
+            "enum": [
+              "none",
+              "cpu",
+              "gpu"
+            ],
+            "type": "string"
+          },
+          "TabOwner": {
+            "oneOf": [
+              {
+                "properties": {
+                  "agent": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "kind": {
+                    "const": "agent",
+                    "type": "string"
+                  },
+                  "session": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "session"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "human",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "unclaimed",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "TabState": {
+            "enum": [
+              "starting",
+              "loading",
+              "loaded",
+              "awaiting_decision",
+              "refused",
+              "crashed",
+              "failed"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "tabs": {
+            "items": {
+              "$ref": "#/$defs/BrowserTab"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "tabs"
+        ],
+        "title": "TabList",
+        "type": "object"
+      },
+      "scope": "workspace_unless_all",
+      "scope_note": "A caller in a pane reaches only its own workspace unless it sends scope \"all\" with orchestration open for it.",
+      "stream": false,
+      "summary": "List the tabs of the caller's workspace with their owner; only the caller's own tabs are drivable."
+    },
+    {
+      "audience": "anyone",
+      "examples": [
+        {
+          "params": {
+            "tab": 1
+          },
+          "result": {
+            "drivable": true,
+            "owner": {
+              "kind": "agent",
+              "session": "a9e52660-0000-4000-8000-000000000001"
+            },
+            "presentation": "none",
+            "state": "loaded",
+            "tab": 1,
+            "url": "http://127.0.0.1:5173/",
+            "workspace": "0b6d6713-5706-4af6-8061-06e40f757cb9"
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "browser",
+      "gate_note": "Refused with -32601 unless ipc.scripting or ai_unrestricted is true in paneflow.json, or a browser grant covers the calling pane.",
+      "in_capabilities": false,
+      "name": "browser.claim",
+      "owner": "window",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "tab": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tab"
+        ],
+        "title": "TabParams",
+        "type": "object"
+      },
+      "reply": "deferred",
+      "result": {
+        "$defs": {
+          "Presentation": {
+            "enum": [
+              "none",
+              "cpu",
+              "gpu"
+            ],
+            "type": "string"
+          },
+          "TabOwner": {
+            "oneOf": [
+              {
+                "properties": {
+                  "agent": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "kind": {
+                    "const": "agent",
+                    "type": "string"
+                  },
+                  "session": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "session"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "human",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "unclaimed",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "TabState": {
+            "enum": [
+              "starting",
+              "loading",
+              "loaded",
+              "awaiting_decision",
+              "refused",
+              "crashed",
+              "failed"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "drivable": {
+            "description": "True when the caller owns the tab and may drive it",
+            "type": "boolean"
+          },
+          "owner": {
+            "$ref": "#/$defs/TabOwner"
+          },
+          "presentation": {
+            "$ref": "#/$defs/Presentation",
+            "description": "none while the tab is shown in no pane or dock"
+          },
+          "state": {
+            "$ref": "#/$defs/TabState"
+          },
+          "tab": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "type": "string"
+          },
+          "workspace": {
+            "description": "The durable id of the workspace whose browser profile the tab uses",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tab",
+          "workspace",
+          "url",
+          "state",
+          "owner",
+          "drivable",
+          "presentation"
+        ],
+        "title": "BrowserTab",
+        "type": "object"
+      },
+      "scope": "workspace",
+      "scope_note": "A caller in a pane reaches only sessions of its own workspace unless orchestration is open for it.",
+      "stream": false,
+      "summary": "Take ownership of an unclaimed tab."
+    },
+    {
+      "audience": "anyone",
+      "examples": [
+        {
+          "params": {
+            "tab": 1
+          },
+          "result": {
+            "closed": true,
+            "tab": 1,
+            "url": "http://127.0.0.1:5173/"
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "browser",
+      "gate_note": "Refused with -32601 unless ipc.scripting or ai_unrestricted is true in paneflow.json, or a browser grant covers the calling pane.",
+      "in_capabilities": false,
+      "name": "browser.close",
+      "owner": "window",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "tab": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tab"
+        ],
+        "title": "TabParams",
+        "type": "object"
+      },
+      "reply": "deferred",
+      "result": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "closed": {
+            "type": "boolean"
+          },
+          "tab": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "url": {
+            "description": "The URL the tab showed when it closed",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tab",
+          "url",
+          "closed"
+        ],
+        "title": "Closed",
+        "type": "object"
+      },
+      "scope": "workspace",
+      "scope_note": "A caller in a pane reaches only sessions of its own workspace unless orchestration is open for it.",
+      "stream": false,
+      "summary": "Close a tab the caller owns."
+    },
+    {
+      "audience": "anyone",
+      "examples": [
+        {
+          "params": {
+            "tab": 1,
+            "url": "http://127.0.0.1:5173/cart"
+          },
+          "result": {
+            "http_status": 200,
+            "owner": {
+              "kind": "agent",
+              "session": "a9e52660-0000-4000-8000-000000000001"
+            },
+            "state": "loaded",
+            "tab": 1,
+            "url": "http://127.0.0.1:5173/cart"
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "browser",
+      "gate_note": "Refused with -32601 unless ipc.scripting or ai_unrestricted is true in paneflow.json, or a browser grant covers the calling pane.",
+      "in_capabilities": false,
+      "name": "browser.navigate",
+      "owner": "window",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "tab": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "url": {
+            "description": "An http or https URL of at most 2048 characters",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tab",
+          "url"
+        ],
+        "title": "NavigateParams",
+        "type": "object"
+      },
+      "reply": "deferred",
+      "result": {
+        "$defs": {
+          "TabOwner": {
+            "oneOf": [
+              {
+                "properties": {
+                  "agent": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "kind": {
+                    "const": "agent",
+                    "type": "string"
+                  },
+                  "session": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "session"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "human",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "unclaimed",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "TabState": {
+            "enum": [
+              "starting",
+              "loading",
+              "loaded",
+              "awaiting_decision",
+              "refused",
+              "crashed",
+              "failed"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "http_status": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "owner": {
+            "$ref": "#/$defs/TabOwner"
+          },
+          "state": {
+            "$ref": "#/$defs/TabState"
+          },
+          "tab": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "description": "The URL the tab shows once the call ends",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tab",
+          "url",
+          "state",
+          "owner"
+        ],
+        "title": "Navigated",
+        "type": "object"
+      },
+      "scope": "workspace",
+      "scope_note": "A caller in a pane reaches only sessions of its own workspace unless orchestration is open for it.",
+      "stream": false,
+      "summary": "Load a URL in a tab the caller owns and wait for the page."
+    },
+    {
+      "audience": "anyone",
+      "examples": [
+        {
+          "params": {
+            "tab": 1
+          },
+          "result": {
+            "http_status": 200,
+            "owner": {
+              "kind": "agent",
+              "session": "a9e52660-0000-4000-8000-000000000001"
+            },
+            "state": "loaded",
+            "tab": 1,
+            "url": "http://127.0.0.1:5173/"
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "browser",
+      "gate_note": "Refused with -32601 unless ipc.scripting or ai_unrestricted is true in paneflow.json, or a browser grant covers the calling pane.",
+      "in_capabilities": false,
+      "name": "browser.reload",
+      "owner": "window",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "tab": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tab"
+        ],
+        "title": "TabParams",
+        "type": "object"
+      },
+      "reply": "deferred",
+      "result": {
+        "$defs": {
+          "TabOwner": {
+            "oneOf": [
+              {
+                "properties": {
+                  "agent": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "kind": {
+                    "const": "agent",
+                    "type": "string"
+                  },
+                  "session": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "session"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "human",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "unclaimed",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "TabState": {
+            "enum": [
+              "starting",
+              "loading",
+              "loaded",
+              "awaiting_decision",
+              "refused",
+              "crashed",
+              "failed"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "http_status": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "owner": {
+            "$ref": "#/$defs/TabOwner"
+          },
+          "state": {
+            "$ref": "#/$defs/TabState"
+          },
+          "tab": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "description": "The URL the tab shows once the call ends",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tab",
+          "url",
+          "state",
+          "owner"
+        ],
+        "title": "Navigated",
+        "type": "object"
+      },
+      "scope": "workspace",
+      "scope_note": "A caller in a pane reaches only sessions of its own workspace unless orchestration is open for it.",
+      "stream": false,
+      "summary": "Reload a tab the caller owns and wait for the page."
+    },
+    {
+      "audience": "anyone",
+      "examples": [
+        {
+          "params": {
+            "tab": 1
+          },
+          "result": {
+            "owner": {
+              "kind": "agent",
+              "session": "a9e52660-0000-4000-8000-000000000001"
+            },
+            "state": "loaded",
+            "tab": 1,
+            "url": "http://127.0.0.1:5173/"
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "browser",
+      "gate_note": "Refused with -32601 unless ipc.scripting or ai_unrestricted is true in paneflow.json, or a browser grant covers the calling pane.",
+      "in_capabilities": false,
+      "name": "browser.back",
+      "owner": "window",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "tab": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tab"
+        ],
+        "title": "TabParams",
+        "type": "object"
+      },
+      "reply": "deferred",
+      "result": {
+        "$defs": {
+          "TabOwner": {
+            "oneOf": [
+              {
+                "properties": {
+                  "agent": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "kind": {
+                    "const": "agent",
+                    "type": "string"
+                  },
+                  "session": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "session"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "human",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "unclaimed",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "TabState": {
+            "enum": [
+              "starting",
+              "loading",
+              "loaded",
+              "awaiting_decision",
+              "refused",
+              "crashed",
+              "failed"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "http_status": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "owner": {
+            "$ref": "#/$defs/TabOwner"
+          },
+          "state": {
+            "$ref": "#/$defs/TabState"
+          },
+          "tab": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "description": "The URL the tab shows once the call ends",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tab",
+          "url",
+          "state",
+          "owner"
+        ],
+        "title": "Navigated",
+        "type": "object"
+      },
+      "scope": "workspace",
+      "scope_note": "A caller in a pane reaches only sessions of its own workspace unless orchestration is open for it.",
+      "stream": false,
+      "summary": "Go back one history entry in a tab the caller owns and wait for the page."
+    },
+    {
+      "audience": "anyone",
+      "examples": [
+        {
+          "params": {
+            "tab": 1
+          },
+          "result": {
+            "owner": {
+              "kind": "agent",
+              "session": "a9e52660-0000-4000-8000-000000000001"
+            },
+            "state": "loaded",
+            "tab": 1,
+            "url": "http://127.0.0.1:5173/cart"
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "browser",
+      "gate_note": "Refused with -32601 unless ipc.scripting or ai_unrestricted is true in paneflow.json, or a browser grant covers the calling pane.",
+      "in_capabilities": false,
+      "name": "browser.forward",
+      "owner": "window",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "tab": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tab"
+        ],
+        "title": "TabParams",
+        "type": "object"
+      },
+      "reply": "deferred",
+      "result": {
+        "$defs": {
+          "TabOwner": {
+            "oneOf": [
+              {
+                "properties": {
+                  "agent": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "kind": {
+                    "const": "agent",
+                    "type": "string"
+                  },
+                  "session": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "session"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "human",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              },
+              {
+                "properties": {
+                  "kind": {
+                    "const": "unclaimed",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "TabState": {
+            "enum": [
+              "starting",
+              "loading",
+              "loaded",
+              "awaiting_decision",
+              "refused",
+              "crashed",
+              "failed"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "http_status": {
+            "format": "int32",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "owner": {
+            "$ref": "#/$defs/TabOwner"
+          },
+          "state": {
+            "$ref": "#/$defs/TabState"
+          },
+          "tab": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "description": "The URL the tab shows once the call ends",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tab",
+          "url",
+          "state",
+          "owner"
+        ],
+        "title": "Navigated",
+        "type": "object"
+      },
+      "scope": "workspace",
+      "scope_note": "A caller in a pane reaches only sessions of its own workspace unless orchestration is open for it.",
+      "stream": false,
+      "summary": "Go forward one history entry in a tab the caller owns and wait for the page."
+    },
+    {
+      "audience": "anyone",
+      "examples": [
+        {
+          "params": {
+            "tab": 1
+          },
+          "result": {
+            "console": [
+              {
+                "level": "error",
+                "line": 14,
+                "seq": 1,
+                "source": "http://127.0.0.1:5173/",
+                "text": "TypeError: x is undefined"
+              }
+            ],
+            "dropped_bytes": 0,
+            "dropped_entries": 0,
+            "generation": 1,
+            "loading": false,
+            "network": [
+              {
+                "method": "GET",
+                "resource_type": "Fetch",
+                "seq": 1,
+                "status": 500,
+                "url": "http://127.0.0.1:5173/api/prices"
+              }
+            ],
+            "tab": 1,
+            "title": "Shop",
+            "tree": "RootWebArea \"Shop\"\n  heading \"Cart\"\n  button \"Checkout\" [ref=e1]",
+            "url": "http://127.0.0.1:5173/"
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "browser",
+      "gate_note": "Refused with -32601 unless ipc.scripting or ai_unrestricted is true in paneflow.json, or a browser grant covers the calling pane.",
+      "in_capabilities": false,
+      "name": "browser.snapshot",
+      "owner": "window",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "tab": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tab"
+        ],
+        "title": "TabParams",
+        "type": "object"
+      },
+      "reply": "deferred",
+      "result": {
+        "$defs": {
+          "ConsoleEntry": {
+            "additionalProperties": false,
+            "properties": {
+              "column": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "level": {
+                "description": "debug, info, warning or error",
+                "type": "string"
+              },
+              "line": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "seq": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "source": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "seq",
+              "level",
+              "text"
+            ],
+            "type": "object"
+          },
+          "Dialog": {
+            "additionalProperties": false,
+            "properties": {
+              "dismissed": {
+                "type": "boolean"
+              },
+              "kind": {
+                "$ref": "#/$defs/DialogKind"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "message",
+              "dismissed"
+            ],
+            "type": "object"
+          },
+          "DialogKind": {
+            "enum": [
+              "alert",
+              "confirm",
+              "prompt",
+              "beforeunload"
+            ],
+            "type": "string"
+          },
+          "NetworkEntry": {
+            "additionalProperties": false,
+            "properties": {
+              "failure": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "method": {
+                "type": "string"
+              },
+              "request_headers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Request headers; the values of Authorization, Cookie and Proxy-Authorization are left out",
+                "type": "object"
+              },
+              "resource_type": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "seq": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "status": {
+                "format": "uint16",
+                "maximum": 65535,
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "seq",
+              "method",
+              "url"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "console": {
+            "description": "Console entries recorded since the previous snapshot",
+            "items": {
+              "$ref": "#/$defs/ConsoleEntry"
+            },
+            "type": "array"
+          },
+          "dialogs": {
+            "items": {
+              "$ref": "#/$defs/Dialog"
+            },
+            "type": "array"
+          },
+          "dropped_bytes": {
+            "description": "Bytes of tree left out past the 32 KiB bound",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "dropped_entries": {
+            "description": "Entries recorded since the previous snapshot that the buffers no longer hold",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "generation": {
+            "description": "The navigation generation the references belong to; a reference from an older generation is stale",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "loading": {
+            "description": "True while the page is still loading; the tree is what exists so far",
+            "type": "boolean"
+          },
+          "network": {
+            "description": "Network entries recorded since the previous snapshot",
+            "items": {
+              "$ref": "#/$defs/NetworkEntry"
+            },
+            "type": "array"
+          },
+          "tab": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tree": {
+            "description": "The accessibility tree, one node per line, indented two spaces per depth: role \"name\" [ref=eN]",
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tab",
+          "url",
+          "loading",
+          "generation",
+          "tree",
+          "dropped_bytes",
+          "console",
+          "network",
+          "dropped_entries"
+        ],
+        "title": "Snapshot",
+        "type": "object"
+      },
+      "scope": "workspace",
+      "scope_note": "A caller in a pane reaches only sessions of its own workspace unless orchestration is open for it.",
+      "stream": false,
+      "summary": "Return a tab's URL, title, accessibility tree with element references, and the console and network entries since the previous snapshot."
+    },
+    {
+      "audience": "anyone",
+      "examples": [
+        {
+          "params": {
+            "action": "click",
+            "ref": "e1",
+            "tab": 1
+          },
+          "result": {
+            "action": "click",
+            "navigated": true,
+            "tab": 1,
+            "url": "http://127.0.0.1:5173/checkout"
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "browser",
+      "gate_note": "Refused with -32601 unless ipc.scripting or ai_unrestricted is true in paneflow.json, or a browser grant covers the calling pane.",
+      "in_capabilities": false,
+      "name": "browser.act",
+      "owner": "window",
+      "params": {
+        "$defs": {
+          "Action": {
+            "enum": [
+              "click",
+              "type",
+              "press",
+              "hover",
+              "select",
+              "scroll"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "action": {
+            "$ref": "#/$defs/Action"
+          },
+          "delta_y": {
+            "default": 400,
+            "description": "Pixels to scroll down, negative to scroll up, for scroll",
+            "format": "int64",
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "key": {
+            "description": "A key name such as Enter, Tab, Escape or ArrowDown, for press",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ref": {
+            "description": "An element reference eN from the latest snapshot",
+            "type": "string"
+          },
+          "tab": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "text": {
+            "description": "The text to type, for type",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "value": {
+            "description": "The value or visible label of the option to choose, for select",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "tab",
+          "ref",
+          "action"
+        ],
+        "title": "ActParams",
+        "type": "object"
+      },
+      "reply": "deferred",
+      "result": {
+        "$defs": {
+          "Action": {
+            "enum": [
+              "click",
+              "type",
+              "press",
+              "hover",
+              "select",
+              "scroll"
+            ],
+            "type": "string"
+          },
+          "Dialog": {
+            "additionalProperties": false,
+            "properties": {
+              "dismissed": {
+                "type": "boolean"
+              },
+              "kind": {
+                "$ref": "#/$defs/DialogKind"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "message",
+              "dismissed"
+            ],
+            "type": "object"
+          },
+          "DialogKind": {
+            "enum": [
+              "alert",
+              "confirm",
+              "prompt",
+              "beforeunload"
+            ],
+            "type": "string"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "$ref": "#/$defs/Action"
+          },
+          "dialogs": {
+            "description": "JavaScript dialogs the action opened; each one was dismissed",
+            "items": {
+              "$ref": "#/$defs/Dialog"
+            },
+            "type": "array"
+          },
+          "navigated": {
+            "description": "True when the action started a navigation of the tab",
+            "type": "boolean"
+          },
+          "tab": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "tab",
+          "action",
+          "navigated",
+          "url"
+        ],
+        "title": "Acted",
+        "type": "object"
+      },
+      "scope": "workspace",
+      "scope_note": "A caller in a pane reaches only sessions of its own workspace unless orchestration is open for it.",
+      "stream": false,
+      "summary": "Click, type, press a key, hover, select an option or scroll on an element of the latest snapshot."
+    },
+    {
+      "audience": "anyone",
+      "examples": [
+        {
+          "params": {
+            "tab": 1,
+            "text": "Order placed"
+          },
+          "result": {
+            "condition": "text \"Order placed\"",
+            "tab": 1,
+            "waited_ms": 120
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "browser",
+      "gate_note": "Refused with -32601 unless ipc.scripting or ai_unrestricted is true in paneflow.json, or a browser grant covers the calling pane.",
+      "in_capabilities": false,
+      "name": "browser.wait_for",
+      "owner": "window",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "network_idle": {
+            "description": "Wait until no request has been in flight for 500 ms",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "ref": {
+            "description": "Wait until this reference of the latest snapshot is visible",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tab": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "text": {
+            "description": "Wait until the page shows this text",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timeout_ms": {
+            "default": 10000,
+            "description": "Milliseconds to wait, at most 60000",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "tab"
+        ],
+        "title": "WaitParams",
+        "type": "object"
+      },
+      "reply": "deferred",
+      "result": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "condition": {
+            "type": "string"
+          },
+          "tab": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "waited_ms": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tab",
+          "condition",
+          "waited_ms"
+        ],
+        "title": "Waited",
+        "type": "object"
+      },
+      "scope": "workspace",
+      "scope_note": "A caller in a pane reaches only sessions of its own workspace unless orchestration is open for it.",
+      "stream": false,
+      "summary": "Wait until a tab shows a text, shows an element of the latest snapshot, or has no request in flight."
+    },
+    {
+      "audience": "anyone",
+      "examples": [
+        {
+          "params": {
+            "tab": 1
+          },
+          "result": {
+            "cursor": 1,
+            "dropped": 0,
+            "entries": [
+              {
+                "level": "error",
+                "line": 14,
+                "seq": 1,
+                "source": "http://127.0.0.1:5173/",
+                "text": "TypeError: x is undefined"
+              }
+            ],
+            "tab": 1
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "browser",
+      "gate_note": "Refused with -32601 unless ipc.scripting or ai_unrestricted is true in paneflow.json, or a browser grant covers the calling pane.",
+      "in_capabilities": false,
+      "name": "browser.console",
+      "owner": "window",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "cursor": {
+            "description": "Return the entries after this cursor; from the oldest kept when absent",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "limit": {
+            "default": 200,
+            "description": "Entries to return, at most 1000",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "tab": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tab"
+        ],
+        "title": "HistoryParams",
+        "type": "object"
+      },
+      "reply": "deferred",
+      "result": {
+        "$defs": {
+          "ConsoleEntry": {
+            "additionalProperties": false,
+            "properties": {
+              "column": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "level": {
+                "description": "debug, info, warning or error",
+                "type": "string"
+              },
+              "line": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "seq": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "source": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "seq",
+              "level",
+              "text"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "description": "Pass it back to read the entries after these",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "dropped": {
+            "description": "Entries after the given cursor that the buffer no longer holds",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/$defs/ConsoleEntry"
+            },
+            "type": "array"
+          },
+          "tab": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tab",
+          "entries",
+          "cursor",
+          "dropped"
+        ],
+        "title": "ConsoleHistory",
+        "type": "object"
+      },
+      "scope": "workspace",
+      "scope_note": "A caller in a pane reaches only sessions of its own workspace unless orchestration is open for it.",
+      "stream": false,
+      "summary": "Page through a tab's console history with a cursor."
+    },
+    {
+      "audience": "anyone",
+      "examples": [
+        {
+          "params": {
+            "tab": 1
+          },
+          "result": {
+            "cursor": 1,
+            "dropped": 0,
+            "entries": [
+              {
+                "method": "GET",
+                "resource_type": "Fetch",
+                "seq": 1,
+                "status": 500,
+                "url": "http://127.0.0.1:5173/api/prices"
+              }
+            ],
+            "tab": 1
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "browser",
+      "gate_note": "Refused with -32601 unless ipc.scripting or ai_unrestricted is true in paneflow.json, or a browser grant covers the calling pane.",
+      "in_capabilities": false,
+      "name": "browser.network",
+      "owner": "window",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "cursor": {
+            "description": "Return the entries after this cursor; from the oldest kept when absent",
+            "format": "uint64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "limit": {
+            "default": 200,
+            "description": "Entries to return, at most 1000",
+            "format": "uint",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "tab": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tab"
+        ],
+        "title": "HistoryParams",
+        "type": "object"
+      },
+      "reply": "deferred",
+      "result": {
+        "$defs": {
+          "NetworkEntry": {
+            "additionalProperties": false,
+            "properties": {
+              "failure": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "method": {
+                "type": "string"
+              },
+              "request_headers": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Request headers; the values of Authorization, Cookie and Proxy-Authorization are left out",
+                "type": "object"
+              },
+              "resource_type": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "seq": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "status": {
+                "format": "uint16",
+                "maximum": 65535,
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "seq",
+              "method",
+              "url"
+            ],
+            "type": "object"
+          }
+        },
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "dropped": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/$defs/NetworkEntry"
+            },
+            "type": "array"
+          },
+          "tab": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tab",
+          "entries",
+          "cursor",
+          "dropped"
+        ],
+        "title": "NetworkHistory",
+        "type": "object"
+      },
+      "scope": "workspace",
+      "scope_note": "A caller in a pane reaches only sessions of its own workspace unless orchestration is open for it.",
+      "stream": false,
+      "summary": "Page through a tab's network history with a cursor: method, URL, status, resource type and failure, never a body."
+    },
+    {
+      "audience": "anyone",
+      "examples": [
+        {
+          "params": {
+            "tab": 1
+          },
+          "result": {
+            "data": "iVBORw0KGgo=",
+            "device_scale_factor": 1.0,
+            "format": "png",
+            "height": 800,
+            "tab": 1,
+            "width": 1280
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "browser",
+      "gate_note": "Refused with -32601 unless ipc.scripting or ai_unrestricted is true in paneflow.json, or a browser grant covers the calling pane.",
+      "in_capabilities": false,
+      "name": "browser.screenshot",
+      "owner": "window",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "tab": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tab"
+        ],
+        "title": "TabParams",
+        "type": "object"
+      },
+      "reply": "deferred",
+      "result": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "description": "The PNG, base64 encoded",
+            "type": "string"
+          },
+          "device_scale_factor": {
+            "format": "double",
+            "type": "number"
+          },
+          "format": {
+            "type": "string"
+          },
+          "height": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "tab": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "width": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tab",
+          "format",
+          "width",
+          "height",
+          "device_scale_factor",
+          "data"
+        ],
+        "title": "Screenshot",
+        "type": "object"
+      },
+      "scope": "workspace",
+      "scope_note": "A caller in a pane reaches only sessions of its own workspace unless orchestration is open for it.",
+      "stream": false,
+      "summary": "Return a PNG of a tab's viewport at its device scale factor."
+    },
+    {
+      "audience": "anyone",
+      "examples": [
+        {
+          "params": {
+            "script": "document.title",
+            "tab": 1
+          },
+          "result": {
+            "dropped_bytes": 0,
+            "origin": "http://127.0.0.1:5173",
+            "tab": 1,
+            "value": "\"Shop\""
+          }
+        }
+      ],
+      "fallback": null,
+      "gate": "browser",
+      "gate_note": "Refused with -32601 unless ipc.scripting or ai_unrestricted is true in paneflow.json, or a browser grant covers the calling pane.",
+      "in_capabilities": false,
+      "name": "browser.evaluate",
+      "owner": "window",
+      "params": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "script": {
+            "description": "A JavaScript expression evaluated in the page, at most 65536 bytes",
+            "type": "string"
+          },
+          "tab": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "tab",
+          "script"
+        ],
+        "title": "EvaluateParams",
+        "type": "object"
+      },
+      "reply": "deferred",
+      "result": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "dropped_bytes": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "exception": {
+            "description": "The message of the exception the script threw",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "origin": {
+            "type": "string"
+          },
+          "tab": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "value": {
+            "description": "The result as JSON text, bounded at 32 KiB",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "tab",
+          "origin",
+          "dropped_bytes"
+        ],
+        "title": "Evaluated",
+        "type": "object"
+      },
+      "scope": "workspace",
+      "scope_note": "A caller in a pane reaches only sessions of its own workspace unless orchestration is open for it.",
+      "stream": false,
+      "summary": "Evaluate a JavaScript expression in a tab the caller owns, once the user has approved evaluation for this agent in this workspace."
+    },
+    {
+      "audience": "anyone",
+      "examples": [
+        {
           "params": {
             "session": "223e4567-e89b-42d3-a456-426614174000",
             "source_session": "123e4567-e89b-42d3-a456-426614174000",
@@ -6771,7 +9250,8 @@
             "enum": [
               "write",
               "spawn",
-              "layout"
+              "layout",
+              "browser"
             ],
             "type": "string"
           }
@@ -7019,7 +9499,8 @@
             "enum": [
               "write",
               "spawn",
-              "layout"
+              "layout",
+              "browser"
             ],
             "type": "string"
           }
@@ -7153,7 +9634,8 @@
             "enum": [
               "write",
               "spawn",
-              "layout"
+              "layout",
+              "browser"
             ],
             "type": "string"
           }

@@ -7,11 +7,13 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use paneflow_browser_proto::{
     Command as HostCommand, CommandError, ENDPOINT_ARG, Event, ExitReason, Hello, HostMessage,
     OriginDecision, PROFILES_ARG, PROTOCOL_VERSION, ProfileName, READY_LINE, Reply, RequestId,
-    TabId, WindowMessage, check_version, read_message, write_message,
+    TabId, Welcome, WindowMessage, check_version, read_message, write_message,
 };
 
 use crate::transport::{self, Stream};
-use crate::{ClientEvent, HOST_STOPPED_MESSAGE, HostConfig, TabStatus, Ticket, host_environment};
+use crate::{
+    ClientEvent, HOST_STOPPED_MESSAGE, HostConfig, HostInfo, TabStatus, Ticket, host_environment,
+};
 
 const STDERR_TAIL_BYTES: usize = 8 * 1024;
 
@@ -38,6 +40,8 @@ enum HostState {
     Running {
         generation: u64,
         pid: u32,
+        engine: String,
+        sandbox: bool,
         writer: Sender<WindowMessage>,
     },
 }
@@ -97,6 +101,26 @@ impl BrowserClient {
             HostState::Running { pid, .. } => Some(pid),
             _ => None,
         }
+    }
+
+    pub fn host_info(&self) -> Option<HostInfo> {
+        match &self.shared.lock().host {
+            HostState::Running {
+                pid,
+                engine,
+                sandbox,
+                ..
+            } => Some(HostInfo {
+                pid: *pid,
+                engine: engine.clone(),
+                sandbox: *sandbox,
+            }),
+            _ => None,
+        }
+    }
+
+    pub fn binary(&self) -> &std::path::Path {
+        &self.shared.config.binary
     }
 
     pub fn tab_status(&self, tab: TabId) -> Option<TabStatus> {
@@ -279,6 +303,7 @@ fn answered(result: Result<Reply, CommandError>) -> Ticket {
 struct Started {
     child: Child,
     pid: u32,
+    welcome: Welcome,
     stream: Stream,
     stderr_tail: Arc<Mutex<VecDeque<u8>>>,
 }
@@ -370,9 +395,10 @@ fn launch(config: &HostConfig, generation: u64) -> Result<Started, String> {
     }
     let handshake = connect_and_greet(&endpoint, config);
     match handshake {
-        Ok(stream) => Ok(Started {
+        Ok((stream, welcome)) => Ok(Started {
             child,
             pid,
+            welcome,
             stream,
             stderr_tail,
         }),
@@ -458,7 +484,10 @@ fn wait_ready(stdout: impl Read + Send + 'static) -> Receiver<bool> {
     receiver
 }
 
-fn connect_and_greet(endpoint: &std::path::Path, config: &HostConfig) -> Result<Stream, String> {
+fn connect_and_greet(
+    endpoint: &std::path::Path,
+    config: &HostConfig,
+) -> Result<(Stream, Welcome), String> {
     let mut stream = transport::connect(endpoint).map_err(|error| {
         format!(
             "cannot reach the browser engine at {}: {error}",
@@ -478,7 +507,7 @@ fn connect_and_greet(endpoint: &std::path::Path, config: &HostConfig) -> Result<
         HostMessage::Welcome(welcome) => {
             check_version(PROTOCOL_VERSION, welcome.protocol_version)
                 .map_err(|refusal| refusal.to_string())?;
-            Ok(stream)
+            Ok((stream, welcome))
         }
         HostMessage::Refused(refusal) => Err(refusal.to_string()),
         other => Err(format!(
@@ -491,6 +520,7 @@ fn adopt(shared: &Arc<Shared>, generation: u64, started: Started) {
     let Started {
         mut child,
         pid,
+        welcome,
         stream,
         stderr_tail,
     } = started;
@@ -537,6 +567,8 @@ fn adopt(shared: &Arc<Shared>, generation: u64, started: Started) {
             HostState::Running {
                 generation,
                 pid,
+                engine: welcome.engine,
+                sandbox: welcome.sandbox,
                 writer: writer.clone(),
             },
         ) {

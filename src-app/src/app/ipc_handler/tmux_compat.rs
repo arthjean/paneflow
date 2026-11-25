@@ -79,6 +79,7 @@ impl PaneFlowApp {
         &mut self,
         params: &serde_json::Value,
         caller_pid: Option<i64>,
+        principal: &paneflow_api::Principal,
         cx: &mut Context<Self>,
     ) -> IpcReply {
         let request = match tmux_request(params) {
@@ -111,7 +112,7 @@ impl PaneFlowApp {
                 return IpcReply::Ready(failure(format!("paneflow tmux-compat: {message}")));
             }
         };
-        match self.run_tmux_command(&request, caller, parsed, caller_pid, cx) {
+        match self.run_tmux_command(&request, caller, parsed, (caller_pid, principal), cx) {
             Ok(reply) => reply,
             Err(error) => IpcReply::Ready(failure(error.message())),
         }
@@ -122,7 +123,7 @@ impl PaneFlowApp {
         request: &TmuxRequest,
         caller: u32,
         parsed: TmuxCommand,
-        caller_pid: Option<i64>,
+        (caller_pid, principal): (Option<i64>, &paneflow_api::Principal),
         cx: &mut Context<Self>,
     ) -> Result<IpcReply, TeamError> {
         let ready = |value| Ok(IpcReply::Ready(value));
@@ -244,7 +245,7 @@ impl PaneFlowApp {
                     self,
                     "surface.send_text",
                     &params,
-                    caller_pid,
+                    (caller_pid, principal),
                     self.ipc_gates,
                     cx,
                 ) {

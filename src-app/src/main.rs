@@ -21,6 +21,7 @@ mod assets;
 mod auto_naming;
 #[cfg(test)]
 mod bench_harness;
+mod browser_control;
 mod claude_sessions;
 mod cli;
 mod codex_sessions;

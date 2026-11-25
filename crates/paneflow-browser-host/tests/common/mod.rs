@@ -72,6 +72,41 @@ navigator.mediaDevices.getUserMedia({video: true, audio: true}).then(() => resul
 const DOWNLOAD_PAGE: &str = r#"<!doctype html><html><head><meta charset="utf-8"><title>Download</title></head><body>
 <a id="get" href="/test/file.bin">Get the file</a></body></html>"#;
 
+const HIDDEN_PAGE: &str = r#"<!doctype html><html><head><meta charset="utf-8"><title>Hidden</title></head><body>
+<button id="shown" type="button" onclick="document.getElementById('later').hidden=false">Show the late button</button>
+<button id="later" type="button" hidden>Late button</button>
+<div style="visibility:hidden"><button type="button">Invisible button</button></div>
+</body></html>"#;
+
+const AUTH_PAGE: &str = r#"<!doctype html><html><head><meta charset="utf-8"><title>Auth</title></head><body>auth
+<script>fetch('/api/cart', {headers: {'Authorization': 'Bearer secret-token-123', 'X-Trace': 'visible-trace'}});</script></body></html>"#;
+
+const SLOW_HEAD: &str = r#"<!doctype html><html><head><meta charset="utf-8"><title>Slow page</title></head><body><h1>Arrived first</h1>"#;
+
+pub const SLOW_PAGE_DELAY: Duration = Duration::from_secs(4);
+
+fn big_page() -> String {
+    let mut page = String::from(
+        r#"<!doctype html><html><head><meta charset="utf-8"><title>Big</title></head><body>"#,
+    );
+    for index in 0..3000 {
+        page.push_str(&format!(
+            "<button type=\"button\">Button number {index}</button>"
+        ));
+    }
+    page.push_str("</body></html>");
+    page
+}
+
+fn respond_slowly(stream: &mut TcpStream) {
+    let head = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n";
+    let _ = stream.write_all(head.as_bytes());
+    let _ = stream.write_all(SLOW_HEAD.as_bytes());
+    let _ = stream.flush();
+    std::thread::sleep(SLOW_PAGE_DELAY);
+    let _ = stream.write_all(b"<p>Arrived last</p></body></html>");
+}
+
 const COOKIE_PAGE: &str = r#"<!doctype html><html><head><meta charset="utf-8"><title>Cookies</title></head><body>cookies</body></html>"#;
 
 fn serve(mut stream: TcpStream) {
@@ -129,6 +164,26 @@ fn serve(mut stream: TcpStream) {
             "Content-Disposition: attachment; filename=\"file.bin\"\r\n",
             &[7u8; 4096],
         ),
+        "/test/hidden" => respond(
+            &mut stream,
+            "200 OK",
+            "text/html",
+            "",
+            HIDDEN_PAGE.as_bytes(),
+        ),
+        "/test/auth" => respond(&mut stream, "200 OK", "text/html", "", AUTH_PAGE.as_bytes()),
+        "/test/big" => respond(
+            &mut stream,
+            "200 OK",
+            "text/html",
+            "",
+            big_page().as_bytes(),
+        ),
+        "/test/slow" => respond_slowly(&mut stream),
+        "/test/redirect" => {
+            let location = format!("Location: {query}\r\n");
+            respond(&mut stream, "302 Found", "text/plain", &location, b"moved")
+        }
         "/test/cookie" => {
             let set = if query.is_empty() {
                 String::new()

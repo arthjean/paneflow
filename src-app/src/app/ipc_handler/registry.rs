@@ -13,10 +13,11 @@ pub(crate) struct Call<'a, P> {
     pub(crate) params: P,
     pub(crate) raw: &'a Value,
     pub(crate) caller_pid: Option<i64>,
+    pub(crate) caller: &'a Principal,
 }
 
 type AppHandler = Box<
-    dyn Fn(&mut PaneFlowApp, &Value, Option<i64>, &mut Context<PaneFlowApp>) -> IpcReply
+    dyn Fn(&mut PaneFlowApp, &Value, Option<i64>, &Principal, &mut Context<PaneFlowApp>) -> IpcReply
         + Send
         + Sync,
 >;
@@ -72,13 +73,9 @@ fn decode<P: serde::de::DeserializeOwned>(raw: &Value) -> Result<P, JsonRpcError
         .map_err(|error| JsonRpcError::invalid_params(format!("invalid params: {error}")))
 }
 
-pub(crate) fn gate_refusal(gate: Gate, scripting_open: bool) -> Option<JsonRpcError> {
-    match gate {
-        Gate::Scripting { refusal } if !scripting_open => {
-            Some(JsonRpcError::method_not_enabled(refusal))
-        }
-        Gate::Open | Gate::Scripting { .. } | Gate::OrchestrationWhenSpawning => None,
-    }
+pub(crate) fn gate_refusal(gate: Gate, gates: Gates) -> Option<JsonRpcError> {
+    gate.closed_refusal(&gates)
+        .map(JsonRpcError::method_not_enabled)
 }
 
 pub(crate) fn spawn_gate_open(spec: &Spec, gates: Gates) -> bool {
@@ -221,13 +218,16 @@ impl RegistryBuilder {
     pub(crate) fn inline<M: Method>(self, answer: fn(Call<'_, M::Params>) -> Value) -> Self {
         self.push::<M>(
             Reply::Inline,
-            Serve::Inline(Box::new(move |raw, _| match decode::<M::Params>(raw) {
-                Ok(params) => answer(Call {
-                    params,
-                    raw,
-                    caller_pid: None,
-                }),
-                Err(error) => error.into_value(),
+            Serve::Inline(Box::new(move |raw, caller| {
+                match decode::<M::Params>(raw) {
+                    Ok(params) => answer(Call {
+                        params,
+                        raw,
+                        caller_pid: None,
+                        caller,
+                    }),
+                    Err(error) => error.into_value(),
+                }
             })),
         )
     }
@@ -246,20 +246,21 @@ impl RegistryBuilder {
     ) -> Self {
         self.push::<M>(
             registered,
-            Serve::App(Box::new(move |app, raw, caller_pid, cx| {
-                match decode::<M::Params>(raw) {
+            Serve::App(Box::new(
+                move |app, raw, caller_pid, caller, cx| match decode::<M::Params>(raw) {
                     Ok(params) => handler(
                         app,
                         Call {
                             params,
                             raw,
                             caller_pid,
+                            caller,
                         },
                         cx,
                     ),
                     Err(error) => IpcReply::Ready(error.into_value()),
-                }
-            })),
+                },
+            )),
         )
     }
 
@@ -269,7 +270,7 @@ impl RegistryBuilder {
     ) -> Self {
         self.push::<M>(
             Reply::Ready,
-            Serve::App(Box::new(move |app, raw, caller_pid, cx| {
+            Serve::App(Box::new(move |app, raw, caller_pid, caller, cx| {
                 IpcReply::Ready(match decode::<M::Params>(raw) {
                     Ok(params) => handler(
                         app,
@@ -277,6 +278,7 @@ impl RegistryBuilder {
                             params,
                             raw,
                             caller_pid,
+                            caller,
                         },
                         cx,
                     ),
@@ -402,7 +404,7 @@ impl Registry {
         app: &mut PaneFlowApp,
         method: &str,
         params: &Value,
-        caller_pid: Option<i64>,
+        (caller_pid, caller): (Option<i64>, &Principal),
         gates: Gates,
         cx: &mut Context<PaneFlowApp>,
     ) -> IpcReply {
@@ -414,17 +416,17 @@ impl Registry {
         if let Err(error) = entry.validate(params) {
             return IpcReply::Ready(error.into_value());
         }
-        if let Some(refusal) = gate_refusal(entry.spec().gate, gates.scripting) {
+        if let Some(refusal) = gate_refusal(entry.spec().gate, gates) {
             return IpcReply::Ready(refusal.into_value());
         }
         match &entry.serve {
             Serve::App(handler) => {
                 let outer = std::mem::replace(&mut app.ipc_gates, gates);
-                let reply = handler(app, params, caller_pid, cx);
+                let reply = handler(app, params, caller_pid, caller, cx);
                 app.ipc_gates = outer;
                 reply
             }
-            Serve::Inline(answer) => IpcReply::Ready(answer(params, &Principal::Window)),
+            Serve::Inline(answer) => IpcReply::Ready(answer(params, caller)),
             Serve::Stream => IpcReply::Ready(
                 JsonRpcError::method_not_found(format!(
                     "{method} is a stream; open it on its own connection"
@@ -522,12 +524,10 @@ mod tests {
                     Admission::Refused { data, .. } => {
                         format!("refused:{}", data["reason"].as_str().unwrap_or("none"))
                     }
-                    Admission::Allowed(gates) => {
-                        match gate_refusal(entry.spec().gate, gates.scripting) {
-                            Some(_) => "refused:gate_closed".to_string(),
-                            None => "allowed".to_string(),
-                        }
-                    }
+                    Admission::Allowed(gates) => match gate_refusal(entry.spec().gate, gates) {
+                        Some(_) => "refused:gate_closed".to_string(),
+                        None => "allowed".to_string(),
+                    },
                 };
                 let expected = if fields[column].starts_with("allowed") {
                     "allowed"
@@ -613,10 +613,13 @@ mod tests {
         let Gate::Scripting { refusal } = spec.gate else {
             panic!("surface.send_keystroke is scripting gated");
         };
-        let error = gate_refusal(spec.gate, false).expect("closed gate");
+        let error = gate_refusal(spec.gate, Gates::CLOSED).expect("closed gate");
         assert_eq!(error.code, -32601);
         assert_eq!(error.message, refusal);
-        assert!(gate_refusal(spec.gate, true).is_none(), "an open gate");
+        assert!(
+            gate_refusal(spec.gate, Gates::OPEN).is_none(),
+            "an open gate"
+        );
     }
 }
 

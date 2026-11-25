@@ -35,16 +35,18 @@ pub enum Right {
     Write,
     Spawn,
     Layout,
+    Browser,
 }
 
 impl Right {
-    pub const ALL: [Self; 3] = [Self::Write, Self::Spawn, Self::Layout];
+    pub const ALL: [Self; 4] = [Self::Write, Self::Spawn, Self::Layout, Self::Browser];
 
     pub const fn label(self) -> &'static str {
         match self {
             Self::Write => "write",
             Self::Spawn => "spawn",
             Self::Layout => "layout",
+            Self::Browser => "browser",
         }
     }
 
@@ -188,6 +190,7 @@ pub fn needed_right(spec: &Spec) -> Option<Right> {
             Some(Right::Layout)
         }
         Gate::OrchestrationWhenSpawning => Some(Right::Spawn),
+        Gate::Browser { .. } => Some(Right::Browser),
     }
 }
 
@@ -209,6 +212,7 @@ pub fn pane_gates(principal: &Principal, spec: &Spec, base: Gates, view: &GrantV
         let own_workspace = view.covers(session, right, GrantScope::Workspace);
         match right {
             Right::Write if own_workspace => gates.scripting = true,
+            Right::Browser if own_workspace => gates.browser = true,
             Right::Spawn | Right::Layout if everywhere => gates.orchestration = true,
             Right::Spawn
                 if own_workspace

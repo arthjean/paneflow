@@ -57,6 +57,13 @@ impl HostConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostInfo {
+    pub pid: u32,
+    pub engine: String,
+    pub sandbox: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ClientEvent {
     HostStarted { pid: u32 },

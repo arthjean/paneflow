@@ -4,6 +4,7 @@ use paneflow_ipc_client::{IpcClient, IpcTransport};
 use serde_json::Value;
 
 pub(crate) mod api_cmd;
+mod browser_cmd;
 mod config_cmd;
 mod control_cmds;
 mod do_cmd;
@@ -57,6 +58,7 @@ const VERBS: &[&str] = &[
     "sessions",
     "events",
     "agent",
+    "browser",
     "list_panes",
     "read_pane",
     "search_pane",
@@ -217,6 +219,11 @@ enum Commands {
         about = "Reload or check init.lua, the Lua configuration the worker runs"
     )]
     Config(config_cmd::ConfigCommand),
+    #[command(
+        subcommand,
+        about = "Open, read and drive the browser tabs of the Paneflow window"
+    )]
+    Browser(browser_cmd::BrowserCommand),
     #[command(
         subcommand,
         about = "List or revoke the grants agents in panes hold over Paneflow"
@@ -615,6 +622,16 @@ pub fn run() -> i32 {
         };
     }
 
+    if let Commands::Browser(command) = command {
+        return match browser_cmd::run(command) {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("paneflow: {}", e.message);
+                e.code
+            }
+        };
+    }
+
     if let Commands::Grants(command) = command {
         return match grants_cmd::run(command) {
             Ok(code) => code,
@@ -941,6 +958,7 @@ fn dispatch(command: Commands, client: &CliTransport) -> Result<i32, CliError> {
         Commands::Do(args) => Ok(do_cmd::run(args)),
         Commands::Actions { json } => config_cmd::actions(json),
         Commands::Config(command) => config_cmd::run(command),
+        Commands::Browser(command) => browser_cmd::run(command),
         Commands::Grants(command) => grants_cmd::run(command),
         Commands::Host(command) => host_cmd::run(command),
         Commands::Serve(command) => serve_cmd::run(command),

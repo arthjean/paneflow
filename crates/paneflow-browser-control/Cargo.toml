@@ -1,0 +1,20 @@
+[package]
+name = "paneflow-browser-control"
+version.workspace = true
+edition = "2024"
+rust-version.workspace = true
+license.workspace = true
+description = "The agent-facing browser methods of the Paneflow window: tab ownership, snapshots, actions, logs and approvals over the browser host"
+publish = false
+
+[dependencies]
+log.workspace = true
+paneflow-api.workspace = true
+paneflow-browser-client.workspace = true
+paneflow-browser-proto.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+url = "2.5"
+
+[lints]
+workspace = true

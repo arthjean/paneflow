@@ -120,6 +120,23 @@ fn workspace_surface_entries(workspaces: &[Workspace], cx: &App) -> Vec<SurfaceE
     entries
 }
 
+pub(super) struct SessionPlace {
+    pub(super) session: String,
+    pub(super) workspace_idx: usize,
+    pub(super) agent: Option<String>,
+}
+
+pub(super) fn session_directory(workspaces: &[Workspace], cx: &App) -> Vec<SessionPlace> {
+    workspace_surface_entries(workspaces, cx)
+        .into_iter()
+        .map(|entry| SessionPlace {
+            session: entry.entity.read(cx).terminal.session_id.to_string(),
+            workspace_idx: entry.workspace_idx,
+            agent: entry.agent,
+        })
+        .collect()
+}
+
 fn surface_entry_for(
     entity: Entity<TerminalView>,
     workspace_idx: usize,

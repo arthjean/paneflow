@@ -9,6 +9,7 @@
 )]
 
 mod bridge;
+mod browser;
 mod mcp;
 mod output;
 mod resolve;

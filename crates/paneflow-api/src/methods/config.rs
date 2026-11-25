@@ -33,12 +33,22 @@ const GRANT_REQUEST: &str = "grant.request";
 pub fn reply_deadline(method: &str, default: std::time::Duration) -> std::time::Duration {
     if method == ACTION_INVOKE {
         ACTION_REPLY_DEADLINE
+    } else if super::browser::is_browser_method(method) {
+        super::browser::CLIENT_REPLY_DEADLINE
     } else if method == super::prompt::AGENT_PROMPT_RESOLVE || method == GRANT_REQUEST {
         std::time::Duration::from_secs(
             super::prompt::AGENT_PROMPT_DEADLINE_SECS + SLOW_REPLY_DEADLINE.as_secs(),
         )
     } else if SLOW_REPLY_METHODS.contains(&method) {
         SLOW_REPLY_DEADLINE
+    } else {
+        default
+    }
+}
+
+pub fn window_reply_deadline(method: &str, default: std::time::Duration) -> std::time::Duration {
+    if super::browser::is_browser_method(method) {
+        super::browser::REPLY_DEADLINE
     } else {
         default
     }

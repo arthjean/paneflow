@@ -4,7 +4,7 @@ use paneflow_api::{Catalog, Descriptor, Owner};
 use paneflow_ipc_client::host_control::{
     ControlTarget, HostControl, HostTransport, REQUEST_DEADLINE, resolve_control_target,
 };
-use paneflow_ipc_client::{IpcClient, IpcTransport};
+use paneflow_ipc_client::{CallLimits, IpcClient, IpcTransport};
 use serde_json::Value;
 
 use super::{CLIENT_NAME, CliError};
@@ -141,6 +141,14 @@ fn worker_request(
         .map_err(CliError::runtime)
 }
 
+pub(super) fn window_limits(method: &str) -> CallLimits {
+    let default = CallLimits::DEFAULT;
+    CallLimits {
+        deadline: paneflow_api::methods::config::reply_deadline(method, default.deadline),
+        max_bytes: paneflow_api::methods::browser::reply_bytes(method).unwrap_or(default.max_bytes),
+    }
+}
+
 pub(super) fn send(
     catalog: &Catalog,
     endpoint: &Endpoint,
@@ -150,7 +158,7 @@ pub(super) fn send(
     let descriptor = catalog.get(method).ok_or_else(|| unknown_method(method))?;
     match endpoint {
         Endpoint::Window(socket) => IpcClient::new(socket.clone())
-            .call(method, params)
+            .call_with_limits(method, params, window_limits(method))
             .map_err(CliError::runtime),
         Endpoint::Host(path) => {
             let transport = HostTransport::connect(path, CLIENT_NAME).map_err(|error| {

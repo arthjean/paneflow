@@ -396,6 +396,319 @@ paneflow.agent_prompt = {}
 ---@return integer? code
 paneflow.agent_prompt.resolve = function(params) end
 
+---@class paneflow.browser
+paneflow.browser = {}
+
+---@class paneflow.browser.act.params
+---@field action "click"|"type"|"press"|"hover"|"select"|"scroll"
+---@field delta_y? integer Pixels to scroll down, negative to scroll up, for scroll
+---@field key? string A key name such as Enter, Tab, Escape or ArrowDown, for press
+---@field ref string An element reference eN from the latest snapshot
+---@field tab integer
+---@field text? string The text to type, for type
+---@field value? string The value or visible label of the option to choose, for select
+
+---@class paneflow.browser.act.result
+---@field action "click"|"type"|"press"|"hover"|"select"|"scroll"
+---@field dialogs? table[]
+---@field navigated boolean
+---@field tab integer
+---@field url string
+
+---Click, type, press a key, hover, select an option or scroll on an element of the latest snapshot.
+---@param params paneflow.browser.act.params
+---@return paneflow.browser.act.result? result
+---@return string? message
+---@return integer? code
+paneflow.browser.act = function(params) end
+
+---@class paneflow.browser.back.params
+---@field tab integer
+
+---@class paneflow.browser.back.result
+---@field http_status? integer
+---@field owner table
+---@field state "starting"|"loading"|"loaded"|"awaiting_decision"|"refused"|"crashed"|"failed"
+---@field tab integer
+---@field title? string
+---@field url string
+
+---Go back one history entry in a tab the caller owns and wait for the page.
+---@param params paneflow.browser.back.params
+---@return paneflow.browser.back.result? result
+---@return string? message
+---@return integer? code
+paneflow.browser.back = function(params) end
+
+---@class paneflow.browser.claim.params
+---@field tab integer
+
+---@class paneflow.browser.claim.result
+---@field drivable boolean
+---@field owner table
+---@field presentation "none"|"cpu"|"gpu"
+---@field state "starting"|"loading"|"loaded"|"awaiting_decision"|"refused"|"crashed"|"failed"
+---@field tab integer
+---@field title? string
+---@field url string
+---@field workspace string
+
+---Take ownership of an unclaimed tab.
+---@param params paneflow.browser.claim.params
+---@return paneflow.browser.claim.result? result
+---@return string? message
+---@return integer? code
+paneflow.browser.claim = function(params) end
+
+---@class paneflow.browser.close.params
+---@field tab integer
+
+---@class paneflow.browser.close.result
+---@field closed boolean
+---@field tab integer
+---@field url string
+
+---Close a tab the caller owns.
+---@param params paneflow.browser.close.params
+---@return paneflow.browser.close.result? result
+---@return string? message
+---@return integer? code
+paneflow.browser.close = function(params) end
+
+---@class paneflow.browser.console.params
+---@field cursor? integer Return the entries after this cursor; from the oldest kept when absent
+---@field limit? integer Entries to return, at most 1000
+---@field tab integer
+
+---@class paneflow.browser.console.result
+---@field cursor integer
+---@field dropped integer
+---@field entries table[]
+---@field tab integer
+
+---Page through a tab's console history with a cursor.
+---@param params paneflow.browser.console.params
+---@return paneflow.browser.console.result? result
+---@return string? message
+---@return integer? code
+paneflow.browser.console = function(params) end
+
+---@class paneflow.browser.evaluate.params
+---@field script string A JavaScript expression evaluated in the page, at most 65536 bytes
+---@field tab integer
+
+---@class paneflow.browser.evaluate.result
+---@field dropped_bytes integer
+---@field exception? string
+---@field origin string
+---@field tab integer
+---@field value? string
+
+---Evaluate a JavaScript expression in a tab the caller owns, once the user has approved evaluation for this agent in this workspace.
+---@param params paneflow.browser.evaluate.params
+---@return paneflow.browser.evaluate.result? result
+---@return string? message
+---@return integer? code
+paneflow.browser.evaluate = function(params) end
+
+---@class paneflow.browser.forward.params
+---@field tab integer
+
+---@class paneflow.browser.forward.result
+---@field http_status? integer
+---@field owner table
+---@field state "starting"|"loading"|"loaded"|"awaiting_decision"|"refused"|"crashed"|"failed"
+---@field tab integer
+---@field title? string
+---@field url string
+
+---Go forward one history entry in a tab the caller owns and wait for the page.
+---@param params paneflow.browser.forward.params
+---@return paneflow.browser.forward.result? result
+---@return string? message
+---@return integer? code
+paneflow.browser.forward = function(params) end
+
+---@class paneflow.browser.install.params
+
+---@class paneflow.browser.install.result
+---@field binary string
+---@field installed boolean
+---@field message string
+
+---Report whether the browser engine is installed where this window looks for it.
+---@param params paneflow.browser.install.params?
+---@return paneflow.browser.install.result? result
+---@return string? message
+---@return integer? code
+paneflow.browser.install = function(params) end
+
+---@class paneflow.browser.list.params
+---@field scope? string workspace by default; all needs orchestration
+
+---@class paneflow.browser.list.result
+---@field tabs table[]
+
+---List the tabs of the caller's workspace with their owner; only the caller's own tabs are drivable.
+---@param params paneflow.browser.list.params?
+---@return paneflow.browser.list.result? result
+---@return string? message
+---@return integer? code
+paneflow.browser.list = function(params) end
+
+---@class paneflow.browser.navigate.params
+---@field tab integer
+---@field url string An http or https URL of at most 2048 characters
+
+---@class paneflow.browser.navigate.result
+---@field http_status? integer
+---@field owner table
+---@field state "starting"|"loading"|"loaded"|"awaiting_decision"|"refused"|"crashed"|"failed"
+---@field tab integer
+---@field title? string
+---@field url string
+
+---Load a URL in a tab the caller owns and wait for the page.
+---@param params paneflow.browser.navigate.params
+---@return paneflow.browser.navigate.result? result
+---@return string? message
+---@return integer? code
+paneflow.browser.navigate = function(params) end
+
+---@class paneflow.browser.network.params
+---@field cursor? integer Return the entries after this cursor; from the oldest kept when absent
+---@field limit? integer Entries to return, at most 1000
+---@field tab integer
+
+---@class paneflow.browser.network.result
+---@field cursor integer
+---@field dropped integer
+---@field entries table[]
+---@field tab integer
+
+---Page through a tab's network history with a cursor: method, URL, status, resource type and failure, never a body.
+---@param params paneflow.browser.network.params
+---@return paneflow.browser.network.result? result
+---@return string? message
+---@return integer? code
+paneflow.browser.network = function(params) end
+
+---@class paneflow.browser.open.params
+---@field url string An http or https URL of at most 2048 characters
+---@field workspace? string The durable id of the workspace whose profile the tab uses, for a caller outside every pane; a pane always opens in its own workspace
+
+---@class paneflow.browser.open.result
+---@field http_status? integer
+---@field owner table
+---@field state "starting"|"loading"|"loaded"|"awaiting_decision"|"refused"|"crashed"|"failed"
+---@field tab integer
+---@field title? string
+---@field url string
+
+---Open a tab owned by the caller on an http or https URL, in its workspace's profile, and wait for the page.
+---@param params paneflow.browser.open.params
+---@return paneflow.browser.open.result? result
+---@return string? message
+---@return integer? code
+paneflow.browser.open = function(params) end
+
+---@class paneflow.browser.reload.params
+---@field tab integer
+
+---@class paneflow.browser.reload.result
+---@field http_status? integer
+---@field owner table
+---@field state "starting"|"loading"|"loaded"|"awaiting_decision"|"refused"|"crashed"|"failed"
+---@field tab integer
+---@field title? string
+---@field url string
+
+---Reload a tab the caller owns and wait for the page.
+---@param params paneflow.browser.reload.params
+---@return paneflow.browser.reload.result? result
+---@return string? message
+---@return integer? code
+paneflow.browser.reload = function(params) end
+
+---@class paneflow.browser.screenshot.params
+---@field tab integer
+
+---@class paneflow.browser.screenshot.result
+---@field data string
+---@field device_scale_factor number
+---@field format string
+---@field height integer
+---@field tab integer
+---@field width integer
+
+---Return a PNG of a tab's viewport at its device scale factor.
+---@param params paneflow.browser.screenshot.params
+---@return paneflow.browser.screenshot.result? result
+---@return string? message
+---@return integer? code
+paneflow.browser.screenshot = function(params) end
+
+---@class paneflow.browser.snapshot.params
+---@field tab integer
+
+---@class paneflow.browser.snapshot.result
+---@field console table[]
+---@field dialogs? table[]
+---@field dropped_bytes integer
+---@field dropped_entries integer
+---@field generation integer
+---@field loading boolean
+---@field network table[]
+---@field tab integer
+---@field title? string
+---@field tree string
+---@field url string
+
+---Return a tab's URL, title, accessibility tree with element references, and the console and network entries since the previous snapshot.
+---@param params paneflow.browser.snapshot.params
+---@return paneflow.browser.snapshot.result? result
+---@return string? message
+---@return integer? code
+paneflow.browser.snapshot = function(params) end
+
+---@class paneflow.browser.status.params
+---@field scope? string workspace by default; all needs orchestration
+
+---@class paneflow.browser.status.result
+---@field binary string
+---@field host_pid? integer
+---@field installed boolean
+---@field running boolean
+---@field runtime_version? string
+---@field sandbox string
+---@field tabs table[]
+
+---Report whether a browser host runs, its engine, its sandbox and the tabs the caller may see.
+---@param params paneflow.browser.status.params?
+---@return paneflow.browser.status.result? result
+---@return string? message
+---@return integer? code
+paneflow.browser.status = function(params) end
+
+---@class paneflow.browser.wait_for.params
+---@field network_idle? boolean Wait until no request has been in flight for 500 ms
+---@field ref? string Wait until this reference of the latest snapshot is visible
+---@field tab integer
+---@field text? string Wait until the page shows this text
+---@field timeout_ms? integer Milliseconds to wait, at most 60000
+
+---@class paneflow.browser.wait_for.result
+---@field condition string
+---@field tab integer
+---@field waited_ms integer
+
+---Wait until a tab shows a text, shows an element of the latest snapshot, or has no request in flight.
+---@param params paneflow.browser.wait_for.params
+---@return paneflow.browser.wait_for.result? result
+---@return string? message
+---@return integer? code
+paneflow.browser.wait_for = function(params) end
+
 ---@class paneflow.client.dispatch_action.params
 ---@field name string A name from client.list_actions, such as toggle_zoom
 
@@ -525,7 +838,7 @@ paneflow.grant = {}
 
 ---@class paneflow.grant.delegate.params
 ---@field duration_secs? integer Seconds the delegated grant lasts, until the delegator's grant ends by default
----@field rights ("write"|"spawn"|"layout")[]
+---@field rights ("write"|"spawn"|"layout"|"browser")[]
 ---@field scope? "workspace"|"instance"
 ---@field session string The session of a pane the caller spawned with surface.split
 
@@ -558,7 +871,7 @@ paneflow.grant.list = function(params) end
 ---@class paneflow.grant.request.params
 ---@field duration_secs? integer Seconds the grant lasts once allowed, 3600 by default; 0 asks for a grant with no expiry
 ---@field reason? string Why the agent needs it, shown to the human
----@field rights ("write"|"spawn"|"layout")[] Rights asked for, among write, spawn and layout
+---@field rights ("write"|"spawn"|"layout"|"browser")[] Rights asked for, among write, spawn and layout
 ---@field scope? "workspace"|"instance" workspace reaches the calling pane's own workspace, instance every workspace
 
 ---@class paneflow.grant.request.result

@@ -24,6 +24,7 @@ use crate::workspace::{Tab, Workspace, next_workspace_id_in};
 use crate::{PaneFlowApp, ai_types};
 
 mod agent_frames;
+mod browser_methods;
 #[cfg(test)]
 mod conformance;
 mod gates;
@@ -137,8 +138,14 @@ impl PaneFlowApp {
                 scripting: req.gates.scripting || granted,
                 ..req.gates
             };
-            let result = match self.handle_ipc(&req.method, &req.params, req.caller_pid, gates, cx)
-            {
+            let result = match self.handle_ipc(
+                &req.method,
+                &req.params,
+                req.caller_pid,
+                &req.caller,
+                gates,
+                cx,
+            ) {
                 IpcReply::Ready(result) => result,
                 IpcReply::Deferred(job) => {
                     answer_off_thread(job, req.response_tx).detach();
@@ -185,10 +192,11 @@ impl PaneFlowApp {
         method: &str,
         params: &serde_json::Value,
         caller_pid: Option<i64>,
+        caller: &paneflow_api::Principal,
         gates: paneflow_api::Gates,
         cx: &mut Context<Self>,
     ) -> IpcReply {
-        registry().serve(self, method, params, caller_pid, gates, cx)
+        registry().serve(self, method, params, (caller_pid, caller), gates, cx)
     }
 }
 
@@ -201,7 +209,7 @@ fn identity() -> serde_json::Value {
 }
 
 fn register_methods(builder: RegistryBuilder) -> RegistryBuilder {
-    use paneflow_api::methods::{config, events, surface, system, tmux, workspace};
+    use paneflow_api::methods::{browser, config, events, surface, system, tmux, workspace};
 
     builder
         .inline::<system::Ping>(|_| serde_json::json!({"pong": true}))
@@ -229,7 +237,7 @@ fn register_methods(builder: RegistryBuilder) -> RegistryBuilder {
         .ready::<surface::FleetList>(PaneFlowApp::fleet_list)
         .stream::<events::Subscribe>()
         .asynchronous::<tmux::Compat>(|app, call, cx| {
-            app.tmux_compat_reply(call.raw, call.caller_pid, cx)
+            app.tmux_compat_reply(call.raw, call.caller_pid, call.caller, cx)
         })
         .inline::<config::ListBuiltinActions>(
             |_| serde_json::json!({"actions": crate::keybindings::builtin_actions()}),
@@ -239,6 +247,25 @@ fn register_methods(builder: RegistryBuilder) -> RegistryBuilder {
         })
         .inline::<system::Describe>(|call| registry().describe(call.params.method.as_deref()))
         .inline_for_caller::<system::WhoAmI>(paneflow_api::Principal::whoami_value)
+        .deferred::<browser::Status>(PaneFlowApp::browser_reply::<browser::Status>)
+        .deferred::<browser::Install>(PaneFlowApp::browser_reply::<browser::Install>)
+        .deferred::<browser::Open>(PaneFlowApp::browser_reply::<browser::Open>)
+        .deferred::<browser::List>(PaneFlowApp::browser_reply::<browser::List>)
+        .deferred::<browser::Claim>(PaneFlowApp::browser_reply::<browser::Claim>)
+        .deferred::<browser::Close>(PaneFlowApp::browser_reply::<browser::Close>)
+        .deferred::<browser::Navigate>(PaneFlowApp::browser_reply::<browser::Navigate>)
+        .deferred::<browser::Reload>(PaneFlowApp::browser_reply::<browser::Reload>)
+        .deferred::<browser::Back>(PaneFlowApp::browser_reply::<browser::Back>)
+        .deferred::<browser::Forward>(PaneFlowApp::browser_reply::<browser::Forward>)
+        .deferred::<browser::SnapshotMethod>(PaneFlowApp::browser_reply::<browser::SnapshotMethod>)
+        .deferred::<browser::Act>(PaneFlowApp::browser_reply::<browser::Act>)
+        .deferred::<browser::WaitFor>(PaneFlowApp::browser_reply::<browser::WaitFor>)
+        .deferred::<browser::Console>(PaneFlowApp::browser_reply::<browser::Console>)
+        .deferred::<browser::Network>(PaneFlowApp::browser_reply::<browser::Network>)
+        .deferred::<browser::ScreenshotMethod>(
+            PaneFlowApp::browser_reply::<browser::ScreenshotMethod>,
+        )
+        .deferred::<browser::Evaluate>(PaneFlowApp::browser_reply::<browser::Evaluate>)
 }
 
 impl PaneFlowApp {
@@ -295,6 +322,7 @@ mod tests {
                 state
             },
             caller_pid: None,
+            caller: paneflow_api::Principal::Window,
             grant: None,
             gates: paneflow_api::Gates::CLOSED,
         }

@@ -4486,6 +4486,9 @@ dependencies = [
  "open",
  "paneflow-agent-config",
  "paneflow-api",
+ "paneflow-browser-client",
+ "paneflow-browser-control",
+ "paneflow-browser-proto",
  "paneflow-config",
  "paneflow-dock-tile",
  "paneflow-git",
@@ -4569,6 +4572,19 @@ dependencies = [
  "paneflow-home",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "paneflow-browser-control"
+version = "0.20.0"
+dependencies = [
+ "log",
+ "paneflow-api",
+ "paneflow-browser-client",
+ "paneflow-browser-proto",
+ "serde",
+ "serde_json",
+ "url",
 ]
 
 [[package]]
@@ -4756,6 +4772,7 @@ dependencies = [
 name = "paneflow-mcp"
 version = "0.20.0"
 dependencies = [
+ "paneflow-api",
  "paneflow-home",
  "paneflow-ipc-client",
  "serde",
