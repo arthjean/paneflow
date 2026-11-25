@@ -1,5 +1,5 @@
 use super::*;
-use crate::ui_primitives::AccessibleControlExt as _;
+use crate::ui_primitives::{AccessibleControlExt as _, Press};
 
 pub(crate) const RETRY_LABEL: &str = "Retry";
 
@@ -110,17 +110,13 @@ impl CodeView {
                                 "code-conflict-keep",
                                 "Keep mine",
                                 ui,
-                                cx.listener(|this, _: &MouseDownEvent, _w, cx| {
-                                    this.resolve_keep_mine(cx)
-                                }),
+                                cx.listener(|this, _: &Press, _w, cx| this.resolve_keep_mine(cx)),
                             ))
                             .child(conflict_button(
                                 "code-conflict-reload",
                                 "Reload from disk",
                                 ui,
-                                cx.listener(|this, _: &MouseDownEvent, _w, cx| {
-                                    this.resolve_reload(cx)
-                                }),
+                                cx.listener(|this, _: &Press, _w, cx| this.resolve_reload(cx)),
                             )),
                     )
                     .into_any_element(),
@@ -160,7 +156,7 @@ impl CodeView {
                                 "code-language-server-start",
                                 "Start",
                                 ui,
-                                cx.listener(|this, _: &MouseDownEvent, _w, cx| {
+                                cx.listener(|this, _: &Press, _w, cx| {
                                     this.start_language_server(cx)
                                 }),
                             ))
@@ -168,7 +164,7 @@ impl CodeView {
                                 "code-language-server-not-now",
                                 "Not now",
                                 ui,
-                                cx.listener(|this, _: &MouseDownEvent, _w, cx| {
+                                cx.listener(|this, _: &Press, _w, cx| {
                                     this.decline_language_server(cx)
                                 }),
                             )),
@@ -189,7 +185,7 @@ impl CodeView {
                     "code-language-server-restart",
                     "Restart",
                     ui,
-                    cx.listener(|this, _: &MouseDownEvent, _w, _cx| this.restart_language_server()),
+                    cx.listener(|this, _: &Press, _w, _cx| this.restart_language_server()),
                 ));
             }
             out.push(banner.into_any_element());
@@ -517,10 +513,14 @@ pub(super) fn conflict_button(
     id: &'static str,
     label: &'static str,
     ui: crate::theme::UiColors,
-    on_click: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
-) -> AnyElement {
+    on_press: impl Fn(&Press, &mut Window, &mut App) + 'static,
+) -> gpui::Stateful<gpui::Div> {
+    let on_press = Rc::new(on_press);
+    let pointer = on_press.clone();
     div()
         .id(id)
+        .role(gpui::Role::Button)
+        .aria_label(label)
         .debug_selector(move || id.into())
         .flex_none()
         .px_2()
@@ -532,9 +532,13 @@ pub(super) fn conflict_button(
         .text_color(ui.text)
         .cursor_pointer()
         .hover(|style| style.bg(ui.overlay))
-        .on_mouse_down(MouseButton::Left, on_click)
+        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+            pointer(&Press, window, cx)
+        })
+        .on_a11y_action(gpui::accesskit::Action::Click, move |_, window, cx| {
+            on_press(&Press, window, cx)
+        })
         .child(label)
-        .into_any_element()
 }
 
 #[cfg(test)]
@@ -573,6 +577,34 @@ mod tests {
             cx.notify();
         });
         cx.run_until_parked();
+    }
+
+    #[test]
+    fn every_banner_button_is_an_accessible_button_named_after_its_label() {
+        use gpui::Element as _;
+        use gpui::accesskit::{Action, Node, Role};
+
+        let ui = crate::theme::ui_colors();
+        for (id, label) in [
+            ("code-language-server-start", "Start"),
+            ("code-language-server-not-now", "Not now"),
+            ("code-language-server-restart", "Restart"),
+            ("code-conflict-keep", "Keep mine"),
+            ("code-conflict-reload", "Reload from disk"),
+        ] {
+            let button = conflict_button(id, label, ui, |_, _, _| {});
+            let role = button
+                .a11y_role()
+                .unwrap_or_else(|| panic!("{label} exposes an accessibility role"));
+            let mut node = Node::new(role);
+            button.write_a11y_info(&mut node);
+            assert_eq!(node.role(), Role::Button, "{label}");
+            assert_eq!(node.label(), Some(label));
+            assert!(
+                node.supports_action(Action::Click),
+                "{label} answers an accessibility press"
+            );
+        }
     }
 
     #[gpui::test]

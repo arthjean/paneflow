@@ -1,4 +1,5 @@
 use super::*;
+use crate::ui_primitives::Press;
 
 pub(crate) const TRACKER_DEBOUNCE: Duration = Duration::from_millis(150);
 const TRACKER_POLICY: ComparisonPolicy = ComparisonPolicy::Default;
@@ -404,14 +405,14 @@ impl CodeView {
                 "code-marker-copy",
                 "Copy",
                 ui,
-                cx.listener(|this, _: &MouseDownEvent, _w, cx| this.copy_popup_base(cx)),
+                cx.listener(|this, _: &Press, _w, cx| this.copy_popup_base(cx)),
             ));
         }
         actions = actions.child(conflict_button(
             "code-marker-revert",
             "Revert",
             ui,
-            cx.listener(|this, _: &MouseDownEvent, _w, cx| this.revert_from_popup(cx)),
+            cx.listener(|this, _: &Press, _w, cx| this.revert_from_popup(cx)),
         ));
         panel = panel.child(actions);
 
