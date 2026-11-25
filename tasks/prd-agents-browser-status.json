@@ -25,10 +25,10 @@
     {
       "id": "EP-003",
       "title": "Agent control",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 9,
-      "stories_done": 0
+      "stories_done": 9
     },
     {
       "id": "EP-004",
@@ -255,100 +255,100 @@
       "id": "US-014",
       "title": "Declare the browser methods and the browser right",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-011"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-25T10:17:28+01:00",
+      "completed_at": "2026-11-25",
+      "reviewed_at": "2026-11-25"
     },
     {
       "id": "US-015",
       "title": "Open, list, navigate and close tabs with an owner",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-014"
       ],
       "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-25",
+      "reviewed_at": "2026-11-25"
     },
     {
       "id": "US-016",
       "title": "Return one grouped snapshot",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-015"
       ],
       "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-25",
+      "reviewed_at": "2026-11-25"
     },
     {
       "id": "US-017",
       "title": "Act on elements by reference and wait for conditions",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-016"
       ],
       "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-25",
+      "reviewed_at": "2026-11-25"
     },
     {
       "id": "US-018",
       "title": "Read console, network and a screenshot on demand",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-016"
       ],
       "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-25",
+      "reviewed_at": "2026-11-25"
     },
     {
       "id": "US-019",
       "title": "Evaluate JavaScript behind an approval",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-017",
         "US-020"
       ],
       "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-25",
+      "reviewed_at": "2026-11-25"
     },
     {
       "id": "US-020",
       "title": "Ask the user before an agent acts on a new site",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-015",
         "US-013"
       ],
       "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-25",
+      "reviewed_at": "2026-11-25"
     },
     {
       "id": "US-021",
       "title": "Expose the tools through MCP and the CLI",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-016",
@@ -356,14 +356,14 @@
         "US-018"
       ],
       "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-25",
+      "reviewed_at": "2026-11-25"
     },
     {
       "id": "US-022",
       "title": "Prove the loop with a real agent",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-019",
@@ -371,8 +371,8 @@
         "US-021"
       ],
       "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-25",
+      "reviewed_at": "2026-11-25"
     },
     {
       "id": "US-023",

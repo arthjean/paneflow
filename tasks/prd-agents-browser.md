@@ -588,11 +588,11 @@ The `browser.*` methods, their right, their approvals, and their MCP and CLI ent
 **Dependencies:** Blocked by US-011
 
 **Acceptance Criteria:**
-- [ ] Given `crates/paneflow-api`, when the method list is read, then each method of "The browser API" is one `Descriptor` owned by the window, and no other `browser.*` method exists.
-- [ ] Given the rights of a pane grant, when they are listed, then `browser` appears beside `write`, `spawn` and `layout`.
-- [ ] Given a caller with no `browser` right, when it calls any `browser.*` method, then `authorize` refuses it and the decision is a row of `decision_table.txt`.
-- [ ] Given the regenerated `protocol/api-v1.json`, when it is compared with the registry, then every `browser.*` method and its schema is present.
-- [ ] Given a caller whose identity cannot be established, when it calls a `browser.*` method, then the call is refused before reaching the host.
+- [x] Given `crates/paneflow-api`, when the method list is read, then each method of "The browser API" is one `Descriptor` owned by the window, and no other `browser.*` method exists.
+- [x] Given the rights of a pane grant, when they are listed, then `browser` appears beside `write`, `spawn` and `layout`.
+- [x] Given a caller with no `browser` right, when it calls any `browser.*` method, then `authorize` refuses it and the decision is a row of `decision_table.txt`.
+- [x] Given the regenerated `protocol/api-v1.json`, when it is compared with the registry, then every `browser.*` method and its schema is present.
+- [x] Given a caller whose identity cannot be established, when it calls a `browser.*` method, then the call is refused before reaching the host.
 
 #### US-015: Open, list, navigate and close tabs with an owner
 **Description:** As an agent, I want to open a tab on my workspace's server and know which tabs are mine so that I never act on a page the human is using.
@@ -601,13 +601,13 @@ The `browser.*` methods, their right, their approvals, and their MCP and CLI ent
 **Dependencies:** Blocked by US-014
 
 **Acceptance Criteria:**
-- [ ] Given an agent with the right, when it calls `browser.open` with a loopback URL, then a tab opens in its workspace's profile, owned by that agent's session, and its id is returned.
-- [ ] Given tabs owned by the agent, by the human and by another agent, when the agent calls `browser.list`, then each tab is listed with its owner and only the agent's own tabs are marked drivable.
-- [ ] Given a tab owned by the human, when an agent calls `browser.navigate` on it, then the call is refused with an error naming the owner.
-- [ ] Given an agent-owned tab, when the agent calls `browser.navigate`, `browser.reload`, `browser.back` or `browser.close`, then the tab does so and the result reports the final URL.
-- [ ] Given a URL longer than the limit the API declares or with a scheme other than `http` or `https`, when it is submitted, then the call is refused without reaching the host.
-- [ ] Given an agent session that ends, when its tabs are listed afterwards, then they are reported as unclaimed.
-- [ ] Given an unclaimed tab, when an agent with the right calls `browser.claim`, then the tab is owned by that agent's session; given a tab owned by someone else, then the call is refused naming the owner.
+- [x] Given an agent with the right, when it calls `browser.open` with a loopback URL, then a tab opens in its workspace's profile, owned by that agent's session, and its id is returned.
+- [x] Given tabs owned by the agent, by the human and by another agent, when the agent calls `browser.list`, then each tab is listed with its owner and only the agent's own tabs are marked drivable.
+- [x] Given a tab owned by the human, when an agent calls `browser.navigate` on it, then the call is refused with an error naming the owner.
+- [x] Given an agent-owned tab, when the agent calls `browser.navigate`, `browser.reload`, `browser.back` or `browser.close`, then the tab does so and the result reports the final URL.
+- [x] Given a URL longer than the limit the API declares or with a scheme other than `http` or `https`, when it is submitted, then the call is refused without reaching the host.
+- [x] Given an agent session that ends, when its tabs are listed afterwards, then they are reported as unclaimed.
+- [x] Given an unclaimed tab, when an agent with the right calls `browser.claim`, then the tab is owned by that agent's session; given a tab owned by someone else, then the call is refused naming the owner.
 
 #### US-016: Return one grouped snapshot
 **Description:** As an agent, I want one call that tells me what the page shows and what went wrong so that I do not spend turns assembling it.
@@ -616,12 +616,12 @@ The `browser.*` methods, their right, their approvals, and their MCP and CLI ent
 **Dependencies:** Blocked by US-015
 
 **Acceptance Criteria:**
-- [ ] Given a loaded tab, when the agent calls `browser.snapshot`, then the result carries the URL and title, the accessibility tree in the text form of "The browser API", and the console and network entries recorded since the previous snapshot.
-- [ ] Given a page whose snapshot exceeds the bound of A7, when the snapshot is returned, then it is truncated at the bound and states how much was dropped.
-- [ ] Given a snapshot, when it reaches the agent through MCP, then all page-derived text is inside one `wrap_untrusted` block whose header carries `source="browser"`.
-- [ ] Given a password field with a value, when the snapshot is taken, then the value is absent from the result.
-- [ ] Given a tab that is still loading, when `browser.snapshot` is called, then the result says so and returns what exists.
-- [ ] Given a tab that is not displayed in any pane or dock, when `browser.snapshot` is called, then the result is the same as for a displayed tab.
+- [x] Given a loaded tab, when the agent calls `browser.snapshot`, then the result carries the URL and title, the accessibility tree in the text form of "The browser API", and the console and network entries recorded since the previous snapshot.
+- [x] Given a page whose snapshot exceeds the bound of A7, when the snapshot is returned, then it is truncated at the bound and states how much was dropped.
+- [x] Given a snapshot, when it reaches the agent through MCP, then all page-derived text is inside one `wrap_untrusted` block whose header carries `source="browser"`.
+- [x] Given a password field with a value, when the snapshot is taken, then the value is absent from the result.
+- [x] Given a tab that is still loading, when `browser.snapshot` is called, then the result says so and returns what exists.
+- [x] Given a tab that is not displayed in any pane or dock, when `browser.snapshot` is called, then the result is the same as for a displayed tab.
 
 #### US-017: Act on elements by reference and wait for conditions
 **Description:** As an agent, I want to click, type and wait using the references of the snapshot so that my actions hit what I saw.
@@ -630,11 +630,11 @@ The `browser.*` methods, their right, their approvals, and their MCP and CLI ent
 **Dependencies:** Blocked by US-016
 
 **Acceptance Criteria:**
-- [ ] Given a reference from the latest snapshot, when the agent calls `browser.act` with click, type, press, hover, select or scroll, then the action is applied to that element and the result reports whether a navigation followed.
-- [ ] Given a reference from a snapshot taken before a navigation, when it is used, then the call fails with an error saying the reference is stale and a new snapshot is needed.
-- [ ] Given a reference to an element that is hidden or disabled, when a click is requested, then the call fails naming the reason.
-- [ ] Given `browser.wait_for` with a text, a reference or a network-idle condition, when the condition holds before the timeout, then the call returns; when it does not, the call returns a timeout error stating what was awaited.
-- [ ] Given a JavaScript dialog opened by the action, when the result returns, then it reports the dialog and its message as fenced text, and the dialog is dismissed.
+- [x] Given a reference from the latest snapshot, when the agent calls `browser.act` with click, type, press, hover, select or scroll, then the action is applied to that element and the result reports whether a navigation followed.
+- [x] Given a reference from a snapshot taken before a navigation, when it is used, then the call fails with an error saying the reference is stale and a new snapshot is needed.
+- [x] Given a reference to an element that is hidden or disabled, when a click is requested, then the call fails naming the reason.
+- [x] Given `browser.wait_for` with a text, a reference or a network-idle condition, when the condition holds before the timeout, then the call returns; when it does not, the call returns a timeout error stating what was awaited.
+- [x] Given a JavaScript dialog opened by the action, when the result returns, then it reports the dialog and its message as fenced text, and the dialog is dismissed.
 
 #### US-018: Read console, network and a screenshot on demand
 **Description:** As an agent, I want to page through console and network history and get an image when text is not enough.
@@ -643,11 +643,11 @@ The `browser.*` methods, their right, their approvals, and their MCP and CLI ent
 **Dependencies:** Blocked by US-016
 
 **Acceptance Criteria:**
-- [ ] Given a tab with console history, when the agent calls `browser.console` with a cursor, then entries after the cursor are returned with level, text and source location, and a new cursor.
-- [ ] Given a tab with network history, when the agent calls `browser.network`, then each entry carries method, URL, status, resource type and failure reason, and no request or response body.
-- [ ] Given more entries than the per-tab buffer holds, when history is read, then the result states that older entries were dropped.
-- [ ] Given `browser.screenshot`, when it is called on an agent-owned tab, then a PNG of the viewport is returned at the tab's device scale factor.
-- [ ] Given a request header named `Authorization` or `Cookie`, when network entries are returned, then its value is absent.
+- [x] Given a tab with console history, when the agent calls `browser.console` with a cursor, then entries after the cursor are returned with level, text and source location, and a new cursor.
+- [x] Given a tab with network history, when the agent calls `browser.network`, then each entry carries method, URL, status, resource type and failure reason, and no request or response body.
+- [x] Given more entries than the per-tab buffer holds, when history is read, then the result states that older entries were dropped.
+- [x] Given `browser.screenshot`, when it is called on an agent-owned tab, then a PNG of the viewport is returned at the tab's device scale factor.
+- [x] Given a request header named `Authorization` or `Cookie`, when network entries are returned, then its value is absent.
 
 #### US-019: Evaluate JavaScript behind an approval
 **Description:** As an agent, I want to run a script in the page when the semantic tools are not enough, and as a user, I want to approve that the first time.
@@ -656,11 +656,11 @@ The `browser.*` methods, their right, their approvals, and their MCP and CLI ent
 **Dependencies:** Blocked by US-017, US-020
 
 **Acceptance Criteria:**
-- [ ] Given an agent that has never been approved for evaluation in this workspace, when it calls `browser.evaluate`, then the call waits on an approval that shows the agent, the origin and the script.
-- [ ] Given the approval granted, when the script runs, then its JSON-serialisable result is returned as fenced text bounded by the snapshot bound.
-- [ ] Given the approval denied, when the call returns, then it carries a refusal and the script did not run.
-- [ ] Given a script that throws, when the call returns, then it carries the exception message as fenced text.
-- [ ] Given a script still running at the timeout the API declares, when the timeout elapses, then the call returns a timeout error.
+- [x] Given an agent that has never been approved for evaluation in this workspace, when it calls `browser.evaluate`, then the call waits on an approval that shows the agent, the origin and the script.
+- [x] Given the approval granted, when the script runs, then its JSON-serialisable result is returned as fenced text bounded by the snapshot bound.
+- [x] Given the approval denied, when the call returns, then it carries a refusal and the script did not run.
+- [x] Given a script that throws, when the call returns, then it carries the exception message as fenced text.
+- [x] Given a script still running at the timeout the API declares, when the timeout elapses, then the call returns a timeout error.
 
 #### US-020: Ask the user before an agent acts on a new site
 **Description:** As a user, I want to decide per site whether an agent may browse it so that a page cannot send my agent elsewhere.
@@ -669,11 +669,11 @@ The `browser.*` methods, their right, their approvals, and their MCP and CLI ent
 **Dependencies:** Blocked by US-015, US-013
 
 **Acceptance Criteria:**
-- [ ] Given an agent-owned tab navigating to an origin that is not loopback and has no decision, when the host holds the navigation, then the approval broker raises a request showing the agent and the origin, with allow once, always allow for this workspace, and deny.
-- [ ] Given "always allow" chosen, when the same agent session or another one in the workspace navigates to that origin, then no request is raised.
-- [ ] Given "deny" chosen, when the call returns, then it carries a refusal naming the origin and the tab stays on its previous page.
-- [ ] Given a pending site approval, when a `browser.*` call or pane input from the requesting agent arrives, then it cannot answer the approval.
-- [ ] Given a redirect from an allowed origin to an undecided one, when the host sees the redirect, then it is held and a request is raised for the new origin.
+- [x] Given an agent-owned tab navigating to an origin that is not loopback and has no decision, when the host holds the navigation, then the approval broker raises a request showing the agent and the origin, with allow once, always allow for this workspace, and deny.
+- [x] Given "always allow" chosen, when the same agent session or another one in the workspace navigates to that origin, then no request is raised.
+- [x] Given "deny" chosen, when the call returns, then it carries a refusal naming the origin and the tab stays on its previous page.
+- [x] Given a pending site approval, when a `browser.*` call or pane input from the requesting agent arrives, then it cannot answer the approval.
+- [x] Given a redirect from an allowed origin to an undecided one, when the host sees the redirect, then it is held and a request is raised for the new origin.
 
 #### US-021: Expose the tools through MCP and the CLI
 **Description:** As an agent, I want the browser methods as MCP tools and CLI verbs so that any coding agent in a pane can use them.
@@ -682,12 +682,12 @@ The `browser.*` methods, their right, their approvals, and their MCP and CLI ent
 **Dependencies:** Blocked by US-016, US-017, US-018
 
 **Acceptance Criteria:**
-- [ ] Given `paneflow-mcp`, when its tool list is read, then it contains one tool per `browser.*` method the agent may call, each described in one sentence that states page content is untrusted.
-- [ ] Given the `paneflow` CLI, when `paneflow browser --help` runs, then it lists a verb per method with an example, and each verb has `--json` output.
-- [ ] Given a browser tool called when no host binary can be resolved, when the call returns, then the error says the browser engine is not installed.
-- [ ] Given `paneflow browser status --json`, when it runs, then it reports through `browser.status` whether a host runs, its runtime version, the sandbox state, and for each tab its owner and presentation path.
-- [ ] Given the release-min build, when `scripts/check-helper-sizes.sh` runs, then `paneflow-mcp` is under its cap.
-- [ ] Given an MCP client scoped to one workspace, when it lists tabs, then tabs of other workspaces are absent.
+- [x] Given `paneflow-mcp`, when its tool list is read, then it contains one tool per `browser.*` method the agent may call, each described in one sentence that states page content is untrusted.
+- [x] Given the `paneflow` CLI, when `paneflow browser --help` runs, then it lists a verb per method with an example, and each verb has `--json` output.
+- [x] Given a browser tool called when no host binary can be resolved, when the call returns, then the error says the browser engine is not installed.
+- [x] Given `paneflow browser status --json`, when it runs, then it reports through `browser.status` whether a host runs, its runtime version, the sandbox state, and for each tab its owner and presentation path.
+- [x] Given the release-min build, when `scripts/check-helper-sizes.sh` runs, then `paneflow-mcp` is under its cap.
+- [x] Given an MCP client scoped to one workspace, when it lists tabs, then tabs of other workspaces are absent.
 
 #### US-022: Prove the loop with a real agent
 **Description:** As Arthur, I want a real agent to find planted defects through the shipped tools so that the control plane is proven end to end.
@@ -696,10 +696,10 @@ The `browser.*` methods, their right, their approvals, and their MCP and CLI ent
 **Dependencies:** Blocked by US-019, US-020, US-021
 
 **Acceptance Criteria:**
-- [ ] Given a debug build on a tagged home and the tracked fixture application, when an agent in a pane is asked to check the page, then it reports the console error and the failing request using only `browser.*` tools.
-- [ ] Given the same session, when the agent fixes the fixture and checks again, then its second snapshot shows neither defect.
-- [ ] Given the tracked fixture page whose visible text instructs the reader to open an external site, when the agent snapshots it, then no navigation to that site happens without a site approval being raised.
-- [ ] Given the session transcript, when it is reviewed, then every page-derived string reached the agent inside a fence.
+- [x] Given a debug build on a tagged home and the tracked fixture application, when an agent in a pane is asked to check the page, then it reports the console error and the failing request using only `browser.*` tools.
+- [x] Given the same session, when the agent fixes the fixture and checks again, then its second snapshot shows neither defect.
+- [x] Given the tracked fixture page whose visible text instructs the reader to open an external site, when the agent snapshots it, then no navigation to that site happens without a site approval being raised.
+- [x] Given the session transcript, when it is reviewed, then every page-derived string reached the agent inside a fence.
 
 ---
 
