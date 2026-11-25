@@ -229,15 +229,32 @@ fn ghostty_key_input(
         .chars()
         .next()
         .filter(|_| keystroke.key.chars().count() == 1);
+    let shifted_meta_letter = meta_shifted_letter(keystroke);
     Some(ghostty::KeyInput {
         key,
         action,
         modifiers: ghostty_modifiers(keystroke.modifiers),
-        consumed_modifiers: ghostty::Modifiers::empty(),
-        text: String::new(),
+        consumed_modifiers: if shifted_meta_letter.is_some() {
+            ghostty::Modifiers::SHIFT
+        } else {
+            ghostty::Modifiers::empty()
+        },
+        text: shifted_meta_letter.map(String::from).unwrap_or_default(),
         unshifted_codepoint,
         composing: false,
     })
+}
+
+fn meta_shifted_letter(keystroke: &gpui::Keystroke) -> Option<char> {
+    let modifiers = keystroke.modifiers;
+    if !modifiers.alt || !modifiers.shift || modifiers.control || modifiers.platform {
+        return None;
+    }
+    let mut chars = keystroke.key.chars();
+    match (chars.next(), chars.next()) {
+        (Some(letter), None) if letter.is_ascii_alphabetic() => Some(letter.to_ascii_uppercase()),
+        _ => None,
+    }
 }
 
 pub(super) fn ghostty_text_key_input(

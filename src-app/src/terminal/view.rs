@@ -2482,8 +2482,21 @@ mod tests {
         }
     }
 
-    fn type_option_b_composing(
+    fn option_key(key: &str, shift: bool, composed: &str) -> gpui::Keystroke {
+        gpui::Keystroke {
+            modifiers: gpui::Modifiers {
+                alt: true,
+                shift,
+                ..Default::default()
+            },
+            key: key.into(),
+            key_char: Some(composed.into()),
+        }
+    }
+
+    fn type_with_option(
         option_as_meta: bool,
+        keystroke: gpui::Keystroke,
         cx: &mut gpui::TestAppContext,
     ) -> Vec<paneflow_terminal_ghostty::KeyInput> {
         let (terminal, _host, cx) = hosted_terminal(cx);
@@ -2493,24 +2506,29 @@ mod tests {
             window.refresh();
             window.draw(cx).clear(cx);
         });
-        let option_b = gpui::Keystroke {
-            modifiers: gpui::Modifiers {
-                alt: true,
-                ..Default::default()
-            },
-            key: "b".into(),
-            key_char: Some("\u{222b}".into()),
-        };
-        cx.update(|window, cx| window.dispatch_keystroke(option_b, cx));
+        cx.update(|window, cx| window.dispatch_keystroke(keystroke, cx));
         cx.run_until_parked();
         terminal.read_with(cx, |view, _| view.terminal.queued_key_input_for_test())
+    }
+
+    fn encoded_presses(
+        keys: &[paneflow_terminal_ghostty::KeyInput],
+        option_as_meta: bool,
+    ) -> Vec<Vec<u8>> {
+        keys.iter()
+            .filter(|key| key.action == paneflow_terminal_ghostty::KeyAction::Press)
+            .map(|key| {
+                crate::terminal::ghostty_session::encode_key_for_test(key, option_as_meta)
+                    .expect("the key encodes")
+            })
+            .collect()
     }
 
     #[gpui::test]
     fn option_as_meta_sends_option_b_as_meta_without_the_composed_character(
         cx: &mut gpui::TestAppContext,
     ) {
-        let keys = type_option_b_composing(true, cx);
+        let keys = type_with_option(true, option_key("b", false, "\u{222b}"), cx);
         assert!(
             keys.iter().any(
                 |key| key.action == paneflow_terminal_ghostty::KeyAction::Press
@@ -2524,11 +2542,18 @@ mod tests {
             keys.iter().all(|key| !key.text.contains('\u{222b}')),
             "the composed character must not follow the Meta key: {keys:?}"
         );
+        assert_eq!(encoded_presses(&keys, true), vec![b"\x1bb".to_vec()]);
+    }
+
+    #[gpui::test]
+    fn option_as_meta_sends_option_shift_b_as_meta_capital_b(cx: &mut gpui::TestAppContext) {
+        let keys = type_with_option(true, option_key("b", true, "\u{131}"), cx);
+        assert_eq!(encoded_presses(&keys, true), vec![b"\x1bB".to_vec()]);
     }
 
     #[gpui::test]
     fn without_option_as_meta_option_b_types_the_composed_character(cx: &mut gpui::TestAppContext) {
-        let keys = type_option_b_composing(false, cx);
+        let keys = type_with_option(false, option_key("b", false, "\u{222b}"), cx);
         assert!(
             keys.iter().any(|key| key.text == "\u{222b}"),
             "Option+B must type the composed character: {keys:?}"

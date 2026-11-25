@@ -1287,6 +1287,18 @@ fn apply_smooth_scroll_overscan(inner: &SessionInner, terminal: &mut ghostty::Di
     }
 }
 
+#[cfg(test)]
+pub(crate) fn encode_key_for_test(
+    key: &ghostty::KeyInput,
+    option_as_meta: bool,
+) -> Option<Vec<u8>> {
+    let size = window_size(TerminalWindowSize::new(20, 4, 8, 16)).ok()?;
+    let mut terminal =
+        ghostty::DisplayTerminal::new(size, 100, ghostty::TerminalAppearance::default()).ok()?;
+    configure_embedder_options(&mut terminal, 100, option_as_meta);
+    terminal.encode_key(key).ok()
+}
+
 fn configure_embedder_options(
     terminal: &mut ghostty::DisplayTerminal,
     max_scrollback: usize,
