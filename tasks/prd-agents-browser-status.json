@@ -3,16 +3,16 @@
     "file": "tasks/prd-agents-browser.md",
     "title": "A browser inside Paneflow that an agent can drive",
     "created_at": "2026-11-24",
-    "status": "READY"
+    "status": "IN_PROGRESS"
   },
   "epics": [
     {
       "id": "EP-001",
       "title": "Kill tests on Linux",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 7,
-      "stories_done": 0
+      "stories_done": 7
     },
     {
       "id": "EP-002",
@@ -84,83 +84,83 @@
       "id": "US-001",
       "title": "Pin the engine",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-24T22:26:51+01:00",
+      "completed_at": "2026-11-25",
+      "reviewed_at": "2026-11-25"
     },
     {
       "id": "US-002",
       "title": "Kill test 1, shared textures under Wayland and X11",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-001"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-24T22:26:51+01:00",
+      "completed_at": "2026-11-25",
+      "reviewed_at": "2026-11-25"
     },
     {
       "id": "US-003",
       "title": "Kill test 2, a frame crosses two processes into a GPUI rectangle",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-002"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-24T23:01:19+01:00",
+      "completed_at": "2026-11-25",
+      "reviewed_at": "2026-11-25"
     },
     {
       "id": "US-004",
       "title": "Kill test 3, an agent finds planted defects with no port open",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-001"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-24T22:35:03+01:00",
+      "completed_at": "2026-11-25",
+      "reviewed_at": "2026-11-25"
     },
     {
       "id": "US-005",
       "title": "Measure the CPU path",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-003"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-24T23:01:19+01:00",
+      "completed_at": "2026-11-25",
+      "reviewed_at": "2026-11-25"
     },
     {
       "id": "US-006",
       "title": "Survey the Chromium sandbox on Linux install formats",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-001"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-24T23:01:19+01:00",
+      "completed_at": "2026-11-25",
+      "reviewed_at": "2026-11-25"
     },
     {
       "id": "US-007",
       "title": "Record the verdict",
       "epic": "EP-001",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-002",
@@ -169,9 +169,9 @@
         "US-005",
         "US-006"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-25T03:57:00+01:00",
+      "completed_at": "2026-11-25",
+      "reviewed_at": "2026-11-25"
     },
     {
       "id": "US-008",
