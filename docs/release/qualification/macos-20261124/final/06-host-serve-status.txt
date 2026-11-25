@@ -1,0 +1,72 @@
+# Final regression pass, macOS 27.2 Apple Silicon, debug build of main at a330868a (paneflow, paneflow-host, worker), PANEFLOW_HOME=~/.paneflow-dev-final (scripts/dev.sh --tag final), every inherited PANEFLOW_* cleared. 'pf' is that build's paneflow; $SCRATCH is the session scratchpad; fixtures under $SCRATCH/final-fx (fake agent 'amp' = a C launcher running a bash script that emits OSC 7501, as in cli/06).
+# F06: host and worker from the CLI in an external terminal
+$ pf host status | head -30
+{
+  "state": "running",
+  "home": "~/.paneflow-dev-final",
+  "endpoint": "$TMPDIR/paneflow-host-ffea6be32e5f3995.sock",
+  "identity": {
+    "name": "paneflow-host",
+    "version": "0.20.0",
+    "protocol": 1,
+    "build_id": "0.20.0+108cacb17ed8",
+    "host_instance": "958cdee0-7e48-4acf-813e-198af8a08f09",
+    "engine": {
+      "engine": "libghostty-vt",
+      "app_version": "1.4.1-dev+108cacb17",
+      "api_version": "1.0.1",
+      "source_sha": "108cacb17ed8990840cd14abfce43d8ed8503ca1"
+    },
+    "pid": 86965,
+    "home": "~/.paneflow-dev-final",
+    "endpoint": "$TMPDIR/paneflow-host-ffea6be32e5f3995.sock",
+    "started_at_ms": 1795560022385
+  },
+  "helpers": {
+    "ai_hook_dir": "~/.paneflow-dev-final/cache/bin/0.20.0"
+  },
+  "resources": {
+    "persistence": {
+      "queued_bytes": 0,
+      "peak_queued_bytes": 4752,
+      "budget_bytes": 8388608,
+      "reserved_bytes": 65536,
+[exit=0]
+
+$ pf serve status
+{
+  "state": "running",
+  "pid": 86967,
+  "build_id": "2da300525bbb180c41869519fffc486be60ccf3bca1e6d62cb8476b38e485fcb",
+  "protocol": 1,
+  "required_core_protocol": 1,
+  "home": "~/.paneflow-dev-final",
+  "endpoint": "$TMPDIR/paneflow-serve-ffea6be32e5f3995.sock",
+  "version": "0.20.0",
+  "session_count": 4,
+  "capabilities": [
+    "agent.snapshot",
+    "agent.follow",
+    "restart.recommendation",
+    "integrations.refresh",
+    "activity.reducer",
+    "activity.notifications",
+    "agent.unread",
+    "agent.activity_log",
+    "events.follow",
+    "prompt.follow",
+    "layout.authority"
+  ]
+}
+[exit=0]
+
+$ pf host stop | cut -c1-300 | head -8
+paneflow: 4 live session(s) remain; stop them before stopping the host
+  070637e5-78e0-43db-afef-c53af29afca6 generation 1 pid 87819 /bin/zsh ($SCRATCH/final-fx/repo)
+  0a38d7ef-d4ff-4854-b4e4-01fe706503d4 generation 1 pid 88002 /bin/zsh ($SCRATCH/final-fx/repo)
+  622d5be9-5006-4ecb-82b0-096a71deaeda generation 1 pid 88008 /bin/zsh ($SCRATCH/final-fx/repo)
+  ead337ee-771c-4364-8de5-811316d1f92a generation 1 pid 88003 /bin/zsh ($SCRATCH/final-fx/repo)
+stop each session with `paneflow-host session stop <id>` first, or rerun with `--force` to end them all
+[exit=0]
+
+host stop exit=1

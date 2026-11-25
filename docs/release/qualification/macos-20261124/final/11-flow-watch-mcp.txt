@@ -1,0 +1,80 @@
+# Final regression pass, macOS 27.2 Apple Silicon, debug build of main at a330868a (paneflow, paneflow-host, worker), PANEFLOW_HOME=~/.paneflow-dev-final (scripts/dev.sh --tag final), every inherited PANEFLOW_* cleared. 'pf' is that build's paneflow; $SCRATCH is the session scratchpad; fixtures under $SCRATCH/final-fx (fake agent 'amp' = a C launcher running a bash script that emits OSC 7501, as in cli/06).
+# F11: flow, watch and the MCP bridge from outside a pane, gates closed then scripting=true
+$ pf flow run $SCRATCH/final-fx/ready-ok.flow.toml
+paneflow: this flow creates panes with commands/prompts: set ipc.orchestration to true in paneflow.json
+[exit=1]
+
+$ echo '{"ipc": {"scripting": true}}' > $PANEFLOW_HOME/paneflow.json; sleep 1.5
+[exit=0]
+
+$ pf flow run $SCRATCH/final-fx/bad.flow.toml
+paneflow: dependency cycle: a → b → a
+[exit=1]
+
+$ pf flow run $SCRATCH/final-fx/ready-ok.flow.toml
+[    0.0s] a → RUNNING
+[    2.1s] a → READY
+---
+a                        READY    
+[exit=0]
+
+$ (sleep 1; paneflow send sh1 'echo watch-probe' --submit) & paneflow watch --surface 2053 (stopped after 4 s)
+{"type":"subscribed","id":1}
+{"type":"surface_changed","surface_id":2053,"output_generation":52,"ts":1795560771400}
+{"type":"surface_changed","surface_id":2053,"output_generation":53,"ts":1795560772377}
+{"type":"surface_changed","surface_id":2053,"output_generation":54,"ts":1795560773398}
+{"type":"heartbeat"}
+{"type":"heartbeat"}
+
+$ MCP_BIN=$PANEFLOW_HOME/bin/paneflow-mcp python3 $SCRATCH/final-fx/mcpclient.py '[{"name":"list_panes"}]' \| grep -i 'scope error' \| head -2
+initialize: {"id": 1, "jsonrpc": "2.0", "result": {"capabilities": {"resources": {"listChanged": false, "subscribe": false}, "tools": {"listChanged": false}}, "instructions": "Reads terminal output from other Paneflow surfaces (panes/tabs). By default it is scoped to the current workspace when launched from a Paneflow pane; set PANEFLOW_MCP_SCOPE=all only when instance-wide reads are intentional. Call list_pa
+== list_panes {}
+{
+ "id": 2,
+ "jsonrpc": "2.0",
+ "result": {
+  "content": [
+   {
+    "text": "scope error: PANEFLOW_SESSION_ID is missing, so the bridge cannot tell which workspace it may read; launch the agent from a Paneflow pane or set PANEFLOW_MCP_SCOPE=all explicitly",
+    "type": "text"
+   }
+  ],
+  "isError": true
+ }
+}
+stderr: paneflow-mcp: every read will be refused: PANEFLOW_SESSION_ID is missing, so the bridge cannot tell which workspace it may read; launch the agent from a Paneflow pane or set PANEFLOW_MCP_SCOPE=all explicitly
+
+[exit=0]
+
+$ PANEFLOW_MCP_SCOPE=all MCP_BIN=$PANEFLOW_HOME/bin/paneflow-mcp python3 $SCRATCH/final-fx/mcpclient.py '[{"name":"read_pane","arguments":{"target":"agentB","lines":3}},{"name":"write_pane","arguments":{"target":"agentB","text":"x"}}]' \| grep -E '"text"|==' \| cut -c1-300
+initialize: {"id": 1, "jsonrpc": "2.0", "result": {"capabilities": {"resources": {"listChanged": false, "subscribe": false}, "tools": {"listChanged": false}}, "instructions": "Reads terminal output from other Paneflow surfaces (panes/tabs). By default it is scoped to the current workspace when launched from a Paneflow pane; set PANEFLOW_MCP_SCOPE=all only when instance-wide reads are intentional. Call list_pa
+== read_pane {"target": "agentB", "lines": 3}
+{
+ "id": 2,
+ "jsonrpc": "2.0",
+ "result": {
+  "content": [
+   {
+    "text": "<untrusted_terminal_output source=\"agentB\" scope=\"all\" total_lines=\"16\" eof=\"false\" id=\"c1bc2db01471bfb0\">\nworking on: hello B, allowed\nDONE: hello B, allowed\nnoop after-grant\n</untrusted_terminal_output id=\"c1bc2db01471bfb0\">",
+    "type": "text"
+   }
+  ],
+  "isError": false
+ }
+}
+== write_pane {"target": "agentB", "text": "x"}
+{
+ "id": 3,
+ "jsonrpc": "2.0",
+ "result": {
+  "content": [
+   {
+    "text": "scope error: write_pane needs PANEFLOW_SESSION_ID: launch the agent from a Paneflow pane",
+    "type": "text"
+   }
+  ],
+  "isError": true
+ }
+}
+[exit=0]
+

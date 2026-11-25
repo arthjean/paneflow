@@ -1,0 +1,303 @@
+# Final regression pass, macOS 27.2 Apple Silicon, debug build of main at a330868a (paneflow, paneflow-host, worker), PANEFLOW_HOME=~/.paneflow-dev-final (scripts/dev.sh --tag final), every inherited PANEFLOW_* cleared. 'pf' is that build's paneflow; $SCRATCH is the session scratchpad; fixtures under $SCRATCH/final-fx (fake agent 'amp' = a C launcher running a bash script that emits OSC 7501, as in cli/06).
+# F01: verbs, ls, send, up, wait against ~/.paneflow-dev-final at a330868a (debug build), external terminal, gates at defaults (closed)
+$ pf frobnicate
+paneflow: unknown verb 'frobnicate'; see `paneflow --help` for the verb list
+[exit=2]
+
+$ pf new --name ws-a --cwd $SCRATCH/final-fx/repo
+{
+  "index": 0,
+  "title": "ws-a",
+  "panes": 1
+}
+[exit=0]
+
+$ pf ls --human
+  ID  NAME                  SPACE             CMD                       CWD
+1026  terminal              Default                                     
+[exit=0]
+
+$ pf up --dry-run $SCRATCH/final-fx/fleet.toml
+{
+  "name": "fleet",
+  "space": null,
+  "layout": "tiled",
+  "panes": [
+    {
+      "cwd": "$SCRATCH/final-fx/repo",
+      "command": null,
+      "prompt": null,
+      "focus": null,
+      "env": null,
+      "name": "sh1",
+      "profile": "normal"
+    },
+    {
+      "cwd": "$SCRATCH/final-fx/repo",
+      "command": "$SCRATCH/final-fx/bin/amp",
+      "prompt": null,
+      "focus": null,
+      "env": null,
+      "name": "agentA",
+      "profile": "normal"
+    },
+    {
+      "cwd": "$SCRATCH/final-fx/repo",
+      "command": "$SCRATCH/final-fx/bin/amp",
+      "prompt": null,
+      "focus": null,
+      "env": null,
+      "name": "agentB",
+      "profile": "normal"
+    }
+  ]
+}
+[exit=0]
+
+$ pf up $SCRATCH/final-fx/fleet.toml
+paneflow: workspace up requires pane orchestration: set ipc.orchestration to true in paneflow.json
+[exit=1]
+
+$ pf wait agentA --pattern FAKE_AGENT_READY --timeout 15
+error: unexpected argument 'agentA' found
+
+Usage: paneflow wait [OPTIONS] --match <SELECTOR>
+
+For more information, try '--help'.
+[exit=2]
+
+$ pf ls --human
+  ID  NAME                  SPACE             CMD                       CWD
+1026  terminal              Default                                     $SCRATCH/final-fx/repo
+[exit=0]
+
+$ pf ps
+(no agents)
+[exit=0]
+
+$ pf status agentA --json
+paneflow: no pane matches target 'agentA'
+[exit=3]
+
+$ pf send sh1 'echo gated'
+paneflow: no pane matches target 'sh1'
+[exit=3]
+
+$ pf api call system.capabilities
+{
+  "scripting": false,
+  "orchestration": false,
+  "methods": [
+    "system.ping",
+    "system.capabilities",
+    "system.identify",
+    "system.counters",
+    "workspace.list",
+    "workspace.create",
+    "workspace.select",
+    "workspace.close",
+    "workspace.current",
+    "workspace.restore_layout",
+    "workspace.up",
+    "surface.list",
+    "surface.read",
+    "surface.search",
+    "surface.rename",
+    "surface.send_text",
+    "surface.send_keystroke",
+    "surface.split",
+    "surface.focus",
+    "surface.status",
+    "fleet.list",
+    "events.subscribe",
+    "tmux.compat"
+  ]
+}
+[exit=0]
+
+$ pf send 1026 'echo gated'
+paneflow: send is disabled on the running Paneflow instance: set ipc.scripting to true in paneflow.json (or hold a write grant) to enable text injection
+[exit=1]
+
+$ echo '{"ipc": {"scripting": true}}' > $PANEFLOW_HOME/paneflow.json; sleep 2; cat $PANEFLOW_HOME/paneflow.json
+{"ipc": {"scripting": true}}
+[exit=0]
+
+$ pf api call system.capabilities --args '{}' | head -3
+{
+  "scripting": true,
+  "orchestration": true,
+[exit=0]
+
+$ pf up $SCRATCH/final-fx/fleet.toml
+{
+  "index": 1,
+  "title": "fleet",
+  "panes": 3,
+  "surface_ids": [
+    2053,
+    2054,
+    2055
+  ],
+  "labels": [
+    "sh1",
+    "agentA",
+    "agentB"
+  ]
+}
+[exit=0]
+
+$ pf wait --match agentA --pattern FAKE_AGENT_READY --timeout 20
+{
+  "matched": true,
+  "panes": [
+    2054
+  ],
+  "matches": [
+    {
+      "surface_id": 2054,
+      "lines": [
+        "FAKE_AGENT_READY"
+      ]
+    }
+  ]
+}
+[exit=0]
+
+$ pf wait --match agentB --pattern FAKE_AGENT_READY --timeout 20
+paneflow: timeout after 20s waiting for /FAKE_AGENT_READY/
+[exit=4]
+
+$ pf ls --human
+  ID  NAME                  SPACE             CMD                       CWD
+2053  sh1                   Default           zsh                       $SCRATCH/final-fx/repo
+2054  agentA                Default           amp                       $SCRATCH/final-fx/repo
+2055  agentB                Default           amp                       $SCRATCH/final-fx/repo
+[exit=0]
+
+$ pf ps
+    PID  TOOL        STATE               WS  PANE
+  88026  amp         finished             1  agentB
+  88027  amp         finished             1  agentA
+[exit=0]
+
+$ pf status agentA --json
+{
+  "surface_id": 2054,
+  "state": "finished",
+  "state_seq": 0,
+  "hooked": false,
+  "tool": "amp",
+  "active_tool_name": null,
+  "message": null,
+  "last_result": null,
+  "waiting_ms": null,
+  "idle_ms": 18777,
+  "output_generation": 6,
+  "session": "ead337ee-771c-4364-8de5-811316d1f92a",
+  "outcome": null,
+  "activity_source": "declared",
+  "agent_runtime": "com.sourcegraph.amp",
+  "reduced_by": "worker"
+}
+[exit=0]
+
+$ pf send sh1 'echo sent-from-cli' --submit
+{
+  "sent": true,
+  "length": 18,
+  "submitted": true,
+  "paste": true,
+  "submit_mode": "deferred_paste_cr",
+  "agent_target": false,
+  "agent_tool": null,
+  "terminal_bracketed_paste": true,
+  "delivered": true,
+  "started": null,
+  "reason": "no_signal",
+  "state": "idle"
+}
+[exit=0]
+
+$ pf wait --match sh1 --pattern sent-from-cli --timeout 10
+{
+  "matched": true,
+  "panes": [
+    2053
+  ],
+  "matches": [
+    {
+      "surface_id": 2053,
+      "lines": [
+        "sent-from-cli"
+      ]
+    }
+  ]
+}
+[exit=0]
+
+$ pf send agentA 'hello agent' --submit
+{
+  "sent": true,
+  "length": 11,
+  "submitted": true,
+  "paste": true,
+  "submit_mode": "deferred_paste_cr",
+  "agent_target": true,
+  "agent_tool": "amp",
+  "terminal_bracketed_paste": false,
+  "delivered": true,
+  "started": true,
+  "reason": "state_transition",
+  "state": "working"
+}
+[exit=0]
+
+$ pf wait --match agentA --idle --timeout 20
+{
+  "surface_id": 2054,
+  "idle": true,
+  "matched": false,
+  "state": "idle",
+  "signal": "agent_state"
+}
+[exit=0]
+
+$ pf read agentA --lines 6
+<untrusted_terminal_output source="surface:2054" total_lines="8" eof="false" id="505032d1bf441963">
+low/ed7b9b96-428f-465c-a947-cceac364368b/scra
+tchpad/final-fx/bin/amp
+FAKE_AGENT_READY
+hello agent
+working on: hello agent
+DONE: hello agent
+</untrusted_terminal_output id="505032d1bf441963">[exit=0]
+
+$ pf search agentA DONE
+{
+  "matches": [
+    {
+      "line": 7,
+      "text": "DONE: hello agent"
+    }
+  ],
+  "truncated": false
+}
+[exit=0]
+
+$ pf key sh1 ctrl-c
+{
+  "sent": true
+}
+[exit=0]
+
+$ pf wait --match sh1 --pattern never-appears --timeout 2
+paneflow: timeout after 2s waiting for /never-appears/
+[exit=4]
+
+
+== note on 'wait --match agentB --pattern FAKE_AGENT_READY' (exit 4 above)
+# agentB had printed FAKE_AGENT_READY before the wait started (search agentB READY finds it on line 2). wait --pattern
+# matches only output that arrives after its baseline read (src-app/src/cli/wait_cmd.rs, read_baseline / text_after_baseline);
+# the same wait on agentA matched because its line arrived after the wait began. Unchanged since 2176684e, so not a late
+# regression; conductor/reference.md's "scans the latest 500 lines" reads as if existing output counted.

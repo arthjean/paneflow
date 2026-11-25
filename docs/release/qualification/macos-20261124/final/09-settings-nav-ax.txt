@@ -1,0 +1,29 @@
+# Final regression pass, macOS 27.2 Apple Silicon, debug build of main at a330868a (paneflow, paneflow-host, worker), PANEFLOW_HOME=~/.paneflow-dev-final (scripts/dev.sh --tag final), every inherited PANEFLOW_* cleared. 'pf' is that build's paneflow; $SCRATCH is the session scratchpad; fixtures under $SCRATCH/final-fx (fake agent 'amp' = a C launcher running a bash script that emits OSC 7501, as in cli/06).
+# F09: Settings navigation through the accessibility tree (agent-desktop 1.3.1, headless AXPress, dev window only)
+== initial
+tablist 'Settings pages'
+  radiobutton 'General' checked
+  radiobutton 'Appearance' -
+  radiobutton 'Keyboard Shortcuts' -
+  radiobutton 'Terminal' -
+  radiobutton 'Editor' -
+  radiobutton 'Workspaces' -
+  radiobutton 'Spaces' -
+  radiobutton 'Worktrees' -
+  radiobutton 'Agents' -
+  radiobutton 'Usage' -
+  radiobutton 'Plugins' -
+== AXPress on 'Appearance': "label":"AXPress","mechanism":"semantic_api","outcome":"succeeded"
+  radiobutton 'Appearance' checked
+== AXPress on 'Terminal': "label":"AXPress","mechanism":"semantic_api","outcome":"succeeded"
+  radiobutton 'Terminal' checked
+== AXPress on 'Worktrees': "label":"AXPress","mechanism":"semantic_api","outcome":"succeeded"
+  radiobutton 'Worktrees' checked
+== AXPress on 'Agents': "label":"AXPress","mechanism":"semantic_api","outcome":"succeeded"
+  radiobutton 'Agents' checked
+== AXPress on 'Usage': "label":"AXPress","mechanism":"semantic_api","outcome":"succeeded"
+  radiobutton 'Usage' checked
+== AXPress on 'Plugins': "label":"AXPress","mechanism":"semantic_api","outcome":"succeeded"
+  radiobutton 'Plugins' checked
+== AXPress on 'General': "label":"AXPress","mechanism":"semantic_api","outcome":"succeeded"
+  radiobutton 'General' checked

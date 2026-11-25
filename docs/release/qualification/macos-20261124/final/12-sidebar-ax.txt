@@ -1,0 +1,43 @@
+# Final regression pass, macOS 27.2 Apple Silicon, debug build of main at a330868a (paneflow, paneflow-host, worker), PANEFLOW_HOME=~/.paneflow-dev-final (scripts/dev.sh --tag final), every inherited PANEFLOW_* cleared. 'pf' is that build's paneflow; $SCRATCH is the session scratchpad; fixtures under $SCRATCH/final-fx (fake agent 'amp' = a C launcher running a bash script that emits OSC 7501, as in cli/06).
+# F12: sidebar rows in the accessibility tree on consecutive snapshots while pane sh1 prints a line every 100 ms (a11y view cache, ac8fe506), and each row's description (Shift+F10, 4011646f)
+== snapshot 1
+    outline 'Workspaces' desc=None
+      treeitem 'ws-a' desc=None
+      treeitem 'finaltwo' desc=None
+      treeitem 'feat/final-one' desc=None
+      treeitem 'New tab' desc=None
+      treeitem 'fleet' desc=None
+      treeitem 'Tab 1' desc=None
+      treeitem 'ready-ok' desc=None
+      treeitem 'Tab 1' desc=None
+== snapshot 2
+    outline 'Workspaces' desc=None
+      treeitem 'ws-a' desc=None
+      treeitem 'finaltwo' desc=None
+      treeitem 'feat/final-one' desc=None
+      treeitem 'New tab' desc=None
+      treeitem 'fleet' desc=None
+      treeitem 'Tab 1' desc=None
+      treeitem 'ready-ok' desc=None
+      treeitem 'Tab 1' desc=None
+== snapshot 3
+    outline 'Workspaces' desc=None
+      treeitem 'ws-a' desc=None
+      treeitem 'finaltwo' desc=None
+      treeitem 'feat/final-one' desc=None
+      treeitem 'New tab' desc=None
+      treeitem 'fleet' desc=None
+      treeitem 'Tab 1' desc=None
+      treeitem 'ready-ok' desc=None
+      treeitem 'Tab 1' desc=None
+
+== raw macOS AX attributes of the sidebar rows (AXUIElementCopyAttributeValue on pid of the dev window; agent-desktop does not print AXHelp)
+AXOutline/AXUnknown title=Workspaces description=- help=- value=-
+AXRow/AXOutlineRow title=ws-a description=- help=Shift+F10 opens the context menu value=-
+AXRow/AXOutlineRow title=finaltwo description=- help=Shift+F10 opens the context menu value=-
+AXRow/AXOutlineRow title=feat/final-one description=- help=Shift+F10 opens the context menu value=-
+AXRow/AXOutlineRow title=New tab description=- help=Shift+F10 opens the context menu value=-
+AXRow/AXOutlineRow title=fleet description=- help=Shift+F10 opens the context menu value=-
+AXRow/AXOutlineRow title=Tab 1 description=- help=Shift+F10 opens the context menu value=-
+AXRow/AXOutlineRow title=ready-ok description=- help=Shift+F10 opens the context menu value=-
+AXRow/AXOutlineRow title=Tab 1 description=- help=Shift+F10 opens the context menu value=-

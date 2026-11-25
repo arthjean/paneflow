@@ -1,0 +1,12 @@
+# Final regression pass, macOS 27.2 Apple Silicon, debug build of main at a330868a (paneflow, paneflow-host, worker), PANEFLOW_HOME=~/.paneflow-dev-final (scripts/dev.sh --tag final), every inherited PANEFLOW_* cleared. 'pf' is that build's paneflow; $SCRATCH is the session scratchpad; fixtures under $SCRATCH/final-fx (fake agent 'amp' = a C launcher running a bash script that emits OSC 7501, as in cli/06).
+# F10: theme switch from Settings > Appearance by accessibility press
+== paneflow.json before: {"ipc": {"scripting": false}}
+== AXPress 'Light': "outcome":"succeeded"
+== paneflow.json after: {
+  "ipc": {
+    "scripting": false
+  },
+  "theme_mode": "light",
+  "theme": "Paneflow Light"
+}
+   radiobutton 'Light' ['checked']

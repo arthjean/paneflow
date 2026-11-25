@@ -1,0 +1,92 @@
+# Final regression pass, macOS 27.2 Apple Silicon, debug build of main at a330868a (paneflow, paneflow-host, worker), PANEFLOW_HOME=~/.paneflow-dev-final (scripts/dev.sh --tag final), every inherited PANEFLOW_* cleared. 'pf' is that build's paneflow; $SCRATCH is the session scratchpad; fixtures under $SCRATCH/final-fx (fake agent 'amp' = a C launcher running a bash script that emits OSC 7501, as in cli/06).
+# F03: host session.input journal and gates. Targets: session 0a38d7ef-d4ff-4854-b4e4-01fe706503d4 (pane sh1 2053, workspace fleet), 070637e5-78e0-43db-afef-c53af29afca6 (pane 1026, workspace ws-a). Payloads are shell comments.
+# step 0: while ipc.scripting=true, start the in-pane probe with a 6 s delay, then close the gates
+$ pf api call system.capabilities | head -3
+{
+  "scripting": false,
+  "orchestration": false,
+[exit=0]
+
+== J1. external control client, gates closed -> refused, nothing journaled
+>> [host] {"jsonrpc": "2.0", "id": 1, "method": "host.hello", "params": {"client": "qual-final-journal", "protocol": 1}}
+<< {"jsonrpc":"2.0","id":1,"result":{"name":"paneflow-host","version":"0.20.0","protocol":1,"build_id":"0.20.0+108cacb17ed8","host_instance":"958cdee0-7e48-4acf-813e-198af8a08f09","engine":{"engine":"libghostty-vt","app_version":"1.4.1-dev+108cacb17","api_version":"1.0.1","source_sha":"108cacb17ed8990840cd14abfce43d8ed8503ca1"},"pid":86965,"home":"~/.paneflow-dev-final","endpoint":"$TMPDIR/paneflow-host-ffea6be32e5f3995.sock","started_at_ms":1795560022385}}
+>> [host] {"jsonrpc": "2.0", "id": 2, "method": "session.input", "params": {"session": "0a38d7ef-d4ff-4854-b4e4-01fe706503d4", "data": "IyBKMS1zaG91bGQtbm90LWxhbmQ="}}
+<< {"jsonrpc":"2.0","id":2,"error":{"code":-32601,"message":"session.input disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable"}}
+# new host.log lines:
+== J4. foreign client whose hello carries the engine identity (formerly accepted as the window, unjournaled), gates closed
+>> [host] {"jsonrpc": "2.0", "id": 1, "method": "host.hello", "params": {"client": "qual-final-script", "protocol": 1, "engine": {"engine": "libghostty-vt", "app_version": "1.4.1-dev+108cacb17", "api_version": "1.0.1", "source_sha": "108cacb17ed8990840cd14abfce43d8ed8503ca1"}}}
+<< {"jsonrpc":"2.0","id":1,"result":{"name":"paneflow-host","version":"0.20.0","protocol":1,"build_id":"0.20.0+108cacb17ed8","host_instance":"958cdee0-7e48-4acf-813e-198af8a08f09","engine":{"engine":"libghostty-vt","app_version":"1.4.1-dev+108cacb17","api_version":"1.0.1","source_sha":"108cacb17ed8990840cd14abfce43d8ed8503ca1"},"pid":86965,"home":"~/.paneflow-dev-final","endpoint":"$TMPDIR/paneflow-host-ffea6be32e5f3995.sock","started_at_ms":1795560022385}}
+>> [host] {"jsonrpc": "2.0", "id": 2, "method": "system.whoami", "params": {}}
+<< {"jsonrpc":"2.0","id":2,"result":{"principal":"external"}}
+>> [host] {"jsonrpc": "2.0", "id": 3, "method": "session.input", "params": {"session": "0a38d7ef-d4ff-4854-b4e4-01fe706503d4", "data": "IyBKNC1kZWNsYXJlZC13aW5kb3c="}}
+<< {"jsonrpc":"2.0","id":3,"error":{"code":-32601,"message":"session.input disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable"}}
+>> [host] {"jsonrpc": "2.0", "id": 1, "method": "host.hello", "params": {"client": "paneflow-desktop", "protocol": 1}}
+<< {"jsonrpc":"2.0","id":1,"result":{"name":"paneflow-host","version":"0.20.0","protocol":1,"build_id":"0.20.0+108cacb17ed8","host_instance":"958cdee0-7e48-4acf-813e-198af8a08f09","engine":{"engine":"libghostty-vt","app_version":"1.4.1-dev+108cacb17","api_version":"1.0.1","source_sha":"108cacb17ed8990840cd14abfce43d8ed8503ca1"},"pid":86965,"home":"~/.paneflow-dev-final","endpoint":"$TMPDIR/paneflow-host-ffea6be32e5f3995.sock","started_at_ms":1795560022385}}
+>> [host] {"jsonrpc": "2.0", "id": 2, "method": "session.input", "params": {"session": "0a38d7ef-d4ff-4854-b4e4-01fe706503d4", "data": "IyBKNGItZGVjbGFyZWQtZGVza3RvcA=="}}
+<< {"jsonrpc":"2.0","id":2,"error":{"code":-32601,"message":"session.input disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable"}}
+# new host.log lines:
+== J3. pane sh1, gates closed, no grant (in-pane probe output follows)
+# in pane sh1 (surface 2053), {'ipc': {'scripting': False}}
+>> [host] {"jsonrpc": "2.0", "id": 1, "method": "host.hello", "params": {"client": "qual-final-pane", "protocol": 1}}
+<< {"jsonrpc":"2.0","id":1,"result":{"name":"paneflow-host","version":"0.20.0","protocol":1,"build_id":"0.20.0+108cacb17ed8","host_instance":"958cdee0-7e48-4acf-813e-198af8a08f09","engine":{"engine":"libghostty-vt","app_version":"1.4.1-dev+108cacb17","api_version":"1.0.1","source_sha":"108cacb17ed8990840cd14abfce43d8ed8503ca1"},"pid":86965,"home":"~/.paneflow-dev-final","endpoint":"$TMPDIR/paneflow-host-ffea6be32e5f3995.sock","started_at_ms":1795560022385}}
+>> [host] {"jsonrpc": "2.0", "id": 2, "method": "session.input", "params": {"session": "0a38d7ef-d4ff-4854-b4e4-01fe706503d4", "data": "IyBKLXBhbmUtb3duLTEyNTA0"}}
+<< {"jsonrpc":"2.0","id":2,"error":{"code":-32601,"message":"session.input disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable"}}
+>> [host] {"jsonrpc": "2.0", "id": 3, "method": "session.input", "params": {"session": "070637e5-78e0-43db-afef-c53af29afca6", "data": "IyBKLXBhbmUtb3RoZXItd3M="}}
+<< {"jsonrpc":"2.0","id":3,"error":{"code":-32601,"message":"session.input disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable"}}
+$ paneflow send sh1 '# J-pane-send' (CLI from the pane)
+paneflow: send is disabled on the running Paneflow instance: set ipc.scripting to true in paneflow.json (or hold a write grant) to enable text injection
+[exit=1]
+# new host.log lines:
+== J2. ipc.scripting=true: external control client accepted, one info line with client, session and byte count, no content
+>> [host] {"jsonrpc": "2.0", "id": 1, "method": "host.hello", "params": {"client": "qual-final-journal", "protocol": 1}}
+<< {"jsonrpc":"2.0","id":1,"result":{"name":"paneflow-host","version":"0.20.0","protocol":1,"build_id":"0.20.0+108cacb17ed8","host_instance":"958cdee0-7e48-4acf-813e-198af8a08f09","engine":{"engine":"libghostty-vt","app_version":"1.4.1-dev+108cacb17","api_version":"1.0.1","source_sha":"108cacb17ed8990840cd14abfce43d8ed8503ca1"},"pid":86965,"home":"~/.paneflow-dev-final","endpoint":"$TMPDIR/paneflow-host-ffea6be32e5f3995.sock","started_at_ms":1795560022385}}
+>> [host] {"jsonrpc": "2.0", "id": 2, "method": "session.input", "params": {"session": "0a38d7ef-d4ff-4854-b4e4-01fe706503d4", "data": "IyBKMi1zZWNyZXQtY29udGVudC14eXo="}}
+<< {"jsonrpc":"2.0","id":2,"result":{"accepted_bytes":23}}
+# new host.log lines:
+[2026-11-24T22:44:29Z INFO  paneflow_host::server] paneflow-host: control client qual-final-journal wrote 23 bytes to session 0a38d7ef-d4ff-4854-b4e4-01fe706503d4
+== J3b. pane sh1 with ipc.scripting=true (Ctrl+C first: the J2 payload sat on the prompt)
+# in pane sh1 (surface 2053), {'ipc': {'scripting': True}}
+>> [host] {"jsonrpc": "2.0", "id": 1, "method": "host.hello", "params": {"client": "qual-final-pane", "protocol": 1}}
+<< {"jsonrpc":"2.0","id":1,"result":{"name":"paneflow-host","version":"0.20.0","protocol":1,"build_id":"0.20.0+108cacb17ed8","host_instance":"958cdee0-7e48-4acf-813e-198af8a08f09","engine":{"engine":"libghostty-vt","app_version":"1.4.1-dev+108cacb17","api_version":"1.0.1","source_sha":"108cacb17ed8990840cd14abfce43d8ed8503ca1"},"pid":86965,"home":"~/.paneflow-dev-final","endpoint":"$TMPDIR/paneflow-host-ffea6be32e5f3995.sock","started_at_ms":1795560022385}}
+>> [host] {"jsonrpc": "2.0", "id": 2, "method": "session.input", "params": {"session": "0a38d7ef-d4ff-4854-b4e4-01fe706503d4", "data": "IyBKLXBhbmUtb3duLTEyNTA0"}}
+<< {"jsonrpc":"2.0","id":2,"result":{"accepted_bytes":18}}
+>> [host] {"jsonrpc": "2.0", "id": 3, "method": "session.input", "params": {"session": "070637e5-78e0-43db-afef-c53af29afca6", "data": "IyBKLXBhbmUtb3RoZXItd3M="}}
+<< {"jsonrpc":"2.0","id":3,"result":{"accepted_bytes":17}}
+$ paneflow send sh1 '# J-pane-send' (CLI from the pane)
+{
+  "sent": true,
+  "length": 13,
+  "submitted": false,
+  "paste": false,
+  "submit_mode": null,
+  "agent_target": false,
+  "agent_tool": null,
+  "terminal_bracketed_paste": false
+}
+[exit=0]
+# new host.log lines:
+[2026-11-24T22:44:43Z INFO  paneflow_host::server] paneflow-host: control client qual-final-pane wrote 18 bytes to session 0a38d7ef-d4ff-4854-b4e4-01fe706503d4
+[2026-11-24T22:44:43Z INFO  paneflow_host::server] paneflow-host: control client qual-final-pane wrote 17 bytes to session 070637e5-78e0-43db-afef-c53af29afca6
+# grep for any payload text in host.log: 0 match(es)
+
+== J3c. pane sh1 holding the prompt grant g-...-1 (write, workspace, 120 s; see F05), gates closed
+# in pane sh1 (surface 2053), {'ipc': {'scripting': False}}
+>> [host] {"jsonrpc": "2.0", "id": 1, "method": "host.hello", "params": {"client": "qual-final-pane", "protocol": 1}}
+>> [host] {"jsonrpc": "2.0", "id": 2, "method": "session.input", "params": {"session": "0a38d7ef-d4ff-4854-b4e4-01fe706503d4", "data": "IyBKLXBhbmUtb3duLTEyNTA0"}}
+<< {"jsonrpc":"2.0","id":2,"result":{"accepted_bytes":18}}
+>> [host] {"jsonrpc": "2.0", "id": 3, "method": "session.input", "params": {"session": "070637e5-78e0-43db-afef-c53af29afca6", "data": "IyBKLXBhbmUtb3RoZXItd3M="}}
+<< {"jsonrpc":"2.0","id":3,"error":{"code":-32602,"message":"session.input refused: session 070637e5-78e0-43db-afef-c53af29afca6 belongs to workspace 57cec221-5449-4f83-ab6f-5d2c93478625, outside the workspace of the calling pane; reaching another workspace needs ipc.orchestration","data":{"reason":"scope_refused","principal":"pane"}}}
+$ paneflow send sh1 '# J-pane-send' (CLI from the pane)
+{
+  "sent": true,
+  "length": 13,
+  "submitted": false,
+  "paste": false,
+  "submit_mode": null,
+  "agent_target": false,
+  "agent_tool": null,
+  "terminal_bracketed_paste": false
+}
+[exit=0]
+# new host.log line:
+[2026-11-24T22:48:54Z INFO  paneflow_host::server] paneflow-host: control client qual-final-pane wrote 18 bytes to session 0a38d7ef-d4ff-4854-b4e4-01fe706503d4

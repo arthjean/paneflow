@@ -1,0 +1,121 @@
+# Final regression pass, macOS 27.2 Apple Silicon, debug build of main at a330868a (paneflow, paneflow-host, worker), PANEFLOW_HOME=~/.paneflow-dev-final (scripts/dev.sh --tag final), every inherited PANEFLOW_* cleared. 'pf' is that build's paneflow; $SCRATCH is the session scratchpad; fixtures under $SCRATCH/final-fx (fake agent 'amp' = a C launcher running a bash script that emits OSC 7501, as in cli/06).
+# F04: MCP write_pane between two fake agents of workspace fleet (agentA 2054 -> agentB 2055), the approval bar decided in the window by accessibility press (agent-desktop click on 'Allow for this agent session' / 'Deny', dev window w-1732 only). Each 'mcp ...' line was typed into agentA, whose script runs the bridge from inside its pane.
+== 23:45:03 mcp [{"name":"write_pane","arguments":{"target":"agentB","text":"hello from A"}}]
+initialize: {"id": 1, "jsonrpc": "2.0", "result": {"capabilities": {"resources": {"listChanged": false, "subscribe": false}, "tools": {"listChanged": false}}, "instructions": "Reads terminal output from other Paneflow surfaces (panes/tabs). By default it is scoped to the current workspace when launched from a Paneflow pane; set PANEFLOW_MCP_SCOPE=all only when instance-wide reads are intentional. Call list_pa
+== write_pane {"target": "agentB", "text": "hello from A"}
+{
+ "id": 2,
+ "jsonrpc": "2.0",
+ "result": {
+  "content": [
+   {
+    "text": "{\n  \"message\": \"a human must allow repo to write into repo in Paneflow; nothing was written, call write_pane again after the decision\",\n  \"request\": 1,\n  \"status\": \"approval_pending\"\n}",
+    "type": "text"
+   }
+  ],
+  "isError": false
+ }
+}
+== 23:45:20 mcp [{"name":"write_pane","arguments":{"target":"agentB","text":"hello from A"}}]
+initialize: {"id": 1, "jsonrpc": "2.0", "result": {"capabilities": {"resources": {"listChanged": false, "subscribe": false}, "tools": {"listChanged": false}}, "instructions": "Reads terminal output from other Paneflow surfaces (panes/tabs). By default it is scoped to the current workspace when launched from a Paneflow pane; set PANEFLOW_MCP_SCOPE=all only when instance-wide reads are intentional. Call list_pa
+== write_pane {"target": "agentB", "text": "hello from A"}
+{
+ "id": 2,
+ "jsonrpc": "2.0",
+ "result": {
+  "content": [
+   {
+    "text": "Paneflow IPC pane.write failed: paneflow error -32602: text contains CR or LF; multiline surface.send_text requires active bracketed paste",
+    "type": "text"
+   }
+  ],
+  "isError": true
+ }
+}
+== 23:45:37 mcp [{"name":"write_pane","arguments":{"target":"agentB","text":"hello from A after relaunch"}}]
+initialize: {"id": 1, "jsonrpc": "2.0", "result": {"capabilities": {"resources": {"listChanged": false, "subscribe": false}, "tools": {"listChanged": false}}, "instructions": "Reads terminal output from other Paneflow surfaces (panes/tabs). By default it is scoped to the current workspace when launched from a Paneflow pane; set PANEFLOW_MCP_SCOPE=all only when instance-wide reads are intentional. Call list_pa
+== write_pane {"target": "agentB", "text": "hello from A after relaunch"}
+{
+ "id": 2,
+ "jsonrpc": "2.0",
+ "result": {
+  "content": [
+   {
+    "text": "{\n  \"message\": \"a human must allow repo to write into repo in Paneflow; nothing was written, call write_pane again after the decision\",\n  \"request\": 2,\n  \"status\": \"approval_pending\"\n}",
+    "type": "text"
+   }
+  ],
+  "isError": false
+ }
+}
+== 23:45:50 mcp [{"name":"write_pane","arguments":{"target":"agentB","text":"after deny"}}]
+initialize: {"id": 1, "jsonrpc": "2.0", "result": {"capabilities": {"resources": {"listChanged": false, "subscribe": false}, "tools": {"listChanged": false}}, "instructions": "Reads terminal output from other Paneflow surfaces (panes/tabs). By default it is scoped to the current workspace when launched from a Paneflow pane; set PANEFLOW_MCP_SCOPE=all only when instance-wide reads are intentional. Call list_pa
+== write_pane {"target": "agentB", "text": "after deny"}
+{
+ "id": 2,
+ "jsonrpc": "2.0",
+ "result": {
+  "content": [
+   {
+    "text": "Paneflow IPC pane.write failed: paneflow error -32602: the human denied writes from repo into repo; nothing was written",
+    "type": "text"
+   }
+  ],
+  "isError": true
+ }
+}
+== 23:47:16 mcp [{"name":"write_pane","arguments":{"target":"agentB","text":"hello B, allowed"}}]
+initialize: {"id": 1, "jsonrpc": "2.0", "result": {"capabilities": {"resources": {"listChanged": false, "subscribe": false}, "tools": {"listChanged": false}}, "instructions": "Reads terminal output from other Paneflow surfaces (panes/tabs). By default it is scoped to the current workspace when launched from a Paneflow pane; set PANEFLOW_MCP_SCOPE=all only when instance-wide reads are intentional. Call list_pa
+== write_pane {"target": "agentB", "text": "hello B, allowed"}
+{
+ "id": 2,
+ "jsonrpc": "2.0",
+ "result": {
+  "content": [
+   {
+    "text": "{\n  \"message\": \"a human must allow repo to write into repo in Paneflow; nothing was written, call write_pane again after the decision\",\n  \"request\": 3,\n  \"status\": \"approval_pending\"\n}",
+    "type": "text"
+   }
+  ],
+  "isError": false
+ }
+}
+== 23:47:23 mcp [{"name":"write_pane","arguments":{"target":"agentB","text":"hello B, allowed","submit":true}}]
+initialize: {"id": 1, "jsonrpc": "2.0", "result": {"capabilities": {"resources": {"listChanged": false, "subscribe": false}, "tools": {"listChanged": false}}, "instructions": "Reads terminal output from other Paneflow surfaces (panes/tabs). By default it is scoped to the current workspace when launched from a Paneflow pane; set PANEFLOW_MCP_SCOPE=all only when instance-wide reads are intentional. Call list_pa
+== write_pane {"target": "agentB", "text": "hello B, allowed", "submit": true}
+{
+ "id": 2,
+ "jsonrpc": "2.0",
+ "result": {
+  "content": [
+   {
+    "text": "{\n  \"bytes\": 60,\n  \"delivered\": true,\n  \"reason\": \"state_transition\",\n  \"started\": true,\n  \"state\": \"working\",\n  \"status\": \"written\",\n  \"submit_mode\": \"deferred_paste_cr\",\n  \"submitted\": true\n}",
+    "type": "text"
+   }
+  ],
+  "isError": false
+ }
+}
+
+== notes
+# 23:45:20 'text contains CR or LF': the first target ran without bracketed paste; the bridge prefixes a line naming the source, so a multi-line relay needs bracketed paste (as in cli/30). agentB was relaunched with it at 23:45:30, which ended the approval (request 2 at 23:45:37). Request 2 was denied; the next call answered 'denied' once. agentA was then relaunched (new occurrence), request 3 allowed, and the relayed message landed in agentB:
+$ paneflow read agentB --raw --lines 6
+d/final-fx/bin/amp
+FAKE_AGENT_READY
+^[[200~[Paneflow: message from repo, surface 2054]
+hello B, allowed^[[201~working on: [Paneflow: message from repo, surface 2054]
+
+DONE: [Paneflow: message from repo, surface 2054]
+working on: hello B, allowed
+
+== host.log (agent_write and decisions)
+[2026-11-24T22:45:03Z INFO  paneflow_host::agent_write] paneflow-host: write request 1: session ead337ee-771c-4364-8de5-811316d1f92a wants to write to session 622d5be9-5006-4ecb-82b0-096a71deaeda
+[2026-11-24T22:45:18Z INFO  paneflow_host::agent_write] paneflow-host: write request 1 allowed: session ead337ee-771c-4364-8de5-811316d1f92a to session 622d5be9-5006-4ecb-82b0-096a71deaeda
+[2026-11-24T22:45:18Z INFO  paneflow_host::server] paneflow-host: client paneflow-desktop decided write request 1
+[2026-11-24T22:45:38Z INFO  paneflow_host::agent_write] paneflow-host: write request 2: session ead337ee-771c-4364-8de5-811316d1f92a wants to write to session 622d5be9-5006-4ecb-82b0-096a71deaeda
+[2026-11-24T22:45:49Z INFO  paneflow_host::agent_write] paneflow-host: write request 2 denied: session ead337ee-771c-4364-8de5-811316d1f92a to session 622d5be9-5006-4ecb-82b0-096a71deaeda
+[2026-11-24T22:45:49Z INFO  paneflow_host::server] paneflow-host: client paneflow-desktop decided write request 2
+[2026-11-24T22:47:16Z INFO  paneflow_host::agent_write] paneflow-host: write request 3: session ead337ee-771c-4364-8de5-811316d1f92a wants to write to session 622d5be9-5006-4ecb-82b0-096a71deaeda
+[2026-11-24T22:47:22Z INFO  paneflow_host::agent_write] paneflow-host: write request 3 allowed: session ead337ee-771c-4364-8de5-811316d1f92a to session 622d5be9-5006-4ecb-82b0-096a71deaeda
+[2026-11-24T22:47:22Z INFO  paneflow_host::server] paneflow-host: client paneflow-desktop decided write request 3
+[2026-11-24T22:47:23Z INFO  paneflow_host::agent_write] paneflow-host: pane.write relayed 60 bytes from session ead337ee-771c-4364-8de5-811316d1f92a to session 622d5be9-5006-4ecb-82b0-096a71deaeda

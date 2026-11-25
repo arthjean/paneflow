@@ -1,0 +1,189 @@
+Command palette and grant prompt accessibility (macOS 27.2 Apple Silicon, agent-desktop 2.6), debug build of commit 000e45d8 on its own home ~/.paneflow-dev-axprompt (every inherited PANEFLOW_* unset, paneflow.json {"ipc": {"scripting": true}} so the CLI can type into the pane), dev window w-1822 (pid 35337) targeted by --window-id only. Every press is headless (AXPress).
+BEFORE (main 9e99fa53, regression pass 120-a11y-gaps.txt): only the Filter field of either surface was in the tree.
+Rows are AXStaticText items of an AXList (AccessKit maps ListBoxOption so on macOS), named after the visible label, selected when highlighted, with AXPress; toggle rows carry their state as value.
+
+== press cmd+shift+p --window-id w-1822, then snapshot -i --compact (palette subtree) ==
+    group 'Command palette' actions=SetFocus
+      search 'Search the command palette'
+        textfield 'Search commands…' states=focused actions=SetValue,SetFocus
+      list 'Commands' actions=Select,SetFocus
+        statictext 'Panes' states=selected actions=Click
+        statictext 'Tabs' actions=Click
+        statictext 'Workspaces' actions=Click
+        statictext 'Sidebar' actions=Click
+        statictext 'Terminal' actions=Click
+        statictext 'Agents' actions=Click
+        statictext 'Appearance' actions=Click
+        statictext 'Paneflow' actions=Click
+
+== set-value <filter field> split, then snapshot (filtered rows, renumbered) ==
+    group 'Command palette' actions=SetFocus
+      search 'Search the command palette'
+        textfield 'Search commands…' states=focused value=split actions=SetValue,SetFocus
+        button 'Clear search the command palette' actions=Click,SetFocus
+      list 'Commands' actions=Select,SetFocus
+        statictext 'Split vertical' states=selected actions=Click
+        statictext 'Split horizontal' actions=Click
+        statictext 'Show pull requests in the sidebar' value=true actions=Click
+        statictext 'Quit Paneflow' actions=Click
+
+== click <ref of Split horizontal> (headless) ==
+{"version":"2.6","ok":true,"command":"click","data":{"action":"click","details":{"auto_wait":{"lease_contention_count":0,"lease_hold_ms":30,"read_only_preflight_attempts":1,"read_only_resolve_attempts":1}},"disposition":{"delivery":"delivered_unverified","retry":"unsafe"},"steps":[{"label":"AXPress","mechanism":"semantic_api","outcome":"succeeded","verified":false}]}}
+
+== pf ls after the press (palette closed, pane split) ==
+pane count before the press: 1, after: 2
+
+== grant request 1 from pane 1026: pf send 1026 --submit 'paneflow api call grant.request --args {"rights":["write"],"scope":"workspace","duration_secs":600}', then snapshot (prompt subtree) ==
+    group 'Allow an agent in pane 7409598a to write in its own workspace for 10 min?' actions=SetFocus
+      search 'Allow an agent in pane 7409598a to write in its own workspace for 10 min?'
+        textfield 'Filter…' states=focused actions=SetValue,SetFocus
+      list 'Choices' actions=Select,SetFocus
+        statictext 'Allow' states=selected actions=Click
+        statictext 'Deny' actions=Click
+
+== click <ref of Deny> (headless) ==
+{"version":"2.6","ok":true,"command":"click","data":{"action":"click","details":{"auto_wait":{"lease_contention_count":0,"lease_hold_ms":28,"read_only_preflight_attempts":1,"read_only_resolve_attempts":1}},"disposition":{"delivery":"delivered_unverified","retry":"unsafe"},"steps":[{"label":"AXPress","mechanism":"semantic_api","outcome":"succeeded","verified":false}]}}
+
+== reply printed in the pane to request 1 ==
+{
+  "granted": false,
+  "reason": "denied"
+}
+
+== grant request 2, snapshot ==
+    group 'Allow an agent in pane 7409598a to write in its own workspace for 10 min?' actions=SetFocus
+      search 'Allow an agent in pane 7409598a to write in its own workspace for 10 min?'
+        textfield 'Filter…' states=focused actions=SetValue,SetFocus
+      list 'Choices' actions=Select,SetFocus
+        statictext 'Allow' states=selected actions=Click
+        statictext 'Deny' actions=Click
+
+== click <ref of Allow> (headless) ==
+{"version":"2.6","ok":true,"command":"click","data":{"action":"click","details":{"auto_wait":{"lease_contention_count":0,"lease_hold_ms":24,"read_only_preflight_attempts":1,"read_only_resolve_attempts":1}},"disposition":{"delivery":"delivered_unverified","retry":"unsafe"},"steps":[{"label":"AXPress","mechanism":"semantic_api","outcome":"succeeded","verified":false}]}}
+
+== reply printed in the pane to request 2 ==
+{
+  "granted": true,
+  "id": "g-1795564111584-1",
+  "expires_at_ms": 1795564770593
+}
+
+== pf grants ls ==
+g-1795564111584-1  session 7409598a-fcf3-415b-9ecf-a84687cb6fac  write  workspace  579s left  prompt
+
+== ######## Scope extension: controls that worked with the mouse only (same dev home, rebuilt at 7d792a81, window w-1848, pid 61509; every press headless). BEFORE is the main build's welcome screen with no workspace: welcome rows and empty sidebar actions absent ######## ==
+
+
+== before (main build): snapshot -i --compact of the welcome screen ==
+window 'Paneflow' states=focused
+  group None actions=SetFocus
+    button 'Customize sidebar' actions=Click,SetFocus
+    button 'New workspace' actions=Click,SetFocus
+    outline 'Workspaces' actions=Select,SetFocus
+    button 'Agents' actions=Click,SetFocus
+    button 'Customize agent rows' actions=Click,SetFocus
+    list 'Agents' actions=Select,SetFocus
+    link 'Star Paneflow on GitHub' actions=Click,SetFocus
+      button 'Dismiss' actions=Click,SetFocus
+    search 'Filter workspaces'
+      textfield 'Filter' actions=SetValue,SetFocus
+    button '59% plan usage, Claude Code week' actions=Click,SetFocus
+    button 'Hide sidebar' actions=Click,SetFocus
+  button 'Close' actions=Click
+  button 'Full Screen' actions=Click,RightClick
+  button 'Minimize' actions=Click
+
+== (1) after: welcome screen and empty sidebar (workspace closed through the palette row Close workspace, pressed headlessly) ==
+window 'Paneflow' states=focused
+  group None actions=SetFocus
+    button 'Customize sidebar' actions=Click,SetFocus
+    button 'New workspace' actions=Click,SetFocus
+    outline 'Workspaces' actions=Select,SetFocus
+      button 'Open folder' actions=Click,SetFocus
+      button 'Clone repository' actions=Click,SetFocus
+    button 'Agents' actions=Click,SetFocus
+    button 'Customize agent rows' actions=Click,SetFocus
+    list 'Agents' actions=Select,SetFocus
+    link 'Star Paneflow on GitHub' actions=Click,SetFocus
+      button 'Dismiss' actions=Click,SetFocus
+    search 'Filter workspaces'
+      textfield 'Filter' actions=SetValue,SetFocus
+    button '60% plan usage, Claude Code week' actions=Click,SetFocus
+    button 'Open folder…' actions=Click,SetFocus
+    button 'Clone repository…' actions=Click,SetFocus
+    button 'Open command palette' actions=Click,SetFocus
+    button 'axws' actions=Click,SetFocus
+    splitter 'Resize the Workspaces sidebar' value=432
+    button 'Hide sidebar' actions=Click,SetFocus
+  button 'Close' actions=Click
+  button 'Full Screen' actions=Click,RightClick
+    group None
+      group None
+  button 'Minimize' actions=Click
+
+== (1) click <Clone repository> of the empty sidebar (headless): the clone picker opens, its rows exposed as options ==
+    list 'Repositories' actions=Select,SetFocus
+      statictext 'Clone from GitHub' states=selected actions=Click
+
+== (1) click <recent workspace row axws> on the welcome screen (headless): the workspace reopens ==
+    outline 'Workspaces' actions=Select,SetFocus
+      treeitem 'axws' states=selected actions=Click,SetFocus,Expand,Collapse
+        button 'New tab in axws' actions=Click,SetFocus
+
+== (2) Settings > Appearance, click <combobox Interface style> (headless): the open dropdown is a menu of radio items, value = checked ==
+    menu None states=focused
+      menuitem 'Classic' value=true actions=Click,SetFocus
+      menuitem 'Rounded' value=false actions=Click,SetFocus
+
+== (2) click <menuitem Rounded> (headless), then paneflow.json of the dev home ==
+{
+  "ipc": {
+    "scripting": true
+  },
+  "interface_style": "rounded"
+}
+
+== (2) dropdown reopened: Rounded now checked (set back to Classic afterwards) ==
+    menu None states=focused
+      menuitem 'Classic' value=false actions=Click,SetFocus
+      menuitem 'Rounded' value=true actions=Click,SetFocus
+
+== (3) File dock tab: the files sidebar is an outline of tree items ==
+    outline 'Files' actions=Select,SetFocus
+      treeitem 'src' states=selected actions=Click,SetFocus,Expand,Collapse
+      treeitem 'README.md' actions=Click,SetFocus,Expand,Collapse
+
+== (3) click <treeitem src> (headless): the folder opens ==
+    outline 'Files' actions=Select,SetFocus
+      treeitem 'src' states=selected actions=Click,SetFocus,Expand,Collapse
+      treeitem 'lib.rs' actions=Click,SetFocus,Expand,Collapse
+      treeitem 'main.rs' actions=Click,SetFocus,Expand,Collapse
+      treeitem 'README.md' actions=Click,SetFocus,Expand,Collapse
+
+== (3) click <treeitem lib.rs> (headless): lib.rs opens in the editor (breadcrumb src > lib.rs) and is the selected row ==
+    link 'src' actions=Click,SetFocus
+
+== (3) files tree after opening lib.rs ==
+    outline 'Files' actions=Select,SetFocus
+      treeitem 'src' actions=Click,SetFocus,Expand,Collapse
+      treeitem 'lib.rs' states=selected actions=Click,SetFocus,Expand,Collapse
+      treeitem 'main.rs' actions=Click,SetFocus,Expand,Collapse
+      treeitem 'README.md' actions=Click,SetFocus,Expand,Collapse
+
+== (4) Changes dock: the diff body is a group 'Changed files' with one button per file header ==
+    group 'Changed files' actions=SetFocus
+      button 'README.md, modified' actions=Click,SetFocus
+      button 'src/lib.rs, added' actions=Click,SetFocus
+
+== (4) click <README.md, modified> (headless) ==
+{"version":"2.6","ok":true,"command":"click","data":{"action":"click","details":{"auto_wait":{"lease_contention_count":0,"lease_hold_ms":24,"read_only_preflight_attempts":1,"read_only_resolve_attempts":1}},"disposition":{"delivery":"delivered_unverified","retry":"unsafe"},"steps":[{"label":"AXPress","mechanism":"semantic_api","outcome":"succeeded","verified":false}]}}
+
+== (4) outcome ==
+README.md: rows hidden after the press, src/lib.rs still open (window screenshot checked by eye, not kept: it shows a private path). AccessKit 0.26 has no macOS mapping for the expanded state, so agent-desktop is --property expanded answers applicable:false for these buttons; Windows (UIA ExpandCollapse) and Linux (AT-SPI expanded) receive it.
+
+== (5) click <New dock tab> (headless): its menu opens ==
+    menu None states=focused
+      menuitem 'Changes' actions=Click,SetFocus
+      menuitem 'File' actions=Click,SetFocus
+      menuitem 'Terminal' actions=Click,SetFocus
+      menuitem 'Reopen Closed Tab' actions=SetFocus

@@ -1,0 +1,58 @@
+# Final regression pass, macOS 27.2 Apple Silicon, debug build of main at a330868a (paneflow, paneflow-host, worker), PANEFLOW_HOME=~/.paneflow-dev-final (scripts/dev.sh --tag final), every inherited PANEFLOW_* cleared. 'pf' is that build's paneflow; $SCRATCH is the session scratchpad; fixtures under $SCRATCH/final-fx (fake agent 'amp' = a C launcher running a bash script that emits OSC 7501, as in cli/06).
+# F08: tmux.compat. Gates: ipc.scripting=false, no grants. 'Claude Code (team)' picked by accessibility press in the New pane palette of ws-a; a stand-in 'claude' script in $PANEFLOW_HOME/bin/tmux-compat/ (first on the team launcher's PATH) ran instead of Claude Code, logged its tmux calls, then slept. Token redacted.
+== A. the lead's tmux calls through the shim
+# stand-in claude started as the team lead: argv=--teammate-mode tmux
+# TMUX=paneflow-tmux-compat,0,0 TMUX_PANE=%0 PANEFLOW_SURFACE_ID=3098 PANEFLOW_TMUX_TEAM=<set, 32 chars>
+# which tmux: ~/.paneflow-dev-final/bin/tmux-compat/tmux
+$ tmux -V
+tmux 3.5a
+[exit=0]
+$ tmux display-message -p #{pane_id}
+%0
+[exit=0]
+$ tmux split-window -h -P -F #{pane_id} echo teammate-1-started; sleep 100000
+%1
+[exit=0]
+$ tmux select-pane -t %1 -T reviewer
+[exit=0]
+$ tmux list-panes -F #{pane_id} #{pane_title}
+%0 
+%1 reviewer
+[exit=0]
+$ tmux send-keys -t %1 -l # typed-by-send-keys
+surface.send_text disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable
+[exit=1]
+$ tmux kill-pane -t %0
+paneflow tmux-compat: the team leader pane is closed by its user, not by the team
+[exit=1]
+$ tmux attach-session
+paneflow tmux-compat: unsupported verb: attach-session
+[exit=1]
+# done
+
+== B1. external python3 process holding the team token, naming the lead surface 3098
+>> [window] {"jsonrpc": "2.0", "id": 1, "method": "tmux.compat", "params": {"team": "<team-token>", "surface_id": 3098, "argv": ["list-panes", "-F", "#{pane_id} #{pane_title}"]}}
+<< {"jsonrpc":"2.0","result":{"stdout":"","stderr":"paneflow tmux-compat: the calling process does not run in surface 3098; a team pane can only speak for itself","exit":1},"id":1}
+>> [window] {"jsonrpc": "2.0", "id": 2, "method": "tmux.compat", "params": {"team": "<team-token>", "surface_id": 3098, "argv": ["split-window", "-h", "-P", "-F", "#{pane_id}", "echo spawned-from-outside; sleep 600"]}}
+<< {"jsonrpc":"2.0","result":{"stdout":"","stderr":"paneflow tmux-compat: the calling process does not run in surface 3098; a team pane can only speak for itself","exit":1},"id":2}
+== B2. the tmux shim (the paneflow binary) from the external terminal with the team env copied
+$ PANEFLOW_TMUX_TEAM=<token> PANEFLOW_SURFACE_ID=3098 PANEFLOW_SOCKET_PATH=<window socket> $PANEFLOW_HOME/bin/tmux-compat/tmux list-panes
+paneflow tmux-compat: the calling process does not run in surface 3098; a team pane can only speak for itself
+[exit=1]
+== B3. malformed params
+>> [window] {"jsonrpc": "2.0", "id": 1, "method": "tmux.compat", "params": {"surface_id": 3098, "argv": ["list-panes"]}}
+<< {"jsonrpc":"2.0","error":{"code":-32602,"message":"missing 'team' parameter"},"id":1}
+>> [window] {"jsonrpc": "2.0", "id": 2, "method": "tmux.compat", "params": {"team": "<team-token>", "surface_id": 3098, "argv": "list-panes"}}
+<< {"jsonrpc":"2.0","error":{"code":-32602,"message":"'argv' must be an array"},"id":2}
+>> [window] {"jsonrpc": "2.0", "id": 3, "method": "tmux.compat", "params": {"team": "0000000000000000000000000000beef", "surface_id": 3098, "argv": ["list-panes"]}}
+<< {"jsonrpc":"2.0","result":{"stdout":"","stderr":"paneflow tmux-compat: the calling process does not run in surface 3098; a team pane can only speak for itself","exit":1},"id":3}
+
+== B4. a pane outside the team that read the token
+# in pane sh1 (surface 2053, outside the team), gates: {"ipc": {"scripting": false}}
+>> [window] {"jsonrpc": "2.0", "id": 1, "method": "tmux.compat", "params": {"team": "<team-token>", "surface_id": 3098, "argv": ["split-window", "-h", "-P", "-F", "#{pane_id}", "echo spawned-through-the-team-token; sleep 600"]}}
+<< {"jsonrpc":"2.0","result":{"stdout":"","stderr":"paneflow tmux-compat: the calling process does not run in surface 3098; a team pane can only speak for itself","exit":1},"id":1}
+>> [window] {"jsonrpc": "2.0", "id": 2, "method": "tmux.compat", "params": {"team": "<team-token>", "surface_id": 2053, "argv": ["list-panes"]}}
+<< {"jsonrpc":"2.0","result":{"stdout":"","stderr":"paneflow tmux-compat: the calling pane is not part of this team","exit":1},"id":2}
+# workspace ws-a after B1..B4: no pane was opened by them
+  ID  NAME                  SPACE             CMD                       CWD
+4117  fready                Default           zsh                       $SCRATCH/final-fx/repo

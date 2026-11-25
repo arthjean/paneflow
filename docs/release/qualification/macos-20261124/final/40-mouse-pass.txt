@@ -1,0 +1,229 @@
+# 40: mouse-click pass. Build: debug, main at 9e99fa53 (9e99fa53 = 9d789059 + a docs/help-text commit), PANEFLOW_HOME=~/.paneflow-dev-final2 (scripts/dev.sh --tag final2), PANEFLOW_* cleared.
+# Method: agent-desktop 1.3.1. 'agent-desktop --headed click <ref>' fails on this app before any input ('Physical input target could not be proven at the final input point': GPUI answers no AX hit test), so each click is a physical
+# 'agent-desktop --headed mouse-click --xy X,Y' at the center of the element's AX bounds (or, for controls absent from the AX tree, at a point read off the window screenshot), after raising only the dev process (pid 57223) with System Events. Effects are read back from the AX tree or the CLI.
+
+== 1. title bar sidebar toggle
+-- click 'Hide sidebar' (450,130): done above, the tree then showed: button 'Show sidebar'
+  target center 450,130
+FAILED TIMEOUT Operation exceeded its deadline
+  after:
+    button 'Show sidebar'  @s1iaa28b2jx04z:e1
+-- retry (the first mouse-click timed out in agent-desktop before input; nothing changed):
+mouse-click at 450,130: pointer_click/physical_synthetic/succeeded
+  after:
+    outline 'Workspaces'  @s16x35sjbg6wne:e3
+    button 'Hide sidebar'  @s16x35sjbg6wne:e11
+
+== 2. welcome screen rows (absent from the AX tree, see note A; points read off 40-40-welcome.jpg, window origin 360,110)
+-- click 'Keyboard shortcuts' (1057,621)
+mouse-click at 1057,621: pointer_click/physical_synthetic/succeeded | delivered_unverified
+    button 'Back to the app'  @s16e101sw7gvqs:e1
+      radiobutton 'Keyboard Shortcuts' ['checked'] @s16e101sw7gvqs:e5
+
+== 3. Settings nav tab, switch, dropdown (opened from the welcome row above)
+-- click nav tab 'General'
+  target center 510,278
+mouse-click at 510,278: pointer_click/physical_synthetic/succeeded | delivered_unverified
+      radiobutton 'General' ['checked'] @s2pijx9bay53ln:e3
+      combobox 'Default editor'  @s2pijx9bay53ln:e14
+      combobox 'Shell in the integrated terminal'  @s2pijx9bay53ln:e15
+      combobox 'When quitting with sessions running'  @s2pijx9bay53ln:e16
+      switch 'Native OS notifications'  @s2pijx9bay53ln:e17
+-- click switch 'Native OS notifications' (value before: false)
+  target center 1395,599
+mouse-click at 1395,599: pointer_click/physical_synthetic/succeeded | delivered_unverified
+  value after: true; paneflow.json: {"agent_panel":{"notify_when_agent_waiting":"PrimaryScreen"}}
+-- click dropdown 'When quitting with sessions running' (value before: None)
+  target center 1320,474
+mouse-click at 1320,474: pointer_click/physical_synthetic/succeeded | delivered_unverified
+  the open dropdown's options are not in the AX tree (see note A); 40-43-settings-dropdown-open.jpg shows them
+-- click option 'Keep sessions running' (1300,540, read off 40-43-settings-dropdown-open.jpg)
+mouse-click at 1300,540: pointer_click/physical_synthetic/succeeded | delivered_unverified
+  paneflow.json: {"agent_panel":{"notify_when_agent_waiting":"PrimaryScreen"},"on_quit":"keep"}
+
+== 4. set-value into the Settings search (5b70e2ce), headless
+-- agent-desktop set-value <Search settings…> 'worktree'
+ ok=True delivery=delivered_verified post_state={"enabled": true, "hidden": false, "offscreen": false, "role": "textfield", "value": "worktree"}
+  tree after (search field and the result region):
+    search 'Search settings'  
+      textfield 'Search settings…'  @s6rg7jodqseht:e2
+      button 'Clear search settings'  @s6rg7jodqseht:e3
+    tablist 'Settings pages'  
+      radiobutton 'Keyboard Shortcuts' ['checked'] @s6rg7jodqseht:e4
+      radiobutton 'Worktrees'  @s6rg7jodqseht:e5
+    tabpanel 'Keyboard Shortcuts' ['focused'] 
+      search 'Search shortcuts'  
+        textfield 'Search shortcuts'  @s6rg7jodqseht:e6
+        button 'Clear search shortcuts'  @s6rg7jodqseht:e7
+        switch 'Find by keys'  @s6rg7jodqseht:e8
+      button 'Change Open in WebStorm, now ⌃⌥W'  @s6rg7jodqseht:e9
+      button 'Change Next workspace, now ⌃Tab'  @s6rg7jodqseht:e10
+      button 'Change Select workspace 1, now ⌘1'  @s6rg7jodqseht:e11
+-- click 'Back to the app'
+  target center 510,168
+mouse-click at 510,168: pointer_click/physical_synthetic/succeeded | delivered_unverified
+  Settings tab lists left in the tree: 0
+
+== setup through the CLI (external terminal): ipc.scripting=true, workspace 'repo2' on a repo with one modified and one untracked file, workspace 'fleet' with two fake agents
+{"index":0,"title":"repo2","panes":1}
+{"index":1,"title":"fleet","panes":3,"surface_ids":[2053,2054,2055],"labels":["sh1","agentA","agentB"]}
+  ID  NAME                  SPACE             CMD                       CWD
+2053  sh1                   Default           zsh                       $SCRATCH/final-fx/repo2
+2054  agentA                Default           amp                       $SCRATCH/final-fx/repo2
+2055  agentB                Default           amp                       $SCRATCH/final-fx/repo2
+    PID  TOOL        STATE               WS  PANE
+   9009  amp         finished             1  agentB
+   9011  amp         finished             1  agentA
+
+== 5. sidebar workspace and tab rows
+  before: active workspace: index 1 'fleet'
+-- click workspace row 'repo2'
+  target center 576,204
+mouse-click at 576,204: pointer_click/physical_synthetic/succeeded | delivered_unverified
+  active workspace: index 0 'repo2'
+-- click workspace row 'fleet'
+  target center 576,238
+mouse-click at 576,238: pointer_click/physical_synthetic/succeeded | delivered_unverified
+  active workspace: index 1 'fleet'
+-- hover the 'fleet' row, then click its 'New tab in fleet' button
+  target center 771,238
+mouse-click at 771,238: pointer_click/physical_synthetic/succeeded | delivered_unverified
+      treeitem 'repo2'  @s26jysdb2v7nga:e4
+      treeitem 'fleet' ['selected'] @s26jysdb2v7nga:e6
+      treeitem 'Tab 1'  @s26jysdb2v7nga:e8
+      treeitem 'New tab' ['selected'] @s26jysdb2v7nga:e10
+    group 'New pane' ['focused'] 
+      button 'Branch: main'  @s26jysdb2v7nga:e21
+      button 'Terminal'  @s26jysdb2v7nga:e22
+      button 'Amp'  @s26jysdb2v7nga:e30
+
+== 6. New pane palette rows
+-- click palette row 'Branch: main' (opens the branch list)
+  target center 1176,332
+mouse-click at 1176,332: pointer_click/physical_synthetic/succeeded | delivered_unverified
+      textfield 'Filter'  @s33xcmyw2g2aaf:e19
+      button 'Branch: main'  @s33xcmyw2g2aaf:e21
+    menu 'Branches'  
+      menuitem 'New branch…'  @s33xcmyw2g2aaf:e38
+  the menu 'Branches' opened with menuitems 'New branch…' and 'main' (40-47-palette-branch-list.jpg)
+-- click menuitem 'main' (closes the menu, keeps main)
+  target center 1176,406
+mouse-click at 1176,406: pointer_click/physical_synthetic/succeeded | delivered_unverified
+  Branches menus left: 0
+  before: 3 panes in fleet: sh1(tab -), agentA(tab -), agentB(tab -)
+-- click palette row 'Terminal'
+  target center 1176,373
+mouse-click at 1176,373: pointer_click/physical_synthetic/succeeded | delivered_unverified
+  after: 4 panes in fleet: sh1(tab -), agentA(tab -), agentB(tab -), shell@repo2-2(tab main)
+-- click tab row 'Tab 1'
+  target center 576,272
+mouse-click at 576,272: pointer_click/physical_synthetic/succeeded | delivered_unverified
+      treeitem 'Tab 1' ['selected'] 
+      treeitem 'main'  
+-- click tab row 'main'
+  target center 576,306
+mouse-click at 576,306: pointer_click/physical_synthetic/succeeded | delivered_unverified
+      treeitem 'Tab 1'  
+      treeitem 'main' ['selected'] 
+
+== 7. tab close button (hover the 'main' row, click its 'Close tab')
+  target center 771,306
+mouse-click at 771,306: pointer_click/physical_synthetic/succeeded | delivered_unverified
+      treeitem 'repo2'  @s1yu7w8nnrttyg:e4
+      treeitem 'fleet' ['selected'] @s1yu7w8nnrttyg:e6
+      treeitem 'Tab 1' ['selected'] @s1yu7w8nnrttyg:e8
+  3 panes in fleet
+
+== 8. command palette rows (Cmd+Shift+P; rows absent from the AX tree, see note A; points read off 40-50-command-palette.jpg, screen = shot + (304,72))
+-- click row 'Sidebar' (743,359)
+mouse-click at 743,359: pointer_click/physical_synthetic/succeeded | delivered_unverified
+  the palette shows the Sidebar submenu (40-51-command-palette-sidebar.jpg)
+-- click row 'Toggle Files sidebar' (782,359)
+mouse-click at 782,359: pointer_click/physical_synthetic/succeeded | delivered_unverified
+    button 'Refresh files'  @s3v0d99gob5bk6:e20
+    search 'Search files'  
+      textfield 'Search files'  @s3v0d99gob5bk6:e21
+  the files sidebar opened (40-52-files-sidebar.jpg); its rows (src, README.md, untracked.txt) are absent from the AX tree (see note A)
+
+== 9. files sidebar rows (points read off 40-52-files-sidebar.jpg, screen = shot + (304,72))
+-- click folder row 'src' (1079,248)
+mouse-click at 1079,248: pointer_click/physical_synthetic/succeeded | delivered_unverified
+  'src' expanded and shows a.txt (40-53-files-src-expanded.jpg)
+-- click file row 'a.txt' (1101,276)
+mouse-click at 1101,276: pointer_click/physical_synthetic/succeeded | delivered_unverified
+    button 'Editor Controls'  @s31ozuwattjfje:e23
+  a.txt opened in the dock editor (40-54-files-a-txt-open.jpg)
+
+== 10. title bar Changes dock toggle and a diff dock row
+-- click 'Hide Changes dock'
+  target center 1542,130
+mouse-click at 1542,130: pointer_click/physical_synthetic/succeeded | delivered_unverified
+    button 'Show Changes dock'  
+-- click 'Show Changes dock'
+  target center 1542,130
+mouse-click at 1542,130: pointer_click/physical_synthetic/succeeded | delivered_unverified
+    button 'Hide Changes dock'  
+-- click the dock's '+' (1450,129; shown in 40-56-dock-plus-menu.jpg, no AX button of its own was listed): menu with menuitems Changes, File, Terminal, Reopen Closed Tab
+mouse-click at 1450,129: pointer_click/physical_synthetic/succeeded
+-- click menuitem 'Changes'
+  target center 1365,165
+mouse-click at 1365,165: pointer_click/physical_synthetic/succeeded | delivered_unverified
+    button 'Hide Changes dock'  @s34eh6vmo6a4c6:e28
+  the Changes view lists src/a.txt (split diff) and untracked.txt (40-57-changes-view.jpg); its file rows are absent from the AX tree (see note A)
+-- click diff file row 'src/a.txt' header (1109,201)
+mouse-click at 1109,201: pointer_click/physical_synthetic/succeeded | delivered_unverified
+  src/a.txt collapsed under its header (40-58-diff-row-collapsed.jpg)
+
+== 11. agent dock rows (sidebar Agents section)
+-- click workspace row 'repo2' first
+  target center 576,204
+mouse-click at 576,204: pointer_click/physical_synthetic/succeeded | delivered_unverified
+  active workspace: index 0 'repo2'
+-- click the second agent row 'Amp, Amp, fleet, idle'
+  target center 576,804
+mouse-click at 576,804: pointer_click/physical_synthetic/succeeded | delivered_unverified
+  active workspace: index 1 'fleet'
+  agentB returned to its pane
+
+== 12. write_pane approval bar, Deny then Allow, by mouse (agentA -> agentB, fake agents, typed 'mcp ...' lines run the bridge inside agentA)
+-- write_pane 'hi':
+    "text": "{   "message": "a human must allow repo2 to write into repo2 in Paneflow; nothing was written, call write_pane again after the decision",   "request": 1,   "status": "approval_pending" }"
+    "type": "text"
+-- click 'Deny' on the bar in agentB (40-60-approval-bar.jpg)
+  target center 828,638
+mouse-click at 828,638: pointer_click/physical_synthetic/succeeded | delivered_unverified
+write request 1 denied: session 218840b3-d860-4aa8-b7f6-990e80d390e7 to session 86d90161-d3cd-400a-b4a5-43aff22ae0b2
+client paneflow-desktop decided write request 1
+-- write_pane again (answers the denial once):
+    "text": "Paneflow IPC pane.write failed: paneflow error -32602: the human denied writes from repo2 into repo2; nothing was written",
+    "type": "text"
+-- write_pane again (new request):
+    "text": "{   "message": "a human must allow repo2 to write into repo2 in Paneflow; nothing was written, call write_pane again after the decision",   "request": 2,   "status": "approval_pending" }"
+    "type": "text"
+-- click 'Allow for this agent session'
+  target center 892,605
+mouse-click at 892,605: pointer_click/physical_synthetic/succeeded | delivered_unverified
+write request 2 allowed: session 218840b3-d860-4aa8-b7f6-990e80d390e7 to session 86d90161-d3cd-400a-b4a5-43aff22ae0b2
+client paneflow-desktop decided write request 2
+-- write_pane after Allow:
+    "text": "Paneflow IPC pane.write failed: paneflow error -32602: text contains CR or LF; multiline surface.send_text requires active bracketed paste",
+    "type": "text"
+  (the last refusal is the target's missing bracketed paste, as in final/04; the approval itself was granted)
+
+== 13. Shift+F10 (keyboard): Cmd+Alt+S focuses the sidebar, Down, Shift+F10
+  menu for fleet > Tab 1, anchored under its row: menuitem 'Rename', menuitem 'Close tab (stops its sessions)' (40-62-shift-f10-menu.jpg)
+-- the same on repo2 > Tab 1 (Up, Up, Shift+F10) and a mouse right-click on that row: the same two items (40-63-, 40-64-*.jpg)
+  Shift+F10 and the right click open the same menu at the row: pass. The Branch section (New branch…) is absent: see note C.
+
+== notes
+A. Controls a mouse reaches but the accessibility tree does not list in this build (agent-desktop snapshot, and a raw AX walk for the
+   files rows): the welcome screen rows (Open folder…, Clone repository…, Open command palette, Agent profiles, Keyboard shortcuts,
+   Appearance) and the sidebar's empty-state Open folder / Clone repository; the options of an open Settings dropdown; the command
+   palette rows; the files sidebar rows; the Changes dock file rows; the dock's '+' button. Each one works with the mouse above.
+B. 'agent-desktop --headed click <ref>' refuses every element of this app before any input ("Physical input target could not be
+   proven at the final input point"): GPUI answers no AX hit test at a point. Physical clicks were therefore sent by coordinates.
+C. The tab menu shows its Branch section (New branch…, the branch list) only when the repository has more than one checkout
+   (src-app/src/app/sidebar/context_menu.rs, show_checkouts = checkouts.len() > 1, unchanged since 7dc9997b). worktrees.md says
+   "The tab's context menu offers New branch… for a tab that already exists" without that condition. In final/22 (a330868a) the
+   repo had a second branch, so the section showed. Repro: git init a repo with only main, paneflow new --cwd <repo>, right-click
+   its tab (or Shift+F10): only Rename and Close tab.

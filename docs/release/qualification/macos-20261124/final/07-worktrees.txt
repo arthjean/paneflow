@@ -1,0 +1,112 @@
+# Final regression pass, macOS 27.2 Apple Silicon, debug build of main at a330868a (paneflow, paneflow-host, worker), PANEFLOW_HOME=~/.paneflow-dev-final (scripts/dev.sh --tag final), every inherited PANEFLOW_* cleared. 'pf' is that build's paneflow; $SCRATCH is the session scratchpad; fixtures under $SCRATCH/final-fx (fake agent 'amp' = a C launcher running a bash script that emits OSC 7501, as in cli/06).
+# F06: worktrees through the API on the final build; repo $F/repo (branch main), workspace ws-a (pane 1026)
+$ pf select 0
+{
+  "selected": 0
+}
+[exit=0]
+
+$ pf api call surface.split --args '{"surface_id":1026,"direction":"vertical","worktree":{"branch":"feat/final-one","from":"main"}}'
+{
+  "split": false,
+  "new_tab": true,
+  "tab_id": 3092,
+  "direction": "vertical",
+  "panes": 2,
+  "surface_id": 3090
+}
+[exit=0]
+
+$ pf ls --human
+  ID  NAME                  SPACE             CMD                       CWD
+1026  shell                 Default           zsh                       $SCRATCH/final-fx/repo
+3090  terminal              Default                                     
+[exit=0]
+
+$ git -C $SCRATCH/final-fx/repo worktree list
+$SCRATCH/final-fx/repo 6e8f3c9 [main]
+~/.paneflow-dev-final/worktrees/repo-2a88df8b/feat-final-one                                         6e8f3c9 [feat/final-one]
+[exit=0]
+
+$ ls ~/.paneflow-dev-final/worktrees/repo-2a88df8b
+feat-final-one
+[exit=0]
+
+$ git -C $SCRATCH/final-fx/repo status --short
+[exit=0]
+
+$ pf send 3090 'pwd; git branch --show-current' --submit > /dev/null
+[exit=0]
+
+$ pf read 3090 --raw --lines 4
+m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 feat-final-one % pwd; git branch --show-current
+~/.paneflow-dev-final/worktrees/repo-2a88df8b/feat-final-one
+feat/final-one
+m1@9f65b6f4-0e68-4a86-818b-086b2fc7a047 feat-final-one %[exit=0]
+
+$ pf ls | python3 -c 'import sys,json; [print(s["surface_id"], s["tab_title"], s["cwd"]) for s in json.load(sys.stdin)["surfaces"]]'
+1026  $SCRATCH/final-fx/repo
+3090 feat/final-one ~/.paneflow-dev-final/worktrees/repo-2a88df8b/feat-final-one
+[exit=0]
+
+
+== tab menu New branch...: Shift+F10 on ws-a > Tab 1 (keyboard), B, name 'finaltwo' typed, Return (screenshots final-21..24)
+# after Shift+F10 on ws-a > Tab 1, New branch... (B), name 'finaltwo', Return (Terminal preset)
+$ pf ls
+{
+  "pane_count": 3,
+  "workspace": 0,
+  "scope_workspace_id": null,
+  "surfaces": [
+    {
+      "surface_id": 1026,
+      "name": "shell@repo",
+      "title": "Terminal",
+      "cwd": "$SCRATCH/final-fx/repo",
+      "cmd": "zsh",
+      "workspace_id": 1027,
+      "workspace": 0,
+      "scope": "workspace",
+      "tab_id": 1028,
+      "tab_title": "finaltwo",
+      "space": null,
+      "sandboxed": false
+    },
+    {
+      "surface_id": 3093,
+      "name": "shell@finaltwo",
+      "title": "Terminal",
+      "cwd": "~/.paneflow-dev-final/worktrees/repo-2a88df8b/finaltwo",
+      "cmd": "zsh",
+      "workspace_id": 1027,
+      "workspace": 0,
+      "scope": "workspace",
+      "tab_id": 1028,
+      "tab_title": "finaltwo",
+      "space": null,
+      "sandboxed": false
+    },
+    {
+      "surface_id": 3090,
+      "name": "shell@feat-final-one",
+      "title": "Terminal",
+      "cwd": "~/.paneflow-dev-final/worktrees/repo-2a88df8b/feat-final-one",
+      "cmd": "zsh",
+      "workspace_id": 1027,
+      "workspace": 0,
+      "scope": "workspace",
+      "tab_id": 3092,
+      "tab_title": "feat/final-one",
+      "space": null,
+      "sandboxed": false
+    }
+  ]
+}
+[exit=0]
+
+$ git -C $SCRATCH/final-fx/repo worktree list
+$SCRATCH/final-fx/repo 6e8f3c9 [main]
+~/.paneflow-dev-final/worktrees/repo-2a88df8b/feat-final-one                                         6e8f3c9 [feat/final-one]
+~/.paneflow-dev-final/worktrees/repo-2a88df8b/finaltwo                                               6e8f3c9 [finaltwo]
+[exit=0]
+
