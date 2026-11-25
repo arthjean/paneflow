@@ -608,6 +608,22 @@ enum Signal {
     Stop,
 }
 
+struct WatcherReleasedInBackground(Option<notify::RecommendedWatcher>);
+
+impl Drop for WatcherReleasedInBackground {
+    fn drop(&mut self) {
+        let Some(watcher) = self.0.take() else {
+            return;
+        };
+        let released = std::thread::Builder::new()
+            .name("paneflow-serve-watch-release".into())
+            .spawn(move || drop(watcher));
+        if let Err(error) = released {
+            log::debug!("paneflow-serve: the config watcher was released in place: {error}");
+        }
+    }
+}
+
 fn watch(
     runtime: &Arc<ConfigRuntime>,
     worker: &std::sync::Weak<Worker>,
@@ -623,18 +639,20 @@ fn watch(
     let Some(sender) = sender else {
         return;
     };
-    let mut watcher = match notify::recommended_watcher(move |event| {
-        let _ = sender.send(Signal::Changed(event));
-    }) {
-        Ok(watcher) => Some(watcher),
-        Err(error) => {
-            log::warn!("paneflow-serve: cannot watch init.lua: {error}");
-            None
-        }
-    };
+    let mut watcher = WatcherReleasedInBackground(
+        match notify::recommended_watcher(move |event| {
+            let _ = sender.send(Signal::Changed(event));
+        }) {
+            Ok(watcher) => Some(watcher),
+            Err(error) => {
+                log::warn!("paneflow-serve: cannot watch init.lua: {error}");
+                None
+            }
+        },
+    );
     let mut watched_dirs: Vec<PathBuf> = Vec::new();
     let mut watch_dirs_of = |files: &[PathBuf]| {
-        let Some(watcher) = watcher.as_mut() else {
+        let Some(watcher) = watcher.0.as_mut() else {
             return;
         };
         for file in files {
