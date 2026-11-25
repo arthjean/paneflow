@@ -464,6 +464,18 @@ pub(crate) fn unified_tab_label(color: Hsla) -> gpui::Div {
 
 pub(crate) const PANE_TABS_LABEL: &str = "Pane tabs";
 
+pub(crate) const NEW_PANE_TAB_LABEL: &str = "New tab";
+
+fn expose_new_tab_button(
+    button: gpui::Stateful<gpui::Div>,
+    menu_open: bool,
+) -> gpui::Stateful<gpui::Div> {
+    button
+        .role(gpui::accesskit::Role::Button)
+        .aria_label(NEW_PANE_TAB_LABEL)
+        .aria_expanded(menu_open)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct TabPlace {
     pub(crate) index: usize,
@@ -2068,8 +2080,9 @@ impl Pane {
                 None,
                 Some(rail_hover),
             )
+            .map(|button| expose_new_tab_button(button, menu_open))
             .when(self.new_tab_menu.is_none(), |button| {
-                button.delayed_tooltip(crate::ui_primitives::text_tooltip("New tab"))
+                button.delayed_tooltip(crate::ui_primitives::text_tooltip(NEW_PANE_TAB_LABEL))
             })
             .when(unified, |button| {
                 button.on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -3280,6 +3293,24 @@ mod tests {
             assert_eq!(role, Role::Button, "{title}");
             assert_eq!(node.label(), Some(format!("Close {title}").as_str()));
             assert!(node.supports_action(Action::Click), "{title}");
+        }
+    }
+
+    #[test]
+    fn the_pane_plus_is_a_named_button_that_reports_its_menu() {
+        use crate::ui_primitives::AccessibleControlExt as _;
+        use gpui::accesskit::{Action, Node, Role};
+        use gpui::{InteractiveElement as _, div};
+        for open in [false, true] {
+            let button =
+                super::expose_new_tab_button(div().id("plus"), open).on_activate(|_, _, _| {});
+            let role = gpui::Element::a11y_role(&button).expect("a role");
+            let mut node = Node::new(role);
+            gpui::Element::write_a11y_info(&button, &mut node);
+            assert_eq!(role, Role::Button);
+            assert_eq!(node.label(), Some(super::NEW_PANE_TAB_LABEL));
+            assert_eq!(node.is_expanded(), Some(open));
+            assert!(node.supports_action(Action::Click));
         }
     }
 }
