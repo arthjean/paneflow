@@ -159,7 +159,7 @@ double-forks reads `external`, as on Linux. Measured on macOS 27.2.1
 on Apple Silicon; Intel Macs have not been measured.
 
 An `init.lua` action started from a key or the command palette acts as
-the window, and one started by `paneflow actions run` acts as its
+the window, and one started by `paneflow do <name>` acts as its
 caller.
 
 A `pane` caller never reaches the methods reserved to Paneflow itself
@@ -623,8 +623,8 @@ paneflow hooks status
 ```
 
 Claude Code and Codex are the two runtimes with an installer. Install each
-once per machine, from the CLI or with the **Paneflow hooks** toggle in
-**Settings > Agents**; installing also registers the `paneflow` MCP server,
+once per machine, from the CLI or with the **Hooks and MCP** switch of the
+agent in **Settings > Agents**; installing also registers the `paneflow` MCP server,
 and Codex asks you once to trust the new hooks with `/hooks`. The hooks exit immediately
 outside a Paneflow pane. `paneflow hooks setup` installs every detected
 runtime that has an installer. Agents without an installer still run in

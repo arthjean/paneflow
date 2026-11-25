@@ -51,7 +51,8 @@ project directory:
 paneflow
 ```
 
-On first launch, Paneflow opens a workspace with a terminal pane. You do not
+On first launch, Paneflow opens its welcome screen, where you open a folder,
+clone a repository, or reopen a recent workspace. You do not
 need a Paneflow account or API key. Telemetry is off by default and only
 enabled with your consent.
 

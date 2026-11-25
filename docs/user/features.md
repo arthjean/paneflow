@@ -81,7 +81,7 @@ shows exactly that. Lifecycle hooks for Claude Code and Codex let Paneflow
 resume their conversations and name their tabs. Install these once per
 machine with `paneflow integrations install claude-code` or
 `paneflow integrations install codex`. Codex asks you to trust the hooks
-through `/hooks`. You can also turn on the **Paneflow hooks** toggle of an agent in the
+through `/hooks`. You can also turn on the **Hooks and MCP** switch in an agent's settings dialog in the
 [agent settings](/docs/settings). The same command registers the Paneflow
 MCP bridge and, for Claude Code, the conductor skill. An entry that another
 Paneflow home owns (a debug build next to a release, or a second

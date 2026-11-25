@@ -22,15 +22,16 @@ remain available in [`paneflow.json`](/docs/configuration/schema).
 
 | Page | What it controls | Writes to | Applies |
 | --- | --- | --- | --- |
-| General | Default external editor and default shell for new terminal panes. | `external_editor`, `default_shell` | New launches. Running terminals keep their current process. |
+| General | Default external editor and default shell for new terminal panes, what quitting does while sessions run, and native OS notifications for waiting agents and for notifications sent by terminal programs. | `external_editor`, `default_shell`, `on_quit`, `agent_panel.notify_when_agent_waiting` | Editor and shell apply to new launches, and running terminals keep their current process; the rest hot-reloads. |
 | Appearance | Light, Dark, System, the theme preset, **Comfortable density**, **Interface style**, **Workspace icon**, **Background style** on Windows, macOS, and Linux, **App icon**. | `theme`, `comfortable_density`, `interface_style`, `workspace_icon`, `background_style`, `app_icon` | Theme, density, style, icon, and background changes hot-reload. |
 | Keyboard Shortcuts | Action bindings and reset to defaults. | `shortcuts` | Reloaded after the config save. |
-| Notifications | Native OS notifications for waiting agents and for notifications sent by terminal programs. | `agent_panel.notify_when_agent_waiting` | Hot-reloads. |
 | Terminal | Cursor shape and color, font family, font size, font weight, line height, cell width, integrated glyphs, color emoji, and minimum contrast. | `terminal.cursor_shape`, `terminal.cursor_color`, `font_family`, `font_size`, `font_weight`, `line_height`, `cell_width`, `terminal.integrated_glyphs`, `terminal.color_emoji`, `terminal.minimum_contrast` | Display controls hot-reload. Cursor shape applies to the next new terminal. |
+| Editor | Semantic highlighting from a language server, and a reset of the language server permissions you granted. | `editor.semantic_tokens` | Hot-reloads. |
 | Workspaces | Reusable workspace templates with panes, agents, shell commands, cwd, env, and prompt prefill. | `commands[].workspace` | Templates run through the same workspace launch path as `paneflow up`. |
 | Spaces | The spaces that group workspaces: `Default` first, then each space with its name, image, color, environment variables, the state of the Claude Code and Codex hooks and MCP in the config directories it sets, and a delete action that moves its workspaces to `Default` after a confirmation. Up to 9 spaces. | `spaces`; images go to `avatars/` in the Paneflow home | Names, images, and colors hot-reload. An environment applies to terminals opened after the change. |
 | Worktrees | Root directory for the worktrees Paneflow creates, automatic removal with a keep limit, the list of managed worktrees with a remove action, and the snapshots taken before a removal with restore and delete actions. | `worktrees.dir`, `worktrees.auto_remove`, `worktrees.keep_limit` | Hot-reloads. The root applies to worktrees created from then on. |
-| Agents | Which agents the launcher shows, with their installed version and hook state, a **Paneflow hooks** toggle for Claude Code and Codex, custom agent profiles, Claude Code full access, AI free access, and the injection fence. | `*_button_visible`, `agent_profiles`, `claude_code_bypass_permissions`, `ai_unrestricted`, `ai_injection_fence`; the **Paneflow hooks** toggle writes the agent's own hook config | Launcher and access changes hot-reload. |
+| Agents | Which agents the launcher shows, with their installed version and hook state, a **Hooks and MCP** switch in the settings dialog of Claude Code and of Codex, custom agent profiles, Claude Code full access, AI free access, and the injection fence. | `*_button_visible`, `agent_profiles`, `claude_code_bypass_permissions`, `ai_unrestricted`, `ai_injection_fence`; the **Hooks and MCP** switch writes the agent's own hook config | Launcher and access changes hot-reload. |
+| Usage | One tile per Claude Code and Codex account with its week and session meters, a refresh, which agents the sidebar gauge shows, and an import of past activity. | `usage.sidebar_agents` | Hot-reloads. |
 | Plugins | Installs or repairs the bundled `paneflow-mcp` bridge for Claude Code, Codex, Gemini, and opencode. | Agent config files, not `paneflow.json` | Re-run after a Paneflow update or when an agent config changes. |
 
 ## Interface style
@@ -182,7 +183,7 @@ a card that lists `Default` first. `Default` holds every workspace that has
 no space, reads *Workspaces without a space* or its workspace count, and
 cannot be renamed or deleted. One row per space follows, with its circle,
 its name, and its workspace and variable counts; a collapsed row also flags
-*Agent setup failed* or its environment warnings. Click a row to expand it.
+*Hooks not added* or its environment warnings. Click a row to expand it.
 Only one space is expanded at a time.
 
 | Field | What it does |
@@ -191,7 +192,7 @@ Only one space is expanded at a time.
 | Image | **Upload image** opens a file picker, as does a click on the space's circle. Once an image is set, the buttons read **Replace image** and **Remove image**. See [Space image](#space-image). |
 | Color | No color, or one of Red, Green, Yellow, Blue, Magenta, and Cyan. A space without an image draws its color as a gradient in its circle, the same in every theme, and without a color an outline. |
 | Environment | A summary of the space's variables and an **Edit** button. See [Space environment](#space-environment). |
-| Agent setup | Shown when the space moves `CLAUDE_CONFIG_DIR` or `CODEX_HOME` away from the default: one line per agent, such as `Claude Code hooks and MCP`, with its state, **Retry** after an error, and **Install** when it is not installed. |
+| Accounts | The account each agent signs in with in this space: your default account, the folder the space sets, or **Add account…**, which signs in through the browser. Each agent's line also says whether Paneflow's hooks are in that account, with **Add hooks** when they are not and **Retry** after an error. |
 
 **Delete space**, at the bottom of an expanded space, asks
 *Delete Work? Its 3 workspaces move to Default.* with **Cancel** and
@@ -259,8 +260,9 @@ default, saving it installs Paneflow's hooks and MCP bridge in that
 directory for each agent already installed in **Settings > Agents**, so the
 sidebar still shows when the agent works and waits. Each launch of a
 release build refreshes them, once per distinct pair of Claude Code and
-Codex directories. **Agent setup** lists each agent's state, with **Retry**
-after an error and **Install** when it is not installed.
+Codex directories. The space's **Accounts** section says, for each agent, whether Paneflow's
+hooks are in its account, with **Add hooks** when they are not and
+**Retry** after an error.
 
 Deleting a space leaves its hooks in place. To remove them, delete the
 entries marked `"_paneflow_managed": true` from the `hooks` of
