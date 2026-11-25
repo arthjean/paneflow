@@ -82,6 +82,11 @@ pub(crate) enum ToastAction {
         line: Option<u32>,
         failed: bool,
     },
+    CheckoutInWorktree {
+        ws_id: u64,
+        tab_id: u64,
+        branch: String,
+    },
 }
 
 impl ToastAction {
@@ -89,7 +94,7 @@ impl ToastAction {
         match self {
             Self::OpenConfig { failed, .. } => *failed,
             Self::ReopenTab(_) | Self::OpenReleaseNotes(_) | Self::ShowSpace(_) => false,
-            Self::RetryUpdate | Self::OpenReleasesPage(_) => true,
+            Self::RetryUpdate | Self::OpenReleasesPage(_) | Self::CheckoutInWorktree { .. } => true,
         }
     }
 
@@ -101,6 +106,7 @@ impl ToastAction {
             Self::ReopenTab(_) => "Undo",
             Self::ShowSpace(_) => "Show",
             Self::OpenConfig { .. } => "Open",
+            Self::CheckoutInWorktree { .. } => "Create worktree",
         }
     }
 
@@ -112,6 +118,7 @@ impl ToastAction {
             Self::ReopenTab(_) => "undo",
             Self::ShowSpace(_) => "show-space",
             Self::OpenConfig { .. } => "open-config",
+            Self::CheckoutInWorktree { .. } => "checkout-in-worktree",
         };
         format!("toast-{slug}-{idx}")
     }
@@ -257,7 +264,7 @@ impl PaneFlowApp {
         }
     }
 
-    fn run_toast_action(
+    pub(crate) fn run_toast_action(
         &mut self,
         action: &ToastAction,
         window: &mut gpui::Window,
@@ -292,6 +299,16 @@ impl PaneFlowApp {
                     window,
                     cx,
                 );
+                self.dismiss_toast(cx);
+            }
+            ToastAction::CheckoutInWorktree {
+                ws_id,
+                tab_id,
+                branch,
+            } => {
+                if let Some((ws_idx, tab_idx)) = self.tab_position(*ws_id, *tab_id) {
+                    self.bind_tab_to_branch(ws_idx, tab_idx, branch.clone(), cx);
+                }
                 self.dismiss_toast(cx);
             }
         }

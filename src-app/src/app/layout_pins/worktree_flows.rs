@@ -8,8 +8,10 @@ use super::Rig;
 use crate::PaneFlowApp;
 use crate::workspace::worktree::{ManagedWorktree, TeardownPolicy};
 
-pub(super) const PINS: usize = 6;
+pub(super) const PINS: usize = 9;
 
+const BUSY_CHECKOUT_REFUSAL: &str =
+    "An agent is working in this checkout; create a worktree instead";
 const OUTCOME_WAIT: Duration = Duration::from_secs(60);
 const PUMP_INTERVAL: Duration = Duration::from_millis(5);
 
@@ -38,7 +40,11 @@ fn managed(repo: &Path, branch: &str, age: Duration) -> ManagedWorktree {
 }
 
 fn project(rig: &mut Rig<'_>, repo: &Path) -> usize {
-    let ws = rig.workspace("alpha");
+    project_titled(rig, "alpha", repo)
+}
+
+fn project_titled(rig: &mut Rig<'_>, title: &str, repo: &Path) -> usize {
+    let ws = rig.workspace(title);
     let repo = repo.to_path_buf();
     rig.act(move |app, _, _| {
         let workspace = &mut app.workspaces[ws];
@@ -47,6 +53,26 @@ fn project(rig: &mut Rig<'_>, repo: &Path) -> usize {
         workspace.worktree_root = repo;
     });
     ws
+}
+
+fn mark_agent_working(rig: &mut Rig<'_>, ws: usize) {
+    rig.act(move |app, _, cx| {
+        let surface = app.workspaces[ws].tabs()[0]
+            .surface_ids(cx)
+            .into_iter()
+            .next()
+            .expect("the tab has a surface");
+        let mut session = crate::ai_types::AgentSession::new(
+            crate::agent_launcher::TerminalAgent::ClaudeCode,
+            crate::ai_types::AgentState::Thinking,
+        );
+        session.surface_id = Some(surface);
+        app.workspaces[ws].agent_sessions.insert(4242, session);
+    });
+}
+
+fn bound_worktree(rig: &mut Rig<'_>, ws: usize) -> Option<PathBuf> {
+    rig.act(move |app, _, _| app.workspaces[ws].tabs()[0].worktree.clone())
 }
 
 fn launch_from_palette(rig: &mut Rig<'_>, branch: &str) {
@@ -317,5 +343,131 @@ fn pin_the_tab_menu_offers_new_branch_in_a_repository_with_a_single_branch(
     assert!(
         !offers(&mut rig, ws),
         "a tab outside any repository has no Branch section"
+    );
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_the_changes_dock_branch_picker_refuses_to_switch_a_checkout_an_agent_is_working_in(
+    cx: &mut TestAppContext,
+) {
+    let root = tempfile::tempdir().expect("a repository root");
+    let repo = committed_repo(root.path());
+    let start = current_branch(&repo);
+    fixture::run(&repo, &["branch", "qa-other"]);
+    let mut rig = Rig::mount(cx);
+    let ws = project(&mut rig, &repo);
+    let cwd = repo.display().to_string();
+    let pick = |rig: &mut Rig<'_>, branch: &str| {
+        let (cwd, branch) = (cwd.clone(), branch.to_string());
+        rig.act(move |app, _, cx| {
+            app.dismiss_toast(cx);
+            app.switch_diff_branch(cwd, branch, cx);
+        });
+        wait_for(rig, "the branch picker's answer", |app| app.toast.is_some());
+        rig.act(|app, _, _| app.toast.clone().expect("a toast"))
+    };
+
+    let idle = pick(&mut rig, "qa-other");
+    assert_eq!(idle.message, "Switched to qa-other");
+    assert_eq!(
+        current_branch(&repo),
+        "qa-other",
+        "an idle checkout switches"
+    );
+    pick(&mut rig, &start);
+    assert_eq!(current_branch(&repo), start);
+
+    mark_agent_working(&mut rig, ws);
+    let refused = pick(&mut rig, "qa-other");
+    assert_eq!(refused.message, BUSY_CHECKOUT_REFUSAL);
+    assert_eq!(
+        current_branch(&repo),
+        start,
+        "the working agent's files stay"
+    );
+    let [offer] = refused.actions.as_slice() else {
+        panic!("the refusal offers one action");
+    };
+    assert!(
+        matches!(offer, crate::ToastAction::CheckoutInWorktree { branch, .. } if branch == "qa-other"),
+        "the refusal offers the branch in a worktree"
+    );
+
+    let offer = offer.clone();
+    rig.act(move |app, window, cx| app.run_toast_action(&offer, window, cx));
+    wait_for(&mut rig, "the worktree checkout", |app| {
+        app.branch_checkout_pending.is_empty() && app.workspaces[ws].tabs()[0].worktree.is_some()
+    });
+    let worktree = bound_worktree(&mut rig, ws).expect("the tab is bound to the worktree");
+    assert_eq!(current_branch(&worktree), "qa-other");
+    assert_eq!(current_branch(&repo), start);
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_the_new_branch_form_refuses_a_switch_under_an_agent_of_another_workspace_on_the_checkout(
+    cx: &mut TestAppContext,
+) {
+    let root = tempfile::tempdir().expect("a repository root");
+    let repo = committed_repo(root.path());
+    let start = current_branch(&repo);
+    let mut rig = Rig::mount(cx);
+    let first = project_titled(&mut rig, "alpha", &repo);
+    let second = project_titled(&mut rig, "beta", &repo);
+    mark_agent_working(&mut rig, second);
+
+    rig.act(move |app, window, cx| app.open_pane_palette(first, window, cx));
+    rig.act(|app, window, cx| {
+        app.pane_palette_open_new_branch(window, cx);
+        let draft = app
+            .pane_palette
+            .as_mut()
+            .and_then(|palette| palette.new_branch.as_mut())
+            .expect("the New branch form is open");
+        draft.worktree = false;
+        let name = draft.name.clone();
+        name.update(cx, |input, cx| input.set_value("qa-switch", cx));
+        app.pane_palette_launch(0, window, cx);
+    });
+    wait_for(&mut rig, "the form's answer", |app| {
+        app.branch_checkout_pending.is_empty()
+            && app
+                .pane_palette
+                .as_ref()
+                .is_none_or(|palette| palette.pending_launch.is_some() || palette.error.is_some())
+    });
+
+    let error = rig.act(|app, _, _| app.pane_palette.as_ref().and_then(|p| p.error.clone()));
+    assert_eq!(error.as_deref(), Some(BUSY_CHECKOUT_REFUSAL));
+    assert_eq!(current_branch(&repo), start);
+    assert_eq!(bound_worktree(&mut rig, first), None);
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_binding_a_tab_to_a_branch_under_a_working_agent_checks_it_out_in_a_worktree(
+    cx: &mut TestAppContext,
+) {
+    let root = tempfile::tempdir().expect("a repository root");
+    let repo = committed_repo(root.path());
+    let start = current_branch(&repo);
+    fixture::run(&repo, &["branch", "qa-other"]);
+    let mut rig = Rig::mount(cx);
+    let ws = project(&mut rig, &repo);
+    mark_agent_working(&mut rig, ws);
+
+    rig.act(move |app, _, cx| app.bind_tab_to_branch(ws, 0, "qa-other".to_string(), cx));
+    wait_for(&mut rig, "the worktree checkout", |app| {
+        app.branch_checkout_pending.is_empty() && app.workspaces[ws].tabs()[0].worktree.is_some()
+    });
+
+    let worktree = bound_worktree(&mut rig, ws).expect("the tab is bound to a worktree");
+    assert_ne!(worktree, repo);
+    assert_eq!(current_branch(&worktree), "qa-other");
+    assert_eq!(
+        current_branch(&repo),
+        start,
+        "the shared checkout never moves"
     );
 }

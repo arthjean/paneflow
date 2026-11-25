@@ -9,6 +9,9 @@ use crate::workspace::{
 use gpui::Context;
 use paneflow_config::schema::TabTitleSource;
 
+pub(crate) const BUSY_CHECKOUT_REFUSAL: &str =
+    "An agent is working in this checkout; create a worktree instead";
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct CheckoutGit {
     pub branch: String,
@@ -355,23 +358,35 @@ impl PaneFlowApp {
         .detach();
     }
 
-    fn root_checkout_has_busy_agent(&self, ws_idx: usize, cx: &gpui::App) -> bool {
-        let Some(ws) = self.workspaces.get(ws_idx) else {
-            return false;
-        };
-        let busy_surfaces: std::collections::HashSet<u64> = ws
-            .agent_sessions
-            .values()
-            .filter(|session| matches!(session.state, crate::ai_types::AgentState::Thinking))
-            .filter_map(|session| session.surface_id)
-            .collect();
-        if busy_surfaces.is_empty() {
-            return false;
-        }
-        ws.tabs()
-            .iter()
-            .filter(|tab| tab.worktree.is_none())
-            .any(|tab| !tab.surface_ids(cx).is_disjoint(&busy_surfaces))
+    fn checkout_has_busy_agent(&self, checkout: &std::path::Path, cx: &gpui::App) -> bool {
+        self.workspaces.iter().any(|ws| {
+            let busy_surfaces: std::collections::HashSet<u64> = ws
+                .agent_sessions
+                .values()
+                .filter(|session| matches!(session.state, crate::ai_types::AgentState::Thinking))
+                .filter_map(|session| session.surface_id)
+                .collect();
+            !busy_surfaces.is_empty()
+                && ws
+                    .tabs()
+                    .iter()
+                    .filter(|tab| {
+                        tab.worktree
+                            .as_deref()
+                            .unwrap_or(ws.worktree_root.as_path())
+                            == checkout
+                    })
+                    .any(|tab| !tab.surface_ids(cx).is_disjoint(&busy_surfaces))
+        })
+    }
+
+    pub(crate) fn in_place_switch_refusal(
+        &self,
+        checkout: &std::path::Path,
+        cx: &gpui::App,
+    ) -> Option<&'static str> {
+        self.checkout_has_busy_agent(checkout, cx)
+            .then_some(BUSY_CHECKOUT_REFUSAL)
     }
 
     pub(crate) fn switch_checkout_for_tab(
@@ -393,12 +408,8 @@ impl PaneFlowApp {
             return;
         };
         let ws_id = ws.id;
-        if self.root_checkout_has_busy_agent(ws_idx, cx) {
-            self.pane_palette_branch_failed(
-                tab_id,
-                "An agent is working in this checkout; create a worktree instead".to_string(),
-                cx,
-            );
+        if let Some(refusal) = self.in_place_switch_refusal(&repo_root, cx) {
+            self.pane_palette_branch_failed(tab_id, refusal.to_string(), cx);
             return;
         }
         let label = if branch.trim().is_empty() {

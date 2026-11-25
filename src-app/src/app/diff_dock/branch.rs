@@ -121,13 +121,27 @@ impl PaneFlowApp {
                 };
                 let (cwd, branch) = resolved;
                 self.close_diff_branch_menu(window, cx);
-                self.spawn_switch_diff_branch(cwd, branch, cx);
+                self.switch_diff_branch(cwd, branch, cx);
             }
             _ => {}
         }
     }
 
-    fn spawn_switch_diff_branch(&mut self, cwd: String, branch: String, cx: &mut Context<Self>) {
+    pub(crate) fn switch_diff_branch(
+        &mut self,
+        cwd: String,
+        branch: String,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some((refusal, offer)) = self.diff_branch_switch_refusal(&cwd, &branch, cx) {
+            self.push_toast(
+                refusal.to_string(),
+                vec![offer],
+                crate::TOAST_HOLD_MS * 4,
+                cx,
+            );
+            return;
+        }
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 let result = smol::unblock({
@@ -152,6 +166,30 @@ impl PaneFlowApp {
             },
         )
         .detach();
+    }
+
+    fn diff_branch_switch_refusal(
+        &self,
+        cwd: &str,
+        branch: &str,
+        cx: &gpui::App,
+    ) -> Option<(&'static str, crate::ToastAction)> {
+        let workspace = self
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.cwd == cwd)?;
+        if workspace.git_branch == branch {
+            return None;
+        }
+        let refusal = self.in_place_switch_refusal(&workspace.worktree_root, cx)?;
+        Some((
+            refusal,
+            crate::ToastAction::CheckoutInWorktree {
+                ws_id: workspace.id,
+                tab_id: workspace.active_tab().id,
+                branch: branch.to_string(),
+            },
+        ))
     }
 
     pub(super) fn diff_branch_for_cwd(&self, cwd: &str) -> Option<(String, Option<String>)> {
@@ -385,7 +423,7 @@ fn render_diff_branch_item(
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
             this.close_diff_branch_menu(window, cx);
-            this.spawn_switch_diff_branch(cwd.clone(), item_branch.clone(), cx);
+            this.switch_diff_branch(cwd.clone(), item_branch.clone(), cx);
         }))
         .child(
             svg()
