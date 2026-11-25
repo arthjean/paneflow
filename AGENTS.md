@@ -19,6 +19,7 @@ bash scripts/check-workflows.sh                     # when .github/** changes: e
 uvx zizmor@1.32.0 --config .github/zizmor.yml --min-severity high .github   # when .github/** changes: the Workflow audit job; set GH_TOKEN for the online audits
 bash scripts/test-ci-scripts.sh                     # when a CI script changes: runs the scripts against fixtures
 bash scripts/check-test-wallclock.sh                # when a test changes: no new wall-clock budget
+cargo nextest run --manifest-path crates/paneflow-browser-host/Cargo.toml --locked --profile ci   # when the browser host or a crate it depends on changes, after scripts/fetch-cef.sh; fmt --check and clippy --all-targets --locked run against the same manifest
 bash scripts/sandbox-matrix.sh                      # when crates/paneflow-host/src/sandbox/** changes: the sandbox tests on each distribution's own kernel, in throwaway KVM machines (Linux host with /dev/kvm and podman; about 10 minutes)
 bash scripts/sandbox-matrix.sh --suite identity     # when crates/paneflow-peer/** or crates/paneflow-host/src/peer.rs changes: the caller identity tests on Ubuntu 22.04 (5.15, the SO_PEERCRED fallback) and 24.04 (6.8, SO_PEERPIDFD), plain and with /proc hidepid=2
 ```
@@ -147,6 +148,19 @@ the two you did.
   vocabulary. A guard test
   (`terminal/types.rs::alacritty_is_absent_from_the_app_crate`) fails if a
   second engine reappears.
+- **Chromium lives in one crate outside the workspace.** CEF is linked only by
+  `crates/paneflow-browser-host`, which `Cargo.toml` excludes from the
+  workspace: it has its own lockfile, its own `.config/nextest.toml` and its
+  own CI job, `Browser host (Linux x86_64)`. `scripts/fetch-cef.sh` places the
+  archive pinned by `native/cef/manifest.toml` and unpacks it where
+  `.cargo/config.toml` points `CEF_PATH`. The host patches in a vendored
+  `download-cef` (`crates/paneflow-browser-host/vendor/`, see its manifest
+  header) that refuses to download, so a build without the archive fails
+  naming `scripts/fetch-cef.sh` instead of fetching one the manifest does not
+  pin. The window talks to the host only
+  through `crates/paneflow-browser-proto` and `crates/paneflow-browser-client`,
+  and a guard test in the protocol crate fails if any workspace manifest names
+  `cef`.
 - **One git implementation: the `git` CLI.** Every git read and write spawns
   the user's `git` through `crates/paneflow-git/src/command.rs`, and a background read
   uses `GitProfile::Probe`. Do not add libgit2, gitoxide (`gix`) or a

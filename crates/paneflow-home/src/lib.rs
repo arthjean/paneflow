@@ -14,10 +14,10 @@ pub use endpoint::{
 };
 
 pub use pane::{
-    PANE_ENDPOINT_ENV, PANE_HOST_ENDPOINT_ENV, PANE_SERVE_ENDPOINT_ENV, PANE_WINDOW_ENDPOINT_ENV,
-    PANES_DIR_NAME, PaneServer, SANDBOX_SHARED_SID, SANDBOX_SID_PREFIX, is_pane_session_name,
-    pane_dir_in, pane_endpoint_for_current_home, pane_endpoint_from, pane_endpoint_path,
-    pane_endpoint_session, pane_sandbox_sid, panes_dir_in,
+    PANE_CONTEXT_ENV, PANE_ENDPOINT_ENV, PANE_HOST_ENDPOINT_ENV, PANE_SERVE_ENDPOINT_ENV,
+    PANE_WINDOW_ENDPOINT_ENV, PANES_DIR_NAME, PaneServer, SANDBOX_SHARED_SID, SANDBOX_SID_PREFIX,
+    is_pane_session_name, pane_dir_in, pane_endpoint_for_current_home, pane_endpoint_from,
+    pane_endpoint_path, pane_endpoint_session, pane_sandbox_sid, panes_dir_in,
 };
 pub use read::{
     create_private_dir_all, not_regular_file, open_for_reading, open_regular_for_reading,
@@ -325,6 +325,42 @@ pub fn serve_endpoint_beside_host_endpoint(host_endpoint: &Path) -> Option<PathB
     serve.push_str(SERVE_ENDPOINT_PREFIX);
     serve.push_str(rest);
     Some(host_endpoint.with_file_name(serve))
+}
+
+pub const BROWSER_DIR_NAME: &str = "browser";
+
+pub const BROWSER_PROFILES_DIR_NAME: &str = "profiles";
+
+pub const BROWSER_RUNTIME_DIR_NAME: &str = "runtime";
+
+pub fn browser_dir_in(home: &Path) -> PathBuf {
+    home.join(BROWSER_DIR_NAME)
+}
+
+pub fn browser_profiles_dir_in(home: &Path) -> PathBuf {
+    browser_dir_in(home).join(BROWSER_PROFILES_DIR_NAME)
+}
+
+pub fn browser_runtime_dir_in(home: &Path) -> PathBuf {
+    browser_dir_in(home).join(BROWSER_RUNTIME_DIR_NAME)
+}
+
+const BROWSER_ENDPOINT_PREFIX: &str = "paneflow-browser-";
+
+#[cfg(windows)]
+pub fn browser_endpoint_path(home: &Path, window_pid: u32, instance: u64) -> PathBuf {
+    PathBuf::from(format!(
+        r"\\.\pipe\{BROWSER_ENDPOINT_PREFIX}{}-{window_pid}-{instance}",
+        home_fingerprint(home)
+    ))
+}
+
+#[cfg(unix)]
+pub fn browser_endpoint_path(home: &Path, window_pid: u32, instance: u64) -> PathBuf {
+    runtime_dir().join(format!(
+        "{BROWSER_ENDPOINT_PREFIX}{}-{window_pid}-{instance}.sock",
+        home_fingerprint(home)
+    ))
 }
 
 const IPC_ENDPOINT_PREFIX: &str = "paneflow-ipc-";

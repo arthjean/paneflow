@@ -4,6 +4,7 @@ members = [
     "crates/paneflow-agent-config",
     "crates/paneflow-ai-hook",
     "crates/paneflow-api",
+    "crates/paneflow-browser-client",
     "crates/paneflow-browser-proto",
     "crates/paneflow-colrv1",
     "crates/paneflow-config",
@@ -35,6 +36,7 @@ members = [
 # The AI-hook callback and shim binaries are helpers built on demand (via
 # `-p` or the release-min profile); including them here would make `cargo
 # run` ambiguous across three binaries.
+exclude = ["crates/paneflow-browser-host"]
 default-members = ["src-app"]
 
 [workspace.package]

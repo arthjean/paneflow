@@ -1,0 +1,42 @@
+[package]
+name = "paneflow-browser-host"
+version = "0.20.0"
+edition = "2024"
+rust-version = "1.100.0"
+license = "GPL-3.0-or-later"
+description = "The process that owns Chromium for Paneflow, through CEF, and speaks the private browser protocol to the window"
+publish = false
+
+[workspace]
+exclude = ["vendor"]
+
+[[bin]]
+name = "paneflow-browser-host"
+path = "src/main.rs"
+
+[dependencies]
+cef = { version = "=156.7.0", default-features = false, features = ["sandbox"] }
+cef-dll-sys = { version = "=156.7.0", default-features = false, features = ["sandbox"] }
+libc = "0.2"
+paneflow-browser-proto = { path = "../paneflow-browser-proto" }
+paneflow-peer = { path = "../paneflow-peer" }
+serde_json = "1"
+
+[dev-dependencies]
+paneflow-browser-client = { path = "../paneflow-browser-client" }
+paneflow-home = { path = "../paneflow-home" }
+dirs = "6"
+tempfile = "3"
+
+[lints.clippy]
+panic = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+todo = "warn"
+unwrap_used = "warn"
+expect_used = "warn"
+unwrap_in_result = "warn"
+missing_safety_doc = "allow"
+
+[patch.crates-io]
+download-cef = { path = "vendor/download-cef" }

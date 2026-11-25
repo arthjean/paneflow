@@ -74,6 +74,7 @@ jobs:
       security: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.security }}
       release_packaging: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.release_packaging }}
       workflows: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.workflows }}
+      browser_host: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.browser_host }}
     steps:
       # `dorny/paths-filter` fetches the base ref it needs on its own, so a
       # shallow checkout is enough here.
@@ -103,6 +104,7 @@ jobs:
               - 'vendor/**'
               - '**/Cargo.toml'
               - 'Cargo.lock'
+              - '.cargo/**'
               - 'rust-toolchain.toml'
               - 'clippy.toml'
               - '.config/nextest.toml'
@@ -116,6 +118,19 @@ jobs:
               - 'scripts/**'
             workflows:
               - '.github/**'
+            browser_host:
+              - 'crates/paneflow-browser-host/**'
+              - 'crates/paneflow-browser-proto/**'
+              - 'crates/paneflow-browser-client/**'
+              - 'crates/paneflow-peer/**'
+              - 'crates/paneflow-home/**'
+              - 'native/cef/**'
+              - 'scripts/fetch-cef.sh'
+              - '.cargo/**'
+              - 'deny.toml'
+              - 'clippy.toml'
+              - 'rust-toolchain.toml'
+              - '.github/workflows/run_tests.yml'
             security:
               - '**/Cargo.toml'
               - 'Cargo.lock'
@@ -394,6 +409,100 @@ jobs:
 
       - name: cargo deny check advisories licenses sources
         run: cargo deny --frozen check --disable-fetch advisories licenses sources
+
+  # The browser host (crates/paneflow-browser-host) is not a workspace member:
+  # it links CEF, whose pinned archive weighs 333 MB, so no workspace job pays
+  # for it. This job first proves that a build with no archive fails naming
+  # scripts/fetch-cef.sh (the host patches in a download-cef that never
+  # downloads), then fetches that archive by hash, unpacks it where
+  # .cargo/config.toml points CEF_PATH, and runs the three cargo gates and cargo-deny against
+  # the host's own manifest and lockfile. Its tests start real Chromium: the
+  # image restricts unprivileged user namespaces through AppArmor, which the
+  # Chromium sandbox needs (US-006), and Yama keeps strace from following a
+  # host it did not start; both sysctls are lifted for this job only, and no
+  # test disables the sandbox. It builds without a cache.
+  browser_host_linux:
+    name: Browser host (Linux x86_64)
+    needs: orchestrate
+    if: needs.orchestrate.outputs.browser_host == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the host's build and Chromium runtime libraries
+        run: |
+          printf 'Acquire::Retries "3";\n' | sudo tee /etc/apt/apt.conf.d/80-ci-retries >/dev/null
+          sudo apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            cmake ninja-build strace \
+            libglib2.0-0t64 libnspr4 libnss3 libatk1.0-0t64 libatk-bridge2.0-0t64 \
+            libatspi2.0-0t64 libdbus-1-3 libcups2t64 libx11-6 libxcomposite1 \
+            libxdamage1 libxext6 libxfixes3 libxrandr2 libgbm1 libexpat1 libxcb1 \
+            libxkbcommon0 libcairo2 libpango-1.0-0 libudev1 libasound2t64
+
+      - name: Allow the Chromium sandbox and strace for this job
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          sudo sysctl -w kernel.yama.ptrace_scope=0
+
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: "1.100.0"
+          components: rustfmt, clippy
+
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-nextest@0.9.146
+
+      - name: Install cargo-deny (prebuilt, pinned digest)
+        run: scripts/install-cargo-deny.sh
+
+      - name: A host build with no CEF archive fails naming scripts/fetch-cef.sh
+        run: |
+          log="$RUNNER_TEMP/no-cef-build.log"
+          if cargo build --manifest-path crates/paneflow-browser-host/Cargo.toml --locked >"$log" 2>&1; then
+            echo "::error::the browser host built with no CEF archive in place"
+            exit 1
+          fi
+          if ! grep -q "run scripts/fetch-cef.sh" "$log"; then
+            tail -n 40 "$log"
+            echo "::error::the failed host build does not name scripts/fetch-cef.sh"
+            exit 1
+          fi
+
+      - name: Fetch and unpack the pinned CEF archive
+        run: scripts/fetch-cef.sh
+
+      - name: Format check
+        run: cargo fmt --check --manifest-path crates/paneflow-browser-host/Cargo.toml
+
+      - name: Clippy
+        run: cargo clippy --manifest-path crates/paneflow-browser-host/Cargo.toml --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: cargo nextest run --manifest-path crates/paneflow-browser-host/Cargo.toml --locked --profile ci
+
+      - name: cargo deny check advisories licenses sources
+        if: ${{ !cancelled() }}
+        run: |
+          scripts/ci-retry-network.sh cargo deny fetch db
+          cargo deny --manifest-path crates/paneflow-browser-host/Cargo.toml --frozen check --config deny.toml --disable-fetch advisories licenses sources
+
+      - name: Report failing and flaky tests
+        if: ${{ !cancelled() }}
+        run: scripts/ci-test-report.sh crates/paneflow-browser-host/target/nextest/ci/junit.xml
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-results-browser-host-linux-x86_64
+          path: crates/paneflow-browser-host/target/nextest/ci/junit.xml
+          if-no-files-found: ignore
+          retention-days: 14
 
   # zizmor audits every workflow and composite action whenever anything
   # under .github/ changes, and fails on a finding of high severity. Its
@@ -1388,6 +1497,7 @@ jobs:
       - windows_check
       - windows_render_smoke
       - linux_aarch64_check
+      - browser_host_linux
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -1405,6 +1515,7 @@ jobs:
           RESULT_WINDOWS_CHECK: ${{ needs.windows_check.result }}
           RESULT_WINDOWS_RENDER_SMOKE: ${{ needs.windows_render_smoke.result }}
           RESULT_LINUX_AARCH64_CHECK: ${{ needs.linux_aarch64_check.result }}
+          RESULT_BROWSER_HOST_LINUX: ${{ needs.browser_host_linux.result }}
         run: |
           EXIT_CODE=0
 
@@ -1426,5 +1537,6 @@ jobs:
           check_result "windows_check"        "$RESULT_WINDOWS_CHECK"
           check_result "windows_render_smoke" "$RESULT_WINDOWS_RENDER_SMOKE"
           check_result "linux_aarch64_check"  "$RESULT_LINUX_AARCH64_CHECK"
+          check_result "browser_host_linux"   "$RESULT_BROWSER_HOST_LINUX"
 
           exit $EXIT_CODE

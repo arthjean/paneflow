@@ -4560,6 +4560,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "paneflow-browser-client"
+version = "0.20.0"
+dependencies = [
+ "libc",
+ "log",
+ "paneflow-browser-proto",
+ "paneflow-home",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "paneflow-browser-proto"
 version = "0.20.0"
 dependencies = [

@@ -1,0 +1,12 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Checkout form</title></head>
+<body><h1>Checkout</h1>
+<form id="f" action="/submitted.html" method="get">
+<label>Email <input name="email" type="email" required></label><br>
+<label>Password <input name="password" type="password" value="hunter2-secret"></label><br>
+<label>Country <select name="country"><option value="fr">France</option><option value="us">United States</option><option value="jp">Japan</option></select></label><br>
+<label>Receipt <input name="receipt" type="file"></label><br>
+<label><input name="disabled" type="checkbox" disabled> Disabled option</label><br>
+<button type="submit">Place order</button>
+</form>
+<button type="button" onclick="alert('Order saved')">Save for later</button>
+</body></html>

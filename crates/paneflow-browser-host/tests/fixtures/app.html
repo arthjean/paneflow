@@ -1,0 +1,17 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Fixture shop</title></head>
+<body>
+<header><h1>Fixture shop</h1><nav><a href="/form.html">Checkout</a> <a href="/video.html">Video</a></nav></header>
+<main>
+<section aria-label="Cart"><h2>Your cart</h2><ul id="items"><li>Loading items</li></ul>
+<button id="refresh" type="button">Refresh cart</button></section>
+<p id="total">Total: unknown</p>
+</main>
+<script>
+function renderCart(data){const ul=document.getElementById('items');ul.innerHTML='';for(const it of data.items){const li=document.createElement('li');li.textContent=it.name+' x'+it.qty;ul.appendChild(li)}}
+fetch('/api/cart').then(r=>r.json()).then(renderCart);
+fetch('/api/prices').then(r=>{if(!r.ok)throw new Error('prices '+r.status);return r.json()}).then(p=>{document.getElementById('total').textContent='Total: '+p.total}).catch(e=>console.warn('prices failed',e.message));
+const totalLabel=document.querySelector('#grand-total');
+totalLabel.textContent='computed';
+document.getElementById('refresh').addEventListener('click',()=>fetch('/api/cart').then(r=>r.json()).then(renderCart));
+</script>
+</body></html>

@@ -1,0 +1,73 @@
+# Vendored from download-cef 3.0.1 on crates.io (the version cef-dll-sys
+# 156.7.0 resolves), patched in from crates/paneflow-browser-host/Cargo.toml.
+# Paneflow change: CefIndex::download_from refuses outside its own tests, so
+# a host build that finds no unpacked CEF archive fails naming
+# scripts/fetch-cef.sh instead of downloading an archive the manifest does not
+# pin. Everything else is upstream text. Drop this copy when cef-dll-sys can
+# be told to never download, or re-vendor it when the cef pin moves
+# download-cef to another version.
+[package]
+edition = "2021"
+name = "download-cef"
+version = "3.0.1"
+authors = [
+    "Wu Yu Wei <yuweiwu@pm.me>",
+    "Bill Avery <wravery@gmail.com>",
+    "csmoe <csmoe@msn.com>",
+]
+build = false
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Download and extract pre-built CEF (Chromium Embedded Framework) archives."
+readme = "README.md"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/tauri-apps/cef-rs"
+
+[lib]
+name = "download_cef"
+path = "src/lib.rs"
+
+[dependencies.bzip2]
+version = "0.6"
+
+[dependencies.clap]
+version = "4"
+features = ["derive"]
+
+[dependencies.fs-err]
+version = "3.2.2"
+
+[dependencies.indicatif]
+version = "0.18"
+
+[dependencies.regex]
+version = "1"
+
+[dependencies.semver]
+version = "1"
+
+[dependencies.serde]
+version = "1"
+features = ["derive"]
+
+[dependencies.serde_json]
+version = "1"
+
+[dependencies.sha1_smol]
+version = "1"
+
+[dependencies.tar]
+version = "0.4"
+
+[dependencies.thiserror]
+version = "2"
+
+[dependencies.ureq]
+version = "3"
+features = [
+    "json",
+    "socks-proxy",
+]
