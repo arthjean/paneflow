@@ -367,7 +367,7 @@ impl PaneFlowApp {
             &self.cached_config,
             seen,
             Some(surface_id),
-            cx.background_executor().clone(),
+            cx,
         );
     }
 

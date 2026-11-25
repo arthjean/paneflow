@@ -232,19 +232,6 @@ unicode-width = "0.2"
 # path picker index and the file tree's gitignore filtering.
 ignore = "0.4"
 
-# Cross-platform desktop notifications fired by the agents runtime when a
-# turn ends, needs input, or exits unexpectedly while the user is not
-# already looking at the Agents panel. `notify-rust` 4.x default features use
-# freedesktop DBus on Linux, NSUserNotificationCenter on macOS, and WinRT
-# toasts on Windows. Release Windows attribution depends on the Start Menu
-# shortcut's AppUserModelID in `packaging/wix/main.wxs` matching the runtime
-# app_id. Unpackaged/dev builds make a best-effort HKCU AppUserModelID
-# registration immediately before sending the toast, but Windows may still
-# require a Start Menu shortcut for visible banners.
-# Keeping the default features avoids the `libdbus-1-dev` system build dep
-# that the legacy `d` feature pulls in.
-notify-rust = "4"
-
 # US-001 (prd-audit-remediation): detached minisign (Ed25519) signature
 # verification - the independent root of trust for the self-updater
 # (`update/signature.rs`). Verify-only and pure Rust (no libsodium / C dep),
@@ -271,6 +258,27 @@ memchr = "2.8"
 
 [features]
 default = []
+
+# Desktop notifications on Linux and Windows, fired by the agents runtime when
+# a turn ends, needs input, or exits unexpectedly while the user is not already
+# looking at the pane, and for OSC 9 / 777 / 7501 program notifications.
+# `notify-rust` 4.x default features use freedesktop DBus on Linux and WinRT
+# toasts on Windows. Release Windows attribution depends on the Start Menu
+# shortcut's AppUserModelID in `packaging/wix/main.wxs` matching the runtime
+# app_id. Unpackaged/dev builds make a best-effort HKCU AppUserModelID
+# registration immediately before sending the toast, but Windows may still
+# require a Start Menu shortcut for visible banners.
+# Keeping the default features avoids the `libdbus-1-dev` system build dep
+# that the legacy `d` feature pulls in.
+#
+# macOS never links it: its backend, mac-notification-sys, resolves the sending
+# application with the AppleScript `get id of application "use_default"`, which
+# opens an app-modal "Choose Application" dialog and freezes the window. macOS
+# posts through GPUI's `App::show_system_notification` (UNUserNotificationCenter
+# on its own worker thread) from the running bundle instead; see
+# `agents/notifications.rs`.
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+notify-rust = "4"
 
 # Linux: enable Wayland + X11 display backends for gpui_platform
 [target.'cfg(target_os = "linux")'.dependencies]

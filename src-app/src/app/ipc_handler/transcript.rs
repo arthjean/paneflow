@@ -6,7 +6,6 @@ pub(super) struct TranscriptTurnEndNotification {
     pub(super) space: Option<String>,
     pub(super) config: PaneFlowConfig,
     pub(super) seen: bool,
-    pub(super) executor: BackgroundExecutor,
 }
 
 fn read_last_result(params: &serde_json::Value) -> Option<String> {
@@ -108,17 +107,19 @@ impl PaneFlowApp {
                 let extracted =
                     smol::unblock(move || extract_last_result_from_transcript(&path)).await;
                 if let Some(notification) = notification {
-                    desktop_notifications::fire_desktop_notification(
-                        DesktopNotification::turn_finished(
-                            notification.agent,
-                            &notification.title,
-                            extracted.as_deref(),
-                            notification.space.as_deref(),
-                        ),
-                        &notification.config,
-                        notification.seen,
-                        notification.executor,
-                    );
+                    cx.update(|cx| {
+                        desktop_notifications::fire_desktop_notification(
+                            DesktopNotification::turn_finished(
+                                notification.agent,
+                                &notification.title,
+                                extracted.as_deref(),
+                                notification.space.as_deref(),
+                            ),
+                            &notification.config,
+                            notification.seen,
+                            cx,
+                        );
+                    });
                 }
                 let (Some((ws_id, session_key)), Some(text)) = (update_target, extracted) else {
                     return;

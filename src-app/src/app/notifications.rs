@@ -517,14 +517,14 @@ pub(crate) fn fire_worker_notification(
     config: &paneflow_config::schema::PaneFlowConfig,
     seen: bool,
     session_key: Option<u64>,
-    executor: gpui::BackgroundExecutor,
+    cx: &gpui::App,
 ) {
     desktop_notifications::fire_desktop_notification_for_session(
         notification,
         config,
         seen,
         session_key,
-        executor,
+        cx,
     );
 }
 
@@ -534,7 +534,7 @@ pub(crate) fn fire_agent_exit_notification(
     exit_code: i32,
     config: &paneflow_config::schema::PaneFlowConfig,
     seen: bool,
-    executor: gpui::BackgroundExecutor,
+    cx: &gpui::App,
 ) {
     desktop_notifications::fire_desktop_notification(
         DesktopNotification::agent_exited(
@@ -545,7 +545,7 @@ pub(crate) fn fire_agent_exit_notification(
         ),
         config,
         seen,
-        executor,
+        cx,
     );
 }
 

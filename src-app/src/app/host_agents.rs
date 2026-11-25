@@ -818,7 +818,7 @@ impl PaneFlowApp {
                     self.surfaces_under_user_eye(workspace_id, cx).as_ref(),
                     Some(surface_id),
                 ) || workspace.muted,
-                cx.background_executor().clone(),
+                cx,
             );
         }
         self.sync_attention(cx);
@@ -898,7 +898,7 @@ impl PaneFlowApp {
             &config,
             seen,
             Some(surface_id),
-            executor,
+            cx,
         );
     }
 

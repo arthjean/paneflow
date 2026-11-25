@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::sync::{LazyLock, Mutex};
 
-use gpui::{BackgroundExecutor, WindowId};
+use gpui::{App, WindowId};
 use paneflow_config::schema::{AgentPanelConfig, NotifyWhenAgentWaiting, PaneFlowConfig};
 
 use crate::agent_launcher::TerminalAgent;
@@ -163,9 +163,9 @@ pub(crate) fn fire_desktop_notification(
     notification: DesktopNotification,
     config: &PaneFlowConfig,
     seen: bool,
-    executor: BackgroundExecutor,
+    cx: &App,
 ) {
-    fire_desktop_notification_for_session(notification, config, seen, None, executor);
+    fire_desktop_notification_for_session(notification, config, seen, None, cx);
 }
 
 pub(crate) fn fire_desktop_notification_for_session(
@@ -173,7 +173,7 @@ pub(crate) fn fire_desktop_notification_for_session(
     config: &PaneFlowConfig,
     seen: bool,
     session_key: Option<u64>,
-    executor: BackgroundExecutor,
+    cx: &App,
 ) {
     let gate = config.agent_panel.as_ref().map_or(
         NotifyWhenAgentWaiting::Never,
@@ -182,8 +182,37 @@ pub(crate) fn fire_desktop_notification_for_session(
     if !should_fire_desktop_notification(gate, seen) {
         return;
     }
+    deliver_desktop_notification(notification, session_key, cx);
+}
 
-    executor
+#[cfg(target_os = "macos")]
+fn deliver_desktop_notification(
+    notification: DesktopNotification,
+    _session_key: Option<u64>,
+    cx: &App,
+) {
+    match *MACOS_NOTIFICATION_ROUTE {
+        MacNotificationRoute::UserNotifications => {
+            cx.show_system_notification(user_notification(notification));
+        }
+        MacNotificationRoute::NoAppBundle => {
+            static REPORTED: std::sync::Once = std::sync::Once::new();
+            REPORTED.call_once(|| {
+                log::warn!(
+                    "paneflow: desktop notifications are off because this process does not run from an app bundle; macOS only delivers them to a bundled app"
+                );
+            });
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn deliver_desktop_notification(
+    notification: DesktopNotification,
+    session_key: Option<u64>,
+    cx: &App,
+) {
+    cx.background_executor()
         .spawn(async move {
             if let Err(error) = smol::unblock(move || show_desktop_notification(notification)).await
             {
@@ -193,9 +222,72 @@ pub(crate) fn fire_desktop_notification_for_session(
         .detach();
 }
 
+#[cfg(any(target_os = "macos", test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MacNotificationRoute {
+    UserNotifications,
+    NoAppBundle,
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn mac_notification_route(
+    bundle_identifier: Option<&str>,
+    bundle_path: Option<&std::path::Path>,
+) -> MacNotificationRoute {
+    let in_app_bundle = bundle_path
+        .and_then(std::path::Path::extension)
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("app"));
+    let identified = bundle_identifier.is_some_and(|identifier| !identifier.trim().is_empty());
+    if identified && in_app_bundle {
+        MacNotificationRoute::UserNotifications
+    } else {
+        MacNotificationRoute::NoAppBundle
+    }
+}
+
+#[cfg(target_os = "macos")]
+static MACOS_NOTIFICATION_ROUTE: LazyLock<MacNotificationRoute> = LazyLock::new(|| {
+    let (identifier, path) = main_bundle_identity();
+    let route = mac_notification_route(identifier.as_deref(), path.as_deref());
+    log::info!(
+        "paneflow: desktop notifications route {route:?} for bundle {} at {}",
+        identifier.as_deref().unwrap_or("<none>"),
+        path.as_deref()
+            .map_or_else(|| "<none>".into(), |path| path.display().to_string())
+    );
+    route
+});
+
+#[cfg(target_os = "macos")]
+fn main_bundle_identity() -> (Option<String>, Option<std::path::PathBuf>) {
+    use core_foundation::base::TCFType;
+    use core_foundation::bundle::{CFBundle, CFBundleGetIdentifier};
+    use core_foundation::string::CFString;
+
+    let bundle = CFBundle::main_bundle();
+    let identifier_ref = unsafe { CFBundleGetIdentifier(bundle.as_concrete_TypeRef()) };
+    let identifier = (!identifier_ref.is_null())
+        .then(|| unsafe { CFString::wrap_under_get_rule(identifier_ref) }.to_string());
+    (identifier, bundle.path())
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn user_notification(notification: DesktopNotification) -> gpui::SystemNotification {
+    static NEXT_TAG: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let serial = NEXT_TAG.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    gpui::SystemNotification {
+        tag: format!("paneflow-{}-{serial}", std::process::id()).into(),
+        title: notification.summary.into(),
+        body: notification.body.into(),
+        actions: Vec::new(),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
 static NOTIFIER_FAILURES_REPORTED: LazyLock<Mutex<HashSet<u64>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
 
+#[cfg(not(target_os = "macos"))]
 fn report_delivery_failure(session_key: Option<u64>, error: &str) {
     if let Some(key) = session_key {
         let mut reported = NOTIFIER_FAILURES_REPORTED
@@ -262,6 +354,7 @@ pub(crate) fn agent_exit_notification_body(
     )
 }
 
+#[cfg(not(target_os = "macos"))]
 fn show_desktop_notification(notification: DesktopNotification) -> Result<(), String> {
     let mut builder = notify_rust::Notification::new();
     builder
@@ -347,6 +440,113 @@ fn ensure_windows_notification_icon() -> Result<std::path::PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_process_inside_an_identified_app_bundle_posts_through_user_notifications() {
+        use std::path::Path;
+
+        let shipped = Path::new("/Applications/PaneFlow.app");
+        assert_eq!(
+            mac_notification_route(Some("io.github.arthurdev44.paneflow"), Some(shipped)),
+            MacNotificationRoute::UserNotifications
+        );
+        assert_eq!(
+            mac_notification_route(
+                Some("io.github.arthurdev44.paneflow.scratch"),
+                Some(Path::new("/tmp/build/PaneFlow.APP"))
+            ),
+            MacNotificationRoute::UserNotifications
+        );
+        assert_eq!(
+            mac_notification_route(None, Some(Path::new("/repo/target/debug"))),
+            MacNotificationRoute::NoAppBundle,
+            "a bare debug binary has no bundle identifier"
+        );
+        assert_eq!(
+            mac_notification_route(
+                Some("io.github.arthurdev44.paneflow"),
+                Some(Path::new("/repo/target/debug"))
+            ),
+            MacNotificationRoute::NoAppBundle,
+            "an identifier embedded in a bare binary is not an app bundle"
+        );
+        assert_eq!(
+            mac_notification_route(Some("  "), Some(shipped)),
+            MacNotificationRoute::NoAppBundle
+        );
+        assert_eq!(
+            mac_notification_route(None, None),
+            MacNotificationRoute::NoAppBundle
+        );
+    }
+
+    #[test]
+    fn a_user_notification_keeps_its_text_and_never_reuses_a_tag() {
+        let first = user_notification(program_notification(
+            "Build".to_owned(),
+            "blocked".to_owned(),
+            "pane",
+        ));
+        let second = user_notification(program_notification(
+            "Build".to_owned(),
+            "blocked".to_owned(),
+            "pane",
+        ));
+        assert_eq!(first.title.as_ref(), "Build");
+        assert_eq!(first.body.as_ref(), "blocked");
+        assert!(first.actions.is_empty());
+        assert_ne!(first.tag, second.tag);
+    }
+
+    #[test]
+    fn the_macos_build_cannot_reach_the_applescript_application_lookup() {
+        let manifest: toml::Table = include_str!("../../Cargo.toml").parse().unwrap();
+        let applescript_crates = ["notify-rust", "mac-notification-sys"];
+        let declares = |table: Option<&toml::Value>, name: &str| {
+            table
+                .and_then(toml::Value::as_table)
+                .is_some_and(|deps| deps.contains_key(name))
+        };
+        for name in applescript_crates {
+            assert!(
+                !declares(manifest.get("dependencies"), name),
+                "{name} in [dependencies] links the AppleScript lookup into the macOS build"
+            );
+        }
+        let targets = manifest
+            .get("target")
+            .and_then(toml::Value::as_table)
+            .cloned()
+            .unwrap_or_default();
+        for (cfg, table) in &targets {
+            let excludes_macos = cfg == r#"cfg(not(target_os = "macos"))"#;
+            for name in applescript_crates {
+                if declares(table.get("dependencies"), name) {
+                    assert!(
+                        excludes_macos,
+                        "{name} is declared for {cfg}, which can include macOS"
+                    );
+                }
+            }
+        }
+        let sources = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut stack = vec![sources];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|ext| ext == "rs") {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    assert!(
+                        !text.contains(concat!("mac_notification", "_sys")),
+                        "{} reaches mac-notification-sys directly",
+                        path.display()
+                    );
+                }
+            }
+        }
+    }
 
     #[test]
     fn another_active_window_survives_deactivation_and_removal() {

@@ -936,7 +936,13 @@ stale code.
   state the worker finds already held when it starts or discovers a session is
   not announced again. The decision rides on the `agent.event` frame as
   `notify`; the Controller decides whether the user already saw the pane and
-  delivers it.
+  delivers it (`src-app/src/agents/notifications.rs`): through `notify-rust`
+  off the render thread on Linux and Windows, and on macOS through GPUI's
+  `show_system_notification`, which posts to `UNUserNotificationCenter` from
+  its own worker thread. macOS never links `notify-rust`, whose backend looks
+  the sending application up with AppleScript and opens a modal "Choose
+  Application" dialog; a process that does not run from an app bundle (a bare
+  debug binary) logs once that notifications are off and posts nothing.
 - **The host viewport scan.** Every 500 ms the host thread named
   `paneflow-host-viewport` asks each live session whose output moved for its
   title, its OSC 7501 record and capability, and its foreground process group,

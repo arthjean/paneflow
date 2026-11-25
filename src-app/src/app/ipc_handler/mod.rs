@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use gpui::{App, AppContext, BackgroundExecutor, Context, Entity, Focusable};
+use gpui::{App, AppContext, Context, Entity, Focusable};
 use paneflow_api::Method;
 use paneflow_config::schema::{LayoutNode, PaneFlowConfig, TabTitleSource, TerminalSurfaceProfile};
 use paneflow_ipc_client::ai_hook::{
