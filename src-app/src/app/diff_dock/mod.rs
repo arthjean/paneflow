@@ -57,6 +57,18 @@ fn diff_file_toggle(app: gpui::WeakEntity<PaneFlowApp>) -> DiffFileToggle {
     })
 }
 
+fn diff_fold_toggle(
+    app: gpui::WeakEntity<PaneFlowApp>,
+    expanded: &std::collections::HashSet<String>,
+) -> crate::diff::FoldToggle {
+    crate::diff::FoldToggle {
+        expanded: std::rc::Rc::new(expanded.clone()),
+        toggle: std::rc::Rc::new(move |key, _window, cx| {
+            let _ = app.update(cx, |this, cx| this.toggle_diff_fold(key.to_string(), cx));
+        }),
+    }
+}
+
 impl PaneFlowApp {
     pub(crate) fn open_diff_dock_panel(&mut self, cwd: String, cx: &mut Context<Self>) {
         let cwd = cwd.trim().to_string();
@@ -840,6 +852,10 @@ impl PaneFlowApp {
             .child(
                 DiffElement::new(body, pal)
                     .with_file_toggle(diff_file_toggle(cx.entity().downgrade()))
+                    .with_fold_toggle(diff_fold_toggle(
+                        cx.entity().downgrade(),
+                        &self.diff_dock.expanded_folds,
+                    ))
                     .with_highlight(self.diff_dock.diff_options.highlight)
                     .with_revert_chip(chip_row)
                     .with_hovered_header(self.diff_dock.header_hover),
@@ -1095,6 +1111,14 @@ impl PaneFlowApp {
             .unwrap_or_default()
     }
 
+    pub(crate) fn toggle_diff_fold(&mut self, key: String, cx: &mut Context<Self>) {
+        if !self.diff_dock.expanded_folds.remove(&key) {
+            self.diff_dock.expanded_folds.insert(key);
+        }
+        self.recompute_diff_dock_display();
+        cx.notify();
+    }
+
     fn handle_diff_dock_body_click(&mut self, ev: &ClickEvent, cx: &mut Context<Self>) {
         let split = self.diff_dock.split;
         if self.handle_diff_dock_h_scrollbar_click(ev.position(), split, cx)
@@ -1142,11 +1166,7 @@ impl PaneFlowApp {
             }
         };
         if let Some(key) = fold_key {
-            if !self.diff_dock.expanded_folds.remove(&key) {
-                self.diff_dock.expanded_folds.insert(key);
-            }
-            self.recompute_diff_dock_display();
-            cx.notify();
+            self.toggle_diff_fold(key, cx);
             return;
         }
 

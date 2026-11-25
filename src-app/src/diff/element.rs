@@ -286,8 +286,10 @@ pub struct DiffPrepaint {
     sticky_images: Vec<MaskIcon>,
     sticky_glyphs: Vec<Glyphs>,
     headers: Vec<FileHeaderTarget>,
+    folds: Vec<FoldTarget>,
     scale: f32,
     header_nodes: Vec<(accesskit::NodeId, SharedString)>,
+    fold_nodes: Vec<(accesskit::NodeId, SharedString)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -300,6 +302,22 @@ pub struct FileHeaderTarget {
 
 pub type FileToggle = Rc<dyn Fn(&SharedString, &mut Window, &mut App)>;
 
+pub type FoldPress = Rc<dyn Fn(&SharedString, &mut Window, &mut App)>;
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FoldTarget {
+    pub key: SharedString,
+    pub count: u32,
+    pub expanded: bool,
+    pub bounds: Bounds<Pixels>,
+}
+
+#[derive(Clone)]
+pub struct FoldToggle {
+    pub expanded: Rc<std::collections::HashSet<String>>,
+    pub toggle: FoldPress,
+}
+
 pub const DIFF_FILES_LABEL: &str = "Changed files";
 
 pub fn file_header_node(header: &FileHeaderTarget, scale: f32) -> accesskit::Node {
@@ -307,14 +325,71 @@ pub fn file_header_node(header: &FileHeaderTarget, scale: f32) -> accesskit::Nod
     node.set_label(format!("{}, {}", header.path, header.change.spoken()));
     node.set_expanded(!header.collapsed);
     node.add_action(accesskit::Action::Click);
-    let bounds = header.bounds;
-    node.set_bounds(accesskit::Rect {
+    node.set_bounds(spoken_bounds(header.bounds, scale));
+    node
+}
+
+fn spoken_bounds(bounds: Bounds<Pixels>, scale: f32) -> accesskit::Rect {
+    accesskit::Rect {
         x0: f64::from(f32::from(bounds.origin.x) * scale),
         y0: f64::from(f32::from(bounds.origin.y) * scale),
         x1: f64::from(f32::from(bounds.origin.x + bounds.size.width) * scale),
         y1: f64::from(f32::from(bounds.origin.y + bounds.size.height) * scale),
-    });
+    }
+}
+
+pub fn fold_spoken_label(count: u32, expanded: bool) -> String {
+    let verb = if expanded { "Hide" } else { "Show" };
+    let noun = if count == 1 { "line" } else { "lines" };
+    format!("{verb} {count} unmodified {noun}")
+}
+
+pub fn fold_node(fold: &FoldTarget, scale: f32) -> accesskit::Node {
+    let mut node = accesskit::Node::new(accesskit::Role::Button);
+    node.set_label(fold_spoken_label(fold.count, fold.expanded));
+    node.set_expanded(fold.expanded);
+    node.add_action(accesskit::Action::Click);
+    node.set_bounds(spoken_bounds(fold.bounds, scale));
     node
+}
+
+pub fn visible_folds(
+    body: &DiffBody,
+    first: usize,
+    last: usize,
+    origin: Point<Pixels>,
+    width: Pixels,
+    expanded: &std::collections::HashSet<String>,
+) -> Vec<FoldTarget> {
+    let offsets = body.offsets_rc();
+    let fold_at = |row: usize| -> Option<(SharedString, u32)> {
+        match body {
+            DiffBody::Unified { rows, .. } => {
+                let row = rows.get(row).filter(|row| row.kind == RowKind::Fold)?;
+                Some((row.fold_key.clone()?, row.fold_count))
+            }
+            DiffBody::Split { rows, .. } => match rows.get(row)? {
+                SplitRow::Fold(fold) => Some((fold.key.clone(), fold.count)),
+                _ => None,
+            },
+        }
+    };
+    (first..last)
+        .filter_map(|row| {
+            let (key, count) = fold_at(row)?;
+            let top = *offsets.get(row)?;
+            let bottom = *offsets.get(row + 1)?;
+            Some(FoldTarget {
+                expanded: expanded.contains(key.as_ref()),
+                key,
+                count,
+                bounds: Bounds::new(
+                    point(origin.x, origin.y + px(top)),
+                    size(width, px(bottom - top)),
+                ),
+            })
+        })
+        .collect()
 }
 
 pub fn visible_file_headers(
@@ -379,6 +454,7 @@ pub struct DiffElement {
     hovered_header: Option<usize>,
     highlight: HighlightPolicy,
     file_toggle: Option<FileToggle>,
+    fold_toggle: Option<FoldToggle>,
 }
 
 impl DiffElement {
@@ -414,7 +490,17 @@ impl DiffElement {
             hovered_header: None,
             highlight: HighlightPolicy::Words,
             file_toggle: None,
+            fold_toggle: None,
         }
+    }
+
+    pub fn with_fold_toggle(mut self, toggle: FoldToggle) -> Self {
+        self.fold_toggle = Some(toggle);
+        self
+    }
+
+    fn exposes_controls(&self) -> bool {
+        self.file_toggle.is_some() || self.fold_toggle.is_some()
     }
 
     pub fn with_file_toggle(mut self, toggle: FileToggle) -> Self {
@@ -1284,9 +1370,8 @@ impl Element for DiffElement {
     type PrepaintState = Option<DiffPrepaint>;
 
     fn id(&self) -> Option<ElementId> {
-        self.file_toggle
-            .as_ref()
-            .map(|_| ElementId::Name("diff-files".into()))
+        self.exposes_controls()
+            .then(|| ElementId::Name("diff-files".into()))
     }
 
     fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
@@ -1294,7 +1379,7 @@ impl Element for DiffElement {
     }
 
     fn a11y_role(&self) -> Option<accesskit::Role> {
-        self.file_toggle.as_ref().map(|_| accesskit::Role::Group)
+        self.exposes_controls().then_some(accesskit::Role::Group)
     }
 
     fn write_a11y_info(&self, node: &mut accesskit::Node) {
@@ -1313,6 +1398,12 @@ impl Element for DiffElement {
             let id = builder.synthetic_node_id(header.path.as_ref());
             if builder.push_child(id, file_header_node(header, layout.scale)) {
                 layout.header_nodes.push((id, header.path.clone()));
+            }
+        }
+        for fold in &layout.folds {
+            let id = builder.synthetic_node_id(("fold", fold.key.as_ref()));
+            if builder.push_child(id, fold_node(fold, layout.scale)) {
+                layout.fold_nodes.push((id, fold.key.clone()));
             }
         }
     }
@@ -1577,6 +1668,17 @@ impl Element for DiffElement {
         } else {
             Vec::new()
         };
+        let folds = match self.fold_toggle.as_ref() {
+            Some(toggle) => visible_folds(
+                &self.body,
+                first,
+                last,
+                point(bounds.origin.x, bounds.origin.y),
+                width,
+                &toggle.expanded,
+            ),
+            None => Vec::new(),
+        };
 
         Some(DiffPrepaint {
             quads,
@@ -1591,8 +1693,10 @@ impl Element for DiffElement {
             sticky_images,
             sticky_glyphs,
             headers,
+            folds,
             scale: window.scale_factor(),
             header_nodes: Vec::new(),
+            fold_nodes: Vec::new(),
         })
     }
 
@@ -1615,6 +1719,15 @@ impl Element for DiffElement {
                 let path = path.clone();
                 window.on_a11y_action(*id, accesskit::Action::Click, move |_, window, cx| {
                     toggle(&path, window, cx)
+                });
+            }
+        }
+        if let Some(fold_toggle) = self.fold_toggle.as_ref() {
+            for (id, key) in &layout.fold_nodes {
+                let toggle = fold_toggle.toggle.clone();
+                let key = key.clone();
+                window.on_a11y_action(*id, accesskit::Action::Click, move |_, window, cx| {
+                    toggle(&key, window, cx)
                 });
             }
         }
@@ -1761,6 +1874,7 @@ pub(crate) fn shape_plain(
 
 #[cfg(test)]
 mod tests {
+    use super::super::rows::FOLD_ROW_HEIGHT;
     use super::*;
 
     fn rects(
@@ -2010,6 +2124,133 @@ mod tests {
         let plain = DiffElement::new(body, palette);
         assert_eq!(plain.a11y_role(), None);
         let toggled = plain.with_file_toggle(Rc::new(|_, _, _| {}));
+        assert_eq!(toggled.a11y_role(), Some(accesskit::Role::Group));
+        assert!(toggled.id().is_some());
+    }
+
+    fn fold_row(key: &str, count: u32) -> DisplayRow {
+        let mut row = display_row(RowKind::Fold, None);
+        row.text = format!("{count} unmodified lines").into();
+        row.fold_key = Some(key.to_string().into());
+        row.fold_count = count;
+        row
+    }
+
+    #[test]
+    fn each_visible_fold_is_a_button_that_shows_or_hides_its_unmodified_lines() {
+        let rows = vec![
+            display_row(
+                RowKind::FileHeader,
+                Some(("README.md", FileChange::Modified)),
+            ),
+            fold_row("README.md:1:1:12", 12),
+            display_row(RowKind::Added, None),
+            fold_row("README.md:30:31:1", 1),
+            display_row(RowKind::Context, None),
+        ];
+        let offsets = vec![
+            0.0,
+            FILE_HEADER_HEIGHT,
+            FILE_HEADER_HEIGHT + FOLD_ROW_HEIGHT,
+            FILE_HEADER_HEIGHT + FOLD_ROW_HEIGHT + ROW_HEIGHT,
+            FILE_HEADER_HEIGHT + 2.0 * FOLD_ROW_HEIGHT + ROW_HEIGHT,
+            FILE_HEADER_HEIGHT + 2.0 * FOLD_ROW_HEIGHT + 2.0 * ROW_HEIGHT,
+        ];
+        let unified = DiffBody::Unified {
+            rows: Rc::new(rows),
+            offsets: Rc::new(offsets),
+            max_line_no: 31,
+            spans: Rc::new(Vec::new()),
+            h_offsets: Rc::new(Vec::new()),
+        };
+        let origin = point(px(10.), px(100.));
+        let mut expanded = std::collections::HashSet::new();
+        expanded.insert("README.md:30:31:1".to_string());
+        let folds = visible_folds(&unified, 0, 5, origin, px(400.), &expanded);
+        assert_eq!(
+            folds,
+            [
+                FoldTarget {
+                    key: "README.md:1:1:12".into(),
+                    count: 12,
+                    expanded: false,
+                    bounds: Bounds::new(
+                        point(px(10.), px(100. + FILE_HEADER_HEIGHT)),
+                        size(px(400.), px(FOLD_ROW_HEIGHT)),
+                    ),
+                },
+                FoldTarget {
+                    key: "README.md:30:31:1".into(),
+                    count: 1,
+                    expanded: true,
+                    bounds: Bounds::new(
+                        point(
+                            px(10.),
+                            px(100. + FILE_HEADER_HEIGHT + FOLD_ROW_HEIGHT + ROW_HEIGHT)
+                        ),
+                        size(px(400.), px(FOLD_ROW_HEIGHT)),
+                    ),
+                },
+            ]
+        );
+        let collapsed = fold_node(&folds[0], 2.0);
+        assert_eq!(collapsed.role(), accesskit::Role::Button);
+        assert_eq!(collapsed.label(), Some("Show 12 unmodified lines"));
+        assert_eq!(collapsed.is_expanded(), Some(false));
+        assert!(collapsed.supports_action(accesskit::Action::Click));
+        assert_eq!(
+            collapsed.bounds().map(|rect| (rect.x0, rect.y0, rect.x1)),
+            Some((20.0, f64::from(2.0 * (100. + FILE_HEADER_HEIGHT)), 820.0))
+        );
+        let open = fold_node(&folds[1], 1.0);
+        assert_eq!(open.label(), Some("Hide 1 unmodified line"));
+        assert_eq!(open.is_expanded(), Some(true));
+        assert!(
+            visible_folds(&unified, 2, 3, origin, px(400.), &expanded).is_empty(),
+            "a fold scrolled out of view leaves the tree"
+        );
+
+        let split = DiffBody::Split {
+            rows: Rc::new(vec![
+                SplitRow::Header(HeaderParts {
+                    path: "src/lib.rs".into(),
+                    old_path: None,
+                    change: FileChange::Modified,
+                    added: 1,
+                    removed: 0,
+                }),
+                SplitRow::Fold(super::super::rows::FoldBlock {
+                    key: "src/lib.rs:1:1:7".into(),
+                    text: "7 unmodified lines".into(),
+                    base_start: 1,
+                    new_start: 1,
+                    count: 7,
+                    rows: Vec::new(),
+                }),
+            ]),
+            offsets: Rc::new(vec![
+                0.0,
+                FILE_HEADER_HEIGHT,
+                FILE_HEADER_HEIGHT + FOLD_ROW_HEIGHT,
+            ]),
+            max_line_no: 8,
+            spans: Rc::new(Vec::new()),
+            h_offsets: Rc::new(Vec::new()),
+        };
+        let split_folds = visible_folds(&split, 0, 2, origin, px(400.), &expanded);
+        assert_eq!(
+            split_folds
+                .iter()
+                .map(|fold| fold_spoken_label(fold.count, fold.expanded))
+                .collect::<Vec<_>>(),
+            ["Show 7 unmodified lines"]
+        );
+
+        let palette = super::super::rows::palette(crate::theme::ui_colors());
+        let toggled = DiffElement::new(split, palette).with_fold_toggle(FoldToggle {
+            expanded: Rc::new(expanded),
+            toggle: Rc::new(|_, _, _| {}),
+        });
         assert_eq!(toggled.a11y_role(), Some(accesskit::Role::Group));
         assert!(toggled.id().is_some());
     }

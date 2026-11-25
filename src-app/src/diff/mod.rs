@@ -18,7 +18,7 @@ pub use git::FileChange;
 
 pub(crate) use align::CellKind;
 pub(crate) use element::{
-    DiffBody, DiffElement, fill_text_runs, revert_chip_bounds, shape_plain, text_runs,
+    DiffBody, DiffElement, FoldToggle, fill_text_runs, revert_chip_bounds, shape_plain, text_runs,
 };
 pub(crate) use engine::DiffHunk;
 #[cfg(test)]
