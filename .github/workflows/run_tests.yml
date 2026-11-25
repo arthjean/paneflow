@@ -217,7 +217,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
-          toolchain: "1.98.0"
+          toolchain: "1.100.0"
           components: rustfmt, clippy
 
       - name: Format check
@@ -247,7 +247,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
-          toolchain: "1.98.0"
+          toolchain: "1.100.0"
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
@@ -319,7 +319,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
-          toolchain: "1.98.0"
+          toolchain: "1.100.0"
 
       - name: Run the performance gates
         run: scripts/perf-gates.sh
@@ -373,7 +373,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
-          toolchain: "1.98.0"
+          toolchain: "1.100.0"
 
       # The release binary, at the version and SHA-256 pinned in the script.
       # `audit.yml` installs it through the same script, so the PR gate and
@@ -504,7 +504,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
-          toolchain: "1.98.0"
+          toolchain: "1.100.0"
           targets: aarch64-apple-darwin
           # US-018 AC2 adds cargo fmt + cargo clippy steps below - those
           # need the rustfmt + clippy components, which dtolnay's action
@@ -908,7 +908,7 @@ jobs:
       # cross-compile target.
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
-          toolchain: "1.98.0"
+          toolchain: "1.100.0"
           components: rustfmt, clippy
           targets: x86_64-pc-windows-msvc
 
@@ -1312,7 +1312,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
-          toolchain: "1.98.0"
+          toolchain: "1.100.0"
           components: rustfmt, clippy
           targets: aarch64-unknown-linux-gnu
 

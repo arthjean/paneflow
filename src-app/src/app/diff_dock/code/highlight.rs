@@ -2379,7 +2379,10 @@ mod tests {
         assert!(h.runs(3).is_empty() && !h.lexical_runs(3).is_empty());
         let at = d.line_to_byte(3);
         let edit = d.insert(at, "let typed = 1; ").expect("insert");
-        assert!(matches!(h.edit(&d, &edit), HighlightOutcome::Synced));
+        assert!(matches!(
+            h.edit_with_budget(&d, &edit, Duration::from_secs(5)),
+            HighlightOutcome::Synced
+        ));
         assert!(
             !h.runs(3).is_empty(),
             "the edited row is colored by layer 1"

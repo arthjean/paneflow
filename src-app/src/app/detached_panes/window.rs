@@ -177,13 +177,9 @@ impl PaneFlowApp {
                 let close_owner = owner.clone();
                 let close_pane = content.clone();
                 window.on_window_should_close(cx, move |_, cx| {
-                    if close_owner
+                    close_owner
                         .update(cx, |owner, cx| owner.reattach_pane(&close_pane, cx))
                         .is_err()
-                    {
-                        return true;
-                    }
-                    false
                 });
                 view.update(cx, |_, cx| {
                     cx.observe_window_bounds(window, |this, window, cx| {

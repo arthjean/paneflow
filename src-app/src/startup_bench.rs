@@ -161,15 +161,12 @@ struct Trace {
 }
 
 fn app_binary() -> PathBuf {
-    if let Some(path) = std::env::var_os(EXE_ENV) {
-        return PathBuf::from(path);
-    }
-    let test_binary = std::env::current_exe().expect("test binary path");
-    let profile_dir = test_binary
-        .parent()
-        .and_then(Path::parent)
-        .expect("test binaries live under <target>/<profile>/deps");
-    profile_dir.join(format!("paneflow{}", std::env::consts::EXE_SUFFIX))
+    let Some(path) = std::env::var_os(EXE_ENV) else {
+        panic!(
+            "{EXE_ENV} is not set: run the suite through scripts/bench-startup.sh (or .ps1) or scripts/perf-gates.sh, which pass the app binary Cargo reports, since the test binary's own location says nothing about where the app is built"
+        );
+    };
+    PathBuf::from(path)
 }
 
 fn seed_home(home: &Path, scenario: Scenario, cwd: &Path) {

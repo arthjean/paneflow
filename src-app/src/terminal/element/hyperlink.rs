@@ -73,22 +73,22 @@ pub(super) fn sanitize_url_punctuation(url: &str) -> &str {
 }
 
 pub fn is_url_scheme_openable(uri: &str) -> bool {
-    if uri.starts_with("http://")
-        || uri.starts_with("https://")
-        || uri.starts_with("mailto:")
-        || uri.starts_with("gemini://")
-        || uri.starts_with("gopher://")
-        || uri.starts_with("news:")
-        || uri.starts_with("git://")
-        || uri.starts_with("ssh:")
-        || uri.starts_with("ftp://")
-        || uri.starts_with("ipfs:")
-        || uri.starts_with("ipns:")
-        || uri.starts_with("magnet:")
-    {
-        return true;
-    }
-    false
+    [
+        "http://",
+        "https://",
+        "mailto:",
+        "gemini://",
+        "gopher://",
+        "news:",
+        "git://",
+        "ssh:",
+        "ftp://",
+        "ipfs:",
+        "ipns:",
+        "magnet:",
+    ]
+    .iter()
+    .any(|scheme| uri.starts_with(scheme))
 }
 
 const MARKDOWN_EXTENSIONS: &[&str] = &["md", "markdown"];

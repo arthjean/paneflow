@@ -82,6 +82,7 @@ LOG_*.text
 # Local-only distribution/growth strategy notes (personal marketing, not
 # project source) - never publish to the OSS repo.
 /DISTRIBUTION.md
+/distribution-plan.md
 
 # Windows debug symbols emitted next to release builds (multi-MB .pdb tree).
 # Build artifact, not source.

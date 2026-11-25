@@ -88,7 +88,7 @@ jobs:
           # Must match `rust-toolchain.toml` channel verbatim. The
           # workspace dep graph (oo7, cosmic-text, smol_str, wgpu)
           # requires rustc >= 1.92, so this can't drift below 1.92.
-          toolchain: "1.98.0"
+          toolchain: "1.100.0"
           components: rustfmt, clippy
           targets: aarch64-apple-darwin
 

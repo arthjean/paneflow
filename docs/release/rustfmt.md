@@ -9,7 +9,7 @@ mid-release (the failure mode that broke CI on v0.2.11).
 
 - `rust-toolchain.toml` (repo root) - `channel`, `components`, `profile`
 - `.github/workflows/*.yml` - every explicit `dtolnay/rust-toolchain@master`
-  step passes the same `toolchain: "1.98.0"` input. Both must move together.
+  step passes the same `toolchain: "1.100.0"` input. Both must move together.
 
 One step is deliberately exempt: the `llvm-tools` install in
 `libghostty-recipe.yml`. It is not a workspace toolchain, it is the LLVM that
@@ -45,6 +45,12 @@ forces a sooner bump).
    - `.github/workflows/*.yml` -> every explicit `toolchain: "<new-version>"`,
      except the `llvm-tools` step in `libghostty-recipe.yml`
    - `README.md` and `AGENTS.md` prose references
+   - a `CHANGELOG.md` entry under `[Unreleased]`
+
+   Records keep the version that produced them: released `CHANGELOG.md`
+   entries, `docs/release/qualification/` reports, `bench/` results and
+   baselines, and `tasks/` PRDs still name the previous toolchain after a
+   bump.
 5. Open the PR titled `chore(rust): bump pinned toolchain to <new-version>`
    and let CI run. Both fmt and clippy must be green; if not, fix in the
    same PR.

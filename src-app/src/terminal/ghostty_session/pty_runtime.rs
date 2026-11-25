@@ -327,7 +327,7 @@ pub(super) fn release_queued_input_bytes(inner: &SessionInner, released: usize) 
     }
     let _ = inner
         .queued_input_bytes
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |queued| {
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |queued| {
             Some(queued.saturating_sub(released))
         });
 }
