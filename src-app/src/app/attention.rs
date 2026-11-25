@@ -203,6 +203,14 @@ impl PaneFlowApp {
             return;
         };
         let (ws_idx, pane) = (loc.workspace_idx, loc.pane);
+        let surface_idx = pane.read(cx).surfaces().iter().position(|surface| {
+            surface
+                .as_terminal()
+                .is_some_and(|terminal| terminal.read(cx).surface_id() == surface_id)
+        });
+        if let Some(surface_idx) = surface_idx {
+            pane.update(cx, |pane, cx| pane.activate_surface(surface_idx, cx));
+        }
         self.activate_workspace_at(ws_idx, WorkspaceFocusTarget::Pane { pane }, window, cx);
         self.jump_cursor = Some(surface_id);
         self.activate_surface_prompt(surface_id, cx);

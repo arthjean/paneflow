@@ -7,11 +7,11 @@ use crate::app::workspace_ops::SurfaceLaunch;
 use crate::layout::MAX_PANES;
 use crate::pane::PaneEvent;
 use crate::{
-    ClosePane, FocusLeft, FocusRight, NewTab, NextTab, PreviousTab, SplitHorizontally,
-    SplitVertically, ToggleZoom, UndoClosePane,
+    ClosePane, FocusLeft, FocusRight, JumpNextWaiting, NewTab, NextTab, PreviousTab,
+    SplitHorizontally, SplitVertically, ToggleZoom, UndoClosePane,
 };
 
-pub(super) const PINS: usize = 28;
+pub(super) const PINS: usize = 29;
 
 fn split_v(rig: &mut Rig<'_>) {
     rig.act(|app, window, cx| app.handle_split_v(&SplitVertically, window, cx));
@@ -386,6 +386,53 @@ fn pin_a_new_tab_appends_and_is_shown(cx: &mut TestAppContext) {
     assert_eq!(rig.tabs(0), ["=a", "*second=b"]);
     assert_eq!(rig.focused().as_deref(), Some("b"));
     assert_eq!(rig.requests(), ["create b"]);
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_jumping_to_an_unseen_agent_in_a_hidden_tab_shows_its_tab_and_marks_it_seen(
+    cx: &mut TestAppContext,
+) {
+    let mut rig = Rig::mount(cx);
+    rig.workspace("alpha");
+    rig.act(|app, window, cx| {
+        app.open_tab_with_surface(
+            0,
+            "second".into(),
+            TerminalSurfaceProfile::Normal,
+            SurfaceLaunch::default(),
+            window,
+            cx,
+        )
+    });
+    let agent_surface = rig.surface_id("a");
+    rig.act(|app, _, _| {
+        let mut agent = crate::ai_types::AgentSession::new(
+            crate::agent_launcher::TerminalAgent::ClaudeCode,
+            crate::ai_types::AgentState::Finished,
+        );
+        agent.surface_id = Some(agent_surface);
+        let workspace = &mut app.workspaces[0];
+        workspace.agent_sessions.insert(1, agent);
+        workspace
+            .agent_completion_notification
+            .record_finished(false, Some(agent_surface));
+    });
+    rig.workspace("beta");
+    assert_eq!(rig.workspaces(), ["alpha", "*beta"]);
+    assert_eq!(rig.tabs(0), ["=a", "*second=b"]);
+
+    rig.act(|app, window, cx| app.handle_jump_next_waiting(&JumpNextWaiting, window, cx));
+
+    assert_eq!(rig.workspaces(), ["*alpha", "beta"]);
+    assert_eq!(rig.tabs(0), ["*=a", "second=b"]);
+    assert_eq!(rig.focused().as_deref(), Some("a"));
+    let unseen = rig.act(|app, _, _| {
+        app.workspaces[0]
+            .agent_completion_notification
+            .is_unread_surface(agent_surface)
+    });
+    assert!(!unseen, "the agent shown by the jump is still not yet seen");
 }
 
 #[gpui::test]

@@ -178,6 +178,21 @@ impl PaneFlowApp {
         pane: &Entity<Pane>,
         cx: &mut Context<Self>,
     ) -> bool {
+        let holding_tab = self.workspaces.get(ws_idx).and_then(|ws| {
+            ws.tabs()
+                .iter()
+                .position(|tab| {
+                    tab.root
+                        .as_ref()
+                        .is_some_and(|root| root.contains_leaf(pane))
+                })
+                .filter(|&tab_idx| tab_idx != ws.active_tab_idx())
+        });
+        if let Some(tab_idx) = holding_tab {
+            let pending = self.pending_pane_focus.clone();
+            self.select_tab_through_model(ws_idx, tab_idx, cx);
+            self.pending_pane_focus = pending;
+        }
         let hidden = self.workspaces.get(ws_idx).is_some_and(|ws| {
             let tab = ws.active_tab();
             tab.is_zoomed()
