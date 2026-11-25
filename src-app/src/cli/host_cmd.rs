@@ -6,7 +6,7 @@ use paneflow_host::protocol::{ClientHello, ERR_SESSION_LIVE};
 use paneflow_host::{HostClient, HostClientError, Probe};
 use serde_json::{Value, json};
 
-use super::{CliError, EXIT_OK};
+use super::{CliError, EXIT_OK, EXIT_RUNTIME};
 
 const CLIENT_NAME: &str = "paneflow-cli";
 const STOP_WAIT: Duration = Duration::from_secs(5);
@@ -56,6 +56,12 @@ fn start(home: &Path) -> Result<i32, CliError> {
 }
 
 fn status(home: &Path) -> Result<i32, CliError> {
+    let (report, code) = status_report(home)?;
+    super::print_json(&report)?;
+    Ok(code)
+}
+
+fn status_report(home: &Path) -> Result<(Value, i32), CliError> {
     let endpoint = paneflow_host::endpoint::host_endpoint_path(home);
     let hello = ClientHello::local(CLIENT_NAME);
     let report = match paneflow_host::probe(home, &endpoint, &hello) {
@@ -104,6 +110,19 @@ fn status(home: &Path) -> Result<i32, CliError> {
             "endpoint": endpoint.display().to_string(),
             "message": message,
         }),
+        Probe::Busy(message) => {
+            return Ok((
+                json!({
+                    "state": "busy",
+                    "home": home.display().to_string(),
+                    "endpoint": endpoint.display().to_string(),
+                    "message": format!(
+                        "the host is running but every connection slot is taken ({message}); retry once other clients disconnect"
+                    ),
+                }),
+                EXIT_RUNTIME,
+            ));
+        }
         Probe::Faulted(message) => json!({
             "state": "faulted",
             "home": home.display().to_string(),
@@ -111,8 +130,7 @@ fn status(home: &Path) -> Result<i32, CliError> {
             "message": message,
         }),
     };
-    super::print_json(&report)?;
-    Ok(EXIT_OK)
+    Ok((report, EXIT_OK))
 }
 
 fn session_line(row: Value) -> Value {
@@ -205,4 +223,55 @@ fn stop(home: &Path, force: bool) -> Result<i32, CliError> {
     } else {
         super::EXIT_TIMEOUT
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn status_reports_a_host_with_every_connection_slot_taken_as_busy() {
+        let home = tempfile::tempdir().expect("home");
+        let endpoint = paneflow_host::endpoint::host_endpoint_path(home.path());
+        let host = paneflow_host::SessionHost::open(home.path(), &endpoint).expect("a host");
+        let server =
+            paneflow_host::ServerHandle::spawn(std::sync::Arc::clone(&host), endpoint.clone())
+                .expect("the host serves its endpoint");
+        let limit = HostClient::connect(&endpoint, &ClientHello::local(CLIENT_NAME))
+            .expect("the host answers")
+            .call("host.status", json!({}))
+            .expect("host.status answers")["resources"]["connections"]["limit"]
+            .as_u64()
+            .and_then(|limit| usize::try_from(limit).ok())
+            .expect("host.status reports its connection limit");
+        let settled = Instant::now() + Duration::from_secs(20);
+        while server.active_connections() > 0 {
+            assert!(Instant::now() < settled, "the first connection is released");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let held: Vec<_> = (0..limit)
+            .map(|_| std::os::unix::net::UnixStream::connect(&endpoint).expect("a slot"))
+            .collect();
+        while server.active_connections() < limit {
+            assert!(
+                Instant::now() < settled,
+                "every held connection is accepted"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let (report, code) = status_report(home.path()).expect("status answers");
+
+        assert_eq!(report["state"], "busy", "{report}");
+        assert!(
+            report["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("every connection slot is taken")),
+            "{report}"
+        );
+        assert_eq!(code, EXIT_RUNTIME);
+        drop(held);
+        server.stop().expect("the host stops");
+    }
 }

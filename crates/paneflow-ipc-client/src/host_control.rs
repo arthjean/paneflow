@@ -145,6 +145,7 @@ pub fn answer_windows(patience: Duration) -> impl Iterator<Item = Duration> {
 pub enum ControlProbeError {
     Absent(io::Error),
     Unanswered(String),
+    Busy(String),
     Faulted(String),
 }
 
@@ -232,7 +233,7 @@ impl HostControl {
         Ok(control)
     }
 
-    fn pending_refusal(&mut self) -> Option<String> {
+    fn pending_refusal(&mut self) -> Option<Refusal> {
         match self.wire.read_line(SHORTEST_PROBE) {
             Ok(LineRead::Line(line)) => serde_json::from_str::<Value>(line.trim())
                 .ok()
@@ -246,8 +247,8 @@ impl HostControl {
         self.next_id += 1;
         let hello = request_frame(id, METHOD_HOST_HELLO, control_hello(client));
         if let Err(error) = self.wire.write_json_with_timeout(&hello, answer) {
-            if let Some(message) = self.pending_refusal() {
-                return Err(ControlProbeError::Faulted(message));
+            if let Some(refusal) = self.pending_refusal() {
+                return Err(refusal.into_probe_error());
             }
             return Err(probe_io_failure("sending host.hello", error));
         }
@@ -275,8 +276,8 @@ impl HostControl {
             let value: Value = serde_json::from_str(line.trim()).map_err(|error| {
                 ControlProbeError::Faulted(format!("invalid host.hello answer: {error}"))
             })?;
-            if let Some(message) = connection_refusal(&value) {
-                return Err(ControlProbeError::Faulted(message));
+            if let Some(refusal) = connection_refusal(&value) {
+                return Err(refusal.into_probe_error());
             }
             if value.get("id").and_then(Value::as_u64) != Some(id) {
                 continue;
@@ -311,9 +312,12 @@ impl HostControl {
         let id = self.next_id;
         self.next_id += 1;
         let request = request_frame(id, method, params);
-        self.wire
-            .write_json_with_timeout(&request, deadline)
-            .map_err(|error| format!("paneflow host request {method} failed: {error}"))?;
+        if let Err(error) = self.wire.write_json_with_timeout(&request, deadline) {
+            if let Some(refusal) = self.pending_refusal() {
+                return Err(refusal.message);
+            }
+            return Err(format!("paneflow host request {method} failed: {error}"));
+        }
         loop {
             let line = match self.wire.read_line(deadline) {
                 Ok(LineRead::Line(line)) => line,
@@ -340,8 +344,8 @@ impl HostControl {
             let mut value: Value = serde_json::from_str(line.trim()).map_err(|error| {
                 format!("invalid JSON-RPC response from the local Paneflow host: {error}")
             })?;
-            if let Some(message) = connection_refusal(&value) {
-                return Err(message);
+            if let Some(refusal) = connection_refusal(&value) {
+                return Err(refusal.message);
             }
             if value.get("id").and_then(Value::as_u64) != Some(id) {
                 continue;
@@ -480,11 +484,31 @@ impl IpcTransport for HostTransport {
     }
 }
 
-fn connection_refusal(value: &Value) -> Option<String> {
+struct Refusal {
+    code: Option<i64>,
+    message: String,
+}
+
+impl Refusal {
+    fn into_probe_error(self) -> ControlProbeError {
+        if self.code == Some(crate::JSONRPC_BUSY) {
+            ControlProbeError::Busy(self.message)
+        } else {
+            ControlProbeError::Faulted(self.message)
+        }
+    }
+}
+
+fn connection_refusal(value: &Value) -> Option<Refusal> {
     if value.get("id").is_some_and(|id| !id.is_null()) {
         return None;
     }
-    jsonrpc_error_message_from_value(value)
+    let message = jsonrpc_error_message_from_value(value)?;
+    let code = value
+        .get("error")
+        .and_then(|error| error.get("code"))
+        .and_then(Value::as_i64);
+    Some(Refusal { code, message })
 }
 
 #[cfg(test)]
@@ -560,7 +584,7 @@ mod tests {
         let refused = HostControl::probe_open(&endpoint, "probe-test", REQUEST_DEADLINE);
         refuser.join().unwrap();
         match refused {
-            Err(ControlProbeError::Faulted(message)) => {
+            Err(ControlProbeError::Busy(message)) => {
                 assert!(message.contains("worker busy"), "{message}");
             }
             Err(other) => panic!("expected the busy refusal, got {other:?}"),

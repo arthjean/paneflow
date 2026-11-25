@@ -12,6 +12,7 @@ use crate::protocol::{
     encode_data, request,
 };
 use crate::runtime::Checkpoint;
+use paneflow_ipc_client::host_control::SHORTEST_PROBE;
 use paneflow_ipc_client::line_wire::{LineRead, Wire};
 
 #[derive(Debug, thiserror::Error)]
@@ -143,6 +144,11 @@ impl HostClient {
             {
                 return Err(HostClientError::Incompatible(message));
             }
+            Err(HostClientError::Io(error)) => {
+                return Err(client
+                    .pending_refusal()
+                    .unwrap_or(HostClientError::Io(error)));
+            }
             Err(error) => return Err(error),
         };
         let identity: HostIdentity = serde_json::from_value(offered)
@@ -161,6 +167,17 @@ impl HostClient {
         }
         client.identity = identity;
         Ok(client)
+    }
+
+    fn pending_refusal(&mut self) -> Option<HostClientError> {
+        let LineRead::Line(line) = self.wire.read_line(SHORTEST_PROBE).ok()? else {
+            return None;
+        };
+        let value: Value = serde_json::from_str(line.trim()).ok()?;
+        if value.get("id").is_some_and(|id| !id.is_null()) || value.get("error").is_none() {
+            return None;
+        }
+        result_or_error(value).err()
     }
 
     pub fn identity(&self) -> &HostIdentity {

@@ -1949,6 +1949,37 @@ mod tests {
         server.stop().unwrap();
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_probe_of_a_host_with_every_connection_slot_taken_reports_busy() {
+        let (home, _host, server) = start();
+        let held: Vec<_> = (0..MAX_CONNECTIONS)
+            .map(|_| std::os::unix::net::UnixStream::connect(server.endpoint()).unwrap())
+            .collect();
+        let saturated = Instant::now() + Duration::from_secs(20);
+        while server.active_connections() < MAX_CONNECTIONS {
+            assert!(
+                Instant::now() < saturated,
+                "every held connection is accepted"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let outcome = crate::bootstrap::probe_within(
+            home.path(),
+            server.endpoint(),
+            &ClientHello::local("busy-probe"),
+            Instant::now() + Duration::from_secs(5),
+        );
+        match outcome {
+            crate::bootstrap::Probe::Busy(message) => {
+                assert!(message.contains("host busy"), "{message}");
+            }
+            other => panic!("a full host must probe as busy, got {other:?}"),
+        }
+        drop(held);
+        server.stop().unwrap();
+    }
+
     #[test]
     fn streaming_followers_leave_reserved_slots_for_control_requests() {
         let (_home, host, server) = start();

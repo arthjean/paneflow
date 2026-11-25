@@ -97,6 +97,12 @@ fn start(home: &Path) -> Result<i32, CliError> {
 }
 
 fn status(home: &Path) -> Result<i32, CliError> {
+    let (report, code) = status_report(home);
+    super::print_json(&report)?;
+    Ok(code)
+}
+
+fn status_report(home: &Path) -> (Value, i32) {
     let endpoint = paneflow_home::serve_endpoint_path(home);
     let report = match bootstrap::probe(home, &endpoint) {
         Probe::Running(identity) => {
@@ -123,6 +129,19 @@ fn status(home: &Path) -> Result<i32, CliError> {
             "error": error,
             "last_instance_record": bootstrap::read_instance_record(home),
         }),
+        Probe::Busy(message) => {
+            return (
+                json!({
+                    "state": "busy",
+                    "home": home.display().to_string(),
+                    "endpoint": endpoint.display().to_string(),
+                    "message": format!(
+                        "the worker is running but every connection slot is taken ({message}); retry once other clients disconnect"
+                    ),
+                }),
+                super::EXIT_RUNTIME,
+            );
+        }
         Probe::Faulted(message) => json!({
             "state": "faulted",
             "home": home.display().to_string(),
@@ -130,8 +149,7 @@ fn status(home: &Path) -> Result<i32, CliError> {
             "message": message,
         }),
     };
-    super::print_json(&report)?;
-    Ok(EXIT_OK)
+    (report, EXIT_OK)
 }
 
 fn worker_status(endpoint: &Path) -> Option<Value> {
@@ -169,6 +187,30 @@ fn stop(home: &Path, drain: std::time::Duration) -> Result<i32, CliError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn status_reports_a_worker_with_every_connection_slot_taken_as_busy() {
+        let home = tempfile::tempdir().expect("home");
+        let worker = paneflow_serve::open(home.path()).expect("a worker takes the home");
+        let endpoint = paneflow_home::serve_endpoint_path(home.path());
+        let held: Vec<_> = (0..paneflow_serve::server::MAX_CONNECTIONS)
+            .map(|_| std::os::unix::net::UnixStream::connect(&endpoint).expect("a slot"))
+            .collect();
+
+        let (report, code) = status_report(home.path());
+
+        assert_eq!(report["state"], "busy", "{report}");
+        assert!(
+            report["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("every connection slot is taken")),
+            "{report}"
+        );
+        assert_eq!(code, super::super::EXIT_RUNTIME);
+        drop(held);
+        worker.stop();
+    }
 
     #[test]
     fn a_second_start_adopts_the_running_worker_and_status_prints_its_capabilities() {

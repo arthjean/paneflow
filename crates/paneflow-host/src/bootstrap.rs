@@ -108,6 +108,7 @@ pub enum Probe {
     Running(Box<HostIdentity>),
     Unreachable(io::Error),
     Incompatible(String),
+    Busy(String),
     Faulted(String),
 }
 
@@ -161,6 +162,9 @@ fn classify_probe(
             Probe::Unreachable(source)
         }
         Err(HostClientError::Incompatible(message)) => Probe::Incompatible(message),
+        Err(HostClientError::Rpc { code, message, .. }) if code == crate::protocol::ERR_BUSY => {
+            Probe::Busy(message)
+        }
         Err(other) => Probe::Faulted(other.to_string()),
     }
 }
@@ -206,6 +210,10 @@ pub enum BootstrapError {
     Incompatible(PathBuf, String),
     #[error("the endpoint {0} answered with something that is not a compatible host: {1}")]
     EndpointFaulted(PathBuf, String),
+    #[error(
+        "the host on {0} is running but refused the connection because every slot is taken ({1}); retry once other clients disconnect"
+    )]
+    EndpointBusy(PathBuf, String),
     #[error("the host exited with {status} before serving {endpoint}; see {log}")]
     ExitedEarly {
         status: ExitStatus,
@@ -349,6 +357,7 @@ pub fn ensure_host_running_for(
             );
             return Err(BootstrapError::Incompatible(endpoint, message));
         }
+        Probe::Busy(message) => return Err(BootstrapError::EndpointBusy(endpoint, message)),
         Probe::Faulted(message) => return Err(BootstrapError::EndpointFaulted(endpoint, message)),
         Probe::Unreachable(_) => {}
     }
@@ -369,6 +378,10 @@ pub fn ensure_host_running_for(
             Probe::Incompatible(message) => {
                 release_child(child);
                 return Err(BootstrapError::Incompatible(endpoint, message));
+            }
+            Probe::Busy(message) => {
+                release_child(child);
+                return Err(BootstrapError::EndpointBusy(endpoint, message));
             }
             Probe::Faulted(message) => {
                 release_child(child);

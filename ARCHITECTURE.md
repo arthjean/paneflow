@@ -1765,7 +1765,11 @@ caller's own deadline, which keeps `stop_worker`'s drain, the startup waits and
 `stop_incompatible_host` to the time they announce. The worker probe reports
 an endpoint as unreachable only when it is missing or refuses connections; one
 that accepts and never answers is faulted, so it is never mistaken for a
-stopped worker and doubled by a second one. The worker being replaced still
+stopped worker and doubled by a second one. An endpoint at its connection cap
+answers an id-less `-32000` refusal and closes, often before the hello is
+written; both probes read that refusal after a failed hello write and report
+it as busy, never as faulted, and `paneflow host status` and `paneflow serve
+status` print `state: busy` and exit 1. The worker being replaced still
 runs the previous release, which closes its listener without draining, so this
 client side is what covers the first upgrade.
 

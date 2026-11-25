@@ -23,6 +23,7 @@ const CLIENT_NAME: &str = "paneflow-serve-bootstrap";
 pub enum Probe {
     Running(Box<WorkerIdentity>),
     Unreachable(String),
+    Busy(String),
     Faulted(String),
 }
 
@@ -44,6 +45,7 @@ pub fn probe_within(home: &Path, endpoint: &Path, deadline: Instant) -> Probe {
                     window.as_millis()
                 );
             }
+            Err(ControlProbeError::Busy(reason)) => return Probe::Busy(reason),
             Err(ControlProbeError::Unanswered(reason) | ControlProbeError::Faulted(reason)) => {
                 return Probe::Faulted(format!(
                     "the endpoint {} is not answering as a worker: {reason}",
@@ -96,6 +98,10 @@ pub struct WorkerAdoption {
 pub enum WorkerBootstrapError {
     #[error("the worker endpoint {endpoint} cannot be served: {reason}")]
     EndpointFaulted { endpoint: PathBuf, reason: String },
+    #[error(
+        "the worker on {endpoint} is running but refused the connection because every slot is taken ({reason}); retry once other clients disconnect"
+    )]
+    EndpointBusy { endpoint: PathBuf, reason: String },
     #[error("cannot start the worker: {0}")]
     Spawn(#[from] BootstrapError),
     #[error("cannot prepare worker executable {path}: {source}")]
@@ -249,6 +255,9 @@ pub fn ensure_worker_running(
             }
             replaced = Some(identity.version.clone());
         }
+        Probe::Busy(reason) => {
+            return Err(WorkerBootstrapError::EndpointBusy { endpoint, reason });
+        }
         Probe::Faulted(reason) => {
             return Err(WorkerBootstrapError::EndpointFaulted { endpoint, reason });
         }
@@ -280,6 +289,10 @@ pub fn ensure_worker_running(
                     started: true,
                     replaced,
                 });
+            }
+            Probe::Busy(reason) => {
+                release_child(child);
+                return Err(WorkerBootstrapError::EndpointBusy { endpoint, reason });
             }
             Probe::Faulted(reason) => {
                 release_child(child);
@@ -415,6 +428,28 @@ mod tests {
             !stop_worker(home.path(), Duration::from_secs(2)),
             "a worker that accepts connections but never answers was reported stopped"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_worker_with_every_connection_slot_taken_probes_as_busy() {
+        let home = tempfile::tempdir().unwrap();
+        let worker = crate::open(home.path()).unwrap();
+        let endpoint = paneflow_home::serve_endpoint_path(home.path());
+        let held: Vec<_> = (0..crate::server::MAX_CONNECTIONS)
+            .map(|_| std::os::unix::net::UnixStream::connect(&endpoint).unwrap())
+            .collect();
+        let outcome = probe_within(
+            home.path(),
+            &endpoint,
+            Instant::now() + Duration::from_secs(5),
+        );
+        match outcome {
+            Probe::Busy(message) => assert!(message.contains("worker busy"), "{message}"),
+            other => panic!("a full worker must probe as busy, got {other:?}"),
+        }
+        drop(held);
+        worker.stop();
     }
 
     #[cfg(unix)]

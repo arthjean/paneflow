@@ -96,6 +96,7 @@ fn host_still_serving(relay_log_path: &Path) -> Option<String> {
                 }
             }
             paneflow_host::Probe::Incompatible(message)
+            | paneflow_host::Probe::Busy(message)
             | paneflow_host::Probe::Faulted(message) => {
                 if started.elapsed() >= HOST_RELEASE_TIMEOUT {
                     return Some(format!(
