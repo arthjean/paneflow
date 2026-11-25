@@ -25,10 +25,10 @@
     {
       "id": "EP-003",
       "title": "macOS validation on Apple Silicon",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 5,
-      "stories_done": 0
+      "stories_done": 5
     },
     {
       "id": "EP-004",
@@ -150,66 +150,66 @@
       "id": "US-009",
       "title": "Build, lint and test on macOS",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-008"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-25",
+      "completed_at": "2026-11-25",
+      "reviewed_at": "2026-11-25"
     },
     {
       "id": "US-010",
       "title": "Keyboard and input under the native-view overrides",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-009"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-25",
+      "completed_at": "2026-11-25",
+      "reviewed_at": "2026-11-25"
     },
     {
       "id": "US-011",
       "title": "Window chrome and the system report on macOS",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-009"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-25",
+      "completed_at": "2026-11-25",
+      "reviewed_at": "2026-11-25"
     },
     {
       "id": "US-012",
       "title": "Visual pass on macOS",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-009"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-25",
+      "completed_at": "2026-11-25",
+      "reviewed_at": "2026-11-25"
     },
     {
       "id": "US-013",
       "title": "Keystroke latency on macOS",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-009"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-25",
+      "completed_at": "2026-11-25",
+      "reviewed_at": "2026-11-25"
     },
     {
       "id": "US-014",

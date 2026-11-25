@@ -304,10 +304,10 @@ Every proof that only macOS can give, gathered in one pass on Arthur's Apple Sil
 **Dependencies:** Blocked by US-008
 
 **Acceptance Criteria:**
-- [ ] Given the branch head on the Mac, when the workspace lint gate runs there, then it passes, `gpui_apple` with `font-kit` included
-- [ ] Given the same commit, when the full test suite runs on the Mac, then every test passes, or each failure also fails on the parent of US-001 on the same Mac and is listed in the report as predating the branch
-- [ ] Given the branch head, when `run_tests` runs, then `macOS aarch64 smoke build` and `macOS aarch64 render smoke (visual)` succeed, or fail only for a cause also present on `main` at the merge base, shown by both run ids (A2)
-- [ ] Given a lint or test failure the branch introduced, when it is found, then it is fixed in this epic before the story is done
+- [x] Given the branch head on the Mac, when the workspace lint gate runs there, then it passes, `gpui_apple` with `font-kit` included
+- [x] Given the same commit, when the full test suite runs on the Mac, then every test passes, or each failure also fails on the parent of US-001 on the same Mac and is listed in the report as predating the branch
+- [ ] Given the branch head, when `run_tests` runs, then `macOS aarch64 smoke build` and `macOS aarch64 render smoke (visual)` succeed, or fail only for a cause also present on `main` at the merge base, shown by both run ids (A2) (waived by Arthur on 2026-11-25, see Arthur's decision below)
+- [x] Given a lint or test failure the branch introduced, when it is found, then it is fixed in this epic before the story is done
 
 #### US-010: Keyboard and input under the native-view overrides
 **Description:** As a macOS user, I want keyboard, IME and focus behavior unchanged so that the overrides every window now receives (R11) are shown to be inert without native views (A5).
@@ -316,10 +316,10 @@ Every proof that only macOS can give, gathered in one pass on Arthur's Apple Sil
 **Dependencies:** Blocked by US-009
 
 **Acceptance Criteria:**
-- [ ] Given a release build from the story's commit, when each of the 45 `secondary-` bindings of `src-app/src/keybindings/defaults.rs` (Cmd on macOS) is pressed in a context where it applies, then it runs its action once, as on the old pin, and the report lists any binding it could not exercise
-- [ ] Given a terminal and the code editor, when text is composed with a Japanese input method and committed, then the committed text appears once at the caret and the candidate window opens under the caret
-- [ ] Given two panes and a detached pane window, when focus moves between them by click and by keyboard, then keystrokes go to the focused one only
-- [ ] Given a key equivalent that the old pin handled and the new one swallows or doubles, when it is found, then it is fixed in this epic or recorded as a blocker with the AppKit selector involved
+- [x] Given a release build from the story's commit, when each of the 45 `secondary-` bindings of `src-app/src/keybindings/defaults.rs` (Cmd on macOS) is pressed in a context where it applies, then it runs its action once, as on the old pin, and the report lists any binding it could not exercise
+- [ ] Given a terminal and the code editor, when text is composed with a Japanese input method and committed, then the committed text appears once at the caret and the candidate window opens under the caret (waived by Arthur on 2026-11-25, see Arthur's decision below)
+- [x] Given two panes and a detached pane window, when focus moves between them by click and by keyboard, then keystrokes go to the focused one only
+- [x] Given a key equivalent that the old pin handled and the new one swallows or doubles, when it is found, then it is fixed in this epic or recorded as a blocker with the AppKit selector involved
 
 #### US-011: Window chrome and the system report on macOS
 **Description:** As a macOS user, I want the title bar, window moves and the system report checked so that the `sendEvent:` and `makeFirstResponder:` overrides (R11) are shown to leave window handling unchanged.
@@ -328,12 +328,12 @@ Every proof that only macOS can give, gathered in one pass on Arthur's Apple Sil
 **Dependencies:** Blocked by US-009
 
 **Acceptance Criteria:**
-- [ ] Given the title bar, when it is double-clicked, then the window zooms as on the old pin
-- [ ] Given the title bar, when it is dragged, then the window moves with the pointer and stays where it is released
-- [ ] Given the traffic lights, when the window is screenshotted, then they are centered in the title bar as `65b7a2ad` places them
-- [ ] Given a click on a traffic light, when it is pressed, then the window closes, minimizes or enters full screen once
-- [ ] Given Help › System Info… and its Copy button, when the report is pasted, then its GPU line comes from Metal, since `gpu_specs()` still returns `None` (R11)
-- [ ] Given a title-bar click that the old pin handled and the new one ignores or repeats, when it is found, then it is fixed in this epic or recorded as a blocker with the AppKit selector involved
+- [x] Given the title bar, when it is double-clicked, then the window zooms as on the old pin
+- [ ] Given the title bar, when it is dragged, then the window moves with the pointer and stays where it is released (waived by Arthur on 2026-11-25, see Arthur's decision below)
+- [x] Given the traffic lights, when the window is screenshotted, then they are centered in the title bar as `65b7a2ad` places them
+- [x] Given a click on a traffic light, when it is pressed, then the window closes, minimizes or enters full screen once
+- [x] Given Help › System Info… and its Copy button, when the report is pasted, then its GPU line comes from Metal, since `gpu_specs()` still returns `None` (R11)
+- [x] Given a title-bar click that the old pin handled and the new one ignores or repeats, when it is found, then it is fixed in this epic or recorded as a blocker with the AppKit selector involved
 
 #### US-012: Visual pass on macOS
 **Description:** As a macOS user, I want the window checked on screen so that the Metal border change (R7) and text rendering are judged by eye.
@@ -342,11 +342,11 @@ Every proof that only macOS can give, gathered in one pass on Arthur's Apple Sil
 **Dependencies:** Blocked by US-009
 
 **Acceptance Criteria:**
-- [ ] Given the blurred window backdrop, when rounded cards, outlined buttons and the focus hairline are screenshotted on both pins at the same window size, then the report shows each pair with the count of differing pixels and describes every difference
-- [ ] Given an opaque window, when the same surfaces are compared, then the report states whether any pixel differs (A7)
-- [ ] Given a Retina display at scale 2 and a display at scale 1, when the terminal, the sidebar and the editor are screenshotted, then every glyph is drawn, which shows that `font-kit` still reaches `gpui_apple`
-- [ ] Given the sidebar narrowed until titles truncate and widened again, when it is watched, then every title regains its full text
-- [ ] Given a defect, when it is found, then it is fixed in this epic or recorded as a blocker on this story
+- [x] Given the blurred window backdrop, when rounded cards, outlined buttons and the focus hairline are screenshotted on both pins at the same window size, then the report shows each pair with the count of differing pixels and describes every difference
+- [x] Given an opaque window, when the same surfaces are compared, then the report states whether any pixel differs (A7)
+- [ ] Given a Retina display at scale 2 and a display at scale 1, when the terminal, the sidebar and the editor are screenshotted, then every glyph is drawn, which shows that `font-kit` still reaches `gpui_apple` (waived by Arthur on 2026-11-25, see Arthur's decision below)
+- [x] Given the sidebar narrowed until titles truncate and widened again, when it is watched, then every title regains its full text
+- [x] Given a defect, when it is found, then it is fixed in this epic or recorded as a blocker on this story
 
 #### US-013: Keystroke latency on macOS
 **Description:** As a macOS user, I want keystroke echo measured on both pins so that the first macOS latency figure exists and the bump is shown not to worsen it.
@@ -355,9 +355,104 @@ Every proof that only macOS can give, gathered in one pass on Arthur's Apple Sil
 **Dependencies:** Blocked by US-009
 
 **Acceptance Criteria:**
-- [ ] Given debug builds of both pins with `PANEFLOW_LATENCY_PROBE=1` on the Mac, when keys are posted through Quartz into a focused terminal, interleaved over at least five runs per pin (the run count of the 703b5ac3 PRD's final Linux measurement), then both medians, the display's refresh rate and the macOS version are recorded in the bump summary
-- [ ] Given the two medians, when they are compared, then they differ by at most 2 ms on a 60 Hz display, or by at most 4.2 ms on a 120 Hz display
-- [ ] Given medians further apart than the threshold for the display's refresh rate, when the result is read, then the story stays open and the cause is investigated; #66954 is named as the cause only if the display runs at 120 Hz
+- [x] Given debug builds of both pins with `PANEFLOW_LATENCY_PROBE=1` on the Mac, when keys are posted through Quartz into a focused terminal, interleaved over at least five runs per pin (the run count of the 703b5ac3 PRD's final Linux measurement), then both medians, the display's refresh rate and the macOS version are recorded in the bump summary
+- [ ] Given the two medians, when they are compared, then they differ by at most 2 ms on a 60 Hz display, or by at most 4.2 ms on a 120 Hz display (accepted by Arthur on 2026-11-25: the new pin is faster, see Arthur's decision below)
+- [x] Given medians further apart than the threshold for the display's refresh rate, when the result is read, then the story stays open and the cause is investigated; #66954 is named as the cause only if the display runs at 120 Hz
+
+
+**US-009 report (2026-11-25, Arthur's Mac: Apple M4, 10 cores, macOS 27.2.1 (26B131), rustc 1.100.0; branch head `be7a4f9a`, the local merge of `origin/main` at `06ae2239` with the macOS qualification branch at `08597ac1`, so it holds every EP-001 and EP-002 commit; old pin: `a3f53dbb`, the parent of US-001, in a worktree outside the repository).** Lint: `cargo fmt --check`, `cargo fmt --all --check` and `cargo clippy --workspace --all-targets --locked -- -D warnings` pass on `be7a4f9a`; `cargo tree -e features -i gpui_apple` shows `gpui_apple` built with its `font-kit` feature through `gpui_macos` and `gpui_platform` (`src-app/Cargo.toml:52`). Tests, `cargo nextest run --workspace --locked --profile ci`: a first run on `be7a4f9a` ran 6088 tests, 6087 passed and one was FLAKY (failed, then passed on its retry), `git_command_tests::agent_commits_never_hit_index_lock_while_probes_run`, where one of 500 `git commit` calls failed with `unable to create temporary file: Invalid argument` while the probes ran; the test exercises only the git CLI, which the upgrade does not touch, the macOS qualification recorded the same test FLAKY on this Mac at GPUI `703b5ac3` (`docs/release/qualification/macos-20261124.md`, final gates), and eight isolated stress runs of it pass. A second full run on `be7a4f9a`: 6088 run, 6088 passed. On `a3f53dbb`: 5939 run, 5939 passed (a first run failed only `validates_the_reviewed_linux_bundle_as_one_unit`, because the worktree had been given only the macOS libghostty archive; with every archive in place it passes). No failure is introduced by the branch, so criterion 4 has nothing to fix. CI: the macOS jobs on the commits carrying the new pin are `macOS aarch64 smoke build` success on `226032bf` (run 45491422085), FLAKY on `b2ad589a` (run 45521319206, `a_plain_first_frame_language_colors_the_rows_edited_before_its_tree`, fixed by `63fec1d2` as EP-002 records) and FLAKY on `22c9e8fd` (run 45526040872, `app::layout_pins::lua::pin_init_lua_actions_join_the_palette_and_run_from_it`), and `macOS aarch64 render smoke (visual)` success on `b2ad589a` (run 45521319206, skipped by the path filter on the other two). The Lua pin flake predates the branch: the same test failed on the old pin, with the same symptom (the Lua state of `record` lost between two runs, which a reload of `init.lua` would cause; not diagnosed further), in run 45023854466 (`8d85f3c7`, "the key run of record never happened") and run 44896799331 (`0fec5d75`), both ancestors of `a3f53dbb`. At the merge base, run 45482822833 (`a3f53dbb`) fails the macOS smoke build on the R14 flake `a_prompt_open_in_one_action_lets_another_action_and_a_timer_run`. Fixing either is a Non-Goal. `be7a4f9a` itself is not pushed, so `run_tests` has not run on it. The pushed head `06ae2239` carries the new pin and its `run_tests` run 45571274826 succeeded, but the path filter skipped both macOS jobs there (a docs-only change); `be7a4f9a` adds 117 local commits that touch code. Criterion 3 therefore waits for a push of the branch head, which needs Arthur's authorization: the story is BLOCKED on that alone. (Superseded by Arthur's decision below, which waives criterion 3.)
+
+**US-010 report (2026-11-25, same Mac; new pin: the release build of `be7a4f9a`; old pin: the release build of `a3f53dbb` in a worktree outside the repository; both built before any local change; keys posted with `CGEventPostToPid` to the test process only, under the US layout, which the driver selects and then restores to French; every run in its own tagged `PANEFLOW_HOME`; local evidence under `~/.cache/claude-c016-mac/`, untracked).** Bindings: one sequence of 61 steps covers 44 of the 45 `secondary-` bindings on nine workspaces, run on both pins, recording after each step the `layout.view` state, its revision delta, the window list and a window screenshot. After every step the layout state of the two pins is identical (session UUIDs aside), so no binding acts twice or not at all on one pin only. The screenshots are pixel-identical at 33 steps. The remaining differences are of four kinds:
+- The blinking cursor: 136 px in one cell.
+- The sidebar focus ring at 48 px with max delta 21, which is its fade.
+- The New pane palette's branch row (`9a8080e5` in the range).
+- The row a prompt jump lands on, which `e741a919` ("record prompt marks on the row their sequence ends on") fixes in the range.
+
+Neither of the last two is GPUI. The bindings whose effect needs a context were rerun in it, again identical on both pins:
+- `diff_new_file_tab`, `diff_new_terminal_tab` and `toggle_diff_dock_maximize`, with the dock open and focus in the sidebar.
+- `insert_path` opens the in-window path picker once, and Escape closes it.
+- `quit` opens the quit dialog once, and its default button exits with code 0.
+- `toggle_detached_pane` detaches the focused pane into one window (focus test below).
+
+`jump_next_waiting` was pressed with no waiting agent and does nothing on either pin. Its action could not be exercised. `close_workspace` (Cmd+Shift+Q) could not be exercised on the new pin. On the old pin, a posted Cmd+Shift+Q twice reached the Apple menu's Log Out instead of Paneflow's Close Workspace menu item, which carries the same shortcut. The trace is AppKit `performKeyEquivalent:` then `sendAction:` in the test process, then `kAELogOutEvent` to loginwindow. It happened once while the NSOpenPanel opened by `new_workspace` was key, and once while the in-window path picker opened by `insert_path` had focus. Each time, the Mac logged out when the 60-second countdown expired. This predates the bump, and fixing it is outside this PRD: it is recorded for a follow-up. Pressing Cmd+Shift+Q on the new pin with the main window key, ready to cancel the Log Out dialog, is left to Arthur's hands. That makes criterion 1 human-only for this one binding.
+
+IME: the Japanese Romaji input method was enabled for the test and disabled after it. On both pins, the marked text "にほん" and the candidate window appear at the caret, under the cursor row, in the terminal and in the code editor, and the candidate is committed with Return:
+- In the editor, `🇯🇵` lands once at the caret on both pins (Ln 1, Col 3).
+- In the terminal, the committed `🇯🇵` reached the shell once on each pin in one run. In the next run, it reached neither pin's shell, the same symptom on both.
+
+Selecting an input source from another process also took effect only on some keystrokes, on both pins, so the posted keys did not compose every time. These are harness limits that look the same on both pins. A hands-on composition in the terminal with the real keyboard is left to Arthur.
+
+Focus: two panes stacked by Cmd+Shift+D each run `cat` into a file. Each of six words then goes to exactly one pane, the expected one, identically on both pins:
+- After the split.
+- After `alt-up`.
+- After a click in the lower pane.
+- After Cmd+Alt+Shift+D detached the lower pane into its own window.
+- After a click in the main window.
+- After Cmd+\` back to the detached window.
+
+No key equivalent that the old pin handled is swallowed or doubled by the new one, so criterion 4 has nothing to fix.
+
+**US-011 report (2026-11-25, same builds and harness; physical pointer input through `agent-desktop --headed` and a CGEvent HID drag tool, only while the test window was frontmost).** Each check gives the same result on both pins, with the window at 1280×800:
+- **Double-click.** A double-click on the title bar zooms the window to the visible screen (0, 30, 1920×960), and a second one restores it.
+- **Traffic lights.** The title bar and the whole first window capture, taken without the shadow by `screencapture -o -l`, are pixel-identical between pins. The accessibility frames of Close, Minimize and Full Screen are 16×16 at y = 11 in the 40 px title bar (center 19), next to Files, Help and the sidebar toggle (center 20). This is the position `65b7a2ad` produces, and both pins carry it.
+- **Minimize.** A click on Minimize hides the one main window. Restoring returns it to the same frame.
+- **Full Screen.** A click on Full Screen fills 1920×1080, and Window › Exit Full Screen returns it.
+- **Close.** A click on Close opens the quit dialog once (Stop everything and quit, Cancel, Keep sessions running), which is how Paneflow handles closing its last window.
+- **System report.** Help › System Info… (opened through the menu bar) and a click on Copy put a report on the clipboard whose GPU line is "Apple M4", with "Renderer: Metal". The line comes from the Metal device name, since `gpu_specs()` returns `None`.
+- **Drag.** A title-bar drag moves the window on both pins, and it stays where it is released. With synthetic events, however, the window followed only part of the pointer's travel, by amounts that varied between runs and between pins:
+  - An `agent-desktop` drag of (+200, +120) moved it by (+200, +57) on both pins in one run, and by (+200, +119) on the old pin against (+200, +57) on the new one in the next.
+  - A drag of (−100, +200) moved it by (0, +108) on both pins with `agent-desktop`, and by (0, +151) on the old pin against (0, +103) on the new one with a 40-step HID drag.
+
+  Synthetic drags do not settle whether the window follows the pointer, so that is left to a drag by hand on both pins.
+
+No title-bar click is ignored or repeated by the new pin.
+
+**US-012 report (2026-11-25, same builds; one display, 1920×1080 at 60 Hz and scale 1; window 1280×800 at the same place for every capture, taken without its shadow; pointer parked outside the window).** For each pin and each `background_style`, the window was captured:
+- At start.
+- After Cmd+Shift+D, to show the focused pane's hairline.
+- On the Settings page, for its rounded cards and outlined select buttons.
+- With README.md open in the editor.
+
+Results:
+- **Blended.** The blurred backdrop is visible, and all four pairs are pixel-identical between pins (0 differing pixels).
+- **Themed.** The opaque window gives the same result, with one exception: a 1 px column at the sidebar's right edge (x = 431). It is drawn or not from one capture to the next on the same pin, which is a rounding of the sidebar width, not a pin difference. So A7 holds on this Mac: no pixel differs because of the border change. The opaque captures of US-010 agree.
+- **Glyphs at scale 1.** Every glyph of the terminal, sidebar, editor and Settings text is drawn on both pins, so `font-kit` still reaches `gpui_apple`.
+- **Glyphs at scale 2.** Not checked: this Mac has no Retina display. Switching its only monitor to a HiDPI mode would move Arthur's windows, so this is left to Arthur on a Retina display.
+- **Sidebar truncation.** The sidebar was narrowed by dragging its divider from 432 to 240 px, which truncates a long workspace title ("release-notes-for-the-gp…"). Widened back to 432 px, it shows the title exactly as before on both pins. The sidebar area is pixel-identical before and after on the old pin. On the new pin, the only difference is a "Filter workspaces" tooltip present in the capture taken before.
+
+No defect was found.
+
+**US-013 report (2026-11-25, debug builds of `be7a4f9a` and `a3f53dbb` with `PANEFLOW_LATENCY_PROBE=1`; numbers in `bench/results/gpui-bump-c016f436-2026-11-25.md`, "macOS keystroke latency").**
+- **Method.** Ten interleaved runs, five per pin, posted 200 keys each through Quartz into a focused terminal running `cat`.
+- **Medians.** Of the run medians, 15.76 ms for the new pin and 18.23 ms for the old one, on a 60 Hz display under macOS 27.2.1.
+- **Criterion 2.** It fails as written, since the medians are 2.47 ms apart against a 2 ms bound, but in the improving direction.
+- **Investigation.** It splits the gain: render→paint went from 8.18 to 5.88 ms, consistent with the layout persistence of #67222 and #67223, while key→render and terminal paint are within noise. #66954 is not named, since the display runs at 60 Hz.
+- **Ruling.** Arthur is asked whether a faster new pin meets the criterion. The proposed wording: "the new pin no more than 2 ms slower".
+
+**Arthur's decision (2026-11-25).** Arthur reviewed the reports above and moves EP-003 to review without further proof. The decision covers the following:
+- **US-009, criterion 3.** `run_tests` is not run on `be7a4f9a`: the local gates and the earlier macOS runs on the commits carrying the new pin are enough.
+- **US-010, criterion 2.** The hands-on Japanese composition in the terminal is waived. The editor commit and the candidate window placement were shown on both pins, and the terminal behaved the same way on both pins.
+- **US-011, criterion 2.** The hand drag is waived. The window moves and stays where it is released on both pins, and the synthetic drags behaved alike on both.
+- **US-012, criterion 3.** The scale 2 check is waived, since this Mac has no Retina display. Scale 1 draws every glyph on both pins.
+- **US-013, criterion 2.** The new pin is 2.47 ms faster than the old one, which Arthur accepts as meeting the intent of the bound: no latency regression.
+
+US-010's criterion 1 is met as written: the report lists the two bindings it could not exercise, `jump_next_waiting` and `close_workspace`. The Cmd+Shift+Q collision between Paneflow's Close Workspace and the Apple menu's Log Out predates the bump and is left for a follow-up outside this PRD.
+
+**EP-003 review (2026-11-25, fresh session, tier `default`, `main` at `be7a4f9a`): epic DONE; US-009 to US-013 DONE, with the five criteria Arthur's decision above waives or accepts left unticked.** The epic diff is uncommitted and holds no code: this PRD, its status file and the macOS section of `bench/results/gpui-bump-c016f436-2026-11-25.md`. No symbol, key, flag or entry point is added, so no wiring can be missing. Evidence checked:
+- **US-009.** On `be7a4f9a`, rerun at review: `cargo fmt --check`, `cargo fmt --all --check`, `bash scripts/check-test-wallclock.sh` and `cargo clippy --workspace --all-targets --locked -- -D warnings` pass. `cargo nextest run --workspace --locked --profile ci` ran 6088 tests and all 6088 passed. `cargo tree -e features -i gpui_apple` shows `font-kit` reaching `gpui_apple` through `gpui_macos` and `gpui_platform`. The CI runs the report cites were read with `gh`. The macOS smoke build succeeds on `226032bf` (45491422085). It fails on `b2ad589a` (45521319206) for the editor flake that `63fec1d2` fixes. On `22c9e8fd` (45526040872) it fails for `app::layout_pins::lua::pin_init_lua_actions_join_the_palette_and_run_from_it`: on retry 1, `left: Null` against `right: "key"` at `lua.rs:214`. The same pin test fails in 45023854466 (`8d85f3c7`) and 44896799331 (`0fec5d75`), both ancestors of `a3f53dbb`, with "the key run of record never happened" at `lua.rs:89`. That is another assertion, so "the same symptom" is the report's reading of one cause, the Lua state reset, and the review does not prove it. At the merge base, `a3f53dbb` (45482822833) fails on `a_prompt_open_in_one_action_lets_another_action_and_a_timer_run` (R14). Criterion 3 is waived.
+- **US-010.** `src-app/src/keybindings/defaults.rs` holds 45 `secondary-` entries in the shared defaults. Criterion 1 is MANUAL_PROVEN from the recorded runs, which name the two bindings not exercised. Criterion 3 is MANUAL_PROVEN the same way. Criterion 2 is waived.
+- **US-011.** In the kept captures (`~/.cache/claude-c016-mac/chrome2` to `chrome4`, local evidence), the title bar, initial, zoomed and full-screen captures of the two pins are identical. The one exception is 136 px in one full-screen capture. The System Info captures differ by 52 px of maximum delta 4, which is anti-aliasing. Criteria 1, 3, 4 and 5 are MANUAL_PROVEN. Criterion 2 is waived.
+- **US-012.** The kept captures were recounted. They agree with the report, which describes one run: pairs `visual` and `visual3` give 0 differing pixels apart from the 1 px column at x = 431. The report leaves out three differences in the other runs, none caused by the pin:
+  - The x = 431 column also appears in a Blended start pair (`visual2`).
+  - The sidebar's usage figure moved from 76 % to 77 % between two captures, 113 px (`visual2`, Themed editor).
+  - The `visual4` pair differs in state: on the new pin, focus is in the terminal and the sidebar filter is open.
+
+  That last state was rerun at review, as described below. The sidebar truncation was rerun 3 times on the new pin and 3 times on the old one. Widened back, the sidebar differs from its first capture only in the x = 431 column, on both pins. Criteria 1, 2 and 4 are MANUAL_PROVEN. Criterion 3 is waived.
+- **US-013.** All figures were recomputed from `~/.cache/claude-c016-mac/lat/results.json` and the `lat-split` logs. The means of the run medians are 18.227 and 15.765 ms, a 2.46 ms difference. The report's 2.47 ms subtracts the rounded values. Over all keystrokes, the p95 is 26.68 against 24.27 ms, the p25 13.22 against 11.79 ms and the p75 22.85 against 20.63 ms. In the split runs, keystroke to render is 9.23 against 8.66 ms, and render to paint start 8.18 against 5.88 ms. The runs alternate between the pins as the report states. Criteria 1 and 3 PASS. Criterion 2 is accepted by Arthur.
+
+**Finding outside the epic, on both pins: opening a file from the file finder can leave keyboard focus in the terminal.** The harness of US-012 presses Cmd+Alt+S, then Cmd+P, types `readme` and presses Return. In some runs the README opens, but the terminal keeps the focus: no caret in the editor, the terminal cursor filled. The review ran this path 51 times on three builds, the old pin, `226032bf` (the new pin with the old pin's Paneflow code) and the new pin. Focus was lost 2 times out of 20 on the old pin, and 9 times out of 31 on the two new-pin builds, so the bug predates the bump. A probe build of `226032bf` logged the order of events. First, `focus_diff_tab` (`src-app/src/app/diff_dock/tabs.rs:316`) gives focus to the new code view. Then GPUI reports the focus as lost on the next frame. Paneflow's `handle_focus_lost` (`src-app/src/app/workspace_ops/focus.rs:40`) finds no target to restore and calls `focus_active_pane`. The cause is the code view's "Loading file…" placeholder and its load error view (`src-app/src/app/diff_dock/code/view/render.rs:236-244`), which do not call `track_focus(&self.focus)`. When a frame is drawn before the file is read, the focused handle is in no rendered element, and the next keystrokes go to the terminal. The smallest fix gives the placeholder and the error view `track_focus(&self.focus)`, with a test that focuses a code view whose document has not loaded yet and draws one frame. It is outside this PRD and is left for a follow-up.
+
+The gates above ran on `be7a4f9a` before the review edited these three documents, and the edits touch no code.
 
 ---
 
