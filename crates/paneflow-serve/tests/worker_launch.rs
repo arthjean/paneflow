@@ -438,6 +438,44 @@ fn an_attached_window_creates_no_session_and_launches_through_the_worker() {
 }
 
 #[test]
+fn a_refused_bind_names_the_op_and_the_session_the_surface_already_shows() {
+    let home = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    prepare_home(home.path(), cwd.path());
+    let starter = FakeStarter::default();
+    let worker = open_worker(home.path(), &starter);
+    let mut window = Client::connect(home.path());
+    window.ok("layout.attach", json!({"client": "window"}));
+    let start = window.lease();
+    window.ok(
+        "layout.apply",
+        json!({"op": split_op(start, start + 1, terminal_definition()), "ids_from": start + 2}),
+    );
+    let first = SessionId::new();
+    window.ok(
+        "layout.apply",
+        json!({"op": {"op": "bind_session", "surface": start + 1, "session": first}}),
+    );
+
+    let second = SessionId::new();
+    let refused = window
+        .call(
+            "layout.apply",
+            json!({"op": {"op": "bind_session", "surface": start + 1, "session": second}}),
+        )
+        .expect_err("a surface binds one session");
+
+    assert_eq!(refused["data"]["reason"], "invalid");
+    assert_eq!(refused["data"]["op"], "bind_session");
+    let message = refused["message"].as_str().unwrap();
+    assert!(
+        message.contains("bind_session") && message.contains(&first.to_string()),
+        "the refusal says which op failed and why: {message}"
+    );
+    worker.stop();
+}
+
+#[test]
 fn a_command_in_a_new_surface_from_a_client_with_no_window_needs_orchestration() {
     if std::env::var_os("PANEFLOW_IPC_ORCHESTRATION").is_some()
         || std::env::var_os("PANEFLOW_IPC_SCRIPTING").is_some()

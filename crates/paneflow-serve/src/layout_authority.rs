@@ -98,11 +98,41 @@ fn refused(reason: &str, message: impl Into<String>) -> ServeError {
     }
 }
 
-fn op_refused(error: OpError) -> ServeError {
-    refused(
-        error.reason(),
-        format!("the layout op was refused: {error}"),
-    )
+fn op_refused(kind: &str, error: OpError, cause: Option<String>) -> ServeError {
+    let message = match &cause {
+        Some(cause) => format!("the layout op {kind} was refused: {error} ({cause})"),
+        None => format!("the layout op {kind} was refused: {error}"),
+    };
+    log::warn!("paneflow-serve: {message}");
+    ServeError {
+        code: ERR_LAYOUT_REFUSED,
+        message,
+        data: Some(json!({"reason": error.reason(), "op": kind, "cause": cause})),
+    }
+}
+
+fn op_kind(op: &Value) -> String {
+    op.get("op")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .to_string()
+}
+
+fn encoded_kind(op: &Op) -> String {
+    serde_json::to_value(op).map_or_else(|_| "unknown".to_string(), |value| op_kind(&value))
+}
+
+fn refusal_cause(state: &paneflow_layout::State, op: &Op, error: OpError) -> Option<String> {
+    match (op, error) {
+        (Op::BindSession { surface, session }, OpError::Invalid) => {
+            let bound = state.surface(*surface)?.session()?;
+            Some(format!(
+                "surface {} already shows session {bound}, not {session}",
+                surface.get()
+            ))
+        }
+        _ => None,
+    }
 }
 
 fn invalid_params(message: impl Into<String>) -> ServeError {
@@ -530,6 +560,7 @@ impl LayoutAuthority {
         now_ms: u64,
         may_spawn: bool,
     ) -> Result<ApplyOutcome, ServeError> {
+        let kind = op_kind(&op);
         let op: Op = serde_json::from_value(op)
             .map_err(|error| invalid_params(format!("the op is not a layout op: {error}")))?;
         let attached = self.has_attached_window();
@@ -551,17 +582,29 @@ impl LayoutAuthority {
             for id in op.new_ids() {
                 let leased = blocks.iter().any(|block| block.contains(id));
                 if connection != ConnectionId::INTERNAL && !leased {
-                    return Err(op_refused(OpError::Invalid));
+                    return Err(op_refused(
+                        &kind,
+                        OpError::Invalid,
+                        Some(format!("id {id} is outside the ids leased to {key}")),
+                    ));
                 }
                 if connection != ConnectionId::INTERNAL && !trial.reserve_exact(id) {
-                    return Err(op_refused(OpError::Invalid));
+                    return Err(op_refused(
+                        &kind,
+                        OpError::Invalid,
+                        Some(format!("id {id} is already in use")),
+                    ));
                 }
             }
             let ids = match ids_from {
                 Some(at) if connection != ConnectionId::INTERNAL => {
                     let mirror = IdSource::leased(&blocks, at);
                     if mirror.is_overdrawn() {
-                        return Err(op_refused(OpError::Invalid));
+                        return Err(op_refused(
+                            &kind,
+                            OpError::Invalid,
+                            Some(format!("ids_from {at} is past the ids leased to {key}")),
+                        ));
                     }
                     mirror
                 }
@@ -569,9 +612,17 @@ impl LayoutAuthority {
             };
             let applied = trial
                 .apply_with_ids(op.clone(), now_ms, &ids)
-                .map_err(op_refused)?;
+                .map_err(|error| {
+                    op_refused(&kind, error, refusal_cause(core.model.state(), &op, error))
+                })?;
             if ids.is_overdrawn() {
-                return Err(op_refused(OpError::Invalid));
+                return Err(op_refused(
+                    &kind,
+                    OpError::Invalid,
+                    Some(format!(
+                        "the op needs more ids than the lease of {key} holds"
+                    )),
+                ));
             }
             let spawns = if launches_here {
                 spawned_surfaces(&applied.effects)
@@ -662,7 +713,13 @@ impl LayoutAuthority {
             session.clone(),
             inputs,
         )
-        .ok_or_else(|| op_refused(OpError::NotFound))?;
+        .ok_or_else(|| {
+            op_refused(
+                "launch",
+                OpError::NotFound,
+                Some(format!("surface {} is not a terminal", surface.get())),
+            )
+        })?;
         self.lock()
             .launching
             .insert(session.clone(), Instant::now());
@@ -702,10 +759,14 @@ impl LayoutAuthority {
 
     fn apply_internal(&self, op: Op) -> Result<(AppliedOp, Vec<PublishedEvent>), ServeError> {
         let mut core = self.lock();
-        let applied = core
-            .model
-            .apply(op, crate::state::now_ms())
-            .map_err(op_refused)?;
+        let kind = encoded_kind(&op);
+        let applied = match core.model.apply(op.clone(), crate::state::now_ms()) {
+            Ok(applied) => applied,
+            Err(error) => {
+                let cause = refusal_cause(core.model.state(), &op, error);
+                return Err(op_refused(&kind, error, cause));
+            }
+        };
         for effect in &applied.effects {
             Self::queue_effect(&mut core, effect);
         }
@@ -753,7 +814,17 @@ impl LayoutAuthority {
                     .is_none_or(|bound| *bound == session)
         });
         if !startable {
-            return Err(op_refused(OpError::NotFound));
+            let cause = match state.surface(surface).and_then(|known| known.session()) {
+                Some(bound) => format!(
+                    "surface {} already shows session {bound}",
+                    params.surface_id
+                ),
+                None => format!(
+                    "surface {} is not a terminal of the layout",
+                    params.surface_id
+                ),
+            };
+            return Err(op_refused("launch", OpError::NotFound, Some(cause)));
         }
         let inputs = LaunchInputs {
             cwd: params.cwd.map(PathBuf::from),

@@ -25,6 +25,13 @@ fn settle_fire(elapsed: Duration, stable: u8, floor: Duration, max: Duration) ->
     elapsed >= max || (stable >= 2 && elapsed >= floor)
 }
 
+fn request_refusal(error: &str) -> Option<&str> {
+    let rest = error.strip_prefix("paneflow error ")?;
+    let (code, message) = rest.split_once(": ")?;
+    code.parse::<i64>().ok()?;
+    Some(message)
+}
+
 pub fn run(
     client: &impl IpcTransport,
     file: &str,
@@ -743,7 +750,10 @@ impl<T: IpcTransport> Engine<'_, T> {
                     }
                     Err(e) => {
                         self.rollback_unit_worktree(i, created_worktree);
-                        return Err(CliError::runtime(e));
+                        let Some(refusal) = request_refusal(&e) else {
+                            return Err(CliError::runtime(e));
+                        };
+                        self.fail(i, &format!("surface.split refused: {refusal}"), false);
                     }
                 }
             }
@@ -1137,6 +1147,7 @@ mod tests {
     struct FakeInstance {
         calls: RefCell<Vec<(String, Value)>>,
         reads: RefCell<HashMap<u64, Vec<Option<String>>>>,
+        refusals: RefCell<HashMap<&'static str, String>>,
         scripting: bool,
     }
     impl FakeInstance {
@@ -1144,8 +1155,12 @@ mod tests {
             Self {
                 calls: RefCell::new(Vec::new()),
                 reads: RefCell::new(HashMap::new()),
+                refusals: RefCell::new(HashMap::new()),
                 scripting,
             }
+        }
+        fn refuse(&self, method: &'static str, error: &str) {
+            self.refusals.borrow_mut().insert(method, error.to_string());
         }
         fn push_reads(&self, sid: u64, texts: &[&str]) {
             self.reads
@@ -1164,6 +1179,9 @@ mod tests {
             self.calls
                 .borrow_mut()
                 .push((method.to_string(), params.clone()));
+            if let Some(error) = self.refusals.borrow().get(method) {
+                return Err(error.clone());
+            }
             match method {
                 "system.capabilities" => Ok(json!({
                     "scripting": self.scripting,
@@ -1335,6 +1353,56 @@ mod tests {
 
     fn run_flow(fake: &FakeInstance, file: &std::path::Path) -> i32 {
         run(fake, file.to_str().unwrap(), false, true, false).expect("report")
+    }
+
+    #[test]
+    fn a_refused_split_fails_its_step_with_the_reason_and_the_flow_still_reports() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let _root = crate::workspace::worktree::test_support::scoped_root(dir.path().join("wt"));
+        let file = flow_file(
+            &dir,
+            "[defaults]\ntimeout_secs = 30\n\n[[step]]\nid = \"root\"\npane = { command = \"true\" }\n\n[[step]]\nid = \"fan\"\nneeds = [\"root\"]\nforeach = [\"alpha\"]\npane = { name = \"fan-${item}\" }\n\n[[step]]\nid = \"after\"\nneeds = [\"fan\"]\nsend = { target = \"root\", text = \"x\" }\n",
+        );
+        let fake = FakeInstance::new(true);
+        fake.refuse(
+            "surface.split",
+            "paneflow error -32070: the layout op split was refused: pane_limit",
+        );
+        let plan = flow_spec::load(&std::fs::read_to_string(&file).unwrap()).expect("valid");
+        let runs = prepare_runs(&plan, &PaneFlowConfig::default(), |_| true).expect("runs");
+        let mut engine = Engine {
+            client: &fake,
+            on_failure: plan.on_failure,
+            name: plan.name.clone(),
+            layout: plan.layout.as_ipc(),
+            runs,
+            vars: HashMap::new(),
+            started: Instant::now(),
+            json_out: true,
+            split_count: 0,
+            anchor: None,
+            caller: None,
+            scope_all: false,
+            created: HashSet::new(),
+            shown: HashSet::new(),
+        };
+        engine.bootstrap_wave0().expect("the root spawns");
+        engine.progress().expect("the root settles");
+        engine
+            .propagate_and_schedule()
+            .expect("a refused split is a step failure, not an abort");
+
+        let fan = &engine.runs[1];
+        assert!(matches!(fan.state, State::Failed { timeout: false }));
+        assert_eq!(
+            fan.error.as_deref(),
+            Some("surface.split refused: the layout op split was refused: pane_limit")
+        );
+        let code = run_flow(&fake, &file);
+        assert_eq!(
+            code, EXIT_RUNTIME,
+            "the report is printed and the run fails"
+        );
     }
 
     #[test]
