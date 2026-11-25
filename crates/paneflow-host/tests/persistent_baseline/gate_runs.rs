@@ -718,6 +718,30 @@ pub(super) fn host_status(inputs: &Path, values: &mut Values) -> Value {
     }
 }
 
+pub(super) fn worker_stop(inputs: &Path, values: &mut Values) -> Value {
+    let name = "worker.stop_ms";
+    let path = inputs.join("worker-stop.json");
+    match read_json(&path) {
+        Ok(document) => {
+            values.insert(
+                name.to_string(),
+                document["stop_ms"].as_f64().map_or_else(
+                    || Measurement::Missing(format!("{} carries no stop_ms", path.display())),
+                    Measurement::Value,
+                ),
+            );
+            document
+        }
+        Err(error) => {
+            let reason = format!(
+                "the worker stop test wrote no result, so it failed or did not run: {error}"
+            );
+            record_all(values, &[name], &reason);
+            json!({"failed": reason})
+        }
+    }
+}
+
 pub(super) fn status_line(inputs: &Path, values: &mut Values) -> Value {
     let names = [
         "ai_hook.status_line.host_down_p95_ms",
@@ -1108,11 +1132,12 @@ mod tests {
         let mut values = Values::new();
         hook_burst(empty.path(), &mut values);
         host_status(empty.path(), &mut values);
+        worker_stop(empty.path(), &mut values);
         status_line(empty.path(), &mut values);
         startup(empty.path(), &mut values);
         trickle(empty.path(), &mut values);
         editor_layer1(empty.path(), &mut values);
-        assert_eq!(values.len(), 10);
+        assert_eq!(values.len(), 11);
         assert!(
             values
                 .values()

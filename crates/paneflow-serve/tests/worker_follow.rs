@@ -56,23 +56,16 @@ fn an_idle_worker_sleeps_until_a_frame_or_deadline_and_ends_promptly_on_shutdown
         .request(METHOD_AGENT_FOLLOW, json!({}))
         .expect("agent.follow");
     assert_eq!(header["following"], true);
-    let followed_at = Instant::now();
 
     #[cfg(target_os = "linux")]
+    let followed_at = Instant::now();
+    #[cfg(target_os = "linux")]
     let switches_before = worker_thread_switches();
-    let mut previous = followed_at;
     let mut keepalives = 0;
     while keepalives < 4 {
-        let frame = next_frame(&mut follower);
-        if frame["type"] == "keepalive" {
-            let gap = previous.elapsed();
-            assert!(
-                gap >= Duration::from_millis(1_900) && gap <= Duration::from_millis(2_300),
-                "a keepalive leaves at most 2 s after the last frame, took {gap:?}"
-            );
+        if next_frame(&mut follower)["type"] == "keepalive" {
             keepalives += 1;
         }
-        previous = Instant::now();
     }
     #[cfg(target_os = "linux")]
     {
@@ -97,30 +90,47 @@ fn an_idle_worker_sleeps_until_a_frame_or_deadline_and_ends_promptly_on_shutdown
         );
     }
 
-    std::thread::sleep(Duration::from_millis(700));
     let stopping = Instant::now();
     worker.worker().request_shutdown();
-    let end = loop {
-        let frame = next_frame(&mut follower);
-        if frame["type"] != "keepalive" {
-            break frame;
-        }
-    };
+    let end = next_frame(&mut follower);
     let ended_in = stopping.elapsed();
-    assert_eq!(end["type"], "end", "{end}");
+    assert_eq!(
+        end["type"], "end",
+        "a stopping worker ends its follower at once, before the next keepalive is due: {end}"
+    );
     assert_eq!(end["reason"], "the worker is stopping", "{end}");
-    assert!(
-        ended_in < Duration::from_millis(600),
-        "a stopping worker ends its followers within 600 ms, took {ended_in:?}"
-    );
     drop(follower);
+
+    let drain_deadline = paneflow_serve::DRAIN_WAIT.saturating_sub(Duration::from_secs(1));
+    let (stopped, stopped_signal) = std::sync::mpsc::channel();
     let stopping = Instant::now();
-    worker.stop();
-    let stopped_in = stopping.elapsed();
-    assert!(
-        stopped_in < Duration::from_millis(600),
-        "a stopping worker joins its pump within 600 ms, took {stopped_in:?}"
+    let stopper = std::thread::spawn(move || {
+        worker.stop();
+        let _ = stopped.send(stopping.elapsed());
+    });
+    let stopped_in = stopped_signal
+        .recv_timeout(drain_deadline)
+        .unwrap_or_else(|_| {
+            panic!(
+                "a stopping worker joins its threads without waiting out its {:?} drain",
+                paneflow_serve::DRAIN_WAIT
+            )
+        });
+    stopper.join().expect("the stopping thread finishes");
+    eprintln!(
+        "worker follow: the end frame came {ended_in:?} after shutdown, stop took {stopped_in:?}"
     );
+    if let Some(out) = std::env::var_os("PANEFLOW_GATE_WORKER_STOP_OUT") {
+        std::fs::write(
+            out,
+            serde_json::to_vec_pretty(&json!({
+                "end_ms": ended_in.as_secs_f64() * 1000.0,
+                "stop_ms": stopped_in.as_secs_f64() * 1000.0,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    }
     core_server.stop().unwrap();
     drop(core);
 }

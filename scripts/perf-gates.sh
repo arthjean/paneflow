@@ -90,6 +90,11 @@ run_step host-status env PANEFLOW_GATE_HOST_STATUS_OUT="$out/host-status.json" \
   host::tests::host_status_bounds_the_memory_reads_of_sixty_four_silent_sessions \
   -- --exact --nocapture
 
+run_step worker-stop env PANEFLOW_GATE_WORKER_STOP_OUT="$out/worker-stop.json" \
+  cargo test --profile gates --locked -p paneflow-serve --test worker_follow \
+  an_idle_worker_sleeps_until_a_frame_or_deadline_and_ends_promptly_on_shutdown \
+  -- --exact --nocapture
+
 run_step status-line env PANEFLOW_GATE_STATUS_LINE_OUT="$out/status-line.json" \
   cargo test --profile gates --locked -p paneflow-ai-hook --test integration \
   the_status_line_relay_exits_zero_when_the_host_is_down_or_silent \

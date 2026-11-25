@@ -32,6 +32,12 @@ pub(super) const HOST_STATUS_FANOUT: Scenario = Scenario {
     reproduce: "cargo test --profile gates --locked -p paneflow-host --lib host::tests::host_status_bounds_the_memory_reads_of_sixty_four_silent_sessions -- --exact --nocapture",
 };
 
+pub(super) const WORKER_STOP: Scenario = Scenario {
+    id: "worker_stop",
+    description: "an idle worker following its core with one agent.follow stream, stopped once its follower has seen four keepalives",
+    reproduce: "cargo test --profile gates --locked -p paneflow-serve --test worker_follow an_idle_worker_sleeps_until_a_frame_or_deadline_and_ends_promptly_on_shutdown -- --exact --nocapture",
+};
+
 pub(super) const STATUS_LINE_RELAY: Scenario = Scenario {
     id: "status_line_relay",
     description: "100 paneflow-ai-hook status line relays against an absent host endpoint, then 100 against a host that accepts and never reads, each timed from spawn to exit",
@@ -192,6 +198,13 @@ pub(super) const BUDGETS: &[Budget] = &[
         unit: "ms",
         scenario: &HOST_STATUS_FANOUT,
         margin: "the 500 ms MEMORY_USAGE_BUDGET plus 100 ms to wake 64 waiters and build the report; the unit test only bounds it by the budget plus 1 s, since 3-vCPU macOS runners measured 603 to 648 ms",
+    },
+    Budget {
+        counter: "worker.stop_ms",
+        limit: Limit::Below(600.0),
+        unit: "ms",
+        scenario: &WORKER_STOP,
+        margin: "the 600 ms bound the unit test held on every CI leg from US-022 (3968d6a8) until it became an outcome test; the config watcher and the accept thread each join on a 10 ms poll, so 21 to 34 ms in a debug build on an Apple Silicon Mac, idle, with 8 busy cores, or inside a loaded nextest run; 0.68 to 2.35 s in that run while stop still waited for the macOS FSEvents teardown of the config watcher, which is why the unit test only proves stop returns a second before the 5 s DRAIN_WAIT",
     },
     Budget {
         counter: "ai_hook.status_line.host_down_p95_ms",
@@ -771,7 +784,7 @@ mod tests {
         let verdicts = verify(BUDGETS, &measurements);
         let report = failure_report(&verdicts).expect("an overrun fails the verifier");
         assert!(
-            report.starts_with("2 of 29 performance budgets failed\ncounter | measured | budget | excess | scenario\n"),
+            report.starts_with("2 of 30 performance budgets failed\ncounter | measured | budget | excess | scenario\n"),
             "{report}"
         );
         assert!(
@@ -792,7 +805,7 @@ mod tests {
         );
         let summary = markdown(&verdicts);
         assert!(
-            summary.contains("29 budgets, 2 failed, 0 not measured."),
+            summary.contains("30 budgets, 2 failed, 0 not measured."),
             "{summary}"
         );
         assert!(
