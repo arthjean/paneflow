@@ -90,6 +90,47 @@ pub struct ApplyOutcome {
     pub launch_error: Option<ServeError>,
 }
 
+#[derive(Clone, Copy)]
+struct Attempt<'a> {
+    connection: ConnectionId,
+    kind: &'a str,
+    op: &'a Op,
+    ids_from: Option<u64>,
+    now_ms: u64,
+    launches_here: bool,
+}
+
+struct AheadSession {
+    surface: SurfaceId,
+    session: SessionId,
+    binds: bool,
+}
+
+#[derive(Default)]
+struct StartedAhead {
+    started: Vec<AheadSession>,
+    failed: Vec<SurfaceId>,
+    error: Option<ServeError>,
+}
+
+impl StartedAhead {
+    fn take(&mut self, surface: SurfaceId) -> Option<AheadSession> {
+        let index = self
+            .started
+            .iter()
+            .position(|started| started.surface == surface)?;
+        Some(self.started.swap_remove(index))
+    }
+}
+
+struct Committed {
+    events: Vec<PublishedEvent>,
+    revision: u64,
+    late: Vec<SurfaceId>,
+    state: Option<paneflow_layout::State>,
+    launch_error: Option<ServeError>,
+}
+
 fn refused(reason: &str, message: impl Into<String>) -> ServeError {
     ServeError {
         code: ERR_LAYOUT_REFUSED,
@@ -573,61 +614,23 @@ impl LayoutAuthority {
         }
         let launches_here = connection == ConnectionId::INTERNAL || !self.is_attached(connection);
         let mut link: Option<Box<dyn SessionLink>> = None;
-        let (applied, spawns, state) = loop {
+        let mut ahead: Option<StartedAhead> = None;
+        let committed: Result<Committed, ServeError> = loop {
             let mut core = self.lock();
-            self.reload_if_rewritten_unattached(&mut core);
-            let key = Self::client_key(&mut core, connection);
-            let blocks = core.leases.get(&key).cloned().unwrap_or_default();
-            let mut trial = core.model.clone();
-            for id in op.new_ids() {
-                let leased = blocks.iter().any(|block| block.contains(id));
-                if connection != ConnectionId::INTERNAL && !leased {
-                    return Err(op_refused(
-                        &kind,
-                        OpError::Invalid,
-                        Some(format!("id {id} is outside the ids leased to {key}")),
-                    ));
-                }
-                if connection != ConnectionId::INTERNAL && !trial.reserve_exact(id) {
-                    return Err(op_refused(
-                        &kind,
-                        OpError::Invalid,
-                        Some(format!("id {id} is already in use")),
-                    ));
-                }
-            }
-            let ids = match ids_from {
-                Some(at) if connection != ConnectionId::INTERNAL => {
-                    let mirror = IdSource::leased(&blocks, at);
-                    if mirror.is_overdrawn() {
-                        return Err(op_refused(
-                            &kind,
-                            OpError::Invalid,
-                            Some(format!("ids_from {at} is past the ids leased to {key}")),
-                        ));
-                    }
-                    mirror
-                }
-                _ => trial.ids(),
-            };
-            let applied = trial
-                .apply_with_ids(op.clone(), now_ms, &ids)
-                .map_err(|error| {
-                    op_refused(&kind, error, refusal_cause(core.model.state(), &op, error))
-                })?;
-            if ids.is_overdrawn() {
-                return Err(op_refused(
-                    &kind,
-                    OpError::Invalid,
-                    Some(format!(
-                        "the op needs more ids than the lease of {key} holds"
-                    )),
-                ));
-            }
-            let spawns = if launches_here {
-                spawned_surfaces(&applied.effects)
-            } else {
-                Vec::new()
+            let tried = self.try_op(
+                &mut core,
+                Attempt {
+                    connection,
+                    kind: &kind,
+                    op: &op,
+                    ids_from,
+                    now_ms,
+                    launches_here,
+                },
+            );
+            let (trial, applied, spawns) = match tried {
+                Ok(tried) => tried,
+                Err(error) => break Err(error),
             };
             if !spawns.is_empty() {
                 let gated = !may_spawn
@@ -637,15 +640,20 @@ impl LayoutAuthority {
                         })
                     });
                 if gated {
-                    return Err(orchestration_refused("layout.apply"));
+                    break Err(orchestration_refused("layout.apply"));
                 }
-                if link.is_none() {
+                let Some(open) = link.as_mut() else {
                     drop(core);
-                    link = Some(
-                        self.starter
-                            .connect()
-                            .map_err(|error| launch_refused(&error))?,
-                    );
+                    match self.starter.connect() {
+                        Ok(connected) => link = Some(connected),
+                        Err(error) => break Err(launch_refused(&error)),
+                    }
+                    continue;
+                };
+                if ahead.is_none() {
+                    let state = trial.state().clone();
+                    drop(core);
+                    ahead = Some(self.start_ahead(open.as_mut(), &state, &spawns));
                     continue;
                 }
             }
@@ -653,16 +661,82 @@ impl LayoutAuthority {
             for effect in &applied.effects {
                 Self::queue_effect(&mut core, effect);
             }
+            let mut events = published_events(&applied.events, &applied.scopes, applied.revision);
+            let mut revision = applied.revision;
+            let mut late = Vec::new();
+            let mut launch_error = None;
+            if let Some(ahead) = ahead.as_mut() {
+                launch_error = ahead.error.take();
+                for surface in &spawns {
+                    match ahead.take(*surface) {
+                        Some(started) => {
+                            core.launching.remove(&started.session);
+                            if !started.binds {
+                                continue;
+                            }
+                            let bind = Op::BindSession {
+                                surface: *surface,
+                                session: started.session.clone(),
+                            };
+                            match core.model.apply(bind.clone(), now_ms) {
+                                Ok(bound) => {
+                                    for effect in &bound.effects {
+                                        Self::queue_effect(&mut core, effect);
+                                    }
+                                    revision = bound.revision;
+                                    events.extend(published_events(
+                                        &bound.events,
+                                        &bound.scopes,
+                                        bound.revision,
+                                    ));
+                                }
+                                Err(error) => {
+                                    let cause = refusal_cause(core.model.state(), &bind, error);
+                                    core.host_work.push_back(HostWork::Stop(started.session));
+                                    launch_error = Some(op_refused("bind_session", error, cause));
+                                }
+                            }
+                        }
+                        None if ahead.failed.contains(surface) => {}
+                        None => late.push(*surface),
+                    }
+                }
+                for unused in ahead.started.drain(..) {
+                    core.launching.remove(&unused.session);
+                    if unused.binds {
+                        core.host_work.push_back(HostWork::Stop(unused.session));
+                    }
+                }
+            }
             Self::mark_dirty(&mut core);
-            let state = (!spawns.is_empty()).then(|| core.model.state().clone());
-            break (applied, spawns, state);
+            let state = (!late.is_empty()).then(|| core.model.state().clone());
+            break Ok(Committed {
+                events,
+                revision,
+                late,
+                state,
+                launch_error,
+            });
+        };
+        let committed = match committed {
+            Ok(committed) => committed,
+            Err(error) => {
+                if let Some(ahead) = ahead {
+                    self.abandon(ahead);
+                }
+                return Err(error);
+            }
         };
         self.wake.notify_all();
-        let mut events = published_events(&applied.events, &applied.scopes, applied.revision);
-        let mut revision = applied.revision;
-        let mut launch_error = None;
+        let Committed {
+            mut events,
+            mut revision,
+            late,
+            state,
+            mut launch_error,
+        } = committed;
         if let (Some(state), Some(link)) = (state, link.as_mut()) {
-            for surface in spawns {
+            for surface in late {
                 let Some(inputs) = crate::launcher::inputs_from_model(&state, surface) else {
                     continue;
                 };
@@ -696,15 +770,127 @@ impl LayoutAuthority {
         })
     }
 
-    fn start_session(
+    fn try_op(
+        &self,
+        core: &mut Core,
+        attempt: Attempt<'_>,
+    ) -> Result<(Model, paneflow_layout::Applied, Vec<SurfaceId>), ServeError> {
+        let Attempt {
+            connection,
+            kind,
+            op,
+            ids_from,
+            now_ms,
+            launches_here,
+        } = attempt;
+        self.reload_if_rewritten_unattached(core);
+        let key = Self::client_key(core, connection);
+        let blocks = core.leases.get(&key).cloned().unwrap_or_default();
+        let mut trial = core.model.clone();
+        for id in op.new_ids() {
+            let leased = blocks.iter().any(|block| block.contains(id));
+            if connection != ConnectionId::INTERNAL && !leased {
+                return Err(op_refused(
+                    kind,
+                    OpError::Invalid,
+                    Some(format!("id {id} is outside the ids leased to {key}")),
+                ));
+            }
+            if connection != ConnectionId::INTERNAL && !trial.reserve_exact(id) {
+                return Err(op_refused(
+                    kind,
+                    OpError::Invalid,
+                    Some(format!("id {id} is already in use")),
+                ));
+            }
+        }
+        let ids = match ids_from {
+            Some(at) if connection != ConnectionId::INTERNAL => {
+                let mirror = IdSource::leased(&blocks, at);
+                if mirror.is_overdrawn() {
+                    return Err(op_refused(
+                        kind,
+                        OpError::Invalid,
+                        Some(format!("ids_from {at} is past the ids leased to {key}")),
+                    ));
+                }
+                mirror
+            }
+            _ => trial.ids(),
+        };
+        let applied = trial
+            .apply_with_ids(op.clone(), now_ms, &ids)
+            .map_err(|error| {
+                op_refused(kind, error, refusal_cause(core.model.state(), op, error))
+            })?;
+        if ids.is_overdrawn() {
+            return Err(op_refused(
+                kind,
+                OpError::Invalid,
+                Some(format!(
+                    "the op needs more ids than the lease of {key} holds"
+                )),
+            ));
+        }
+        let spawns = if launches_here {
+            spawned_surfaces(&applied.effects)
+        } else {
+            Vec::new()
+        };
+        Ok((trial, applied, spawns))
+    }
+
+    fn start_ahead(
+        &self,
+        link: &mut dyn SessionLink,
+        state: &paneflow_layout::State,
+        spawns: &[SurfaceId],
+    ) -> StartedAhead {
+        let mut ahead = StartedAhead::default();
+        for surface in spawns {
+            let Some(inputs) = crate::launcher::inputs_from_model(state, *surface) else {
+                continue;
+            };
+            let named = state
+                .surface(*surface)
+                .and_then(|known| known.session().cloned());
+            let binds = named.is_none();
+            let session = named.unwrap_or_default();
+            match self.create_session(link, state, *surface, session.clone(), inputs) {
+                Ok(_) => ahead.started.push(AheadSession {
+                    surface: *surface,
+                    session,
+                    binds,
+                }),
+                Err(error) => {
+                    ahead.failed.push(*surface);
+                    ahead.error = Some(error);
+                }
+            }
+        }
+        ahead
+    }
+
+    fn abandon(&self, ahead: StartedAhead) {
+        let mut core = self.lock();
+        for unused in ahead.started {
+            core.launching.remove(&unused.session);
+            if unused.binds {
+                core.host_work.push_back(HostWork::Stop(unused.session));
+            }
+        }
+        drop(core);
+        self.wake.notify_all();
+    }
+
+    fn create_session(
         &self,
         link: &mut dyn SessionLink,
         state: &paneflow_layout::State,
         surface: SurfaceId,
         session: SessionId,
         inputs: LaunchInputs,
-        bind: bool,
-    ) -> Result<Launched, ServeError> {
+    ) -> Result<Vec<String>, ServeError> {
         let prepared = crate::launcher::prepare(
             &self.home,
             &self.support,
@@ -737,11 +923,24 @@ impl LayoutAuthority {
             self.lock().launching.remove(&session);
             return Err(error);
         }
+        Ok(prepared.notices)
+    }
+
+    fn start_session(
+        &self,
+        link: &mut dyn SessionLink,
+        state: &paneflow_layout::State,
+        surface: SurfaceId,
+        session: SessionId,
+        inputs: LaunchInputs,
+        bind: bool,
+    ) -> Result<Launched, ServeError> {
+        let notices = self.create_session(link, state, surface, session.clone(), inputs)?;
         if !bind {
             return Ok(Launched {
                 revision: self.lock().model.revision(),
                 events: Vec::new(),
-                notices: prepared.notices,
+                notices,
             });
         }
         let bound = self.apply_internal(Op::BindSession {
@@ -753,7 +952,7 @@ impl LayoutAuthority {
         Ok(Launched {
             revision: applied.revision,
             events,
-            notices: prepared.notices,
+            notices,
         })
     }
 

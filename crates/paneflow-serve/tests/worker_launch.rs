@@ -19,6 +19,7 @@ use paneflow_config::schema::{
 use paneflow_host::CreateSession;
 use paneflow_ipc_client::host_control::HostControl;
 use paneflow_serve::launcher::{LaunchError, SessionLink, SessionStarter};
+use paneflow_serve::layout_authority::{ConnectionId, LayoutAuthority};
 use serde_json::{Value, json};
 
 const REPLY_WAIT: Duration = Duration::from_secs(30);
@@ -435,6 +436,104 @@ fn an_attached_window_creates_no_session_and_launches_through_the_worker() {
         .expect_err("a surface bound to another session is not relaunched here");
     assert_eq!(rebound["data"]["reason"], "not_found");
     worker.stop();
+}
+
+type Sighting = Option<Option<SessionId>>;
+
+struct Observing {
+    authority: Arc<std::sync::OnceLock<std::sync::Weak<LayoutAuthority>>>,
+    surface: Arc<std::sync::OnceLock<paneflow_layout::SurfaceId>>,
+    sightings: Arc<Mutex<Vec<(Sighting, SessionId)>>>,
+}
+
+struct ObservingLink {
+    authority: Arc<std::sync::OnceLock<std::sync::Weak<LayoutAuthority>>>,
+    surface: Arc<std::sync::OnceLock<paneflow_layout::SurfaceId>>,
+    sightings: Arc<Mutex<Vec<(Sighting, SessionId)>>>,
+}
+
+impl SessionStarter for Observing {
+    fn connect(&self) -> Result<Box<dyn SessionLink>, LaunchError> {
+        Ok(Box::new(ObservingLink {
+            authority: Arc::clone(&self.authority),
+            surface: Arc::clone(&self.surface),
+            sightings: Arc::clone(&self.sightings),
+        }))
+    }
+}
+
+impl SessionLink for ObservingLink {
+    fn exists(&mut self, _session: &SessionId) -> Result<bool, LaunchError> {
+        Ok(false)
+    }
+
+    fn create(&mut self, request: &CreateSession) -> Result<(), LaunchError> {
+        let authority = self.authority.get().and_then(std::sync::Weak::upgrade);
+        let snapshot = authority.expect("the authority is up").snapshot();
+        let surface = *self.surface.get().expect("the surface is reserved");
+        let sighting = snapshot
+            .state
+            .surface(surface)
+            .map(|known| known.session().cloned());
+        self.sightings
+            .lock()
+            .unwrap()
+            .push((sighting, request.session.clone().expect("a named session")));
+        Ok(())
+    }
+}
+
+#[test]
+fn a_terminal_the_worker_starts_is_never_shown_without_its_session() {
+    let home = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    prepare_home(home.path(), cwd.path());
+    let cell = Arc::new(std::sync::OnceLock::new());
+    let reserved = Arc::new(std::sync::OnceLock::new());
+    let sightings = Arc::new(Mutex::new(Vec::new()));
+    let authority = Arc::new(LayoutAuthority::open_with(
+        home.path(),
+        paneflow_home::host_endpoint_path(home.path()),
+        "epoch".to_string(),
+        paneflow_serve::launcher::LaunchSupport::default(),
+        Arc::new(Observing {
+            authority: Arc::clone(&cell),
+            surface: Arc::clone(&reserved),
+            sightings: Arc::clone(&sightings),
+        }),
+    ));
+    cell.set(Arc::downgrade(&authority)).unwrap();
+    let pane = authority.reserve_id();
+    let surface = paneflow_layout::SurfaceId(authority.reserve_id());
+    reserved.set(surface).unwrap();
+
+    let outcome = authority
+        .apply(
+            ConnectionId::INTERNAL,
+            split_op(pane, surface.get(), terminal_definition()),
+            None,
+            0,
+            true,
+        )
+        .expect("the split applies");
+
+    assert!(outcome.launch_error.is_none());
+    let sightings = sightings.lock().unwrap().clone();
+    assert_eq!(sightings.len(), 1, "one terminal is started");
+    let (sighting, created) = &sightings[0];
+    assert!(
+        sighting
+            .as_ref()
+            .is_none_or(|bound| bound.as_ref() == Some(created)),
+        "while its terminal starts, the layout shows the surface as {sighting:?}: \
+         a window that reads it then starts a second terminal of its own"
+    );
+    let bound = authority
+        .snapshot()
+        .state
+        .surface(surface)
+        .and_then(|known| known.session().cloned());
+    assert_eq!(bound.as_ref(), Some(created));
 }
 
 #[test]
