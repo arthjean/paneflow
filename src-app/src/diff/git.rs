@@ -13,6 +13,18 @@ pub enum FileChange {
     TypeChanged,
 }
 
+impl FileChange {
+    pub fn spoken(self) -> &'static str {
+        match self {
+            FileChange::Added => "added",
+            FileChange::Modified => "modified",
+            FileChange::Deleted => "deleted",
+            FileChange::Renamed => "renamed",
+            FileChange::TypeChanged => "type changed",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct FileDiff {
     pub path: String,

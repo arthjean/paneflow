@@ -47,6 +47,16 @@ use crate::diff::{
     split_right_side_at_x,
 };
 
+type DiffFileToggle = std::rc::Rc<dyn Fn(&gpui::SharedString, &mut Window, &mut gpui::App)>;
+
+fn diff_file_toggle(app: gpui::WeakEntity<PaneFlowApp>) -> DiffFileToggle {
+    std::rc::Rc::new(move |path, _window, cx| {
+        let _ = app.update(cx, |this, cx| {
+            this.toggle_diff_file_collapsed(path.to_string(), cx)
+        });
+    })
+}
+
 impl PaneFlowApp {
     pub(crate) fn open_diff_dock_panel(&mut self, cwd: String, cx: &mut Context<Self>) {
         let cwd = cwd.trim().to_string();
@@ -829,6 +839,7 @@ impl PaneFlowApp {
             }))
             .child(
                 DiffElement::new(body, pal)
+                    .with_file_toggle(diff_file_toggle(cx.entity().downgrade()))
                     .with_highlight(self.diff_dock.diff_options.highlight)
                     .with_revert_chip(chip_row)
                     .with_hovered_header(self.diff_dock.header_hover),

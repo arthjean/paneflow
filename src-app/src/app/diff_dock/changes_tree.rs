@@ -129,16 +129,6 @@ fn change_mark(change: FileChange, ui: crate::theme::UiColors) -> (&'static str,
     }
 }
 
-fn change_name(change: FileChange) -> &'static str {
-    match change {
-        FileChange::Added => "added",
-        FileChange::Modified => "modified",
-        FileChange::Deleted => "deleted",
-        FileChange::Renamed => "renamed",
-        FileChange::TypeChanged => "type changed",
-    }
-}
-
 impl PaneFlowApp {
     pub(crate) fn set_diff_changes_tree_open(&mut self, open: bool, cx: &mut Context<Self>) {
         if self.diff_dock.changes_tree_open != open {
@@ -313,7 +303,7 @@ impl PaneFlowApp {
                     TreeRowKind::File { change } => {
                         let (mark, mark_color) = change_mark(change, ui);
                         base.role(gpui::accesskit::Role::Button)
-                            .aria_label(format!("{}, {}", row.label, change_name(change)))
+                            .aria_label(format!("{}, {}", row.label, change.spoken()))
                             .on_activate(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                                 this.reveal_diff_file(path.clone(), cx);
                             }))

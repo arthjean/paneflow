@@ -5,7 +5,7 @@ use gpui::{
     App, BorderStyle, Bounds, ContentMask, Corners, Element, ElementId, Font, FontFeatures,
     FontStyle, FontWeight, GlobalElementId, Hsla, InspectorElementId, LayoutId, Length, Path,
     PathBuilder, Pixels, Point, ShapedLine, SharedString, Style, TextRun, TransformationMatrix,
-    Window, fill, point, px, quad, relative, size,
+    Window, accesskit, fill, point, px, quad, relative, size,
 };
 
 use super::align::CellKind;
@@ -285,6 +285,85 @@ pub struct DiffPrepaint {
     sticky_quads: Vec<Quad>,
     sticky_images: Vec<MaskIcon>,
     sticky_glyphs: Vec<Glyphs>,
+    headers: Vec<FileHeaderTarget>,
+    scale: f32,
+    header_nodes: Vec<(accesskit::NodeId, SharedString)>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FileHeaderTarget {
+    pub path: SharedString,
+    pub change: FileChange,
+    pub collapsed: bool,
+    pub bounds: Bounds<Pixels>,
+}
+
+pub type FileToggle = Rc<dyn Fn(&SharedString, &mut Window, &mut App)>;
+
+pub const DIFF_FILES_LABEL: &str = "Changed files";
+
+pub fn file_header_node(header: &FileHeaderTarget, scale: f32) -> accesskit::Node {
+    let mut node = accesskit::Node::new(accesskit::Role::Button);
+    node.set_label(format!("{}, {}", header.path, header.change.spoken()));
+    node.set_expanded(!header.collapsed);
+    node.add_action(accesskit::Action::Click);
+    let bounds = header.bounds;
+    node.set_bounds(accesskit::Rect {
+        x0: f64::from(f32::from(bounds.origin.x) * scale),
+        y0: f64::from(f32::from(bounds.origin.y) * scale),
+        x1: f64::from(f32::from(bounds.origin.x + bounds.size.width) * scale),
+        y1: f64::from(f32::from(bounds.origin.y + bounds.size.height) * scale),
+    });
+    node
+}
+
+pub fn visible_file_headers(
+    body: &DiffBody,
+    first: usize,
+    last: usize,
+    sticky: Option<(usize, Pixels)>,
+    origin: Point<Pixels>,
+    width: Pixels,
+) -> Vec<FileHeaderTarget> {
+    let offsets = body.offsets_rc();
+    let header_at = |row: usize| -> Option<(SharedString, FileChange, bool)> {
+        match body {
+            DiffBody::Unified { rows, .. } => {
+                let parts = rows.get(row)?.header.as_ref()?;
+                let collapsed = rows
+                    .get(row + 1)
+                    .is_none_or(|next| next.kind == RowKind::FileHeader);
+                Some((parts.path.clone(), parts.change, collapsed))
+            }
+            DiffBody::Split { rows, .. } => {
+                let SplitRow::Header(parts) = rows.get(row)? else {
+                    return None;
+                };
+                let collapsed = rows
+                    .get(row + 1)
+                    .is_none_or(|next| matches!(next, SplitRow::Header(_)));
+                Some((parts.path.clone(), parts.change, collapsed))
+            }
+        }
+    };
+    let target = |row: usize, top: Pixels| {
+        header_at(row).map(|(path, change, collapsed)| FileHeaderTarget {
+            path,
+            change,
+            collapsed,
+            bounds: Bounds::new(point(origin.x, top), size(width, px(FILE_HEADER_HEIGHT))),
+        })
+    };
+    let sticky = sticky
+        .filter(|(row, _)| !(first..last).contains(row))
+        .and_then(|(row, top)| target(row, top));
+    sticky
+        .into_iter()
+        .chain((first..last).filter_map(|row| {
+            let top = origin.y + px(*offsets.get(row)?);
+            target(row, top)
+        }))
+        .collect()
 }
 
 pub struct DiffElement {
@@ -299,6 +378,7 @@ pub struct DiffElement {
     revert_chip: Option<usize>,
     hovered_header: Option<usize>,
     highlight: HighlightPolicy,
+    file_toggle: Option<FileToggle>,
 }
 
 impl DiffElement {
@@ -333,7 +413,13 @@ impl DiffElement {
             revert_chip: None,
             hovered_header: None,
             highlight: HighlightPolicy::Words,
+            file_toggle: None,
         }
+    }
+
+    pub fn with_file_toggle(mut self, toggle: FileToggle) -> Self {
+        self.file_toggle = Some(toggle);
+        self
     }
 
     pub fn with_highlight(mut self, highlight: HighlightPolicy) -> Self {
@@ -1198,11 +1284,37 @@ impl Element for DiffElement {
     type PrepaintState = Option<DiffPrepaint>;
 
     fn id(&self) -> Option<ElementId> {
-        None
+        self.file_toggle
+            .as_ref()
+            .map(|_| ElementId::Name("diff-files".into()))
     }
 
     fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
         None
+    }
+
+    fn a11y_role(&self) -> Option<accesskit::Role> {
+        self.file_toggle.as_ref().map(|_| accesskit::Role::Group)
+    }
+
+    fn write_a11y_info(&self, node: &mut accesskit::Node) {
+        node.set_label(DIFF_FILES_LABEL);
+    }
+
+    fn a11y_synthetic_children(
+        &mut self,
+        prepaint: &mut Self::PrepaintState,
+        builder: &mut gpui::A11ySubtreeBuilder,
+    ) {
+        let Some(layout) = prepaint.as_mut() else {
+            return;
+        };
+        for header in &layout.headers {
+            let id = builder.synthetic_node_id(header.path.as_ref());
+            if builder.push_child(id, file_header_node(header, layout.scale)) {
+                layout.header_nodes.push((id, header.path.clone()));
+            }
+        }
     }
 
     fn request_layout(
@@ -1453,6 +1565,19 @@ impl Element for DiffElement {
             spans.len()
         );
 
+        let headers = if self.file_toggle.is_some() {
+            visible_file_headers(
+                &self.body,
+                first,
+                last,
+                sticky,
+                point(bounds.origin.x, bounds.origin.y),
+                width,
+            )
+        } else {
+            Vec::new()
+        };
+
         Some(DiffPrepaint {
             quads,
             rounded_quads,
@@ -1465,6 +1590,9 @@ impl Element for DiffElement {
             sticky_quads,
             sticky_images,
             sticky_glyphs,
+            headers,
+            scale: window.scale_factor(),
+            header_nodes: Vec::new(),
         })
     }
 
@@ -1481,6 +1609,15 @@ impl Element for DiffElement {
         let Some(layout) = prepaint.take() else {
             return;
         };
+        if let Some(toggle) = self.file_toggle.as_ref() {
+            for (id, path) in &layout.header_nodes {
+                let toggle = toggle.clone();
+                let path = path.clone();
+                window.on_a11y_action(*id, accesskit::Action::Click, move |_, window, cx| {
+                    toggle(&path, window, cx)
+                });
+            }
+        }
         let lh = self.line_height;
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             for q in &layout.quads {
@@ -1776,5 +1913,104 @@ mod tests {
                 "the tab spans three columns after x"
             );
         });
+    }
+
+    fn display_row(kind: RowKind, header: Option<(&str, FileChange)>) -> DisplayRow {
+        DisplayRow {
+            kind,
+            text: "".into(),
+            old_no: None,
+            new_no: None,
+            syntax_runs: Vec::new(),
+            change_runs: Vec::new(),
+            tone: ChangeTone::Full,
+            header: header.map(|(path, change)| HeaderParts {
+                path: path.to_string().into(),
+                old_path: None,
+                change,
+                added: 1,
+                removed: 0,
+            }),
+            fold_key: None,
+            fold_base_start: None,
+            fold_new_start: None,
+            fold_count: 0,
+            folded_rows: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn each_visible_file_header_is_a_named_button_that_reports_whether_its_file_is_open() {
+        let rows = vec![
+            display_row(
+                RowKind::FileHeader,
+                Some(("README.md", FileChange::Modified)),
+            ),
+            display_row(RowKind::Added, None),
+            display_row(RowKind::FileHeader, Some(("src/lib.rs", FileChange::Added))),
+        ];
+        let offsets = vec![
+            0.0,
+            FILE_HEADER_HEIGHT,
+            FILE_HEADER_HEIGHT + ROW_HEIGHT,
+            2.0 * FILE_HEADER_HEIGHT + ROW_HEIGHT,
+        ];
+        let body = DiffBody::Unified {
+            rows: Rc::new(rows),
+            offsets: Rc::new(offsets),
+            max_line_no: 1,
+            spans: Rc::new(Vec::new()),
+            h_offsets: Rc::new(Vec::new()),
+        };
+        let origin = point(px(10.), px(100.));
+        let headers = visible_file_headers(&body, 0, 3, None, origin, px(400.));
+        let seen: Vec<_> = headers
+            .iter()
+            .map(|header| {
+                (
+                    header.path.to_string(),
+                    header.collapsed,
+                    header.bounds.origin.y,
+                )
+            })
+            .collect();
+        assert_eq!(
+            seen,
+            [
+                ("README.md".to_string(), false, px(100.)),
+                (
+                    "src/lib.rs".to_string(),
+                    true,
+                    px(100. + FILE_HEADER_HEIGHT + ROW_HEIGHT)
+                ),
+            ]
+        );
+        let readme = file_header_node(&headers[0], 2.0);
+        assert_eq!(readme.role(), accesskit::Role::Button);
+        assert_eq!(readme.label(), Some("README.md, modified"));
+        assert_eq!(readme.is_expanded(), Some(true));
+        assert!(readme.supports_action(accesskit::Action::Click));
+        assert_eq!(
+            readme.bounds().map(|rect| (rect.x0, rect.y0)),
+            Some((20.0, 200.0))
+        );
+        let lib = file_header_node(&headers[1], 1.0);
+        assert_eq!(lib.label(), Some("src/lib.rs, added"));
+        assert_eq!(lib.is_expanded(), Some(false));
+        let scrolled = visible_file_headers(&body, 1, 2, Some((0, px(100.))), origin, px(400.));
+        assert_eq!(
+            scrolled
+                .iter()
+                .map(|header| header.path.to_string())
+                .collect::<Vec<_>>(),
+            ["README.md"],
+            "the sticky header of a file scrolled past stays pressable"
+        );
+        let palette = super::super::rows::palette(crate::theme::ui_colors());
+        let plain = DiffElement::new(body, palette);
+        assert_eq!(plain.a11y_role(), None);
+        let toggled = plain.with_file_toggle(Rc::new(|_, _, _| {}));
+        assert_eq!(toggled.a11y_role(), Some(accesskit::Role::Group));
+        assert!(toggled.id().is_some());
     }
 }
