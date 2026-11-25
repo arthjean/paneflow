@@ -5,6 +5,8 @@ use gpui::{
 };
 use paneflow_config::schema::ButtonCommand;
 
+use gpui::accesskit::{Role, Toggled};
+
 use crate::PaneFlowApp;
 use crate::ui_primitives::{AccessibleControlExt, AnimatedHoverExt, lerp_color};
 use crate::widgets::scrollbar;
@@ -65,6 +67,77 @@ pub(crate) enum ModalView {
         name_input: Entity<TextInput>,
         command_input: Entity<TextInput>,
     },
+}
+
+fn modal_title(view: &ModalView) -> &'static str {
+    match view {
+        ModalView::List => "Custom buttons",
+        ModalView::Form {
+            editing_id: Some(_),
+            ..
+        } => "Edit button",
+        ModalView::Form {
+            editing_id: None, ..
+        } => "New button",
+    }
+}
+
+fn exposed_dialog(
+    card: gpui::Stateful<gpui::Div>,
+    title: &'static str,
+    workspace_title: &str,
+) -> gpui::Stateful<gpui::Div> {
+    card.role(Role::Dialog)
+        .aria_label(title)
+        .aria_description(SharedString::from(format!(
+            "Buttons of the workspace {workspace_title}"
+        )))
+}
+
+fn icon_label(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or(path)
+        .replace('-', " ")
+}
+
+fn icon_tile(path: &'static str, selected: bool) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(SharedString::from(format!(
+            "cbtn-icon-{}",
+            path.replace(['/', '.'], "-")
+        )))
+        .tab_index(0)
+        .accessible_control(Role::RadioButton, icon_label(path))
+        .aria_toggled(if selected {
+            Toggled::True
+        } else {
+            Toggled::False
+        })
+}
+
+fn icon_group() -> gpui::Stateful<gpui::Div> {
+    div()
+        .id("cbtn-icon-group")
+        .role(Role::RadioGroup)
+        .aria_label("Icon")
+}
+
+fn form_button(id: &'static str, label: &'static str) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .tab_index(0)
+        .accessible_control(Role::Button, label)
+}
+
+fn save_button_shell(label: &'static str, valid: bool) -> gpui::Stateful<gpui::Div> {
+    let button = form_button("cbtn-form-save", label);
+    if valid {
+        button
+    } else {
+        button.aria_description("Needs a name and a command")
+    }
 }
 
 fn new_button_id() -> String {
@@ -142,8 +215,11 @@ impl PaneFlowApp {
         else {
             return;
         };
-        let name_input = cx.new(|cx| TextInput::new(btn.name.clone(), "Name", cx));
-        let command_input = cx.new(|cx| TextInput::new(btn.command.clone(), "Command", cx));
+        let name_input =
+            cx.new(|cx| TextInput::new(btn.name.clone(), "Name", cx).with_accessible_name("Name"));
+        let command_input = cx.new(|cx| {
+            TextInput::new(btn.command.clone(), "Command", cx).with_accessible_name("Command")
+        });
         let name_focus = name_input.read(cx).focus_handle.clone();
         if let Some(modal) = self.custom_buttons_modal.as_mut() {
             modal.view = ModalView::Form {
@@ -287,15 +363,10 @@ impl PaneFlowApp {
         let ws = &self.workspaces[ws_idx];
         let ui = crate::theme::ui_colors();
 
-        let (header_title, header_context) = match &modal.view {
-            ModalView::List => ("Custom buttons", Some(ws.title.clone())),
-            ModalView::Form { editing_id, .. } => {
-                if editing_id.is_some() {
-                    ("Edit button", None)
-                } else {
-                    ("New button", None)
-                }
-            }
+        let header_title = modal_title(&modal.view);
+        let header_context = match &modal.view {
+            ModalView::List => Some(ws.title.clone()),
+            ModalView::Form { .. } => None,
         };
         let header = div()
             .flex()
@@ -331,8 +402,7 @@ impl PaneFlowApp {
                     }),
             )
             .child(
-                div()
-                    .id("cbtn-header-close")
+                form_button("cbtn-header-close", "Close")
                     .flex()
                     .items_center()
                     .justify_center()
@@ -390,8 +460,7 @@ impl PaneFlowApp {
                 this.close_custom_buttons_modal(cx);
             }))
             .child(
-                div()
-                    .id("custom-buttons-modal")
+                exposed_dialog(div().id("custom-buttons-modal"), header_title, &ws.title)
                     .occlude()
                     .track_focus(&self.custom_buttons_modal_focus)
                     .on_key_down(cx.listener(Self::handle_custom_buttons_modal_key_down))
@@ -741,15 +810,16 @@ impl PaneFlowApp {
         let name_field = Self::render_input_field("Name", name_input.clone(), ui);
         let command_field = Self::render_input_field("Command", command_input.clone(), ui);
 
-        let mut icon_grid = div().flex().flex_row().flex_wrap().gap(px(6.)).mt(px(4.));
+        let mut icon_grid = icon_group()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .gap(px(6.))
+            .mt(px(4.));
         for &path in AVAILABLE_ICONS {
             let is_selected = path == icon;
             let path_owned = path.to_string();
-            let tile = div()
-                .id(SharedString::from(format!(
-                    "cbtn-icon-{}",
-                    path.replace(['/', '.'], "-")
-                )))
+            let tile = icon_tile(path, is_selected)
                 .flex()
                 .items_center()
                 .justify_center()
@@ -796,8 +866,7 @@ impl PaneFlowApp {
             "Create"
         };
 
-        let save_button = div()
-            .id("cbtn-form-save")
+        let save_button = save_button_shell(save_label, is_valid)
             .px(px(14.))
             .py(px(6.))
             .rounded(px(6.))
@@ -844,8 +913,7 @@ impl PaneFlowApp {
                     .flex_row()
                     .gap(px(8.))
                     .child(
-                        div()
-                            .id("cbtn-form-cancel")
+                        form_button("cbtn-form-cancel", "Cancel")
                             .px(px(12.))
                             .py(px(6.))
                             .rounded(px(6.))
@@ -966,5 +1034,75 @@ impl PaneFlowApp {
                 .font_family("monospace")
                 .child(input),
             )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::accesskit::{Action, Node};
+
+    fn exposed<E: gpui::Element>(element: &E) -> (Role, Node) {
+        let role = element
+            .a11y_role()
+            .expect("the element exposes an accessibility role");
+        let mut node = Node::new(role);
+        element.write_a11y_info(&mut node);
+        (role, node)
+    }
+
+    #[test]
+    fn the_custom_buttons_dialog_is_a_dialog_named_by_its_view_and_workspace() {
+        assert_eq!(modal_title(&ModalView::List), "Custom buttons");
+        for title in ["Custom buttons", "New button", "Edit button"] {
+            let (role, node) = exposed(&exposed_dialog(
+                div().id("custom-buttons-modal"),
+                title,
+                "obs",
+            ));
+            assert_eq!(role, Role::Dialog, "{title}");
+            assert_eq!(node.label(), Some(title));
+            assert_eq!(node.description(), Some("Buttons of the workspace obs"));
+        }
+    }
+
+    #[test]
+    fn the_icon_choice_is_a_radio_group_that_checks_the_chosen_icon() {
+        let (role, node) = exposed(&icon_group());
+        assert_eq!((role, node.label()), (Role::RadioGroup, Some("Icon")));
+        for selected in [false, true] {
+            let (role, node) =
+                exposed(&icon_tile("icons/player-play.svg", selected).on_activate(|_, _, _| {}));
+            assert_eq!(role, Role::RadioButton);
+            assert_eq!(node.label(), Some("player play"));
+            assert_eq!(
+                node.toggled(),
+                Some(if selected {
+                    Toggled::True
+                } else {
+                    Toggled::False
+                })
+            );
+            assert!(node.supports_action(Action::Click));
+        }
+    }
+
+    #[test]
+    fn the_dialog_buttons_are_named_and_answer_a_press() {
+        for (id, label) in [
+            ("cbtn-header-close", "Close"),
+            ("cbtn-form-cancel", "Cancel"),
+        ] {
+            let (role, node) = exposed(&form_button(id, label).on_activate(|_, _, _| {}));
+            assert_eq!((role, node.label()), (Role::Button, Some(label)));
+            assert!(node.supports_action(Action::Click), "{label}");
+        }
+        let (role, node) = exposed(&save_button_shell("Create", true).on_activate(|_, _, _| {}));
+        assert_eq!((role, node.label()), (Role::Button, Some("Create")));
+        assert_eq!(node.description(), None);
+        assert!(node.supports_action(Action::Click));
+        let (_, node) = exposed(&save_button_shell("Save changes", false));
+        assert_eq!(node.label(), Some("Save changes"));
+        assert_eq!(node.description(), Some("Needs a name and a command"));
     }
 }

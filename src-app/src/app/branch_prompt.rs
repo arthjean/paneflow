@@ -3,6 +3,8 @@ use gpui::{
     MouseButton, ParentElement, SharedString, Styled, Window, deferred, div, prelude::*, px,
 };
 
+use gpui::accesskit::Role;
+
 use crate::PaneFlowApp;
 use crate::ui_primitives::AccessibleControlExt as _;
 use crate::widgets::text_input::TextInput;
@@ -13,6 +15,42 @@ pub(crate) struct BranchPromptState {
     pub(crate) input: Entity<TextInput>,
     pub(crate) running: bool,
     pub(crate) error: Option<String>,
+}
+
+const BRANCH_PROMPT_TITLE: &str = "Create branch here";
+
+fn branch_prompt_explanation(checkout: &str) -> String {
+    format!("Names the detached checkout {checkout}. Uncommitted changes stay.")
+}
+
+fn branch_prompt_card(checkout: &str) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id("branch-prompt")
+        .role(Role::Dialog)
+        .aria_label(BRANCH_PROMPT_TITLE)
+        .aria_description(SharedString::from(branch_prompt_explanation(checkout)))
+}
+
+fn branch_prompt_refusal(message: String, ui: crate::theme::UiColors) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id("branch-prompt-refusal")
+        .role(Role::Status)
+        .aria_label(SharedString::from(message.clone()))
+        .text_size(px(11.))
+        .text_color(ui.vc_deleted)
+        .child(message)
+}
+
+fn branch_prompt_confirm_button(running: bool) -> gpui::Stateful<gpui::Div> {
+    let label = if running {
+        "Creating…"
+    } else {
+        "Create branch"
+    };
+    div()
+        .id("branch-prompt-confirm")
+        .accessible_control(Role::Button, label)
+        .child(label)
 }
 
 impl PaneFlowApp {
@@ -135,9 +173,7 @@ impl PaneFlowApp {
                 div()
                     .text_size(px(11.))
                     .text_color(ui.muted)
-                    .child(SharedString::from(format!(
-                        "Names the detached checkout {checkout}. Uncommitted changes stay."
-                    ))),
+                    .child(SharedString::from(branch_prompt_explanation(&checkout))),
             )
             .child(
                 crate::settings::components::input_frame(
@@ -149,19 +185,9 @@ impl PaneFlowApp {
                 .child(prompt.input.clone()),
             );
         if let Some(err) = &prompt.error {
-            body = body.child(
-                div()
-                    .text_size(px(11.))
-                    .text_color(ui.vc_deleted)
-                    .child(err.clone()),
-            );
+            body = body.child(branch_prompt_refusal(err.clone(), ui));
         }
 
-        let confirm_label: SharedString = if running {
-            "Creating…".into()
-        } else {
-            "Create branch".into()
-        };
         let footer = div()
             .flex()
             .flex_row()
@@ -178,8 +204,7 @@ impl PaneFlowApp {
                     .child("Enter creates · Esc cancels"),
             )
             .child(
-                div()
-                    .id("branch-prompt-confirm")
+                branch_prompt_confirm_button(running)
                     .px(px(12.))
                     .py(px(5.))
                     .rounded(px(5.))
@@ -195,12 +220,10 @@ impl PaneFlowApp {
                     .on_activate(cx.listener(|this, _: &ClickEvent, _w, cx| {
                         this.branch_prompt_confirm(cx);
                         cx.stop_propagation();
-                    }))
-                    .child(confirm_label),
+                    })),
             );
 
-        let card = div()
-            .id("branch-prompt")
+        let card = branch_prompt_card(&checkout)
             .occlude()
             .track_focus(&self.branch_prompt_focus)
             .on_key_down(cx.listener(Self::handle_branch_prompt_key_down))
@@ -225,7 +248,7 @@ impl PaneFlowApp {
                     .text_size(px(13.))
                     .font_weight(gpui::FontWeight::SEMIBOLD)
                     .text_color(ui.text)
-                    .child("Create branch here"),
+                    .child(BRANCH_PROMPT_TITLE),
             )
             .child(body)
             .child(footer);
@@ -246,5 +269,51 @@ impl PaneFlowApp {
         )
         .with_priority(8)
         .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::accesskit::{Action, Node};
+
+    fn exposed<E: gpui::Element>(element: &E) -> (Role, Node) {
+        let role = element
+            .a11y_role()
+            .expect("the element exposes an accessibility role");
+        let mut node = Node::new(role);
+        element.write_a11y_info(&mut node);
+        (role, node)
+    }
+
+    #[test]
+    fn the_create_branch_prompt_is_a_dialog_that_reads_what_it_does() {
+        let (role, node) = exposed(&branch_prompt_card("repo"));
+        assert_eq!(
+            (role, node.label()),
+            (Role::Dialog, Some("Create branch here"))
+        );
+        assert_eq!(
+            node.description(),
+            Some("Names the detached checkout repo. Uncommitted changes stay.")
+        );
+    }
+
+    #[test]
+    fn a_refused_branch_is_a_status_that_reads_its_reason() {
+        let ui = crate::theme::ui_colors();
+        let reason = "An agent is working in this checkout; create a worktree instead";
+        let (role, node) = exposed(&branch_prompt_refusal(reason.to_string(), ui));
+        assert_eq!((role, node.label()), (Role::Status, Some(reason)));
+    }
+
+    #[test]
+    fn the_confirm_button_names_its_state_and_answers_a_press() {
+        for (running, label) in [(false, "Create branch"), (true, "Creating…")] {
+            let (role, node) =
+                exposed(&branch_prompt_confirm_button(running).on_activate(|_, _, _| {}));
+            assert_eq!((role, node.label()), (Role::Button, Some(label)));
+            assert!(node.supports_action(Action::Click), "{label}");
+        }
     }
 }
