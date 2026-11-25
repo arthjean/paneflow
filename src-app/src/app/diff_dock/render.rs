@@ -91,8 +91,7 @@ pub(super) fn render_diff_tab_strip(
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
     let chip_radius = CardShape::from(frame).tab_chip_radius();
-    let mut chips = div()
-        .id("diff-dock-tab-chips")
+    let mut chips = crate::pane::tab_list(div().id("diff-dock-tab-chips"), DOCK_TABS_LABEL)
         .flex()
         .flex_row()
         .items_center()
@@ -104,8 +103,11 @@ pub(super) fn render_diff_tab_strip(
     for (index, tab) in tabs.iter().enumerate() {
         chips = chips.child(render_diff_tab(
             tab,
-            index,
-            index == active,
+            crate::pane::TabPlace {
+                index,
+                count: tabs.len(),
+                selected: index == active,
+            },
             close_armed == Some(index),
             chip_radius,
             ui,
@@ -230,10 +232,33 @@ fn new_tab_trigger(open: bool, rail_hover: Hsla) -> gpui::Stateful<gpui::Div> {
     .aria_expanded(open)
 }
 
+pub(super) const DOCK_TABS_LABEL: &str = "Dock tabs";
+
+pub(super) const UNSAVED_TAB_DESCRIPTION: &str = "Unsaved changes";
+
+fn dock_tab_chip(
+    title: &str,
+    place: crate::pane::TabPlace,
+    dirty: bool,
+    group: SharedString,
+    chip_radius: Option<Pixels>,
+) -> gpui::Stateful<gpui::Div> {
+    crate::pane::expose_tab(
+        crate::pane::unified_tab_chip(
+            SharedString::from(format!("diff-dock-tab-{}", place.index)),
+            group,
+            place.selected,
+            chip_radius,
+        ),
+        title.to_string(),
+        place,
+    )
+    .when(dirty, |chip| chip.aria_description(UNSAVED_TAB_DESCRIPTION))
+}
+
 fn render_diff_tab(
     tab: &DiffDockTab,
-    index: usize,
-    active: bool,
+    place: crate::pane::TabPlace,
     close_armed: bool,
     chip_radius: Option<Pixels>,
     ui: crate::theme::UiColors,
@@ -252,6 +277,7 @@ fn render_diff_tab(
                 truncate_tab_label(&name),
                 view.path().display().to_string(),
                 view.is_dirty(),
+                name,
             ))
         }
         _ => None,
@@ -264,12 +290,18 @@ fn render_diff_tab(
             None,
         ),
         (DiffDockTab::PendingFile, _) => ("icons/dock/folder-tree.svg", "Files".to_string(), None),
-        (_, Some((icon, label, path, _))) => (*icon, label.clone(), Some(path.clone())),
+        (_, Some((icon, label, path, _, _))) => (*icon, label.clone(), Some(path.clone())),
         _ => ("icons/dock/file-code.svg", "File".to_string(), None),
+    };
+    let title = match &file {
+        Some((_, _, _, _, name)) => name.clone(),
+        None => label.clone(),
     };
     let tooltip = tooltip.unwrap_or_else(|| label.clone());
     let closes_on_middle_click = matches!(tab, DiffDockTab::File(_) | DiffDockTab::PendingFile);
-    let dirty = file.is_some_and(|(_, _, _, dirty)| dirty);
+    let dirty = file.as_ref().is_some_and(|(_, _, _, dirty, _)| *dirty);
+    let index = place.index;
+    let active = place.selected;
     let text = if active { ui.text } else { ui.muted };
     let group = SharedString::from(format!("diff-dock-tab-{index}-group"));
     let icon_element = match tab {
@@ -317,54 +349,50 @@ fn render_diff_tab(
             .into_any_element()
     };
 
-    crate::pane::unified_tab_chip(
-        SharedString::from(format!("diff-dock-tab-{index}")),
-        group.clone(),
-        active,
-        chip_radius,
-    )
-    .min_w(px(64.))
-    .max_w(px(208.))
-    .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
-        this.select_diff_tab(index, cx);
-        this.focus_diff_tab(index, window, cx);
-    }))
-    .on_aux_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-        if event.is_right_click() {
-            if let Some(position) = event.mouse_position() {
-                this.open_diff_tab_menu(Some(index), position, cx);
-            }
-            cx.stop_propagation();
-        } else if event.is_middle_click() && closes_on_middle_click {
-            this.request_close_diff_tab(index, window, cx);
-            cx.stop_propagation();
-        }
-    }))
-    .delayed_tooltip(crate::ui_primitives::text_tooltip(tooltip))
-    .child(icon_element)
-    .child(
-        crate::pane::unified_tab_label(text)
-            .flex_initial()
-            .child(label),
-    )
-    .child(
-        crate::pane::tab_close_button(
-            SharedString::from(format!("diff-dock-tab-close-{index}")),
-            chip_radius.is_none(),
-        )
-        .when(!dirty && !close_armed, |button| {
-            button
-                .invisible()
-                .group_hover(group.clone(), |style| style.visible())
-        })
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+    dock_tab_chip(&title, place, dirty, group.clone(), chip_radius)
+        .min_w(px(64.))
+        .max_w(px(208.))
         .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
-            this.request_close_diff_tab(index, window, cx);
-            cx.stop_propagation();
+            this.select_diff_tab(index, cx);
+            this.focus_diff_tab(index, window, cx);
         }))
-        .child(mark),
-    )
-    .into_any_element()
+        .on_aux_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+            if event.is_right_click() {
+                if let Some(position) = event.mouse_position() {
+                    this.open_diff_tab_menu(Some(index), position, cx);
+                }
+                cx.stop_propagation();
+            } else if event.is_middle_click() && closes_on_middle_click {
+                this.request_close_diff_tab(index, window, cx);
+                cx.stop_propagation();
+            }
+        }))
+        .delayed_tooltip(crate::ui_primitives::text_tooltip(tooltip))
+        .child(icon_element)
+        .child(
+            crate::pane::unified_tab_label(text)
+                .flex_initial()
+                .child(label),
+        )
+        .child(
+            crate::pane::tab_close_button(
+                SharedString::from(format!("diff-dock-tab-close-{index}")),
+                chip_radius.is_none(),
+                &title,
+            )
+            .when(!dirty && !close_armed, |button| {
+                button
+                    .invisible()
+                    .group_hover(group.clone(), |style| style.visible())
+            })
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_activate(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.request_close_diff_tab(index, window, cx);
+                cx.stop_propagation();
+            }))
+            .child(mark),
+        )
+        .into_any_element()
 }
 
 fn icon_is_colored(icon: &str) -> bool {
@@ -827,5 +855,55 @@ mod tests {
         let cut = truncate_tab_label(accented);
         assert_eq!(cut.chars().count(), TAB_LABEL_MAX_CHARS);
         assert!(cut.ends_with(".rs"));
+    }
+
+    #[test]
+    fn the_dock_tabs_are_a_tab_list_whose_tabs_select_and_close_by_name() {
+        use crate::ui_primitives::AccessibleControlExt as _;
+        use gpui::accesskit::{Action, Node, Role};
+        fn exposed<E: gpui::Element>(element: &E) -> (Role, Node) {
+            let role = gpui::Element::a11y_role(element).expect("a role");
+            let mut node = Node::new(role);
+            gpui::Element::write_a11y_info(element, &mut node);
+            (role, node)
+        }
+        let (role, node) = exposed(&crate::pane::tab_list(
+            div().id("diff-dock-tab-chips"),
+            DOCK_TABS_LABEL,
+        ));
+        assert_eq!(role, Role::TabList);
+        assert_eq!(node.label(), Some(DOCK_TABS_LABEL));
+        let tabs = [
+            ("Changes", false),
+            ("a_very_long_module_name_here.rs", true),
+        ];
+        for (index, (title, dirty)) in tabs.into_iter().enumerate() {
+            let selected = index == 1;
+            let place = crate::pane::TabPlace {
+                index,
+                count: tabs.len(),
+                selected,
+            };
+            let chip =
+                dock_tab_chip(title, place, dirty, "group".into(), None).on_activate(|_, _, _| {});
+            let (role, node) = exposed(&chip);
+            assert_eq!(role, Role::Tab, "{title}");
+            assert_eq!(node.label(), Some(title));
+            assert_eq!(node.is_selected(), Some(selected), "{title}");
+            assert_eq!(node.position_in_set(), Some(index + 1), "{title}");
+            assert_eq!(node.size_of_set(), Some(tabs.len()), "{title}");
+            assert_eq!(
+                node.description(),
+                dirty.then_some(UNSAVED_TAB_DESCRIPTION),
+                "{title}"
+            );
+            assert!(node.supports_action(Action::Click), "{title}");
+            let close = crate::pane::tab_close_button("close".into(), true, title)
+                .on_activate(|_, _, _| {});
+            let (role, node) = exposed(&close);
+            assert_eq!(role, Role::Button, "{title}");
+            assert_eq!(node.label(), Some(format!("Close {title}").as_str()));
+            assert!(node.supports_action(Action::Click), "{title}");
+        }
     }
 }

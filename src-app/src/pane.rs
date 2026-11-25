@@ -462,10 +462,48 @@ pub(crate) fn unified_tab_label(color: Hsla) -> gpui::Div {
         .text_color(color)
 }
 
-pub(crate) fn tab_close_button(id: SharedString, pill: bool) -> gpui::Stateful<gpui::Div> {
+pub(crate) const PANE_TABS_LABEL: &str = "Pane tabs";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TabPlace {
+    pub(crate) index: usize,
+    pub(crate) count: usize,
+    pub(crate) selected: bool,
+}
+
+pub(crate) fn tab_list(
+    strip: gpui::Stateful<gpui::Div>,
+    label: &'static str,
+) -> gpui::Stateful<gpui::Div> {
+    strip.role(gpui::accesskit::Role::TabList).aria_label(label)
+}
+
+pub(crate) fn expose_tab(
+    chip: gpui::Stateful<gpui::Div>,
+    title: impl Into<SharedString>,
+    place: TabPlace,
+) -> gpui::Stateful<gpui::Div> {
+    chip.role(gpui::accesskit::Role::Tab)
+        .aria_label(title)
+        .aria_selected(place.selected)
+        .aria_position_in_set(place.index + 1)
+        .aria_size_of_set(place.count)
+}
+
+pub(crate) fn tab_close_label(title: &str) -> SharedString {
+    format!("Close {title}").into()
+}
+
+pub(crate) fn tab_close_button(
+    id: SharedString,
+    pill: bool,
+    title: &str,
+) -> gpui::Stateful<gpui::Div> {
     let ui = pane_colors();
     div()
         .id(id)
+        .role(gpui::accesskit::Role::Button)
+        .aria_label(tab_close_label(title))
         .flex_none()
         .size(px(TAB_CLOSE_SIZE))
         .flex()
@@ -1773,8 +1811,7 @@ impl Pane {
             }
         };
 
-        let mut strip = div()
-            .id("pane-tab-strip")
+        let mut strip = tab_list(div().id("pane-tab-strip"), PANE_TABS_LABEL)
             .flex()
             .flex_row()
             .items_center()
@@ -1783,19 +1820,18 @@ impl Pane {
             .overflow_x_scroll()
             .track_scroll(&self.tab_scroll);
 
+        let count = self.surfaces.len();
         for (index, surface) in self.surfaces.iter().enumerate() {
             let active = index == self.active_surface;
             let sandboxed = match surface {
                 PaneSurface::Terminal(terminal) => terminal.read(cx).sandbox_request().is_some(),
                 _ => false,
             };
+            let title = Self::surface_full_title(surface, cx);
             let full_title = if sandboxed {
-                format!(
-                    "{}\n{SANDBOXED_TAB_TOOLTIP}",
-                    Self::surface_full_title(surface, cx)
-                )
+                format!("{title}\n{SANDBOXED_TAB_TOOLTIP}")
             } else {
-                Self::surface_full_title(surface, cx)
+                title.clone()
             };
             let label = Self::surface_title(surface, cx);
             let (resting, hovered) = if active {
@@ -1841,6 +1877,18 @@ impl Pane {
                     hovered,
                 )
             };
+            let chip = expose_tab(
+                chip,
+                title.clone(),
+                TabPlace {
+                    index,
+                    count,
+                    selected: active,
+                },
+            )
+            .when(sandboxed, |chip| {
+                chip.aria_description(SANDBOXED_TAB_TOOLTIP)
+            });
             let chip = chip
                 .on_drag(
                     SurfaceDrag {
@@ -1876,7 +1924,7 @@ impl Pane {
                 })
                 .children(fit.label.then(|| {
                     if unified {
-                        unified_tab_label(text).child(Self::surface_full_title(surface, cx))
+                        unified_tab_label(text).child(title.clone())
                     } else {
                         div()
                             .flex_none()
@@ -1892,6 +1940,7 @@ impl Pane {
                     tab_close_button(
                         SharedString::from(format!("pane-{pane_id}-tab-close-{index}")),
                         unified && chip_radius.is_none(),
+                        &title,
                     )
                     .invisible()
                     .group_hover(group, |style| style.visible())
@@ -3185,5 +3234,52 @@ mod tests {
                 label: false,
             }
         );
+    }
+
+    #[test]
+    fn the_pane_tabs_are_a_tab_list_whose_tabs_select_and_close_by_name() {
+        use crate::ui_primitives::AccessibleControlExt as _;
+        use gpui::accesskit::{Action, Node, Role};
+        use gpui::{InteractiveElement as _, div};
+        fn exposed<E: gpui::Element>(element: &E) -> (Role, Node) {
+            let role = gpui::Element::a11y_role(element).expect("a role");
+            let mut node = Node::new(role);
+            gpui::Element::write_a11y_info(element, &mut node);
+            (role, node)
+        }
+        let (role, node) = exposed(&super::tab_list(
+            div().id("pane-tab-strip"),
+            super::PANE_TABS_LABEL,
+        ));
+        assert_eq!(role, Role::TabList);
+        assert_eq!(node.label(), Some(super::PANE_TABS_LABEL));
+        let titles = ["~/dev/paneflow", "Claude Code", "cargo test"];
+        for (index, title) in titles.into_iter().enumerate() {
+            let selected = index == 1;
+            let place = super::TabPlace {
+                index,
+                count: titles.len(),
+                selected,
+            };
+            let chip = super::expose_tab(
+                super::unified_tab_chip("chip".into(), "group".into(), selected, None),
+                title,
+                place,
+            )
+            .on_activate(|_, _, _| {});
+            let (role, node) = exposed(&chip);
+            assert_eq!(role, Role::Tab, "{title}");
+            assert_eq!(node.label(), Some(title));
+            assert_eq!(node.is_selected(), Some(selected), "{title}");
+            assert_eq!(node.position_in_set(), Some(index + 1), "{title}");
+            assert_eq!(node.size_of_set(), Some(titles.len()), "{title}");
+            assert!(node.supports_action(Action::Click), "{title}");
+            let close =
+                super::tab_close_button("close".into(), false, title).on_activate(|_, _, _| {});
+            let (role, node) = exposed(&close);
+            assert_eq!(role, Role::Button, "{title}");
+            assert_eq!(node.label(), Some(format!("Close {title}").as_str()));
+            assert!(node.supports_action(Action::Click), "{title}");
+        }
     }
 }
