@@ -759,11 +759,13 @@ impl PaneFlowApp {
         if section == SettingsSection::Agents {
             self.probe_agent_versions(cx);
             self.refresh_integration_status(cx);
+            self.refresh_usage_inventory(true, cx);
             self.check_agent_accounts(cx);
         }
         if section == SettingsSection::Spaces {
             self.refresh_space_integration_status(cx);
             self.refresh_integration_status(cx);
+            self.refresh_usage_inventory(true, cx);
             self.check_agent_accounts(cx);
         }
         if section == SettingsSection::Usage {

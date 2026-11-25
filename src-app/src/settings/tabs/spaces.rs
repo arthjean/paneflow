@@ -576,9 +576,8 @@ impl PaneFlowApp {
             let results = smol::unblock(move || refresh_at_launch(&config)).await;
             let _ = this.update(cx, |this, cx| {
                 for (space, results) in results {
-                    this.space_integrations.record(&space, results);
+                    this.space_integrations_settled(&space, results, cx);
                 }
-                this.refresh_space_integration_status(cx);
             });
         })
         .detach();
@@ -591,11 +590,21 @@ impl PaneFlowApp {
             let target = space.clone();
             let results = smol::unblock(move || mirror_into_space(&config, &target)).await;
             let _ = this.update(cx, |this, cx| {
-                this.space_integrations.record(&space, results);
-                this.refresh_space_integration_status(cx);
+                this.space_integrations_settled(&space, results, cx);
             });
         })
         .detach();
+    }
+
+    pub(crate) fn space_integrations_settled(
+        &mut self,
+        space: &SpaceId,
+        results: IntegrationResults,
+        cx: &mut Context<Self>,
+    ) {
+        self.space_integrations.record(space, results);
+        self.refresh_space_integration_status(cx);
+        self.refresh_usage_inventory(true, cx);
     }
 
     pub(crate) fn retry_space_integration(
@@ -623,8 +632,7 @@ impl PaneFlowApp {
             .await;
             let _ = this.update(cx, |this, cx| {
                 this.space_integrations.busy = None;
-                this.space_integrations.record(&space, vec![(slug, result)]);
-                this.refresh_space_integration_status(cx);
+                this.space_integrations_settled(&space, vec![(slug, result)], cx);
             });
         })
         .detach();

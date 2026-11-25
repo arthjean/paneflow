@@ -316,10 +316,8 @@ impl PaneFlowApp {
     }
 
     fn auto_refresh_usage(&mut self, cx: &mut Context<Self>) {
-        if matches!(
-            self.settings_section,
-            Some(SettingsSection::Agents | SettingsSection::Spaces)
-        ) {
+        if self.account_rows_shown() {
+            self.refresh_usage_inventory(true, cx);
             self.check_agent_accounts(cx);
         }
         let page_open = self.settings_section == Some(SettingsSection::Usage);
@@ -406,6 +404,13 @@ impl PaneFlowApp {
                 utc_offset_secs: self.usage.utc_offset_secs,
             },
             agent,
+        )
+    }
+
+    fn account_rows_shown(&self) -> bool {
+        matches!(
+            self.settings_section,
+            Some(SettingsSection::Agents | SettingsSection::Spaces)
         )
     }
 
@@ -515,6 +520,9 @@ impl PaneFlowApp {
                 if app.usage.inventory != entries {
                     app.usage.inventory = entries;
                     app.adopt_known_account_emails(cx);
+                    if app.account_rows_shown() {
+                        app.check_agent_accounts(cx);
+                    }
                     cx.notify();
                 }
             });

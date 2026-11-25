@@ -1,3 +1,4 @@
+mod accounts;
 mod create_close;
 mod events;
 mod ids;
@@ -79,7 +80,8 @@ fn every_layout_pin_holds_in_an_isolated_home() {
         .count();
     assert!(
         passed
-            >= create_close::PINS
+            >= accounts::PINS
+                + create_close::PINS
                 + events::PINS
                 + ids::PINS
                 + lua::PINS
