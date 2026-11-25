@@ -1255,7 +1255,15 @@ mod tests {
         path: PathBuf,
         text: &str,
     ) -> impl FnOnce(&mut Context<CodeView>) -> CodeView + use<> {
-        let document = build_document(path.clone(), text, false);
+        seeded_view_on_disk(path, text, false)
+    }
+
+    pub(super) fn seeded_view_on_disk(
+        path: PathBuf,
+        text: &str,
+        read_only_on_disk: bool,
+    ) -> impl FnOnce(&mut Context<CodeView>) -> CodeView + use<> {
+        let document = build_document(path.clone(), text, read_only_on_disk);
         let mut highlighter = CodeHighlighter::new(
             &document,
             DiffSyntax::from_theme(&crate::theme::paneflow_dark()),

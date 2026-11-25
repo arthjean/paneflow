@@ -1386,6 +1386,11 @@ the selection. Enter and Shift+Enter step through matches, Escape closes the
 bar and returns focus to the text. The replace row (Replace and Replace All)
 is absent on a read-only file; Replace All is one undo step.
 
+The banners above the text (read-only, changed or deleted on disk, language
+server, save error, too complex to color) are 12 px rows with a 1 px bottom
+`border`. Their message takes the remaining width and wraps inside the dock at
+any width, never clipped, and their buttons stay on the trailing edge.
+
 Opening a file at a line or a range of lines, `:N` in the find bar for
 instance, centers it and washes it with the same warm hue at 0.14. The
 wash leaves on the next keystroke, click or scroll.

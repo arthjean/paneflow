@@ -65,6 +65,7 @@ impl CodeView {
                 .border_b_1()
                 .border_color(ui.border)
         };
+        let message = |text: SharedString| div().flex_1().min_w_0().child(text);
         if let Some(reason) = self
             .state
             .document()
@@ -79,7 +80,8 @@ impl CodeView {
                         ui.overlay
                     })
                     .text_color(if flashing { ui.text } else { ui.muted })
-                    .child(read_only_text(reason))
+                    .debug_selector(|| READ_ONLY_BANNER.into())
+                    .child(message(read_only_text(reason).into()))
                     .into_any_element(),
             );
         }
@@ -127,7 +129,9 @@ impl CodeView {
                 row()
                     .bg(ui.vc_conflict.opacity(0.16))
                     .text_color(ui.text)
-                    .child("This file was deleted on disk. Saving recreates it.")
+                    .child(message(
+                        "This file was deleted on disk. Saving recreates it.".into(),
+                    ))
                     .into_any_element(),
             ),
             DiskState::InSync => {}
@@ -190,12 +194,14 @@ impl CodeView {
             }
             out.push(banner.into_any_element());
         }
-        if let Some(message) = &self.save_error {
+        if let Some(error) = &self.save_error {
             out.push(
                 row()
                     .bg(ui.vc_deleted.opacity(0.16))
                     .text_color(ui.text)
-                    .child(format!("{message} Your edits are still here."))
+                    .child(message(
+                        format!("{error} Your edits are still here.").into(),
+                    ))
                     .into_any_element(),
             );
         }
@@ -208,7 +214,7 @@ impl CodeView {
                 row()
                     .bg(ui.overlay)
                     .text_color(ui.muted)
-                    .child(TOO_COMPLEX_BANNER)
+                    .child(message(TOO_COMPLEX_BANNER.into()))
                     .into_any_element(),
             );
         }
@@ -428,6 +434,7 @@ fn read_only_text(reason: ReadOnlyReason) -> String {
     )
 }
 
+pub(super) const READ_ONLY_BANNER: &str = "code-read-only-banner";
 pub(super) const CONFLICT_TEXT: &str = "code-conflict-text";
 pub(super) const CONFLICT_BUTTONS: &str = "code-conflict-buttons";
 pub(super) const CONSENT_TEXT: &str = "code-language-server-consent-text";
@@ -566,6 +573,42 @@ mod tests {
             cx.notify();
         });
         cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn in_a_narrow_dock_the_read_only_banner_wraps_its_text_inside_the_view(
+        cx: &mut TestAppContext,
+    ) {
+        use gpui::size;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("ro.rs");
+        std::fs::write(&path, "fn main() {}\n").expect("seed");
+        let seeded = seeded_view_on_disk(path, "fn main() {}\n", true);
+        let (_view, cx) = cx.add_window_view(move |_window, cx| seeded(cx));
+        cx.simulate_resize(size(px(2400.), px(500.)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let wide = cx
+            .debug_bounds(READ_ONLY_BANNER)
+            .expect("the read-only banner is painted");
+
+        let width = px(280.);
+        cx.simulate_resize(size(width, px(500.)));
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        let narrow = cx
+            .debug_bounds(READ_ONLY_BANNER)
+            .expect("the read-only banner is painted");
+        assert!(
+            narrow.right() <= width,
+            "the banner ends at {:?}, past the {width:?} view",
+            narrow.right()
+        );
+        assert!(
+            narrow.size.height > wide.size.height,
+            "the message wraps onto several lines instead of being clipped: {:?} at {width:?}, {:?} wide",
+            narrow.size.height,
+            wide.size.height
+        );
     }
 
     #[gpui::test]
