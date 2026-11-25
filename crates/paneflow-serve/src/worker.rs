@@ -1176,7 +1176,6 @@ mod tests {
                 std::thread::sleep(std::time::Duration::from_millis(20));
             }
         };
-        std::thread::sleep(crate::config_runtime::RELOAD_SETTLE * 2);
         let config = home.path().join("paneflow.json");
         std::fs::write(&config, r#"{"agent_prompts": "paneflow"}"#).expect("opt in");
         settled(1);

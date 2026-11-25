@@ -480,9 +480,13 @@ impl ConfigRuntime {
         let worker = Arc::downgrade(worker);
         let (sender, signals) = channel();
         *self.signals.lock().unwrap_or_else(PoisonError::into_inner) = Some(sender);
+        let agent_prompts = paneflow_config::loader::load_config_from_path(
+            &paneflow_home::config_path_in(&self.home),
+        )
+        .agent_prompts_in_paneflow();
         let spawned = std::thread::Builder::new()
             .name("paneflow-serve-lua-watch".into())
-            .spawn(move || watch(&runtime, &worker, &signals));
+            .spawn(move || watch(&runtime, &worker, &signals, agent_prompts));
         match spawned {
             Ok(handle) => {
                 *self.watcher.lock().unwrap_or_else(PoisonError::into_inner) = Some(handle);
@@ -608,6 +612,7 @@ fn watch(
     runtime: &Arc<ConfigRuntime>,
     worker: &std::sync::Weak<Worker>,
     signals: &Receiver<Signal>,
+    started_with_agent_prompts: bool,
 ) {
     use notify::Watcher;
     let sender = runtime
@@ -646,19 +651,19 @@ fn watch(
             }
         }
     };
+    let settings_file = paneflow_home::config_path_in(&runtime.home);
     let before_load: Vec<PathBuf> = [
         runtime.path.clone(),
         paneflow_home::lua_dir_in(&runtime.home).join(paneflow_home::INIT_LUA_FILE_NAME),
+        settings_file.clone(),
     ]
     .iter()
     .filter_map(|path| watch_key(path))
     .collect();
     watch_dirs_of(&before_load);
-    let settings_file = paneflow_home::config_path_in(&runtime.home);
     let settings_key = watch_key(&settings_file);
-    let mut agent_prompts =
-        paneflow_config::loader::load_config_from_path(&settings_file).agent_prompts_in_paneflow();
-    let mut settings_pending: Option<Instant> = None;
+    let mut agent_prompts = started_with_agent_prompts;
+    let mut settings_pending: Option<Instant> = Some(Instant::now());
     if let Some(worker) = worker.upgrade() {
         runtime.initial_load(&worker);
     }
