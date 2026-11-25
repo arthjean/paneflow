@@ -394,12 +394,9 @@ fn origin_text(account: &UsageAccount, title: &str) -> Option<String> {
 }
 
 fn origin_names(account: &UsageAccount) -> String {
-    account
-        .origins
-        .iter()
-        .map(|origin| origin.name.as_str())
-        .collect::<Vec<_>>()
-        .join(", ")
+    paneflow_agent_config::usage::accounts::origin_list(
+        account.origins.iter().map(|origin| origin.name.as_str()),
+    )
 }
 
 fn ordered_rows<'a>(inputs: &UsageInputs<'a>) -> Vec<Row<'a>> {

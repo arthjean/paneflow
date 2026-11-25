@@ -204,6 +204,7 @@ pub fn inventory(origins: &[AccountOrigin], home: Option<&Path>) -> Vec<UsageAcc
     accounts
         .into_iter()
         .map(|(_, account_file, mut account)| {
+            account.label = origin_list(account.origins.iter().map(|origin| origin.name.as_str()));
             let email = match account.agent {
                 UsageAgent::Grok => grok_account_identity(&account.config_dir).email,
                 _ => account_file.as_deref().and_then(claude_account_email),
@@ -325,6 +326,16 @@ pub fn session_account_dir(
 
 pub fn canonical_account_dir(path: &Path) -> PathBuf {
     canonical_dir(path)
+}
+
+pub fn origin_list<'a>(names: impl IntoIterator<Item = &'a str>) -> String {
+    let names: Vec<&str> = names.into_iter().collect();
+    match names.as_slice() {
+        [] => String::new(),
+        [one] => (*one).to_string(),
+        [first, second] => format!("{first} and {second}"),
+        [rest @ .., last] => format!("{}, and {last}", rest.join(", ")),
+    }
 }
 
 pub fn account_dir_key(path: &Path) -> String {
@@ -524,6 +535,42 @@ mod tests {
                 work,
                 vec!["Work".to_string(), "Work profile".to_string()]
             )]
+        );
+    }
+
+    #[test]
+    fn an_account_shared_by_several_spaces_is_named_after_each_of_them() {
+        let home = tempfile::tempdir().unwrap();
+        let home = canonical_dir(home.path());
+        std::fs::create_dir_all(home.join(".claude-work")).unwrap();
+        let space = |name: &str| {
+            origin(
+                OriginKind::Space,
+                name,
+                None,
+                &[("CLAUDE_CONFIG_DIR", "~/.claude-work")],
+            )
+        };
+        let label = |origins: &[AccountOrigin]| {
+            let accounts = inventory(origins, Some(&home));
+            assert_eq!(accounts.len(), 1, "one directory is one account");
+            accounts[0].label.clone()
+        };
+        assert_eq!(label(&[space("Work")]), "Work");
+        assert_eq!(label(&[space("Work"), space("Play")]), "Work and Play");
+        assert_eq!(
+            label(&[space("Work"), space("Play"), space("Perso")]),
+            "Work, Play, and Perso"
+        );
+        std::fs::write(
+            home.join(".claude-work").join(".claude.json"),
+            br#"{"oauthAccount": {"emailAddress": "me@company.com"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            label(&[space("Work"), space("Play")]),
+            "me@company.com",
+            "a signed-in account keeps its email"
         );
     }
 
