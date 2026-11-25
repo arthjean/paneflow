@@ -497,11 +497,11 @@ A host process that owns Chromium, started on demand, supervised, speaking a ver
 **Dependencies:** Blocked by US-007
 
 **Acceptance Criteria:**
-- [ ] Given the workspace, when `crates/paneflow-browser-proto` is built, then it depends on no CEF crate and no GPUI crate.
-- [ ] Given a window and a host built from different protocol versions, when they handshake, then the connection is refused with an error naming both versions.
-- [ ] Given every command and event type, when it is serialised and deserialised in a unit test, then the value is unchanged.
-- [ ] Given a frame larger than the maximum message size the crate declares, when it is decoded, then decoding fails without allocating the declared length.
-- [ ] Given `src-app` and every workspace crate, when a guard test scans their manifests, then none names the `cef` crate.
+- [x] Given the workspace, when `crates/paneflow-browser-proto` is built, then it depends on no CEF crate and no GPUI crate.
+- [x] Given a window and a host built from different protocol versions, when they handshake, then the connection is refused with an error naming both versions.
+- [x] Given every command and event type, when it is serialised and deserialised in a unit test, then the value is unchanged.
+- [x] Given a frame larger than the maximum message size the crate declares, when it is decoded, then decoding fails without allocating the declared length.
+- [x] Given `src-app` and every workspace crate, when a guard test scans their manifests, then none names the `cef` crate.
 
 #### US-009: Build the host crate outside the workspace
 **Description:** As a maintainer, I want the host to build from its own manifest with its own CI job so that the workspace gates do not download Chromium.
@@ -510,12 +510,12 @@ A host process that owns Chromium, started on demand, supervised, speaking a ver
 **Dependencies:** Blocked by US-008
 
 **Acceptance Criteria:**
-- [ ] Given the root `Cargo.toml`, when `cargo metadata` runs, then `crates/paneflow-browser-host` is not a workspace member.
-- [ ] Given a checkout with the CEF archive fetched, when the host manifest is built with `--locked`, then it produces the `paneflow-browser-host` binary.
-- [ ] Given `.github/workflows/run_tests.yml`, when a change touches the host crate or the protocol crate, then a job named for the browser host builds, lints and tests it on Linux x86_64.
-- [ ] Given a checkout with no CEF archive, when the host build starts, then it fails with a message naming `scripts/fetch-cef.sh`.
-- [ ] Given the host crate, when its `tests/fixtures/` directory is listed, then it holds the four tracked fixtures of the "Fixtures" section and a test serves each on loopback.
-- [ ] Given `deny.toml`, when `cargo deny check` runs against the host manifest, then it passes with no new registry or git source allowed.
+- [x] Given the root `Cargo.toml`, when `cargo metadata` runs, then `crates/paneflow-browser-host` is not a workspace member.
+- [x] Given a checkout with the CEF archive fetched, when the host manifest is built with `--locked`, then it produces the `paneflow-browser-host` binary.
+- [x] Given `.github/workflows/run_tests.yml`, when a change touches the host crate or the protocol crate, then a job named for the browser host builds, lints and tests it on Linux x86_64.
+- [x] Given a checkout with no CEF archive, when the host build starts, then it fails with a message naming `scripts/fetch-cef.sh`.
+- [x] Given the host crate, when its `tests/fixtures/` directory is listed, then it holds the four tracked fixtures of the "Fixtures" section and a test serves each on loopback.
+- [x] Given `deny.toml`, when `cargo deny check` runs against the host manifest, then it passes with no new registry or git source allowed.
 
 #### US-010: Supervise the host
 **Description:** As a user, I want the browser engine to start only when I open a tab and to fail without taking my terminals with it.
@@ -524,14 +524,14 @@ A host process that owns Chromium, started on demand, supervised, speaking a ver
 **Dependencies:** Blocked by US-009
 
 **Acceptance Criteria:**
-- [ ] Given an application launch in which no browser tab is opened, when the process tree is listed, then no host process exists.
-- [ ] Given the first tab being opened, when the host starts, then the window connects over an endpoint inside the Paneflow home's runtime directory and the host accepts only its parent process, checked with `paneflow-peer`.
-- [ ] Given a running host, when it is killed, then every tab reports a crashed state through the protocol and every terminal session keeps running.
-- [ ] Given a crashed host, when the user reloads a tab, then a new host starts and the tab loads.
-- [ ] Given the last tab closed, when the host has been idle for the period the protocol crate declares, then the host exits.
-- [ ] Given the window started from inside a Paneflow pane, when it starts the host, then the host's environment carries none of `paneflow_host::env::PANE_CONTEXT_ENV`.
-- [ ] Given the host fails to start, when the window observes it, then the GPUI main thread has not waited on it and the tab shows the failure reason.
-- [ ] Given a debug build, when the host binary is resolved, then it comes from the path in `PANEFLOW_BROWSER_HOST` or, when unset, from the host crate's local build output, and never from an installed application's home.
+- [x] Given an application launch in which no browser tab is opened, when the process tree is listed, then no host process exists.
+- [x] Given the first tab being opened, when the host starts, then the window connects over an endpoint inside the Paneflow home's runtime directory and the host accepts only its parent process, checked with `paneflow-peer`.
+- [x] Given a running host, when it is killed, then every tab reports a crashed state through the protocol and every terminal session keeps running.
+- [x] Given a crashed host, when the user reloads a tab, then a new host starts and the tab loads.
+- [x] Given the last tab closed, when the host has been idle for the period the protocol crate declares, then the host exits.
+- [x] Given the window started from inside a Paneflow pane, when it starts the host, then the host's environment carries none of `paneflow_host::env::PANE_CONTEXT_ENV`.
+- [x] Given the host fails to start, when the window observes it, then the GPUI main thread has not waited on it and the tab shows the failure reason.
+- [x] Given a debug build, when the host binary is resolved, then it comes from the path in `PANEFLOW_BROWSER_HOST` or, when unset, from the host crate's local build output, and never from an installed application's home.
 
 #### US-011: Bridge CDP inside the host
 **Description:** As a maintainer, I want the window to call DevTools methods and receive DevTools events through the protocol so that agent tools need no debugging port.
@@ -540,11 +540,11 @@ A host process that owns Chromium, started on demand, supervised, speaking a ver
 **Dependencies:** Blocked by US-010
 
 **Acceptance Criteria:**
-- [ ] Given a tab on a fixture page, when the window sends a DevTools method through the protocol, then the result returns matched by request id.
-- [ ] Given a fixture page that logs to the console, when the page loads, then the window receives the console event through the protocol.
-- [ ] Given a DevTools method that never answers, when the timeout the protocol crate declares elapses, then the caller receives a timeout error and the host stays responsive.
-- [ ] Given a running host, when its command line and its listening sockets are inspected in a test, then no remote-debugging flag and no DevTools TCP endpoint is present.
-- [ ] Given a method sent for a tab that has closed, when the host handles it, then the caller receives an error naming the tab as closed.
+- [x] Given a tab on a fixture page, when the window sends a DevTools method through the protocol, then the result returns matched by request id.
+- [x] Given a fixture page that logs to the console, when the page loads, then the window receives the console event through the protocol.
+- [x] Given a DevTools method that never answers, when the timeout the protocol crate declares elapses, then the caller receives a timeout error and the host stays responsive.
+- [x] Given a running host, when its command line and its listening sockets are inspected in a test, then no remote-debugging flag and no DevTools TCP endpoint is present.
+- [x] Given a method sent for a tab that has closed, when the host handles it, then the caller receives an error naming the tab as closed.
 
 #### US-012: Keep one profile per workspace
 **Description:** As a user, I want each workspace to have its own cookies and storage so that test accounts of one project never appear in another.
@@ -553,11 +553,11 @@ A host process that owns Chromium, started on demand, supervised, speaking a ver
 **Dependencies:** Blocked by US-010
 
 **Acceptance Criteria:**
-- [ ] Given two workspaces, when each sets a cookie on the same loopback origin, then neither reads the other's cookie.
-- [ ] Given a workspace profile, when its location is read, then it is under the Paneflow home resolved by `crates/paneflow-home`, never under `dirs::config_dir` or `dirs::cache_dir`.
-- [ ] Given a workspace closed and reopened, when a tab loads the same origin, then the cookie set before is present.
-- [ ] Given a profile directory already locked by another host, when a second host opens it, then the open fails with an error naming the lock.
-- [ ] Given a fresh profile, when its cookie store is read, then it is empty and no file of an installed browser was read to create it.
+- [x] Given two workspaces, when each sets a cookie on the same loopback origin, then neither reads the other's cookie.
+- [x] Given a workspace profile, when its location is read, then it is under the Paneflow home resolved by `crates/paneflow-home`, never under `dirs::config_dir` or `dirs::cache_dir`.
+- [x] Given a workspace closed and reopened, when a tab loads the same origin, then the cookie set before is present.
+- [x] Given a profile directory already locked by another host, when a second host opens it, then the open fails with an error naming the lock.
+- [x] Given a fresh profile, when its cookie store is read, then it is empty and no file of an installed browser was read to create it.
 
 #### US-013: Enforce origins, schemes and permissions in the host
 **Description:** As a user, I want the browser to reach my local servers freely and nothing else without my decision so that a page cannot wander.
@@ -566,12 +566,12 @@ A host process that owns Chromium, started on demand, supervised, speaking a ver
 **Dependencies:** Blocked by US-011
 
 **Acceptance Criteria:**
-- [ ] Given a navigation to an `http` or `https` URL on a loopback address, when no decision exists, then the navigation proceeds.
-- [ ] Given a top-level navigation to an origin that is not loopback and has no decision, when the host sees it, then the navigation is held and a decision request is emitted through the protocol.
-- [ ] Given a navigation to `file:`, `chrome:`, `devtools:`, `view-source:`, `javascript:` or a top-level `data:` URL, when the host sees it, then it is refused with an error naming the scheme.
-- [ ] Given a page that requests camera, microphone, geolocation or notifications, when the host sees the request, then it is denied.
-- [ ] Given a download started by a page, when the host sees it, then the download is cancelled and an event reports it.
-- [ ] Given a URL that embeds credentials, when it is submitted for navigation, then it is refused.
+- [x] Given a navigation to an `http` or `https` URL on a loopback address, when no decision exists, then the navigation proceeds.
+- [x] Given a top-level navigation to an origin that is not loopback and has no decision, when the host sees it, then the navigation is held and a decision request is emitted through the protocol.
+- [x] Given a navigation to `file:`, `chrome:`, `devtools:`, `view-source:`, `javascript:` or a top-level `data:` URL, when the host sees it, then it is refused with an error naming the scheme.
+- [x] Given a page that requests camera, microphone, geolocation or notifications, when the host sees the request, then it is denied.
+- [x] Given a download started by a page, when the host sees it, then the download is cancelled and an event reports it.
+- [x] Given a URL that embeds credentials, when it is submitted for navigation, then it is refused.
 
 ---
 

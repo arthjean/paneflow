@@ -17,10 +17,10 @@
     {
       "id": "EP-002",
       "title": "The browser host and its private protocol",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 6,
-      "stories_done": 0
+      "stories_done": 6
     },
     {
       "id": "EP-003",
@@ -177,79 +177,79 @@
       "id": "US-008",
       "title": "Define the private protocol",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-007"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-25T08:59:58+01:00",
+      "completed_at": "2026-11-25",
+      "reviewed_at": "2026-11-25"
     },
     {
       "id": "US-009",
       "title": "Build the host crate outside the workspace",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-008"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-25T09:08:13+01:00",
+      "completed_at": "2026-11-25",
+      "reviewed_at": "2026-11-25"
     },
     {
       "id": "US-010",
       "title": "Supervise the host",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-009"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-25T09:29:54+01:00",
+      "completed_at": "2026-11-25",
+      "reviewed_at": "2026-11-25"
     },
     {
       "id": "US-011",
       "title": "Bridge CDP inside the host",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-010"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-25T09:29:54+01:00",
+      "completed_at": "2026-11-25",
+      "reviewed_at": "2026-11-25"
     },
     {
       "id": "US-012",
       "title": "Keep one profile per workspace",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-010"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-25T09:29:54+01:00",
+      "completed_at": "2026-11-25",
+      "reviewed_at": "2026-11-25"
     },
     {
       "id": "US-013",
       "title": "Enforce origins, schemes and permissions in the host",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-011"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-25T09:29:54+01:00",
+      "completed_at": "2026-11-25",
+      "reviewed_at": "2026-11-25"
     },
     {
       "id": "US-014",
