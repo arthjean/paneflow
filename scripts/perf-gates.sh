@@ -104,7 +104,12 @@ if ! PANEFLOW_BENCH_OUT="$out/worker.json" \
 fi
 tail -n 3 "$out/worker.log"
 
-cargo build --profile gates --locked -p paneflow-app -p paneflow-host
+app_exe=$(cargo build --profile gates --locked -p paneflow-app -p paneflow-host --message-format=json-render-diagnostics \
+  | { grep -o '"executable":"[^"]*/paneflow"' || true; } | tail -n 1 | sed 's/^"executable":"//; s/"$//')
+if [ ! -x "$app_exe" ]; then
+  echo "::error::cargo reported no paneflow binary for the gates profile; the startup budgets will fail as missing"
+fi
+export PANEFLOW_BENCH_EXE="$app_exe"
 harness=$(cargo test --profile gates --locked -p paneflow-host --test persistent_baseline --no-run --message-format=json \
   | grep -o '"executable":"[^"]*persistent_baseline-[^"]*"' | tail -n 1 | sed 's/^"executable":"//; s/"$//')
 test -x "$harness"

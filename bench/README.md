@@ -1725,8 +1725,11 @@ developer's real session. One untimed warm-up launch per scenario absorbs whatev
 creates on first run; the timed launches that follow
 (`PANEFLOW_BENCH_STARTUP_RUNS`, default 10) therefore measure a second launch.
 The suite refuses a debug binary unless `PANEFLOW_BENCH_ALLOW_DEBUG` is set.
-`PANEFLOW_BENCH_EXE` overrides the binary path, which otherwise resolves to
-`paneflow` next to the test binary's profile directory.
+`PANEFLOW_BENCH_EXE` names the app binary and is required: the scripts set it to
+the `paneflow` executable Cargo reports for the build they just ran. Since Rust
+1.100, Cargo puts test binaries under
+`<build-dir>/<profile>/build/<package>/<hash>/out/`, so the test binary's own
+location no longer tells where the app was built.
 
 | Metric | Unit | What it captures |
 |---|---|---|

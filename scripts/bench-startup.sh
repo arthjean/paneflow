@@ -28,7 +28,13 @@ export PANEFLOW_BENCH_DIRTY="$dirty"
 export PANEFLOW_BENCH_STAMP="$stamp"
 export PANEFLOW_BENCH_BASELINE_DIR="$root/bench/baselines"
 
-cargo build --release --locked -p paneflow-app -p paneflow-host
+app_exe=$(cargo build --release --locked -p paneflow-app -p paneflow-host --message-format=json-render-diagnostics \
+  | { grep -o '"executable":"[^"]*/paneflow"' || true; } | tail -n 1 | sed 's/^"executable":"//; s/"$//')
+if [ ! -x "$app_exe" ]; then
+  echo "cargo reported no paneflow binary for the release profile" >&2
+  exit 1
+fi
+export PANEFLOW_BENCH_EXE="$app_exe"
 
 cargo test --release --locked -p paneflow-app --bin paneflow \
   startup_bench::startup_first_frame_benchmark \
