@@ -105,9 +105,12 @@ impl Bench {
     }
 
     fn kill_host(&mut self) {
+        use std::os::unix::process::ExitStatusExt;
         let mut process = self.host.take().unwrap();
-        process.kill().unwrap();
-        process.wait().unwrap();
+        let pid = libc::pid_t::try_from(process.id()).unwrap();
+        assert_eq!(unsafe { libc::kill(pid, libc::SIGKILL) }, 0);
+        let status = process.wait().unwrap();
+        assert_eq!(status.signal(), Some(libc::SIGKILL), "{status:?}");
     }
 
     fn client(&self) -> HostClient {
@@ -221,7 +224,17 @@ impl Bench {
     }
 
     fn lose_and_resume(&mut self, session: &SessionId, record: RecordId) -> SessionSummary {
+        self.lose_then_resume(session, record, |_| {})
+    }
+
+    fn lose_then_resume(
+        &mut self,
+        session: &SessionId,
+        record: RecordId,
+        while_lost: impl FnOnce(&Self),
+    ) -> SessionSummary {
         self.kill_host();
+        while_lost(self);
         self.start_host();
         let lost = self.summary(session);
         assert!(!lost.live);
@@ -667,4 +680,164 @@ fn resume_calls_from_outside_the_window_or_outside_the_pane_are_refused() {
         bench.summary(&session).manifest.program_resume.records()[0].id,
         record
     );
+}
+
+fn self_reporting_argv(work: &str) -> [String; 4] {
+    [
+        FIXTURE_NAME.to_owned(),
+        "resume-report".to_owned(),
+        format!("cwd:{work}"),
+        format!("report:{FIXTURE_NAME}"),
+    ]
+}
+
+fn cmdline_of(pid: u32) -> Vec<String> {
+    let raw = std::fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+    let mut elements: Vec<String> = raw
+        .split(|byte| *byte == 0)
+        .map(|element| String::from_utf8_lossy(element).into_owned())
+        .collect();
+    if elements.last().is_some_and(String::is_empty) {
+        elements.pop();
+    }
+    elements
+}
+
+#[test]
+fn a_sigkilled_host_resumes_the_reporting_fixture_whose_new_report_settles_it_under_its_new_pid() {
+    let mut bench = Bench::new();
+    let session = bench.create("/bin/bash", &[]);
+    let reported = self_reporting_argv(&bench.work.display().to_string());
+    let reported_refs: Vec<&str> = reported.iter().map(String::as_str).collect();
+    let record = bench.report_from_the_pane(&session, &reported_refs);
+    let first_owner = bench.summary(&session).manifest.program_resume.records()[0]
+        .owner
+        .pid;
+    assert_eq!(
+        cmdline_of(first_owner)[..2],
+        [FIXTURE_NAME, "resume-report"]
+    );
+
+    let restarted = bench.lose_and_resume(&session, record);
+    let attempt = restarted.resume_attempt.unwrap();
+    assert_eq!(attempt.outcome, AttemptOutcome::Prepared);
+    assert_eq!(attempt.record, Some(record));
+
+    let settled = bench.summary_until(&session, "the resumed fixture's own report", |summary| {
+        summary
+            .resume_attempt
+            .as_ref()
+            .is_some_and(|attempt| attempt.outcome == AttemptOutcome::Settled)
+            && summary
+                .manifest
+                .program_resume
+                .records()
+                .iter()
+                .any(|record| record.argv == [FIXTURE_NAME] && record.settled())
+    });
+    let records = settled.manifest.program_resume.records();
+    assert_eq!(records.len(), 1, "{records:?}");
+    let owner = records[0].owner.pid;
+    assert_ne!(
+        owner, first_owner,
+        "the record moved to the resumed process"
+    );
+    assert_eq!(settled.resume_attempt.unwrap().pid, Some(owner));
+    assert_eq!(
+        cmdline_of(owner),
+        reported,
+        "the resumed fixture runs with the argv it reported"
+    );
+    assert!(settled.resume_candidate.unwrap().settled);
+}
+
+#[test]
+fn a_fixture_removed_from_path_while_the_host_is_dead_drops_its_record_and_leaves_a_plain_shell() {
+    let mut bench = Bench::new();
+    let session = bench.create("/bin/bash", &[]);
+    let reported = self_reporting_argv(&bench.work.display().to_string());
+    let reported_refs: Vec<&str> = reported.iter().map(String::as_str).collect();
+    let record = bench.report_from_the_pane(&session, &reported_refs);
+
+    bench.lose_then_resume(&session, record, |bench| {
+        std::fs::remove_file(bench.tools.join(FIXTURE_NAME)).unwrap();
+    });
+    let failed = bench.summary_until(&session, "the failed attempt", |summary| {
+        summary
+            .resume_attempt
+            .as_ref()
+            .map(|attempt| attempt.outcome)
+            == Some(AttemptOutcome::Failed)
+    });
+    let attempt = failed.resume_attempt.unwrap();
+    assert_eq!(attempt.reason.as_deref(), Some("not_found"));
+    assert_eq!(attempt.program.as_deref(), Some(FIXTURE_NAME));
+    assert!(failed.manifest.program_resume.is_empty());
+    assert!(failed.resume_candidate.is_none());
+    assert!(failed.live);
+    let manifest = manifest_path(bench.home.path(), &session);
+    wait_for("the dropped record leaving the manifest on disk", || {
+        read_manifest(&manifest)
+            .ok()?
+            .program_resume
+            .is_empty()
+            .then_some(())
+    });
+    bench.screen_until(
+        &session,
+        &format!("paneflow-resume: {FIXTURE_NAME}: not found"),
+    );
+    bench.type_line(&session, "echo plain-$((40+2))");
+    bench.screen_until(&session, "plain-42");
+}
+
+const WRAPPER_NAME: &str = "paneflow-wrapper";
+
+fn install_child_spawning_wrapper(bench: &Bench) {
+    use std::os::unix::fs::PermissionsExt;
+    let wrapper = bench.tools.join(WRAPPER_NAME);
+    std::fs::write(
+        &wrapper,
+        format!("#!/bin/sh\n{FIXTURE_NAME} \"$@\"\nstatus=$?\nexit $status\n"),
+    )
+    .unwrap();
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+#[test]
+fn a_program_a_wrapper_starts_as_its_child_takes_over_the_record_and_clears_it_for_good() {
+    let mut bench = Bench::new();
+    install_child_spawning_wrapper(&bench);
+    let session = bench.create("/bin/bash", &[]);
+    let work = bench.work.display().to_string();
+    let reported = [
+        WRAPPER_NAME,
+        "resume-report",
+        &format!("cwd:{work}"),
+        &format!("report:{WRAPPER_NAME}"),
+        "await",
+        "clear",
+    ];
+    let record = bench.report_from_the_pane(&session, &reported);
+    bench.lose_and_resume(&session, record);
+
+    let settled = bench.summary_until(&session, "the wrapped program's own report", |summary| {
+        summary
+            .resume_attempt
+            .as_ref()
+            .is_some_and(|attempt| attempt.outcome == AttemptOutcome::Settled)
+    });
+    let records = settled.manifest.program_resume.records();
+    assert_eq!(records.len(), 1, "{records:?}");
+    let program = records[0].owner.pid;
+    assert_eq!(records[0].argv, [WRAPPER_NAME]);
+    assert!(records[0].settled());
+    assert_eq!(cmdline_of(program)[..2], [FIXTURE_NAME, "resume-report"]);
+    assert_eq!(settled.resume_attempt.unwrap().pid, Some(program));
+    assert!(settled.resume_candidate.unwrap().settled);
+
+    bench.type_line(&session, "");
+    bench.summary_until(&session, "the program's clear", |summary| {
+        summary.manifest.program_resume.is_empty() && summary.resume_candidate.is_none()
+    });
 }
