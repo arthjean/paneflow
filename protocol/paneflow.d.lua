@@ -864,6 +864,7 @@ paneflow.surface = {}
 paneflow.surface.focus = function(params) end
 
 ---@class paneflow.surface.list.params
+---@field scope? "workspace"|"all" "all" reads beyond the calling pane's workspace when orchestration is open for it
 ---@field scope_session? string List the workspace that holds this session
 ---@field workspace_id? integer List this workspace instead of the shown one
 
@@ -885,6 +886,7 @@ paneflow.surface.list = function(params) end
 ---@field lines? integer Trailing lines to return, clamped to 1..4000
 ---@field name? string Pick the surface by its unique name instead of its id
 ---@field offset? integer Lines to skip back from the end of the buffer
+---@field scope? "workspace"|"all" "all" reads beyond the calling pane's workspace when orchestration is open for it
 ---@field scope_session? string
 ---@field surface_id? integer The surface to read; the first surface of the shown tab when absent
 ---@field workspace_id? integer
@@ -921,15 +923,18 @@ paneflow.surface.read = function(params) end
 paneflow.surface.rename = function(params) end
 
 ---@class paneflow.surface.search.params
+---@field fenced? boolean Add a text field holding every match in one untrusted-output fence; the ai_injection_fence setting decides when absent
 ---@field max_matches? integer Matches to return, clamped to 1..1000
 ---@field name? string
 ---@field pattern string Substring or pattern to find, at most 512 bytes
+---@field scope? "workspace"|"all" "all" reads beyond the calling pane's workspace when orchestration is open for it
 ---@field scope_session? string
 ---@field surface_id? integer
 ---@field workspace_id? integer
 
 ---@class paneflow.surface.search.result
 ---@field matches table[]
+---@field text? string
 ---@field truncated boolean
 
 ---Find the scrollback lines of a surface that contain a pattern.

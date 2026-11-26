@@ -785,7 +785,11 @@ impl<T: IpcTransport> Engine<'_, T> {
                     Some(result) => result,
                     None => {
                         self.runs[i].outside_flow = true;
-                        super::selector::resolve_target(self.client, &target)
+                        super::selector::resolve_target_in(
+                            self.client,
+                            &target,
+                            super::selector::Reach::from_scope_all(self.scope_all),
+                        )
                     }
                 };
                 match sid {

@@ -3940,6 +3940,60 @@ mod tests {
     }
 
     #[test]
+    fn a_host_search_is_fenced_with_its_session_unless_the_call_or_the_setting_says_otherwise() {
+        use paneflow_ipc_client::IpcTransport;
+        use paneflow_ipc_client::host_control::HostTransport;
+
+        let (_home, host, server) = start();
+        let created = host
+            .create(serde_json::from_value(shell_create_params()).unwrap())
+            .unwrap();
+        let (session, generation) = (created.manifest.session, created.manifest.generation);
+        let command = "echo FENCE_NEEDLE";
+        host.input(&session, Some(generation), shell_line(command, command))
+            .unwrap();
+        assert!(wait_until(Duration::from_secs(20), || host
+            .text(&session)
+            .is_ok_and(
+                |text| visible_text(&text.text).contains("FENCE_NEEDLE")
+            )));
+        let transport = HostTransport::connect(server.endpoint(), "search-fence-test").unwrap();
+        let target = json!({"session": session, "pattern": "FENCE_NEEDLE"});
+
+        let fenced = transport.call("surface.search", target.clone()).unwrap();
+        let text = fenced["text"]
+            .as_str()
+            .expect("a fenced reply carries text");
+        let header = format!(
+            "<untrusted_terminal_output source=\"session:{session}\" pattern=\"FENCE_NEEDLE\" id=\""
+        );
+        assert!(text.starts_with(&header), "{fenced}");
+        assert_eq!(text.matches("</untrusted_terminal_output").count(), 1);
+        let matches = fenced["matches"].as_array().unwrap();
+        assert!(!matches.is_empty(), "{fenced}");
+        for found in matches {
+            let row = format!("{}: {}", found["line"], found["text"].as_str().unwrap());
+            assert!(text.contains(&row), "{row} in {text}");
+        }
+
+        let mut raw = target.clone();
+        raw["fenced"] = json!(false);
+        let raw = transport.call("surface.search", raw).unwrap();
+        assert!(raw.get("text").is_none(), "{raw}");
+        assert!(!raw["matches"].as_array().unwrap().is_empty(), "{raw}");
+
+        host.override_permissions(crate::control::ControlPermissions {
+            fenced_reads: false,
+            ..granted(false, false)
+        });
+        let unset = transport.call("surface.search", target).unwrap();
+        assert!(unset.get("text").is_none(), "{unset}");
+
+        host.stop(&session, None).unwrap();
+        server.stop().unwrap();
+    }
+
+    #[test]
     fn a_scope_session_without_a_workspace_reaches_only_itself() {
         use paneflow_ipc_client::IpcTransport;
         use paneflow_ipc_client::host_control::HostTransport;

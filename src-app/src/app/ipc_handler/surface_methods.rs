@@ -76,14 +76,37 @@ pub(crate) struct SurfaceMeta {
     pub sandboxed: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReadScopeSource {
+    CallingPane,
+    RequestedWorkspace,
+}
+
+impl ReadScopeSource {
+    fn of(params: &serde_json::Value) -> Self {
+        if params.get("scope_session").is_some() {
+            Self::CallingPane
+        } else {
+            Self::RequestedWorkspace
+        }
+    }
+}
+
 fn authorize_surface_workspace(
     surface_id: u64,
     expected_workspace_id: Option<u64>,
     actual_workspace_id: Option<u64>,
+    source: ReadScopeSource,
 ) -> Result<(), JsonRpcError> {
     match expected_workspace_id {
         None => Ok(()),
         Some(expected) if actual_workspace_id == Some(expected) => Ok(()),
+        Some(_) if source == ReadScopeSource::CallingPane => {
+            Err(JsonRpcError::invalid_params(format!(
+                "surface_id {surface_id} is outside the workspace of the calling pane; {}",
+                paneflow_api::policy::cross_workspace_read_hint()
+            )))
+        }
         Some(expected) => Err(JsonRpcError::invalid_params(format!(
             "surface_id {surface_id} not found in workspace_id {expected}"
         ))),
@@ -360,22 +383,43 @@ pub(super) fn answer_surface_read(
     )
 }
 
+pub(super) struct SurfaceSearchRequest {
+    pub(super) surface_id: u64,
+    pub(super) pattern: String,
+    pub(super) max_matches: usize,
+    pub(super) fenced: bool,
+}
+
 pub(super) fn answer_surface_search(
     backend: &crate::terminal::TerminalSessionBackend,
-    pattern: &str,
-    max_matches: usize,
+    request: &SurfaceSearchRequest,
     timeout: Duration,
 ) -> serde_json::Value {
-    let found = match backend.search_rows(pattern, max_matches, timeout) {
+    let found = match backend.search_rows(&request.pattern, request.max_matches, timeout) {
         Ok(found) => found,
         Err(error) => return JsonRpcError::runtime_query(&error).into_value(),
     };
-    let (matches, clipped) = fit_matches_to_ipc_frame(found.matches);
+    let (matches, clipped, text) = if request.fenced {
+        let fenced = paneflow_ipc_client::scrollback::fence_search_matches(
+            &format!("surface:{}", request.surface_id),
+            &request.pattern,
+            found.matches,
+        );
+        (fenced.matches, fenced.clipped, Some(fenced.text))
+    } else {
+        let (matches, clipped) = fit_matches_to_ipc_frame(found.matches);
+        (matches, clipped, None)
+    };
     let matches: Vec<_> = matches
         .into_iter()
         .map(|(line, text)| serde_json::json!({"line": line, "text": text}))
         .collect();
-    serde_json::json!({"matches": matches, "truncated": found.truncated || clipped})
+    let mut reply =
+        serde_json::json!({"matches": matches, "truncated": found.truncated || clipped});
+    if let Some(text) = text {
+        reply["text"] = serde_json::json!(text);
+    }
+    reply
 }
 
 pub(super) fn surface_read_job(
@@ -401,10 +445,17 @@ pub(super) fn surface_search_job(
     terminal: &Entity<TerminalView>,
     pattern: String,
     max_matches: usize,
+    fenced: bool,
     cx: &App,
 ) -> IpcJob {
     let backend = terminal.read(cx).terminal.session_backend();
-    Box::new(move || answer_surface_search(&backend, &pattern, max_matches, RUNTIME_SEARCH_TIMEOUT))
+    let request = SurfaceSearchRequest {
+        surface_id: terminal.read(cx).surface_id(),
+        pattern,
+        max_matches,
+        fenced,
+    };
+    Box::new(move || answer_surface_search(&backend, &request, RUNTIME_SEARCH_TIMEOUT))
 }
 
 fn input_rejected_error(reason: &str) -> JsonRpcError {
@@ -681,6 +732,15 @@ impl PaneFlowApp {
         params: &serde_json::Value,
         cx: &App,
     ) -> Result<gpui::Entity<TerminalView>, JsonRpcError> {
+        self.resolve_surface_within(params, None, cx)
+    }
+
+    fn resolve_surface_within(
+        &self,
+        params: &serde_json::Value,
+        named_in: Option<u64>,
+        cx: &App,
+    ) -> Result<gpui::Entity<TerminalView>, JsonRpcError> {
         let surface_id = opt_u64(params, "surface_id")?;
         let name = opt_str(params, "name")?;
         if let Some(sid) = surface_id {
@@ -689,7 +749,11 @@ impl PaneFlowApp {
             });
         }
         if let Some(name) = name.filter(|n| !n.is_empty()) {
-            let meta = self.collect_surface_meta(cx);
+            let meta: Vec<SurfaceMeta> = self
+                .collect_surface_meta(cx)
+                .into_iter()
+                .filter(|surface| surface_matches_workspace(surface, named_in))
+                .collect();
             let matches: Vec<&SurfaceMeta> = meta.iter().filter(|m| m.name == name).collect();
             match matches.as_slice() {
                 [one] => {
@@ -729,13 +793,20 @@ impl PaneFlowApp {
         params: &serde_json::Value,
         cx: &App,
     ) -> Result<gpui::Entity<TerminalView>, JsonRpcError> {
-        let terminal = self.resolve_surface(params, cx)?;
         let expected_workspace_id = self.scope_workspace_id(params, cx)?;
+        let source = ReadScopeSource::of(params);
+        let named_in = expected_workspace_id.filter(|_| source == ReadScopeSource::CallingPane);
+        let terminal = self.resolve_surface_within(params, named_in, cx)?;
         let surface_id = terminal.read(cx).surface_id();
         let actual_workspace_id = self
             .surface_workspace_idx(surface_id)
             .and_then(|idx| self.workspace_id_for_workspace_idx(idx));
-        authorize_surface_workspace(surface_id, expected_workspace_id, actual_workspace_id)?;
+        authorize_surface_workspace(
+            surface_id,
+            expected_workspace_id,
+            actual_workspace_id,
+            source,
+        )?;
         Ok(terminal)
     }
 
@@ -775,11 +846,18 @@ impl PaneFlowApp {
     }
 
     pub(super) fn surface_search_reply(&self, params: &serde_json::Value, cx: &App) -> IpcReply {
-        let (pattern, max_matches) =
-            match (opt_str(params, "pattern"), opt_usize(params, "max_matches")) {
-                (Ok(pattern), Ok(max_matches)) => (pattern.unwrap_or(""), max_matches),
-                (Err(error), _) | (_, Err(error)) => return IpcReply::Ready(error.into_value()),
-            };
+        let (pattern, max_matches, fenced) = match (
+            opt_str(params, "pattern"),
+            opt_usize(params, "max_matches"),
+            opt_bool(params, "fenced"),
+        ) {
+            (Ok(pattern), Ok(max_matches), Ok(fenced)) => {
+                (pattern.unwrap_or(""), max_matches, fenced)
+            }
+            (Err(error), _, _) | (_, Err(error), _) | (_, _, Err(error)) => {
+                return IpcReply::Ready(error.into_value());
+            }
+        };
         if pattern.is_empty() {
             return IpcReply::Ready(
                 JsonRpcError::invalid_params("missing or empty 'pattern' parameter").into_value(),
@@ -800,10 +878,12 @@ impl PaneFlowApp {
         };
         let max_matches =
             max_matches.map_or(DEFAULT_SEARCH_MATCHES, |n| n.clamp(1, MAX_SEARCH_MATCHES));
+        let fenced = fenced.unwrap_or_else(|| self.cached_config.ai_injection_fence_enabled());
         IpcReply::Deferred(surface_search_job(
             &terminal,
             pattern.to_owned(),
             max_matches,
+            fenced,
             cx,
         ))
     }
@@ -1168,6 +1248,15 @@ impl PaneFlowApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn unfenced_search(pattern: &str, max_matches: usize) -> SurfaceSearchRequest {
+        SurfaceSearchRequest {
+            surface_id: 0,
+            pattern: pattern.to_string(),
+            max_matches,
+            fenced: false,
+        }
+    }
 
     #[gpui::test]
     fn a_moved_tab_takes_its_session_scope_to_the_destination_workspace(
@@ -1563,15 +1652,25 @@ mod tests {
 
     #[test]
     fn readable_surface_authorization_rejects_cross_workspace_targets() {
+        use super::ReadScopeSource::{CallingPane, RequestedWorkspace};
         assert_eq!(
-            super::authorize_surface_workspace(7, Some(42), Some(42)),
+            super::authorize_surface_workspace(7, Some(42), Some(42), CallingPane),
             Ok(())
         );
-        let error = super::authorize_surface_workspace(7, Some(42), Some(99))
+        let error = super::authorize_surface_workspace(7, Some(42), Some(99), RequestedWorkspace)
             .expect_err("cross-workspace read/search must fail");
         assert_eq!(error.code, super::JsonRpcError::INVALID_PARAMS);
         assert_eq!(error.message, "surface_id 7 not found in workspace_id 42");
-        assert!(super::authorize_surface_workspace(7, None, Some(99)).is_ok());
+        let refused = super::authorize_surface_workspace(7, Some(42), Some(99), CallingPane)
+            .expect_err("a pane caller cannot read another workspace");
+        assert!(
+            refused
+                .message
+                .ends_with(&paneflow_api::policy::cross_workspace_read_hint()),
+            "{}",
+            refused.message
+        );
+        assert!(super::authorize_surface_workspace(7, None, Some(99), CallingPane).is_ok());
     }
 
     #[test]
@@ -2190,7 +2289,7 @@ mod tests {
         let (read_job, search_job) = cx.update(|_, cx| {
             (
                 surface_read_job(&terminal, 10, 0, false, cx),
-                surface_search_job(&terminal, "needle".to_owned(), 10, cx),
+                surface_search_job(&terminal, "needle".to_owned(), 10, false, cx),
             )
         });
         let prepared_in = started.elapsed();
@@ -2231,7 +2330,7 @@ mod tests {
             serde_json::json!(1),
         );
         let search = promote_response(
-            answer_surface_search(&backend, "output", 10, timeout),
+            answer_surface_search(&backend, &unfenced_search("output", 10), timeout),
             serde_json::json!(2),
         );
 
@@ -2258,7 +2357,11 @@ mod tests {
 
         let search = || {
             promote_response(
-                answer_surface_search(&backend, "needle", 10, Duration::from_millis(300)),
+                answer_surface_search(
+                    &backend,
+                    &unfenced_search("needle", 10),
+                    Duration::from_millis(300),
+                ),
                 serde_json::json!(3),
             )
         };
@@ -2315,10 +2418,18 @@ mod tests {
 
         let earlier_backend = backend.clone();
         let earlier = std::thread::spawn(move || {
-            answer_surface_search(&earlier_backend, "needle", 10, Duration::from_secs(5))
+            answer_surface_search(
+                &earlier_backend,
+                &unfenced_search("needle", 10),
+                Duration::from_secs(5),
+            )
         });
         std::thread::sleep(Duration::from_millis(100));
-        let later = answer_surface_search(&backend, "needle", 10, Duration::from_secs(5));
+        let later = answer_surface_search(
+            &backend,
+            &unfenced_search("needle", 10),
+            Duration::from_secs(5),
+        );
         let earlier =
             promote_response(earlier.join().expect("search thread"), serde_json::json!(4));
 
@@ -2347,7 +2458,11 @@ mod tests {
         });
 
         for _ in 0..40 {
-            let found = answer_surface_search(&backend, "needle", 50, Duration::from_secs(5));
+            let found = answer_surface_search(
+                &backend,
+                &unfenced_search("needle", 50),
+                Duration::from_secs(5),
+            );
             for hit in found["matches"].as_array().expect("matches") {
                 assert!(
                     hit["text"]

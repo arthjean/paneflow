@@ -3,8 +3,8 @@ use std::path::Path;
 use paneflow_agent_config::runtime_catalog::{RuntimeHookAdapter, runtime_for_tool};
 use paneflow_config::schema::{SessionGeneration, SessionId, WorkspaceId};
 use paneflow_ipc_client::scrollback::{
-    fit_matches_to_ipc_frame, neutralize_untrusted, paginate_scrollback, search_text,
-    truncate_ipc_text, wrap_untrusted,
+    fence_search_matches, fit_matches_to_ipc_frame, neutralize_untrusted, paginate_scrollback,
+    search_text, truncate_ipc_text, wrap_untrusted,
 };
 use paneflow_ipc_client::send_text::{
     SUBMIT_ECHO_EXTRA, SUBMIT_ECHO_POLL, SubmitTick, bracketed_paste_frame, resolve_paste_mode,
@@ -534,7 +534,8 @@ fn authorize_scoped_session(
         Ok(())
     } else {
         Err(ControlError::Params(format!(
-            "session {session} is outside the workspace of the scope session"
+            "session {session} is outside the workspace of the calling pane; {}",
+            paneflow_api::policy::cross_workspace_read_hint()
         )))
     }
 }
@@ -667,15 +668,29 @@ fn answer(
             let max_matches = param_usize(params, "max_matches")
                 .map(|max| max.clamp(1, MAX_SEARCH_MATCHES))
                 .unwrap_or(DEFAULT_SEARCH_MATCHES);
+            let fenced = params
+                .get("fenced")
+                .and_then(Value::as_bool)
+                .unwrap_or(permissions.fenced_reads);
             let full = host.text(&session)?.text;
             let (matches, capped) = search_text(&full, pattern, max_matches);
-            let (matches, clipped) = fit_matches_to_ipc_frame(matches);
+            let (matches, clipped, text) = if fenced {
+                let fenced = fence_search_matches(&format!("session:{session}"), pattern, matches);
+                (fenced.matches, fenced.clipped, Some(fenced.text))
+            } else {
+                let (matches, clipped) = fit_matches_to_ipc_frame(matches);
+                (matches, clipped, None)
+            };
             let truncated = capped || clipped;
             let matches: Vec<Value> = matches
                 .into_iter()
                 .map(|(line, text)| json!({"line": line, "text": text}))
                 .collect();
-            Ok(json!({"matches": matches, "truncated": truncated}))
+            let mut reply = json!({"matches": matches, "truncated": truncated});
+            if let Some(text) = text {
+                reply["text"] = json!(text);
+            }
+            Ok(reply)
         }
         "surface.status" => {
             let session = resolve_session(aliases, params)?;

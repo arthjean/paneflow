@@ -74,7 +74,6 @@ impl Audience {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScopeRule {
     Unscoped,
-    ClaimedSession,
     Workspace,
     WorkspaceUnlessAll,
 }
@@ -83,7 +82,6 @@ impl ScopeRule {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Unscoped => "none",
-            Self::ClaimedSession => "claimed_session",
             Self::Workspace => "workspace",
             Self::WorkspaceUnlessAll => "workspace_unless_all",
         }
@@ -92,9 +90,6 @@ impl ScopeRule {
     pub const fn note(self) -> Option<&'static str> {
         match self {
             Self::Unscoped => None,
-            Self::ClaimedSession => Some(
-                "A caller in a pane that sends scope_session is scoped to its own session instead.",
-            ),
             Self::Workspace => Some(
                 "A caller in a pane reaches only sessions of its own workspace unless orchestration is open for it.",
             ),

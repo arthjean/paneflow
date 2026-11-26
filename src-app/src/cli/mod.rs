@@ -222,10 +222,31 @@ enum Commands {
         about = "List or revoke the grants agents in panes hold over Paneflow"
     )]
     Grants(grants_cmd::GrantsCommand),
-    #[command(alias = "list_panes", about = "List the panes of the active workspace")]
+    #[command(
+        alias = "list_panes",
+        about = "List the panes of the active workspace, framed as untrusted output when printed to a program (--raw for plain output)"
+    )]
     Ls {
         #[arg(long, help = "Human-readable table instead of the default JSON")]
         human: bool,
+        #[arg(
+            long,
+            conflicts_with = "human",
+            help = "Print the listing as JSON, the default"
+        )]
+        json: bool,
+        #[arg(
+            long,
+            help = "Never wrap the listing in the `<untrusted_terminal_output>` fence it gets when standard output is not a terminal"
+        )]
+        raw: bool,
+        #[arg(
+            long,
+            value_parser = ["workspace", "all"],
+            default_value = "workspace",
+            help = "From inside a Paneflow pane, reads stay in that pane's workspace. `all` reaches every workspace and needs `ipc.orchestration` set to true in paneflow.json"
+        )]
+        scope: String,
     },
     #[command(
         alias = "read_pane",
@@ -248,10 +269,17 @@ enum Commands {
             help = "Return raw scrollback, bypassing the anti-injection fence that otherwise wraps the output as `<untrusted_terminal_output>` (the fence is on by default; see the ai_injection_fence setting)"
         )]
         raw: bool,
+        #[arg(
+            long,
+            value_parser = ["workspace", "all"],
+            default_value = "workspace",
+            help = "From inside a Paneflow pane, reads stay in that pane's workspace. `all` reaches every workspace and needs `ipc.orchestration` set to true in paneflow.json"
+        )]
+        scope: String,
     },
     #[command(
         alias = "search_pane",
-        about = "Search a pane's scrollback for a substring/pattern"
+        about = "Search a pane's scrollback for a substring/pattern, framed as untrusted output by default (--raw for plain lines)"
     )]
     Search {
         #[arg(help = "Target: surface id, name, `cmdline:<substr>`, or `cwd:<path>`")]
@@ -260,8 +288,29 @@ enum Commands {
         pattern: String,
         #[arg(long, help = "Cap the number of matches (server clamps to 1..1000)")]
         max: Option<u64>,
-        #[arg(long, help = "Human-readable lines instead of the default JSON")]
+        #[arg(
+            long,
+            help = "Print `<line>: <text>` lines when the server sends no fenced text"
+        )]
         human: bool,
+        #[arg(
+            long,
+            conflicts_with = "human",
+            help = "Print the whole `{matches, truncated, text}` reply as JSON"
+        )]
+        json: bool,
+        #[arg(
+            long,
+            help = "Return raw `<line>: <text>` lines, bypassing the anti-injection fence that otherwise wraps the matches as `<untrusted_terminal_output>` (see the ai_injection_fence setting)"
+        )]
+        raw: bool,
+        #[arg(
+            long,
+            value_parser = ["workspace", "all"],
+            default_value = "workspace",
+            help = "From inside a Paneflow pane, reads stay in that pane's workspace. `all` reaches every workspace and needs `ipc.orchestration` set to true in paneflow.json"
+        )]
+        scope: String,
     },
     #[command(about = "List running agents across the fleet (pid, tool, state, pane)")]
     Ps {
@@ -868,20 +917,66 @@ fn connect() -> Result<CliTransport, String> {
 
 fn dispatch(command: Commands, client: &CliTransport) -> Result<i32, CliError> {
     match command {
-        Commands::Ls { human } => read_cmds::ls(client, human),
+        Commands::Ls {
+            human,
+            json: _,
+            raw,
+            scope,
+        } => read_cmds::ls(
+            client,
+            read_cmds::ListOptions {
+                format: if human {
+                    read_cmds::ListFormat::Table
+                } else {
+                    read_cmds::ListFormat::Json
+                },
+                reach: selector::Reach::from_scope_all(scope == "all"),
+                raw,
+            },
+        ),
         Commands::Read {
             target,
             lines,
             offset,
             json,
             raw,
-        } => read_cmds::read(client, &target, lines, offset, json, raw),
+            scope,
+        } => read_cmds::read(
+            client,
+            &target,
+            &read_cmds::ReadOptions {
+                lines,
+                offset,
+                json,
+                raw,
+                reach: selector::Reach::from_scope_all(scope == "all"),
+            },
+        ),
         Commands::Search {
             target,
             pattern,
             max,
             human,
-        } => read_cmds::search(client, &target, &pattern, max, human),
+            json,
+            raw,
+            scope,
+        } => read_cmds::search(
+            client,
+            &target,
+            &pattern,
+            &read_cmds::SearchOptions {
+                max,
+                format: if json {
+                    read_cmds::SearchFormat::Json
+                } else if human {
+                    read_cmds::SearchFormat::Lines
+                } else {
+                    read_cmds::SearchFormat::Default
+                },
+                raw,
+                reach: selector::Reach::from_scope_all(scope == "all"),
+            },
+        ),
         Commands::Ps { json } => read_cmds::ps(client, json),
         Commands::Status { target, json } => read_cmds::status(client, &target, json),
         Commands::New { name, cwd, space } => {
@@ -1436,7 +1531,10 @@ mod tests {
     #[test]
     fn cli_parses_a_verb_with_flags() {
         let cli = Cli::try_parse_from(["paneflow", "ls", "--human"]).expect("parse");
-        assert!(matches!(cli.command, Some(Commands::Ls { human: true })));
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Ls { human: true, .. })
+        ));
     }
 
     #[test]

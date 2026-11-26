@@ -38,22 +38,25 @@ fn policies() -> [(&'static str, Policy); 2] {
 pub fn rendered_table() -> String {
     let catalog = paneflow_api::host_catalog().expect("the catalog builds");
     let mut lines = vec![
-        "# method owner principal closed open (params: {\"scope_session\": \"s-claimed\"})"
+        "# method owner principal closed open (params: {\"scope_session\": \"s-claimed\"}) bare (closed, params: {}) scope_rule"
             .to_string(),
     ];
     let params = json!({"scope_session": "s-claimed"});
+    let bare = json!({});
     for descriptor in catalog.iter() {
         for principal in principals() {
-            let decisions: Vec<String> = policies()
+            let mut decisions: Vec<String> = policies()
                 .iter()
                 .map(|(_, policy)| authorize(&principal, descriptor, &params, policy).label())
                 .collect();
+            decisions.push(authorize(&principal, descriptor, &bare, &Policy::default()).label());
             lines.push(format!(
-                "{} {} {} {}",
+                "{} {} {} {} {}",
                 descriptor.name(),
                 descriptor.spec.owner.label(),
                 principal.kind(),
-                decisions.join(" ")
+                decisions.join(" "),
+                descriptor.spec.scope.label(),
             ));
         }
     }

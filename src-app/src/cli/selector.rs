@@ -48,33 +48,83 @@ fn parse_selector(raw: &str) -> Result<Selector<'_>, CliError> {
     Ok(Selector::Name(raw))
 }
 
-pub fn fetch_surfaces(client: &impl IpcTransport) -> Result<Vec<Surface>, CliError> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reach {
+    Workspace,
+    All,
+}
+
+impl Reach {
+    pub const fn from_scope_all(all: bool) -> Self {
+        if all { Self::All } else { Self::Workspace }
+    }
+
+    pub fn list_params(self) -> serde_json::Value {
+        match self {
+            Self::Workspace => json!({}),
+            Self::All => json!({"scope": "all"}),
+        }
+    }
+}
+
+pub struct Listing {
+    pub surfaces: Vec<Surface>,
+    pub scoped: bool,
+    pub reach: Reach,
+}
+
+pub fn listing_is_scoped(result: &serde_json::Value) -> bool {
+    result
+        .get("scope_workspace_id")
+        .is_some_and(|scope| !scope.is_null())
+        || result.get("scope_workspace").is_some()
+}
+
+pub fn fetch_surfaces(client: &impl IpcTransport, reach: Reach) -> Result<Listing, CliError> {
     let result = client
-        .call("surface.list", json!({}))
+        .call("surface.list", reach.list_params())
         .map_err(CliError::runtime)?;
+    let scoped = listing_is_scoped(&result);
     let surfaces = result.get("surfaces").cloned().unwrap_or_else(|| json!([]));
-    serde_json::from_value(surfaces)
-        .map_err(|e| CliError::runtime(format!("malformed surface.list response: {e}")))
+    let surfaces = serde_json::from_value(surfaces)
+        .map_err(|e| CliError::runtime(format!("malformed surface.list response: {e}")))?;
+    Ok(Listing {
+        surfaces,
+        scoped,
+        reach,
+    })
 }
 
 pub fn resolve_target(client: &impl IpcTransport, target: &str) -> Result<u64, CliError> {
-    let surfaces = fetch_surfaces(client)?;
-    resolve(parse_selector(target)?, &surfaces)
+    let selector = parse_selector(target)?;
+    let listing = fetch_surfaces(client, Reach::All)?;
+    let listing = if listing.scoped && matches_for(&selector, &listing.surfaces).is_empty() {
+        match layout_rows(client) {
+            Some(rows) if !matches_for(&selector, &rows).is_empty() => listing.widened_to(rows),
+            _ => listing,
+        }
+    } else {
+        listing
+    };
+    resolve(selector, &listing)
 }
 
-pub fn resolve_all(client: &impl IpcTransport, target: &str) -> Result<Vec<u64>, CliError> {
-    let surfaces = fetch_surfaces(client)?;
-    let selector = parse_selector(target)?;
-    let ids: Vec<u64> = matches_for(&selector, &surfaces)
-        .iter()
-        .map(|s| s.surface_id)
-        .collect();
-    if ids.is_empty() {
-        return Err(CliError::target(format!(
-            "no pane matches target '{target}'"
-        )));
-    }
-    Ok(ids)
+pub fn resolve_target_in(
+    client: &impl IpcTransport,
+    target: &str,
+    reach: Reach,
+) -> Result<u64, CliError> {
+    let listing = fetch_surfaces(client, reach)?;
+    resolve(parse_selector(target)?, &listing)
+}
+
+pub fn resolve_all(
+    client: &impl IpcTransport,
+    target: &str,
+    reach: Reach,
+) -> Result<Vec<u64>, CliError> {
+    let listing = fetch_surfaces(client, reach)?;
+    every_match(&parse_selector(target)?, &listing, target)
 }
 
 pub fn resolve_target_once_drawn(
@@ -84,7 +134,7 @@ pub fn resolve_target_once_drawn(
 ) -> Result<Option<u64>, CliError> {
     let selector = parse_selector(target)?;
     match surfaces_once_drawn(client, &selector, deadline)? {
-        Some(surfaces) => resolve(selector, &surfaces).map(Some),
+        Some(listing) => resolve(selector, &listing).map(Some),
         None => Ok(None),
     }
 }
@@ -95,30 +145,67 @@ pub fn resolve_all_once_drawn(
     deadline: Instant,
 ) -> Result<Option<Vec<u64>>, CliError> {
     let selector = parse_selector(target)?;
-    let Some(surfaces) = surfaces_once_drawn(client, &selector, deadline)? else {
+    let Some(listing) = surfaces_once_drawn(client, &selector, deadline)? else {
         return Ok(None);
     };
-    let ids: Vec<u64> = matches_for(&selector, &surfaces)
+    every_match(&selector, &listing, target).map(Some)
+}
+
+fn every_match(
+    selector: &Selector<'_>,
+    listing: &Listing,
+    target: &str,
+) -> Result<Vec<u64>, CliError> {
+    let ids: Vec<u64> = matches_for(selector, &listing.surfaces)
         .iter()
         .map(|s| s.surface_id)
         .collect();
     if ids.is_empty() {
-        return Err(CliError::target(format!(
-            "no pane matches target '{target}'"
-        )));
+        return Err(no_match(target, listing));
     }
-    Ok(Some(ids))
+    Ok(ids)
+}
+
+impl Listing {
+    fn widened_to(self, surfaces: Vec<Surface>) -> Self {
+        Self {
+            surfaces,
+            scoped: false,
+            reach: self.reach,
+        }
+    }
+}
+
+fn no_match(target: &str, listing: &Listing) -> CliError {
+    match (listing.scoped, listing.reach) {
+        (false, _) => CliError::target(format!("no pane matches target '{target}'")),
+        (true, Reach::Workspace) => CliError::target(format!(
+            "no pane of the calling pane's workspace matches target '{target}'; \
+             panes of other workspaces need --scope all with ipc.orchestration set to true in paneflow.json"
+        )),
+        (true, Reach::All) => CliError::target(format!(
+            "no pane of the calling pane's workspace matches target '{target}'; \
+             panes of other workspaces need ipc.orchestration set to true in paneflow.json"
+        )),
+    }
 }
 
 fn surfaces_once_drawn(
     client: &impl IpcTransport,
     selector: &Selector<'_>,
     deadline: Instant,
-) -> Result<Option<Vec<Surface>>, CliError> {
+) -> Result<Option<Listing>, CliError> {
     loop {
-        let surfaces = fetch_surfaces(client)?;
-        if !matches_for(selector, &surfaces).is_empty() || !layout_holds(client, selector) {
+        let surfaces = fetch_surfaces(client, Reach::All)?;
+        if !matches_for(selector, &surfaces.surfaces).is_empty() {
             return Ok(Some(surfaces));
+        }
+        let Some(rows) = layout_rows(client).filter(|rows| !matches_for(selector, rows).is_empty())
+        else {
+            return Ok(Some(surfaces));
+        };
+        if surfaces.scoped && drawn_outside_the_listing(client, selector, &rows) {
+            return Ok(Some(surfaces.widened_to(rows)));
         }
         if Instant::now() >= deadline {
             return Ok(None);
@@ -127,26 +214,41 @@ fn surfaces_once_drawn(
     }
 }
 
-fn layout_holds(client: &impl IpcTransport, selector: &Selector<'_>) -> bool {
-    let Ok(view) = client.call("layout.view", json!({})) else {
-        return false;
-    };
-    let rows: Vec<Surface> = super::headless::worker_layout_of(&view["view"])
-        .surfaces
-        .into_iter()
-        .map(|surface| Surface {
-            surface_id: surface.surface_id,
-            name: surface.name,
-            cwd: None,
-            cmd: None,
-        })
-        .collect();
-    !matches_for(selector, &rows).is_empty()
+fn drawn_outside_the_listing(
+    client: &impl IpcTransport,
+    selector: &Selector<'_>,
+    rows: &[Surface],
+) -> bool {
+    matches_for(selector, rows).iter().all(|surface| {
+        client
+            .call(
+                "surface.status",
+                json!({ "surface_id": surface.surface_id }),
+            )
+            .is_ok_and(|status| status.get("error").is_none())
+    })
 }
 
-fn resolve(selector: Selector<'_>, surfaces: &[Surface]) -> Result<u64, CliError> {
+fn layout_rows(client: &impl IpcTransport) -> Option<Vec<Surface>> {
+    let view = client.call("layout.view", json!({})).ok()?;
+    Some(
+        super::headless::worker_layout_of(&view["view"])
+            .surfaces
+            .into_iter()
+            .map(|surface| Surface {
+                surface_id: surface.surface_id,
+                name: surface.name,
+                cwd: None,
+                cmd: None,
+            })
+            .collect(),
+    )
+}
+
+fn resolve(selector: Selector<'_>, listing: &Listing) -> Result<u64, CliError> {
     let label = selector_label(&selector);
-    pick_unique(&matches_for(&selector, surfaces), &label)
+    pick_unique(&matches_for(&selector, &listing.surfaces), &label)
+        .map_err(|error| error.unwrap_or_else(|| no_match(&label, listing)))
 }
 
 fn matches_for<'s>(selector: &Selector<'_>, surfaces: &'s [Surface]) -> Vec<&'s Surface> {
@@ -227,11 +329,9 @@ fn selector_label(selector: &Selector<'_>) -> String {
     }
 }
 
-fn pick_unique(matches: &[&Surface], target: &str) -> Result<u64, CliError> {
+fn pick_unique(matches: &[&Surface], target: &str) -> Result<u64, Option<CliError>> {
     match matches {
-        [] => Err(CliError::target(format!(
-            "no pane matches target '{target}'"
-        ))),
+        [] => Err(None),
         [one] => Ok(one.surface_id),
         many => {
             let listed = many
@@ -239,9 +339,9 @@ fn pick_unique(matches: &[&Surface], target: &str) -> Result<u64, CliError> {
                 .map(|s| format!("{}({})", s.surface_id, s.name.as_deref().unwrap_or("?")))
                 .collect::<Vec<_>>()
                 .join(", ");
-            Err(CliError::target(format!(
+            Err(Some(CliError::target(format!(
                 "ambiguous target '{target}'; matches: {listed}"
-            )))
+            ))))
         }
     }
 }
@@ -256,6 +356,14 @@ mod tests {
             name: Some(name.to_string()),
             cmd: Some(cmd.to_string()),
             cwd: Some(cwd.to_string()),
+        }
+    }
+
+    fn listing(surfaces: Vec<Surface>, scoped: bool) -> Listing {
+        Listing {
+            surfaces,
+            scoped,
+            reach: Reach::Workspace,
         }
     }
 
@@ -298,29 +406,38 @@ mod tests {
 
     #[test]
     fn id_resolves_when_present() {
-        assert_eq!(resolve(Selector::Id(20), &fixtures()).unwrap(), 20);
+        assert_eq!(
+            resolve(Selector::Id(20), &listing(fixtures(), false)).unwrap(),
+            20
+        );
     }
 
     #[test]
     fn id_missing_is_target_error() {
-        let err = resolve(Selector::Id(99), &fixtures()).unwrap_err();
+        let err = resolve(Selector::Id(99), &listing(fixtures(), false)).unwrap_err();
         assert_eq!(err.code, super::super::EXIT_TARGET);
         assert!(err.message.contains("99"), "got: {}", err.message);
     }
 
     #[test]
     fn exact_name_wins_over_prefix() {
-        assert_eq!(resolve(Selector::Name("claude"), &fixtures()).unwrap(), 12);
+        assert_eq!(
+            resolve(Selector::Name("claude"), &listing(fixtures(), false)).unwrap(),
+            12
+        );
     }
 
     #[test]
     fn unique_prefix_resolves() {
-        assert_eq!(resolve(Selector::Name("cargo"), &fixtures()).unwrap(), 20);
+        assert_eq!(
+            resolve(Selector::Name("cargo"), &listing(fixtures(), false)).unwrap(),
+            20
+        );
     }
 
     #[test]
     fn ambiguous_cmdline_lists_candidates() {
-        let err = resolve(Selector::Cmdline("claude"), &fixtures()).unwrap_err();
+        let err = resolve(Selector::Cmdline("claude"), &listing(fixtures(), false)).unwrap_err();
         assert_eq!(err.code, super::super::EXIT_TARGET);
         assert!(err.message.contains("ambiguous"), "got: {}", err.message);
         assert!(err.message.contains("12") && err.message.contains("18"));
@@ -328,7 +445,11 @@ mod tests {
 
     #[test]
     fn cwd_prefix_can_be_ambiguous() {
-        let err = resolve(Selector::Cwd("/home/a/proj-backend"), &fixtures()).unwrap_err();
+        let err = resolve(
+            Selector::Cwd("/home/a/proj-backend"),
+            &listing(fixtures(), false),
+        )
+        .unwrap_err();
         assert!(err.message.contains("ambiguous"), "got: {}", err.message);
     }
 
@@ -353,9 +474,35 @@ mod tests {
 
     #[test]
     fn no_match_is_target_error() {
-        let err = resolve(Selector::Name("nope"), &fixtures()).unwrap_err();
+        let err = resolve(Selector::Name("nope"), &listing(fixtures(), false)).unwrap_err();
         assert_eq!(err.code, super::super::EXIT_TARGET);
         assert!(err.message.contains("no pane matches"));
+    }
+
+    #[test]
+    fn a_miss_in_a_scoped_listing_names_the_way_to_other_workspaces() {
+        let err = resolve(Selector::Name("nope"), &listing(fixtures(), true)).unwrap_err();
+        assert_eq!(err.code, super::super::EXIT_TARGET);
+        assert!(
+            err.message.contains("calling pane's workspace"),
+            "{}",
+            err.message
+        );
+        assert!(err.message.contains("--scope all"), "{}", err.message);
+        assert!(err.message.contains("ipc.orchestration"), "{}", err.message);
+        let err =
+            every_match(&Selector::Name("nope"), &listing(fixtures(), true), "nope").unwrap_err();
+        assert!(err.message.contains("--scope all"), "{}", err.message);
+    }
+
+    #[test]
+    fn a_listing_is_scoped_when_the_window_or_the_host_says_so() {
+        assert!(listing_is_scoped(&json!({"scope_workspace_id": 4})));
+        assert!(listing_is_scoped(&json!({"scope_workspace": null})));
+        assert!(!listing_is_scoped(&json!({"scope_workspace_id": null})));
+        assert!(!listing_is_scoped(&json!({"surfaces": []})));
+        assert_eq!(Reach::All.list_params(), json!({"scope": "all"}));
+        assert_eq!(Reach::Workspace.list_params(), json!({}));
     }
 
     #[test]
@@ -369,6 +516,85 @@ mod tests {
     #[test]
     fn cmdline_matches_basename_only_cmd() {
         let surfaces = vec![surface(5, "agent", "claude", "/tmp")];
-        assert_eq!(resolve(Selector::Cmdline("claude"), &surfaces).unwrap(), 5);
+        assert_eq!(
+            resolve(Selector::Cmdline("claude"), &listing(surfaces, false)).unwrap(),
+            5
+        );
+    }
+
+    struct ScopedWindow {
+        drawn: Vec<u64>,
+    }
+
+    impl IpcTransport for ScopedWindow {
+        fn call(
+            &self,
+            method: &str,
+            params: serde_json::Value,
+        ) -> Result<serde_json::Value, String> {
+            let pane = |id: u64, name: &str| {
+                json!({"kind": "pane", "id": id + 100, "surfaces": [
+                    {"id": id, "definition": {"surface_type": "terminal", "custom_name": name}}
+                ]})
+            };
+            match method {
+                "surface.list" => Ok(json!({
+                    "scope_workspace_id": 1,
+                    "surfaces": [{"surface_id": 4, "name": "own"}],
+                })),
+                "layout.view" => Ok(json!({"view": {"state": {
+                    "active_workspace": 0,
+                    "workspaces": [
+                        {"id": 1, "title": "alpha", "tabs": [{"id": 10, "root": pane(4, "own")}]},
+                        {"id": 2, "title": "beta", "tabs": [
+                            {"id": 20, "root": {"kind": "split", "children": [
+                                {"node": pane(9, "foreign")},
+                                {"node": pane(11, "pending")},
+                            ]}}
+                        ]},
+                    ],
+                }}})),
+                "surface.status" => {
+                    let id = params["surface_id"].as_u64().unwrap_or_default();
+                    if self.drawn.contains(&id) {
+                        Ok(json!({"surface_id": id}))
+                    } else {
+                        Ok(json!({"error": "surface not found"}))
+                    }
+                }
+                other => Err(format!("unexpected {other}")),
+            }
+        }
+    }
+
+    #[test]
+    fn an_unscoped_verb_still_resolves_a_pane_of_another_workspace_by_id_or_name() {
+        let window = ScopedWindow { drawn: vec![4, 9] };
+        assert_eq!(resolve_target(&window, "4").unwrap(), 4);
+        assert_eq!(resolve_target(&window, "9").unwrap(), 9);
+        assert_eq!(resolve_target(&window, "foreign").unwrap(), 9);
+        let err = resolve_target(&window, "cwd:/elsewhere").unwrap_err();
+        assert!(err.message.contains("ipc.orchestration"), "{}", err.message);
+        assert!(!err.message.contains("--scope all"), "{}", err.message);
+        let err = resolve_target_in(&window, "9", Reach::Workspace).unwrap_err();
+        assert!(err.message.contains("--scope all"), "{}", err.message);
+    }
+
+    #[test]
+    fn a_wait_on_a_drawn_pane_of_another_workspace_resolves_at_once_and_an_undrawn_one_waits() {
+        let window = ScopedWindow { drawn: vec![4, 9] };
+        let soon = Instant::now() + Duration::from_secs(30);
+        assert_eq!(
+            resolve_target_once_drawn(&window, "foreign", soon).unwrap(),
+            Some(9)
+        );
+        assert_eq!(
+            resolve_all_once_drawn(&window, "9", soon).unwrap(),
+            Some(vec![9])
+        );
+        assert_eq!(
+            resolve_target_once_drawn(&window, "pending", Instant::now()).unwrap(),
+            None
+        );
     }
 }

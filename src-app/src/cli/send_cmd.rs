@@ -3,7 +3,7 @@ use paneflow_ipc_client::host_control::session_id_from;
 use serde_json::{Value, json};
 use std::path::PathBuf;
 
-use super::selector::{resolve_all, resolve_target};
+use super::selector::{Reach, resolve_all, resolve_target_in};
 use super::worker_state::{agent_runtime, with_host_foreground};
 use super::{CliError, EXIT_OK, EXIT_RUNTIME};
 use paneflow_agent_config::delivery::{DeliveryRefusal, TurnStart};
@@ -48,7 +48,7 @@ pub fn send(
     if options.broadcast {
         return send_broadcast(client, target, &text, options);
     }
-    let surface_id = resolve_target(client, target)?;
+    let surface_id = resolve_target_in(client, target, Reach::from_scope_all(options.scope_all))?;
     let mut result = send_to(client, surface_id, &text, options)?;
     if let Some(report) = report {
         result["report_file"] = json!(report.path);
@@ -216,7 +216,7 @@ fn send_broadcast(
     text: &str,
     options: SendOptions,
 ) -> Result<i32, CliError> {
-    let ids = resolve_all(client, target)?;
+    let ids = resolve_all(client, target, Reach::from_scope_all(options.scope_all))?;
     let mut sent: Vec<u64> = Vec::new();
     let mut failed: Vec<Value> = Vec::new();
     for id in ids {
@@ -245,7 +245,7 @@ pub fn key(
     keystroke: &str,
     scope_all: bool,
 ) -> Result<i32, CliError> {
-    let surface_id = resolve_target(client, target)?;
+    let surface_id = resolve_target_in(client, target, Reach::from_scope_all(scope_all))?;
     let mut params = json!({ "surface_id": surface_id, "keystroke": keystroke });
     add_write_scope(&mut params, caller_session(), scope_all);
     match client.call("surface.send_keystroke", params) {

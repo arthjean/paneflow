@@ -1,444 +1,444 @@
-# method owner principal closed open (params: {"scope_session": "s-claimed"})
-system.ping window window allowed:instance allowed:instance
-system.ping window worker allowed:instance allowed:instance
-system.ping window pane allowed:instance allowed:instance
-system.ping window external allowed:instance allowed:instance
-system.ping window unverified refused:unverified_caller refused:unverified_caller
-system.capabilities window window allowed:instance allowed:instance
-system.capabilities window worker allowed:instance allowed:instance
-system.capabilities window pane allowed:instance allowed:instance
-system.capabilities window external allowed:instance allowed:instance
-system.capabilities window unverified allowed:instance allowed:instance
-system.identify window window allowed:instance allowed:instance
-system.identify window worker allowed:instance allowed:instance
-system.identify window pane allowed:instance allowed:instance
-system.identify window external allowed:instance allowed:instance
-system.identify window unverified refused:unverified_caller refused:unverified_caller
-system.counters window window allowed:instance allowed:instance
-system.counters window worker allowed:instance allowed:instance
-system.counters window pane allowed:instance allowed:instance
-system.counters window external allowed:instance allowed:instance
-system.counters window unverified refused:unverified_caller refused:unverified_caller
-workspace.list window window allowed:instance allowed:instance
-workspace.list window worker allowed:instance allowed:instance
-workspace.list window pane allowed:instance allowed:instance
-workspace.list window external allowed:instance allowed:instance
-workspace.list window unverified refused:unverified_caller refused:unverified_caller
-workspace.create worker window allowed:instance allowed:instance
-workspace.create worker worker allowed:instance allowed:instance
-workspace.create worker pane allowed:instance allowed:instance
-workspace.create worker external allowed:instance allowed:instance
-workspace.create worker unverified refused:unverified_caller refused:unverified_caller
-workspace.select worker window allowed:instance allowed:instance
-workspace.select worker worker allowed:instance allowed:instance
-workspace.select worker pane allowed:instance allowed:instance
-workspace.select worker external allowed:instance allowed:instance
-workspace.select worker unverified refused:unverified_caller refused:unverified_caller
-workspace.close worker window allowed:instance allowed:instance
-workspace.close worker worker allowed:instance allowed:instance
-workspace.close worker pane allowed:instance allowed:instance
-workspace.close worker external allowed:instance allowed:instance
-workspace.close worker unverified refused:unverified_caller refused:unverified_caller
-workspace.current window window allowed:instance allowed:instance
-workspace.current window worker allowed:instance allowed:instance
-workspace.current window pane allowed:instance allowed:instance
-workspace.current window external allowed:instance allowed:instance
-workspace.current window unverified refused:unverified_caller refused:unverified_caller
-workspace.restore_layout worker window allowed:instance allowed:instance
-workspace.restore_layout worker worker allowed:instance allowed:instance
-workspace.restore_layout worker pane allowed:instance allowed:instance
-workspace.restore_layout worker external allowed:instance allowed:instance
-workspace.restore_layout worker unverified refused:unverified_caller refused:unverified_caller
-workspace.up worker window allowed:instance allowed:instance
-workspace.up worker worker allowed:instance allowed:instance
-workspace.up worker pane allowed:instance allowed:instance
-workspace.up worker external allowed:instance allowed:instance
-workspace.up worker unverified refused:unverified_caller refused:unverified_caller
-surface.list window window allowed:claimed allowed:claimed
-surface.list window worker allowed:claimed allowed:claimed
-surface.list window pane allowed:pane allowed:pane
-surface.list window external allowed:claimed allowed:claimed
-surface.list window unverified refused:unverified_caller refused:unverified_caller
-surface.read window window allowed:claimed allowed:claimed
-surface.read window worker allowed:claimed allowed:claimed
-surface.read window pane allowed:pane allowed:pane
-surface.read window external allowed:claimed allowed:claimed
-surface.read window unverified refused:unverified_caller refused:unverified_caller
-surface.search window window allowed:claimed allowed:claimed
-surface.search window worker allowed:claimed allowed:claimed
-surface.search window pane allowed:pane allowed:pane
-surface.search window external allowed:claimed allowed:claimed
-surface.search window unverified refused:unverified_caller refused:unverified_caller
-surface.rename worker window allowed:instance allowed:instance
-surface.rename worker worker allowed:instance allowed:instance
-surface.rename worker pane allowed:instance allowed:instance
-surface.rename worker external allowed:instance allowed:instance
-surface.rename worker unverified refused:unverified_caller refused:unverified_caller
-surface.send_text window window allowed:claimed allowed:claimed
-surface.send_text window worker allowed:claimed allowed:claimed
-surface.send_text window pane refused:gate_closed allowed:pane
-surface.send_text window external refused:gate_closed allowed:claimed
-surface.send_text window unverified refused:unverified_caller refused:unverified_caller
-surface.send_keystroke window window allowed:claimed allowed:claimed
-surface.send_keystroke window worker allowed:claimed allowed:claimed
-surface.send_keystroke window pane refused:gate_closed allowed:pane
-surface.send_keystroke window external refused:gate_closed allowed:claimed
-surface.send_keystroke window unverified refused:unverified_caller refused:unverified_caller
-surface.split worker window allowed:instance allowed:instance
-surface.split worker worker allowed:instance allowed:instance
-surface.split worker pane allowed:instance allowed:instance
-surface.split worker external allowed:instance allowed:instance
-surface.split worker unverified refused:unverified_caller refused:unverified_caller
-surface.focus worker window allowed:instance allowed:instance
-surface.focus worker worker allowed:instance allowed:instance
-surface.focus worker pane allowed:instance allowed:instance
-surface.focus worker external allowed:instance allowed:instance
-surface.focus worker unverified refused:unverified_caller refused:unverified_caller
-surface.status window window allowed:instance allowed:instance
-surface.status window worker allowed:instance allowed:instance
-surface.status window pane allowed:instance allowed:instance
-surface.status window external allowed:instance allowed:instance
-surface.status window unverified refused:unverified_caller refused:unverified_caller
-fleet.list window window allowed:instance allowed:instance
-fleet.list window worker allowed:instance allowed:instance
-fleet.list window pane allowed:instance allowed:instance
-fleet.list window external allowed:instance allowed:instance
-fleet.list window unverified refused:unverified_caller refused:unverified_caller
-events.subscribe window window allowed:instance allowed:instance
-events.subscribe window worker allowed:instance allowed:instance
-events.subscribe window pane allowed:instance allowed:instance
-events.subscribe window external allowed:instance allowed:instance
-events.subscribe window unverified refused:unverified_caller refused:unverified_caller
-tmux.compat window window allowed:instance allowed:instance
-tmux.compat window worker allowed:instance allowed:instance
-tmux.compat window pane allowed:instance allowed:instance
-tmux.compat window external allowed:instance allowed:instance
-tmux.compat window unverified refused:unverified_caller refused:unverified_caller
-client.list_actions window window allowed:instance allowed:instance
-client.list_actions window worker allowed:instance allowed:instance
-client.list_actions window pane allowed:instance allowed:instance
-client.list_actions window external allowed:instance allowed:instance
-client.list_actions window unverified refused:unverified_caller refused:unverified_caller
-client.dispatch_action window window allowed:instance allowed:instance
-client.dispatch_action window worker allowed:instance allowed:instance
-client.dispatch_action window pane allowed:instance allowed:instance
-client.dispatch_action window external allowed:instance allowed:instance
-client.dispatch_action window unverified refused:unverified_caller refused:unverified_caller
-system.describe window window allowed:instance allowed:instance
-system.describe window worker allowed:instance allowed:instance
-system.describe window pane allowed:instance allowed:instance
-system.describe window external allowed:instance allowed:instance
-system.describe window unverified allowed:instance allowed:instance
-system.whoami window window allowed:instance allowed:instance
-system.whoami window worker allowed:instance allowed:instance
-system.whoami window pane allowed:instance allowed:instance
-system.whoami window external allowed:instance allowed:instance
-system.whoami window unverified allowed:instance allowed:instance
-pane.write host window allowed:claimed allowed:claimed
-pane.write host worker allowed:claimed allowed:claimed
-pane.write host pane allowed:pane allowed:pane
-pane.write host external allowed:claimed allowed:claimed
-pane.write host unverified refused:unverified_caller refused:unverified_caller
-peer.classify host window allowed:instance allowed:instance
-peer.classify host worker allowed:instance allowed:instance
-peer.classify host pane refused:principal_refused refused:principal_refused
-peer.classify host external allowed:instance allowed:instance
-peer.classify host unverified refused:unverified_caller refused:unverified_caller
-worker.hello worker window allowed:instance allowed:instance
-worker.hello worker worker allowed:instance allowed:instance
-worker.hello worker pane allowed:instance allowed:instance
-worker.hello worker external allowed:instance allowed:instance
-worker.hello worker unverified refused:unverified_caller refused:unverified_caller
-worker.status worker window allowed:instance allowed:instance
-worker.status worker worker allowed:instance allowed:instance
-worker.status worker pane allowed:instance allowed:instance
-worker.status worker external allowed:instance allowed:instance
-worker.status worker unverified refused:unverified_caller refused:unverified_caller
-worker.shutdown worker window allowed:instance allowed:instance
-worker.shutdown worker worker allowed:instance allowed:instance
-worker.shutdown worker pane allowed:instance allowed:instance
-worker.shutdown worker external allowed:instance allowed:instance
-worker.shutdown worker unverified refused:unverified_caller refused:unverified_caller
-agent.snapshot worker window allowed:instance allowed:instance
-agent.snapshot worker worker allowed:instance allowed:instance
-agent.snapshot worker pane allowed:instance allowed:instance
-agent.snapshot worker external allowed:instance allowed:instance
-agent.snapshot worker unverified refused:unverified_caller refused:unverified_caller
-agent.follow worker window allowed:instance allowed:instance
-agent.follow worker worker allowed:instance allowed:instance
-agent.follow worker pane allowed:instance allowed:instance
-agent.follow worker external allowed:instance allowed:instance
-agent.follow worker unverified refused:unverified_caller refused:unverified_caller
-agent.activity_log worker window allowed:instance allowed:instance
-agent.activity_log worker worker allowed:instance allowed:instance
-agent.activity_log worker pane allowed:instance allowed:instance
-agent.activity_log worker external allowed:instance allowed:instance
-agent.activity_log worker unverified refused:unverified_caller refused:unverified_caller
-agent.acknowledge worker window allowed:instance allowed:instance
-agent.acknowledge worker worker allowed:instance allowed:instance
-agent.acknowledge worker pane allowed:instance allowed:instance
-agent.acknowledge worker external allowed:instance allowed:instance
-agent.acknowledge worker unverified refused:unverified_caller refused:unverified_caller
-usage.snapshot worker window allowed:instance allowed:instance
-usage.snapshot worker worker allowed:instance allowed:instance
-usage.snapshot worker pane allowed:instance allowed:instance
-usage.snapshot worker external allowed:instance allowed:instance
-usage.snapshot worker unverified refused:unverified_caller refused:unverified_caller
-usage.refresh worker window allowed:instance allowed:instance
-usage.refresh worker worker allowed:instance allowed:instance
-usage.refresh worker pane allowed:instance allowed:instance
-usage.refresh worker external allowed:instance allowed:instance
-usage.refresh worker unverified refused:unverified_caller refused:unverified_caller
-usage.import worker window allowed:instance allowed:instance
-usage.import worker worker allowed:instance allowed:instance
-usage.import worker pane allowed:instance allowed:instance
-usage.import worker external allowed:instance allowed:instance
-usage.import worker unverified refused:unverified_caller refused:unverified_caller
-events.follow worker window allowed:instance allowed:instance
-events.follow worker worker allowed:instance allowed:instance
-events.follow worker pane allowed:instance allowed:instance
-events.follow worker external allowed:instance allowed:instance
-events.follow worker unverified refused:unverified_caller refused:unverified_caller
-config.status worker window allowed:instance allowed:instance
-config.status worker worker allowed:instance allowed:instance
-config.status worker pane allowed:instance allowed:instance
-config.status worker external allowed:instance allowed:instance
-config.status worker unverified refused:unverified_caller refused:unverified_caller
-config.reload worker window allowed:instance allowed:instance
-config.reload worker worker allowed:instance allowed:instance
-config.reload worker pane allowed:instance allowed:instance
-config.reload worker external allowed:instance allowed:instance
-config.reload worker unverified refused:unverified_caller refused:unverified_caller
-action.list worker window allowed:instance allowed:instance
-action.list worker worker allowed:instance allowed:instance
-action.list worker pane allowed:instance allowed:instance
-action.list worker external allowed:instance allowed:instance
-action.list worker unverified refused:unverified_caller refused:unverified_caller
-action.invoke worker window allowed:instance allowed:instance
-action.invoke worker worker allowed:instance allowed:instance
-action.invoke worker pane allowed:instance allowed:instance
-action.invoke worker external allowed:instance allowed:instance
-action.invoke worker unverified refused:unverified_caller refused:unverified_caller
-action.wait worker window allowed:instance allowed:instance
-action.wait worker worker allowed:instance allowed:instance
-action.wait worker pane allowed:instance allowed:instance
-action.wait worker external allowed:instance allowed:instance
-action.wait worker unverified refused:unverified_caller refused:unverified_caller
-keymap.list worker window allowed:instance allowed:instance
-keymap.list worker worker allowed:instance allowed:instance
-keymap.list worker pane allowed:instance allowed:instance
-keymap.list worker external allowed:instance allowed:instance
-keymap.list worker unverified refused:unverified_caller refused:unverified_caller
-prompt.request worker window allowed:instance allowed:instance
-prompt.request worker worker allowed:instance allowed:instance
-prompt.request worker pane allowed:instance allowed:instance
-prompt.request worker external allowed:instance allowed:instance
-prompt.request worker unverified refused:unverified_caller refused:unverified_caller
-prompt.wait worker window allowed:instance allowed:instance
-prompt.wait worker worker allowed:instance allowed:instance
-prompt.wait worker pane allowed:instance allowed:instance
-prompt.wait worker external allowed:instance allowed:instance
-prompt.wait worker unverified refused:unverified_caller refused:unverified_caller
-prompt.reply worker window allowed:instance allowed:instance
-prompt.reply worker worker allowed:instance allowed:instance
-prompt.reply worker pane allowed:instance allowed:instance
-prompt.reply worker external allowed:instance allowed:instance
-prompt.reply worker unverified refused:unverified_caller refused:unverified_caller
-prompt.follow worker window allowed:instance allowed:instance
-prompt.follow worker worker allowed:instance allowed:instance
-prompt.follow worker pane allowed:instance allowed:instance
-prompt.follow worker external allowed:instance allowed:instance
-prompt.follow worker unverified refused:unverified_caller refused:unverified_caller
-agent_prompt.resolve worker window allowed:instance allowed:instance
-agent_prompt.resolve worker worker allowed:instance allowed:instance
-agent_prompt.resolve worker pane allowed:instance allowed:instance
-agent_prompt.resolve worker external allowed:instance allowed:instance
-agent_prompt.resolve worker unverified refused:unverified_caller refused:unverified_caller
-layout.view worker window allowed:instance allowed:instance
-layout.view worker worker allowed:instance allowed:instance
-layout.view worker pane allowed:instance allowed:instance
-layout.view worker external allowed:instance allowed:instance
-layout.view worker unverified refused:unverified_caller refused:unverified_caller
-layout.attach worker window allowed:instance allowed:instance
-layout.attach worker worker allowed:instance allowed:instance
-layout.attach worker pane refused:principal_refused refused:principal_refused
-layout.attach worker external allowed:instance allowed:instance
-layout.attach worker unverified refused:unverified_caller refused:unverified_caller
-layout.lease_ids worker window allowed:instance allowed:instance
-layout.lease_ids worker worker allowed:instance allowed:instance
-layout.lease_ids worker pane allowed:instance allowed:instance
-layout.lease_ids worker external allowed:instance allowed:instance
-layout.lease_ids worker unverified refused:unverified_caller refused:unverified_caller
-layout.apply worker window allowed:instance allowed:instance
-layout.apply worker worker allowed:instance allowed:instance
-layout.apply worker pane allowed:instance allowed:instance
-layout.apply worker external allowed:instance allowed:instance
-layout.apply worker unverified refused:unverified_caller refused:unverified_caller
-layout.adopt worker window allowed:instance allowed:instance
-layout.adopt worker worker allowed:instance allowed:instance
-layout.adopt worker pane allowed:instance allowed:instance
-layout.adopt worker external allowed:instance allowed:instance
-layout.adopt worker unverified refused:unverified_caller refused:unverified_caller
-layout.launch worker window allowed:instance allowed:instance
-layout.launch worker worker allowed:instance allowed:instance
-layout.launch worker pane refused:principal_refused refused:principal_refused
-layout.launch worker external refused:principal_refused refused:principal_refused
-layout.launch worker unverified refused:unverified_caller refused:unverified_caller
-layout.sweep worker window allowed:instance allowed:instance
-layout.sweep worker worker allowed:instance allowed:instance
-layout.sweep worker pane refused:principal_refused refused:principal_refused
-layout.sweep worker external refused:principal_refused refused:principal_refused
-layout.sweep worker unverified refused:unverified_caller refused:unverified_caller
-grant.request worker window refused:principal_refused refused:principal_refused
-grant.request worker worker refused:principal_refused refused:principal_refused
-grant.request worker pane allowed:instance allowed:instance
-grant.request worker external refused:principal_refused refused:principal_refused
-grant.request worker unverified refused:unverified_caller refused:unverified_caller
-grant.list worker window allowed:instance allowed:instance
-grant.list worker worker allowed:instance allowed:instance
-grant.list worker pane allowed:instance allowed:instance
-grant.list worker external allowed:instance allowed:instance
-grant.list worker unverified refused:unverified_caller refused:unverified_caller
-grant.revoke worker window allowed:instance allowed:instance
-grant.revoke worker worker allowed:instance allowed:instance
-grant.revoke worker pane allowed:instance allowed:instance
-grant.revoke worker external allowed:instance allowed:instance
-grant.revoke worker unverified refused:unverified_caller refused:unverified_caller
-grant.delegate worker window refused:principal_refused refused:principal_refused
-grant.delegate worker worker refused:principal_refused refused:principal_refused
-grant.delegate worker pane allowed:instance allowed:instance
-grant.delegate worker external refused:principal_refused refused:principal_refused
-grant.delegate worker unverified refused:unverified_caller refused:unverified_caller
-host.hello host window allowed:instance allowed:instance
-host.hello host worker allowed:instance allowed:instance
-host.hello host pane allowed:instance allowed:instance
-host.hello host external allowed:instance allowed:instance
-host.hello host unverified refused:unverified_caller refused:unverified_caller
-host.status host window allowed:instance allowed:instance
-host.status host worker allowed:instance allowed:instance
-host.status host pane allowed:instance allowed:instance
-host.status host external allowed:instance allowed:instance
-host.status host unverified refused:unverified_caller refused:unverified_caller
-host.shutdown host window allowed:instance allowed:instance
-host.shutdown host worker allowed:instance allowed:instance
-host.shutdown host pane refused:principal_refused refused:principal_refused
-host.shutdown host external refused:principal_refused refused:principal_refused
-host.shutdown host unverified refused:unverified_caller refused:unverified_caller
-session.list host window allowed:instance allowed:instance
-session.list host worker allowed:instance allowed:instance
-session.list host pane allowed:instance allowed:instance
-session.list host external allowed:instance allowed:instance
-session.list host unverified refused:unverified_caller refused:unverified_caller
-session.create host window allowed:instance allowed:instance
-session.create host worker allowed:instance allowed:instance
-session.create host pane allowed:instance allowed:instance
-session.create host external allowed:instance allowed:instance
-session.create host unverified refused:unverified_caller refused:unverified_caller
-session.inspect host window allowed:instance allowed:instance
-session.inspect host worker allowed:instance allowed:instance
-session.inspect host pane allowed:instance allowed:instance
-session.inspect host external allowed:instance allowed:instance
-session.inspect host unverified refused:unverified_caller refused:unverified_caller
-session.stop host window allowed:claimed allowed:claimed
-session.stop host worker allowed:claimed allowed:claimed
-session.stop host pane allowed:pane allowed:instance
-session.stop host external allowed:claimed allowed:claimed
-session.stop host unverified refused:unverified_caller refused:unverified_caller
-session.restart host window allowed:claimed allowed:claimed
-session.restart host worker allowed:claimed allowed:claimed
-session.restart host pane allowed:pane allowed:instance
-session.restart host external allowed:claimed allowed:claimed
-session.restart host unverified refused:unverified_caller refused:unverified_caller
-session.prepare_resume host window allowed:instance allowed:instance
-session.prepare_resume host worker allowed:instance allowed:instance
-session.prepare_resume host pane refused:principal_refused refused:principal_refused
-session.prepare_resume host external refused:principal_refused refused:principal_refused
-session.prepare_resume host unverified refused:unverified_caller refused:unverified_caller
-session.discard_resume host window allowed:instance allowed:instance
-session.discard_resume host worker allowed:instance allowed:instance
-session.discard_resume host pane refused:principal_refused refused:principal_refused
-session.discard_resume host external refused:principal_refused refused:principal_refused
-session.discard_resume host unverified refused:unverified_caller refused:unverified_caller
-session.resume_attempt host window refused:principal_refused refused:principal_refused
-session.resume_attempt host worker refused:principal_refused refused:principal_refused
-session.resume_attempt host pane allowed:instance allowed:instance
-session.resume_attempt host external refused:principal_refused refused:principal_refused
-session.resume_attempt host unverified refused:unverified_caller refused:unverified_caller
-session.remove host window allowed:claimed allowed:claimed
-session.remove host worker allowed:claimed allowed:claimed
-session.remove host pane allowed:pane allowed:instance
-session.remove host external allowed:claimed allowed:claimed
-session.remove host unverified refused:unverified_caller refused:unverified_caller
-session.input host window allowed:claimed allowed:claimed
-session.input host worker allowed:claimed allowed:claimed
-session.input host pane refused:gate_closed allowed:instance
-session.input host external refused:gate_closed allowed:claimed
-session.input host unverified refused:unverified_caller refused:unverified_caller
-session.runtime.bind host window allowed:instance allowed:instance
-session.runtime.bind host worker allowed:instance allowed:instance
-session.runtime.bind host pane refused:principal_refused refused:principal_refused
-session.runtime.bind host external refused:principal_refused refused:principal_refused
-session.runtime.bind host unverified refused:unverified_caller refused:unverified_caller
-session.resize host window allowed:claimed allowed:claimed
-session.resize host worker allowed:claimed allowed:claimed
-session.resize host pane allowed:pane allowed:instance
-session.resize host external allowed:claimed allowed:claimed
-session.resize host unverified refused:unverified_caller refused:unverified_caller
-session.appearance host window allowed:claimed allowed:claimed
-session.appearance host worker allowed:claimed allowed:claimed
-session.appearance host pane allowed:pane allowed:instance
-session.appearance host external allowed:claimed allowed:claimed
-session.appearance host unverified refused:unverified_caller refused:unverified_caller
-session.workspace host window allowed:instance allowed:instance
-session.workspace host worker allowed:instance allowed:instance
-session.workspace host pane refused:principal_refused refused:principal_refused
-session.workspace host external refused:principal_refused refused:principal_refused
-session.workspace host unverified refused:unverified_caller refused:unverified_caller
-session.clear_history host window allowed:claimed allowed:claimed
-session.clear_history host worker allowed:claimed allowed:claimed
-session.clear_history host pane allowed:pane allowed:instance
-session.clear_history host external allowed:claimed allowed:claimed
-session.clear_history host unverified refused:unverified_caller refused:unverified_caller
-session.reset host window allowed:claimed allowed:claimed
-session.reset host worker allowed:claimed allowed:claimed
-session.reset host pane allowed:pane allowed:instance
-session.reset host external allowed:claimed allowed:claimed
-session.reset host unverified refused:unverified_caller refused:unverified_caller
-session.text host window allowed:instance allowed:instance
-session.text host worker allowed:instance allowed:instance
-session.text host pane allowed:instance allowed:instance
-session.text host external allowed:instance allowed:instance
-session.text host unverified refused:unverified_caller refused:unverified_caller
-session.attach host window allowed:instance allowed:instance
-session.attach host worker allowed:instance allowed:instance
-session.attach host pane allowed:instance allowed:instance
-session.attach host external allowed:instance allowed:instance
-session.attach host unverified refused:unverified_caller refused:unverified_caller
-session.output host window allowed:instance allowed:instance
-session.output host worker allowed:instance allowed:instance
-session.output host pane allowed:instance allowed:instance
-session.output host external allowed:instance allowed:instance
-session.output host unverified refused:unverified_caller refused:unverified_caller
-approval.follow host window allowed:instance allowed:instance
-approval.follow host worker allowed:instance allowed:instance
-approval.follow host pane refused:principal_refused refused:principal_refused
-approval.follow host external refused:principal_refused refused:principal_refused
-approval.follow host unverified refused:unverified_caller refused:unverified_caller
-approval.decide host window allowed:instance allowed:instance
-approval.decide host worker allowed:instance allowed:instance
-approval.decide host pane refused:principal_refused refused:principal_refused
-approval.decide host external refused:principal_refused refused:principal_refused
-approval.decide host unverified refused:unverified_caller refused:unverified_caller
-agent.event host window allowed:instance allowed:instance
-agent.event host worker allowed:instance allowed:instance
-agent.event host pane allowed:instance allowed:instance
-agent.event host external allowed:instance allowed:instance
-agent.event host unverified refused:unverified_caller refused:unverified_caller
-host.grants.set host window allowed:instance allowed:instance
-host.grants.set host worker allowed:instance allowed:instance
-host.grants.set host pane refused:principal_refused refused:principal_refused
-host.grants.set host external refused:principal_refused refused:principal_refused
-host.grants.set host unverified refused:unverified_caller refused:unverified_caller
+# method owner principal closed open (params: {"scope_session": "s-claimed"}) bare (closed, params: {}) scope_rule
+system.ping window window allowed:instance allowed:instance allowed:instance none
+system.ping window worker allowed:instance allowed:instance allowed:instance none
+system.ping window pane allowed:instance allowed:instance allowed:instance none
+system.ping window external allowed:instance allowed:instance allowed:instance none
+system.ping window unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+system.capabilities window window allowed:instance allowed:instance allowed:instance none
+system.capabilities window worker allowed:instance allowed:instance allowed:instance none
+system.capabilities window pane allowed:instance allowed:instance allowed:instance none
+system.capabilities window external allowed:instance allowed:instance allowed:instance none
+system.capabilities window unverified allowed:instance allowed:instance allowed:instance none
+system.identify window window allowed:instance allowed:instance allowed:instance none
+system.identify window worker allowed:instance allowed:instance allowed:instance none
+system.identify window pane allowed:instance allowed:instance allowed:instance none
+system.identify window external allowed:instance allowed:instance allowed:instance none
+system.identify window unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+system.counters window window allowed:instance allowed:instance allowed:instance none
+system.counters window worker allowed:instance allowed:instance allowed:instance none
+system.counters window pane allowed:instance allowed:instance allowed:instance none
+system.counters window external allowed:instance allowed:instance allowed:instance none
+system.counters window unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+workspace.list window window allowed:instance allowed:instance allowed:instance none
+workspace.list window worker allowed:instance allowed:instance allowed:instance none
+workspace.list window pane allowed:instance allowed:instance allowed:instance none
+workspace.list window external allowed:instance allowed:instance allowed:instance none
+workspace.list window unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+workspace.create worker window allowed:instance allowed:instance allowed:instance none
+workspace.create worker worker allowed:instance allowed:instance allowed:instance none
+workspace.create worker pane allowed:instance allowed:instance allowed:instance none
+workspace.create worker external allowed:instance allowed:instance allowed:instance none
+workspace.create worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+workspace.select worker window allowed:instance allowed:instance allowed:instance none
+workspace.select worker worker allowed:instance allowed:instance allowed:instance none
+workspace.select worker pane allowed:instance allowed:instance allowed:instance none
+workspace.select worker external allowed:instance allowed:instance allowed:instance none
+workspace.select worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+workspace.close worker window allowed:instance allowed:instance allowed:instance none
+workspace.close worker worker allowed:instance allowed:instance allowed:instance none
+workspace.close worker pane allowed:instance allowed:instance allowed:instance none
+workspace.close worker external allowed:instance allowed:instance allowed:instance none
+workspace.close worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+workspace.current window window allowed:instance allowed:instance allowed:instance none
+workspace.current window worker allowed:instance allowed:instance allowed:instance none
+workspace.current window pane allowed:instance allowed:instance allowed:instance none
+workspace.current window external allowed:instance allowed:instance allowed:instance none
+workspace.current window unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+workspace.restore_layout worker window allowed:instance allowed:instance allowed:instance none
+workspace.restore_layout worker worker allowed:instance allowed:instance allowed:instance none
+workspace.restore_layout worker pane allowed:instance allowed:instance allowed:instance none
+workspace.restore_layout worker external allowed:instance allowed:instance allowed:instance none
+workspace.restore_layout worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+workspace.up worker window allowed:instance allowed:instance allowed:instance none
+workspace.up worker worker allowed:instance allowed:instance allowed:instance none
+workspace.up worker pane allowed:instance allowed:instance allowed:instance none
+workspace.up worker external allowed:instance allowed:instance allowed:instance none
+workspace.up worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+surface.list window window allowed:claimed allowed:claimed allowed:instance workspace_unless_all
+surface.list window worker allowed:claimed allowed:claimed allowed:instance workspace_unless_all
+surface.list window pane allowed:pane allowed:pane allowed:pane workspace_unless_all
+surface.list window external allowed:claimed allowed:claimed allowed:instance workspace_unless_all
+surface.list window unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller workspace_unless_all
+surface.read window window allowed:claimed allowed:claimed allowed:instance workspace_unless_all
+surface.read window worker allowed:claimed allowed:claimed allowed:instance workspace_unless_all
+surface.read window pane allowed:pane allowed:pane allowed:pane workspace_unless_all
+surface.read window external allowed:claimed allowed:claimed allowed:instance workspace_unless_all
+surface.read window unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller workspace_unless_all
+surface.search window window allowed:claimed allowed:claimed allowed:instance workspace_unless_all
+surface.search window worker allowed:claimed allowed:claimed allowed:instance workspace_unless_all
+surface.search window pane allowed:pane allowed:pane allowed:pane workspace_unless_all
+surface.search window external allowed:claimed allowed:claimed allowed:instance workspace_unless_all
+surface.search window unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller workspace_unless_all
+surface.rename worker window allowed:instance allowed:instance allowed:instance none
+surface.rename worker worker allowed:instance allowed:instance allowed:instance none
+surface.rename worker pane allowed:instance allowed:instance allowed:instance none
+surface.rename worker external allowed:instance allowed:instance allowed:instance none
+surface.rename worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+surface.send_text window window allowed:claimed allowed:claimed allowed:instance workspace_unless_all
+surface.send_text window worker allowed:claimed allowed:claimed allowed:instance workspace_unless_all
+surface.send_text window pane refused:gate_closed allowed:pane refused:gate_closed workspace_unless_all
+surface.send_text window external refused:gate_closed allowed:claimed refused:gate_closed workspace_unless_all
+surface.send_text window unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller workspace_unless_all
+surface.send_keystroke window window allowed:claimed allowed:claimed allowed:instance workspace_unless_all
+surface.send_keystroke window worker allowed:claimed allowed:claimed allowed:instance workspace_unless_all
+surface.send_keystroke window pane refused:gate_closed allowed:pane refused:gate_closed workspace_unless_all
+surface.send_keystroke window external refused:gate_closed allowed:claimed refused:gate_closed workspace_unless_all
+surface.send_keystroke window unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller workspace_unless_all
+surface.split worker window allowed:instance allowed:instance allowed:instance none
+surface.split worker worker allowed:instance allowed:instance allowed:instance none
+surface.split worker pane allowed:instance allowed:instance allowed:instance none
+surface.split worker external allowed:instance allowed:instance allowed:instance none
+surface.split worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+surface.focus worker window allowed:instance allowed:instance allowed:instance none
+surface.focus worker worker allowed:instance allowed:instance allowed:instance none
+surface.focus worker pane allowed:instance allowed:instance allowed:instance none
+surface.focus worker external allowed:instance allowed:instance allowed:instance none
+surface.focus worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+surface.status window window allowed:instance allowed:instance allowed:instance none
+surface.status window worker allowed:instance allowed:instance allowed:instance none
+surface.status window pane allowed:instance allowed:instance allowed:instance none
+surface.status window external allowed:instance allowed:instance allowed:instance none
+surface.status window unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+fleet.list window window allowed:instance allowed:instance allowed:instance none
+fleet.list window worker allowed:instance allowed:instance allowed:instance none
+fleet.list window pane allowed:instance allowed:instance allowed:instance none
+fleet.list window external allowed:instance allowed:instance allowed:instance none
+fleet.list window unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+events.subscribe window window allowed:instance allowed:instance allowed:instance none
+events.subscribe window worker allowed:instance allowed:instance allowed:instance none
+events.subscribe window pane allowed:instance allowed:instance allowed:instance none
+events.subscribe window external allowed:instance allowed:instance allowed:instance none
+events.subscribe window unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+tmux.compat window window allowed:instance allowed:instance allowed:instance none
+tmux.compat window worker allowed:instance allowed:instance allowed:instance none
+tmux.compat window pane allowed:instance allowed:instance allowed:instance none
+tmux.compat window external allowed:instance allowed:instance allowed:instance none
+tmux.compat window unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+client.list_actions window window allowed:instance allowed:instance allowed:instance none
+client.list_actions window worker allowed:instance allowed:instance allowed:instance none
+client.list_actions window pane allowed:instance allowed:instance allowed:instance none
+client.list_actions window external allowed:instance allowed:instance allowed:instance none
+client.list_actions window unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+client.dispatch_action window window allowed:instance allowed:instance allowed:instance none
+client.dispatch_action window worker allowed:instance allowed:instance allowed:instance none
+client.dispatch_action window pane allowed:instance allowed:instance allowed:instance none
+client.dispatch_action window external allowed:instance allowed:instance allowed:instance none
+client.dispatch_action window unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+system.describe window window allowed:instance allowed:instance allowed:instance none
+system.describe window worker allowed:instance allowed:instance allowed:instance none
+system.describe window pane allowed:instance allowed:instance allowed:instance none
+system.describe window external allowed:instance allowed:instance allowed:instance none
+system.describe window unverified allowed:instance allowed:instance allowed:instance none
+system.whoami window window allowed:instance allowed:instance allowed:instance none
+system.whoami window worker allowed:instance allowed:instance allowed:instance none
+system.whoami window pane allowed:instance allowed:instance allowed:instance none
+system.whoami window external allowed:instance allowed:instance allowed:instance none
+system.whoami window unverified allowed:instance allowed:instance allowed:instance none
+pane.write host window allowed:claimed allowed:claimed allowed:instance workspace_unless_all
+pane.write host worker allowed:claimed allowed:claimed allowed:instance workspace_unless_all
+pane.write host pane allowed:pane allowed:pane allowed:pane workspace_unless_all
+pane.write host external allowed:claimed allowed:claimed allowed:instance workspace_unless_all
+pane.write host unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller workspace_unless_all
+peer.classify host window allowed:instance allowed:instance allowed:instance none
+peer.classify host worker allowed:instance allowed:instance allowed:instance none
+peer.classify host pane refused:principal_refused refused:principal_refused refused:principal_refused none
+peer.classify host external allowed:instance allowed:instance allowed:instance none
+peer.classify host unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+worker.hello worker window allowed:instance allowed:instance allowed:instance none
+worker.hello worker worker allowed:instance allowed:instance allowed:instance none
+worker.hello worker pane allowed:instance allowed:instance allowed:instance none
+worker.hello worker external allowed:instance allowed:instance allowed:instance none
+worker.hello worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+worker.status worker window allowed:instance allowed:instance allowed:instance none
+worker.status worker worker allowed:instance allowed:instance allowed:instance none
+worker.status worker pane allowed:instance allowed:instance allowed:instance none
+worker.status worker external allowed:instance allowed:instance allowed:instance none
+worker.status worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+worker.shutdown worker window allowed:instance allowed:instance allowed:instance none
+worker.shutdown worker worker allowed:instance allowed:instance allowed:instance none
+worker.shutdown worker pane allowed:instance allowed:instance allowed:instance none
+worker.shutdown worker external allowed:instance allowed:instance allowed:instance none
+worker.shutdown worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+agent.snapshot worker window allowed:instance allowed:instance allowed:instance none
+agent.snapshot worker worker allowed:instance allowed:instance allowed:instance none
+agent.snapshot worker pane allowed:instance allowed:instance allowed:instance none
+agent.snapshot worker external allowed:instance allowed:instance allowed:instance none
+agent.snapshot worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+agent.follow worker window allowed:instance allowed:instance allowed:instance none
+agent.follow worker worker allowed:instance allowed:instance allowed:instance none
+agent.follow worker pane allowed:instance allowed:instance allowed:instance none
+agent.follow worker external allowed:instance allowed:instance allowed:instance none
+agent.follow worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+agent.activity_log worker window allowed:instance allowed:instance allowed:instance none
+agent.activity_log worker worker allowed:instance allowed:instance allowed:instance none
+agent.activity_log worker pane allowed:instance allowed:instance allowed:instance none
+agent.activity_log worker external allowed:instance allowed:instance allowed:instance none
+agent.activity_log worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+agent.acknowledge worker window allowed:instance allowed:instance allowed:instance none
+agent.acknowledge worker worker allowed:instance allowed:instance allowed:instance none
+agent.acknowledge worker pane allowed:instance allowed:instance allowed:instance none
+agent.acknowledge worker external allowed:instance allowed:instance allowed:instance none
+agent.acknowledge worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+usage.snapshot worker window allowed:instance allowed:instance allowed:instance none
+usage.snapshot worker worker allowed:instance allowed:instance allowed:instance none
+usage.snapshot worker pane allowed:instance allowed:instance allowed:instance none
+usage.snapshot worker external allowed:instance allowed:instance allowed:instance none
+usage.snapshot worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+usage.refresh worker window allowed:instance allowed:instance allowed:instance none
+usage.refresh worker worker allowed:instance allowed:instance allowed:instance none
+usage.refresh worker pane allowed:instance allowed:instance allowed:instance none
+usage.refresh worker external allowed:instance allowed:instance allowed:instance none
+usage.refresh worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+usage.import worker window allowed:instance allowed:instance allowed:instance none
+usage.import worker worker allowed:instance allowed:instance allowed:instance none
+usage.import worker pane allowed:instance allowed:instance allowed:instance none
+usage.import worker external allowed:instance allowed:instance allowed:instance none
+usage.import worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+events.follow worker window allowed:instance allowed:instance allowed:instance none
+events.follow worker worker allowed:instance allowed:instance allowed:instance none
+events.follow worker pane allowed:instance allowed:instance allowed:instance none
+events.follow worker external allowed:instance allowed:instance allowed:instance none
+events.follow worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+config.status worker window allowed:instance allowed:instance allowed:instance none
+config.status worker worker allowed:instance allowed:instance allowed:instance none
+config.status worker pane allowed:instance allowed:instance allowed:instance none
+config.status worker external allowed:instance allowed:instance allowed:instance none
+config.status worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+config.reload worker window allowed:instance allowed:instance allowed:instance none
+config.reload worker worker allowed:instance allowed:instance allowed:instance none
+config.reload worker pane allowed:instance allowed:instance allowed:instance none
+config.reload worker external allowed:instance allowed:instance allowed:instance none
+config.reload worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+action.list worker window allowed:instance allowed:instance allowed:instance none
+action.list worker worker allowed:instance allowed:instance allowed:instance none
+action.list worker pane allowed:instance allowed:instance allowed:instance none
+action.list worker external allowed:instance allowed:instance allowed:instance none
+action.list worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+action.invoke worker window allowed:instance allowed:instance allowed:instance none
+action.invoke worker worker allowed:instance allowed:instance allowed:instance none
+action.invoke worker pane allowed:instance allowed:instance allowed:instance none
+action.invoke worker external allowed:instance allowed:instance allowed:instance none
+action.invoke worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+action.wait worker window allowed:instance allowed:instance allowed:instance none
+action.wait worker worker allowed:instance allowed:instance allowed:instance none
+action.wait worker pane allowed:instance allowed:instance allowed:instance none
+action.wait worker external allowed:instance allowed:instance allowed:instance none
+action.wait worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+keymap.list worker window allowed:instance allowed:instance allowed:instance none
+keymap.list worker worker allowed:instance allowed:instance allowed:instance none
+keymap.list worker pane allowed:instance allowed:instance allowed:instance none
+keymap.list worker external allowed:instance allowed:instance allowed:instance none
+keymap.list worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+prompt.request worker window allowed:instance allowed:instance allowed:instance none
+prompt.request worker worker allowed:instance allowed:instance allowed:instance none
+prompt.request worker pane allowed:instance allowed:instance allowed:instance none
+prompt.request worker external allowed:instance allowed:instance allowed:instance none
+prompt.request worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+prompt.wait worker window allowed:instance allowed:instance allowed:instance none
+prompt.wait worker worker allowed:instance allowed:instance allowed:instance none
+prompt.wait worker pane allowed:instance allowed:instance allowed:instance none
+prompt.wait worker external allowed:instance allowed:instance allowed:instance none
+prompt.wait worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+prompt.reply worker window allowed:instance allowed:instance allowed:instance none
+prompt.reply worker worker allowed:instance allowed:instance allowed:instance none
+prompt.reply worker pane allowed:instance allowed:instance allowed:instance none
+prompt.reply worker external allowed:instance allowed:instance allowed:instance none
+prompt.reply worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+prompt.follow worker window allowed:instance allowed:instance allowed:instance none
+prompt.follow worker worker allowed:instance allowed:instance allowed:instance none
+prompt.follow worker pane allowed:instance allowed:instance allowed:instance none
+prompt.follow worker external allowed:instance allowed:instance allowed:instance none
+prompt.follow worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+agent_prompt.resolve worker window allowed:instance allowed:instance allowed:instance none
+agent_prompt.resolve worker worker allowed:instance allowed:instance allowed:instance none
+agent_prompt.resolve worker pane allowed:instance allowed:instance allowed:instance none
+agent_prompt.resolve worker external allowed:instance allowed:instance allowed:instance none
+agent_prompt.resolve worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+layout.view worker window allowed:instance allowed:instance allowed:instance none
+layout.view worker worker allowed:instance allowed:instance allowed:instance none
+layout.view worker pane allowed:instance allowed:instance allowed:instance none
+layout.view worker external allowed:instance allowed:instance allowed:instance none
+layout.view worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+layout.attach worker window allowed:instance allowed:instance allowed:instance none
+layout.attach worker worker allowed:instance allowed:instance allowed:instance none
+layout.attach worker pane refused:principal_refused refused:principal_refused refused:principal_refused none
+layout.attach worker external allowed:instance allowed:instance allowed:instance none
+layout.attach worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+layout.lease_ids worker window allowed:instance allowed:instance allowed:instance none
+layout.lease_ids worker worker allowed:instance allowed:instance allowed:instance none
+layout.lease_ids worker pane allowed:instance allowed:instance allowed:instance none
+layout.lease_ids worker external allowed:instance allowed:instance allowed:instance none
+layout.lease_ids worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+layout.apply worker window allowed:instance allowed:instance allowed:instance none
+layout.apply worker worker allowed:instance allowed:instance allowed:instance none
+layout.apply worker pane allowed:instance allowed:instance allowed:instance none
+layout.apply worker external allowed:instance allowed:instance allowed:instance none
+layout.apply worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+layout.adopt worker window allowed:instance allowed:instance allowed:instance none
+layout.adopt worker worker allowed:instance allowed:instance allowed:instance none
+layout.adopt worker pane allowed:instance allowed:instance allowed:instance none
+layout.adopt worker external allowed:instance allowed:instance allowed:instance none
+layout.adopt worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+layout.launch worker window allowed:instance allowed:instance allowed:instance none
+layout.launch worker worker allowed:instance allowed:instance allowed:instance none
+layout.launch worker pane refused:principal_refused refused:principal_refused refused:principal_refused none
+layout.launch worker external refused:principal_refused refused:principal_refused refused:principal_refused none
+layout.launch worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+layout.sweep worker window allowed:instance allowed:instance allowed:instance none
+layout.sweep worker worker allowed:instance allowed:instance allowed:instance none
+layout.sweep worker pane refused:principal_refused refused:principal_refused refused:principal_refused none
+layout.sweep worker external refused:principal_refused refused:principal_refused refused:principal_refused none
+layout.sweep worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+grant.request worker window refused:principal_refused refused:principal_refused refused:principal_refused none
+grant.request worker worker refused:principal_refused refused:principal_refused refused:principal_refused none
+grant.request worker pane allowed:instance allowed:instance allowed:instance none
+grant.request worker external refused:principal_refused refused:principal_refused refused:principal_refused none
+grant.request worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+grant.list worker window allowed:instance allowed:instance allowed:instance none
+grant.list worker worker allowed:instance allowed:instance allowed:instance none
+grant.list worker pane allowed:instance allowed:instance allowed:instance none
+grant.list worker external allowed:instance allowed:instance allowed:instance none
+grant.list worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+grant.revoke worker window allowed:instance allowed:instance allowed:instance none
+grant.revoke worker worker allowed:instance allowed:instance allowed:instance none
+grant.revoke worker pane allowed:instance allowed:instance allowed:instance none
+grant.revoke worker external allowed:instance allowed:instance allowed:instance none
+grant.revoke worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+grant.delegate worker window refused:principal_refused refused:principal_refused refused:principal_refused none
+grant.delegate worker worker refused:principal_refused refused:principal_refused refused:principal_refused none
+grant.delegate worker pane allowed:instance allowed:instance allowed:instance none
+grant.delegate worker external refused:principal_refused refused:principal_refused refused:principal_refused none
+grant.delegate worker unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+host.hello host window allowed:instance allowed:instance allowed:instance none
+host.hello host worker allowed:instance allowed:instance allowed:instance none
+host.hello host pane allowed:instance allowed:instance allowed:instance none
+host.hello host external allowed:instance allowed:instance allowed:instance none
+host.hello host unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+host.status host window allowed:instance allowed:instance allowed:instance none
+host.status host worker allowed:instance allowed:instance allowed:instance none
+host.status host pane allowed:instance allowed:instance allowed:instance none
+host.status host external allowed:instance allowed:instance allowed:instance none
+host.status host unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+host.shutdown host window allowed:instance allowed:instance allowed:instance none
+host.shutdown host worker allowed:instance allowed:instance allowed:instance none
+host.shutdown host pane refused:principal_refused refused:principal_refused refused:principal_refused none
+host.shutdown host external refused:principal_refused refused:principal_refused refused:principal_refused none
+host.shutdown host unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+session.list host window allowed:instance allowed:instance allowed:instance none
+session.list host worker allowed:instance allowed:instance allowed:instance none
+session.list host pane allowed:instance allowed:instance allowed:instance none
+session.list host external allowed:instance allowed:instance allowed:instance none
+session.list host unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+session.create host window allowed:instance allowed:instance allowed:instance none
+session.create host worker allowed:instance allowed:instance allowed:instance none
+session.create host pane allowed:instance allowed:instance allowed:instance none
+session.create host external allowed:instance allowed:instance allowed:instance none
+session.create host unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+session.inspect host window allowed:instance allowed:instance allowed:instance none
+session.inspect host worker allowed:instance allowed:instance allowed:instance none
+session.inspect host pane allowed:instance allowed:instance allowed:instance none
+session.inspect host external allowed:instance allowed:instance allowed:instance none
+session.inspect host unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+session.stop host window allowed:claimed allowed:claimed allowed:instance workspace
+session.stop host worker allowed:claimed allowed:claimed allowed:instance workspace
+session.stop host pane allowed:pane allowed:instance allowed:pane workspace
+session.stop host external allowed:claimed allowed:claimed allowed:instance workspace
+session.stop host unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller workspace
+session.restart host window allowed:claimed allowed:claimed allowed:instance workspace
+session.restart host worker allowed:claimed allowed:claimed allowed:instance workspace
+session.restart host pane allowed:pane allowed:instance allowed:pane workspace
+session.restart host external allowed:claimed allowed:claimed allowed:instance workspace
+session.restart host unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller workspace
+session.prepare_resume host window allowed:instance allowed:instance allowed:instance none
+session.prepare_resume host worker allowed:instance allowed:instance allowed:instance none
+session.prepare_resume host pane refused:principal_refused refused:principal_refused refused:principal_refused none
+session.prepare_resume host external refused:principal_refused refused:principal_refused refused:principal_refused none
+session.prepare_resume host unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+session.discard_resume host window allowed:instance allowed:instance allowed:instance none
+session.discard_resume host worker allowed:instance allowed:instance allowed:instance none
+session.discard_resume host pane refused:principal_refused refused:principal_refused refused:principal_refused none
+session.discard_resume host external refused:principal_refused refused:principal_refused refused:principal_refused none
+session.discard_resume host unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+session.resume_attempt host window refused:principal_refused refused:principal_refused refused:principal_refused none
+session.resume_attempt host worker refused:principal_refused refused:principal_refused refused:principal_refused none
+session.resume_attempt host pane allowed:instance allowed:instance allowed:instance none
+session.resume_attempt host external refused:principal_refused refused:principal_refused refused:principal_refused none
+session.resume_attempt host unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+session.remove host window allowed:claimed allowed:claimed allowed:instance workspace
+session.remove host worker allowed:claimed allowed:claimed allowed:instance workspace
+session.remove host pane allowed:pane allowed:instance allowed:pane workspace
+session.remove host external allowed:claimed allowed:claimed allowed:instance workspace
+session.remove host unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller workspace
+session.input host window allowed:claimed allowed:claimed allowed:instance workspace
+session.input host worker allowed:claimed allowed:claimed allowed:instance workspace
+session.input host pane refused:gate_closed allowed:instance refused:gate_closed workspace
+session.input host external refused:gate_closed allowed:claimed refused:gate_closed workspace
+session.input host unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller workspace
+session.runtime.bind host window allowed:instance allowed:instance allowed:instance none
+session.runtime.bind host worker allowed:instance allowed:instance allowed:instance none
+session.runtime.bind host pane refused:principal_refused refused:principal_refused refused:principal_refused none
+session.runtime.bind host external refused:principal_refused refused:principal_refused refused:principal_refused none
+session.runtime.bind host unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+session.resize host window allowed:claimed allowed:claimed allowed:instance workspace
+session.resize host worker allowed:claimed allowed:claimed allowed:instance workspace
+session.resize host pane allowed:pane allowed:instance allowed:pane workspace
+session.resize host external allowed:claimed allowed:claimed allowed:instance workspace
+session.resize host unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller workspace
+session.appearance host window allowed:claimed allowed:claimed allowed:instance workspace
+session.appearance host worker allowed:claimed allowed:claimed allowed:instance workspace
+session.appearance host pane allowed:pane allowed:instance allowed:pane workspace
+session.appearance host external allowed:claimed allowed:claimed allowed:instance workspace
+session.appearance host unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller workspace
+session.workspace host window allowed:instance allowed:instance allowed:instance none
+session.workspace host worker allowed:instance allowed:instance allowed:instance none
+session.workspace host pane refused:principal_refused refused:principal_refused refused:principal_refused none
+session.workspace host external refused:principal_refused refused:principal_refused refused:principal_refused none
+session.workspace host unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+session.clear_history host window allowed:claimed allowed:claimed allowed:instance workspace
+session.clear_history host worker allowed:claimed allowed:claimed allowed:instance workspace
+session.clear_history host pane allowed:pane allowed:instance allowed:pane workspace
+session.clear_history host external allowed:claimed allowed:claimed allowed:instance workspace
+session.clear_history host unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller workspace
+session.reset host window allowed:claimed allowed:claimed allowed:instance workspace
+session.reset host worker allowed:claimed allowed:claimed allowed:instance workspace
+session.reset host pane allowed:pane allowed:instance allowed:pane workspace
+session.reset host external allowed:claimed allowed:claimed allowed:instance workspace
+session.reset host unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller workspace
+session.text host window allowed:instance allowed:instance allowed:instance none
+session.text host worker allowed:instance allowed:instance allowed:instance none
+session.text host pane allowed:instance allowed:instance allowed:instance none
+session.text host external allowed:instance allowed:instance allowed:instance none
+session.text host unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+session.attach host window allowed:instance allowed:instance allowed:instance none
+session.attach host worker allowed:instance allowed:instance allowed:instance none
+session.attach host pane allowed:instance allowed:instance allowed:instance none
+session.attach host external allowed:instance allowed:instance allowed:instance none
+session.attach host unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+session.output host window allowed:instance allowed:instance allowed:instance none
+session.output host worker allowed:instance allowed:instance allowed:instance none
+session.output host pane allowed:instance allowed:instance allowed:instance none
+session.output host external allowed:instance allowed:instance allowed:instance none
+session.output host unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+approval.follow host window allowed:instance allowed:instance allowed:instance none
+approval.follow host worker allowed:instance allowed:instance allowed:instance none
+approval.follow host pane refused:principal_refused refused:principal_refused refused:principal_refused none
+approval.follow host external refused:principal_refused refused:principal_refused refused:principal_refused none
+approval.follow host unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+approval.decide host window allowed:instance allowed:instance allowed:instance none
+approval.decide host worker allowed:instance allowed:instance allowed:instance none
+approval.decide host pane refused:principal_refused refused:principal_refused refused:principal_refused none
+approval.decide host external refused:principal_refused refused:principal_refused refused:principal_refused none
+approval.decide host unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+agent.event host window allowed:instance allowed:instance allowed:instance none
+agent.event host worker allowed:instance allowed:instance allowed:instance none
+agent.event host pane allowed:instance allowed:instance allowed:instance none
+agent.event host external allowed:instance allowed:instance allowed:instance none
+agent.event host unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
+host.grants.set host window allowed:instance allowed:instance allowed:instance none
+host.grants.set host worker allowed:instance allowed:instance allowed:instance none
+host.grants.set host pane refused:principal_refused refused:principal_refused refused:principal_refused none
+host.grants.set host external refused:principal_refused refused:principal_refused refused:principal_refused none
+host.grants.set host unverified refused:unverified_caller refused:unverified_caller refused:unverified_caller none
 # prompt.follow and prompt.reply against the prompt's asker: method principal asker decision
 prompt.follow window agent shown_with_a_token
 prompt.follow window action_run_by_agent shown_with_a_token

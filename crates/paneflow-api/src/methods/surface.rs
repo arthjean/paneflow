@@ -13,6 +13,10 @@ pub struct ListParams {
     pub workspace_id: Option<u64>,
     #[schemars(description = "List the workspace that holds this session")]
     pub scope_session: Option<String>,
+    #[schemars(
+        description = "\"all\" reads beyond the calling pane's workspace when orchestration is open for it"
+    )]
+    pub scope: Option<WriteScope>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -69,6 +73,10 @@ pub struct ReadParams {
     pub fenced: Option<bool>,
     pub workspace_id: Option<u64>,
     pub scope_session: Option<String>,
+    #[schemars(
+        description = "\"all\" reads beyond the calling pane's workspace when orchestration is open for it"
+    )]
+    pub scope: Option<WriteScope>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -90,8 +98,16 @@ pub struct SearchParams {
     pub pattern: String,
     #[schemars(description = "Matches to return, clamped to 1..1000", extend("default" = 50))]
     pub max_matches: Option<usize>,
+    #[schemars(
+        description = "Add a text field holding every match in one untrusted-output fence; the ai_injection_fence setting decides when absent"
+    )]
+    pub fenced: Option<bool>,
     pub workspace_id: Option<u64>,
     pub scope_session: Option<String>,
+    #[schemars(
+        description = "\"all\" reads beyond the calling pane's workspace when orchestration is open for it"
+    )]
+    pub scope: Option<WriteScope>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -106,6 +122,11 @@ pub struct SearchMatch {
 pub struct SearchResult {
     pub matches: Vec<SearchMatch>,
     pub truncated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(
+        description = "Every match as `<line>: <text>` in one untrusted-output fence, present when the search is fenced"
+    )]
+    pub text: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -312,7 +333,7 @@ method! {
         fallback: HOST_FALLBACK,
         gate: Gate::Open,
         audience: Audience::Anyone,
-        scope: ScopeRule::ClaimedSession,
+        scope: ScopeRule::WorkspaceUnlessAll,
         reply: Reply::Ready,
         capabilities: true,
         params: ListParams,
@@ -347,7 +368,7 @@ method! {
         fallback: HOST_FALLBACK,
         gate: Gate::Open,
         audience: Audience::Anyone,
-        scope: ScopeRule::ClaimedSession,
+        scope: ScopeRule::WorkspaceUnlessAll,
         reply: Reply::Deferred,
         capabilities: true,
         params: ReadParams,
@@ -371,7 +392,7 @@ method! {
         fallback: HOST_FALLBACK,
         gate: Gate::Open,
         audience: Audience::Anyone,
-        scope: ScopeRule::ClaimedSession,
+        scope: ScopeRule::WorkspaceUnlessAll,
         reply: Reply::Deferred,
         capabilities: true,
         params: SearchParams,

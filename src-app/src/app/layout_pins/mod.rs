@@ -5,6 +5,7 @@ mod ids;
 mod lua;
 mod parity;
 mod prompts;
+mod read_scope;
 mod rearrange;
 mod sidebar;
 mod team_tokens;
@@ -87,6 +88,7 @@ fn every_layout_pin_holds_in_an_isolated_home() {
                 + lua::PINS
                 + parity::PINS
                 + prompts::PINS
+                + read_scope::PINS
                 + rearrange::PINS
                 + sidebar::PINS
                 + worker::PINS

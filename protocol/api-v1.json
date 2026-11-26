@@ -1181,8 +1181,28 @@
       "name": "surface.list",
       "owner": "window",
       "params": {
+        "$defs": {
+          "WriteScope": {
+            "enum": [
+              "workspace",
+              "all"
+            ],
+            "type": "string"
+          }
+        },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
+          "scope": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WriteScope"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "\"all\" reads beyond the calling pane's workspace when orchestration is open for it"
+          },
           "scope_session": {
             "description": "List the workspace that holds this session",
             "type": [
@@ -1351,8 +1371,8 @@
         "title": "SurfaceList",
         "type": "object"
       },
-      "scope": "claimed_session",
-      "scope_note": "A caller in a pane that sends scope_session is scoped to its own session instead.",
+      "scope": "workspace_unless_all",
+      "scope_note": "A caller in a pane reaches only its own workspace unless it sends scope \"all\" with orchestration open for it.",
       "stream": false,
       "summary": "List the surfaces of the shown workspace, or of one workspace, with their identity."
     },
@@ -1382,6 +1402,15 @@
       "name": "surface.read",
       "owner": "window",
       "params": {
+        "$defs": {
+          "WriteScope": {
+            "enum": [
+              "workspace",
+              "all"
+            ],
+            "type": "string"
+          }
+        },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
           "fenced": {
@@ -1417,6 +1446,17 @@
               "integer",
               "null"
             ]
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WriteScope"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "\"all\" reads beyond the calling pane's workspace when orchestration is open for it"
           },
           "scope_session": {
             "type": [
@@ -1486,8 +1526,8 @@
         "title": "SurfaceText",
         "type": "object"
       },
-      "scope": "claimed_session",
-      "scope_note": "A caller in a pane that sends scope_session is scoped to its own session instead.",
+      "scope": "workspace_unless_all",
+      "scope_note": "A caller in a pane reaches only its own workspace unless it sends scope \"all\" with orchestration open for it.",
       "stream": false,
       "summary": "Read a surface's trailing scrollback lines."
     },
@@ -1517,8 +1557,24 @@
       "name": "surface.search",
       "owner": "window",
       "params": {
+        "$defs": {
+          "WriteScope": {
+            "enum": [
+              "workspace",
+              "all"
+            ],
+            "type": "string"
+          }
+        },
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
+          "fenced": {
+            "description": "Add a text field holding every match in one untrusted-output fence; the ai_injection_fence setting decides when absent",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
           "max_matches": {
             "default": 50,
             "description": "Matches to return, clamped to 1..1000",
@@ -1538,6 +1594,17 @@
           "pattern": {
             "description": "Substring or pattern to find, at most 512 bytes",
             "type": "string"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/WriteScope"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "\"all\" reads beyond the calling pane's workspace when orchestration is open for it"
           },
           "scope_session": {
             "type": [
@@ -1599,6 +1666,13 @@
             },
             "type": "array"
           },
+          "text": {
+            "description": "Every match as `<line>: <text>` in one untrusted-output fence, present when the search is fenced",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "truncated": {
             "type": "boolean"
           }
@@ -1610,8 +1684,8 @@
         "title": "SearchResult",
         "type": "object"
       },
-      "scope": "claimed_session",
-      "scope_note": "A caller in a pane that sends scope_session is scoped to its own session instead.",
+      "scope": "workspace_unless_all",
+      "scope_note": "A caller in a pane reaches only its own workspace unless it sends scope \"all\" with orchestration open for it.",
       "stream": false,
       "summary": "Find the scrollback lines of a surface that contain a pattern."
     },

@@ -15,6 +15,10 @@ pub fn cross_workspace_hint() -> String {
     )
 }
 
+pub fn cross_workspace_read_hint() -> String {
+    format!("to read across workspaces, {OPEN_ORCHESTRATION} and pass --scope all")
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Switches {
     pub scripting: bool,

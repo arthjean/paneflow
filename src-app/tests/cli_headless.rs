@@ -90,7 +90,7 @@ fn the_layout_verbs_work_with_a_worker_and_a_host_and_no_window() {
 
     let selected = ok(home.path(), &["select", &notes.to_string()]);
     assert_eq!(selected, json!({"selected": notes}));
-    let shown = ok(home.path(), &["ls"]);
+    let shown = ok(home.path(), &["ls", "--raw"]);
     let notes_rows = shown["surfaces"].as_array().unwrap();
     assert_eq!(
         notes_rows.len(),
@@ -105,7 +105,7 @@ fn the_layout_verbs_work_with_a_worker_and_a_host_and_no_window() {
     assert_eq!(focused["focused"], true, "{focused}");
     assert_eq!(focused["surface_id"], logs);
 
-    let listed = ok(home.path(), &["ls"]);
+    let listed = ok(home.path(), &["ls", "--raw"]);
     let rows = listed["surfaces"].as_array().unwrap();
     let ids: Vec<u64> = rows
         .iter()

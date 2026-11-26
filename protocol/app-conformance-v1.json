@@ -239,11 +239,33 @@
     },
     {
       "id": "surface_search",
-      "summary": "surface.search returns the matching lines and a truncation flag.",
+      "summary": "surface.search returns the matching lines, a truncation flag and, fenced by default, every match in one untrusted-output block.",
       "method": "surface.search",
       "params": {
         "surface_id": "$surface",
         "pattern": "conformance"
+      },
+      "expect": {
+        "result": {
+          "matches": [
+            {
+              "line": "integer",
+              "text": "string"
+            }
+          ],
+          "truncated": "boolean",
+          "text": "string"
+        }
+      }
+    },
+    {
+      "id": "surface_search_unfenced",
+      "summary": "surface.search with fenced false returns the raw matching lines and no text block.",
+      "method": "surface.search",
+      "params": {
+        "surface_id": "$surface",
+        "pattern": "conformance",
+        "fenced": false
       },
       "expect": {
         "result": {

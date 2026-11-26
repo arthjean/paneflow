@@ -89,8 +89,6 @@ fn admits_audience(principal: &Principal, audience: Audience) -> bool {
 fn pane_scope(rule: ScopeRule, params: &Value, gates: &Gates, own: Scope) -> Scope {
     match rule {
         ScopeRule::Unscoped => Scope::Instance,
-        ScopeRule::ClaimedSession if params.get(SCOPE_SESSION).is_some() => own,
-        ScopeRule::ClaimedSession => Scope::Instance,
         ScopeRule::Workspace if gates.reach => Scope::Instance,
         ScopeRule::Workspace => own,
         ScopeRule::WorkspaceUnlessAll
