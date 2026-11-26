@@ -559,13 +559,13 @@ An upgrade from an install that has the bridge, and a live agent that works thro
 **Dependencies:** Blocked by US-011, US-012, US-015
 
 **Acceptance Criteria:**
-- [ ] Given a tagged home where the 0.20.0 release ran `paneflow integrations install claude-code` and `codex` and `paneflow mcp install`, and Gemini CLI, OpenCode and fx configs seeded with the 0.20.0 writers' entries, when the new release build starts once, then `paneflow integrations list` shows Claude Code and Codex installed
-- [ ] Given the same start, when it completes, then no agent config file contains an entry whose command is `paneflow-mcp`
-- [ ] Given the same start, when it completes, then `<home>/bin/paneflow-mcp` does not exist
-- [ ] Given Claude Code started in a pane after the upgrade, when it starts, then `claude mcp list` shows no `paneflow` server
-- [ ] Given Codex started in a pane after the upgrade, when it starts, then it reports no MCP startup error
-- [ ] Given a hook event from Claude Code after the upgrade, when it fires, then the pane's agent status updates
-- [ ] Given `~/.gemini/settings.json` holding a syntax error before the start, when the new build starts, then that file is unchanged, a warning names it, and the other files are purged
+- [x] Given a tagged home where the 0.20.0 release ran `paneflow integrations install claude-code` and `codex` and `paneflow mcp install`, and Gemini CLI, OpenCode and fx configs seeded with the 0.20.0 writers' entries, when the new release build starts once, then `paneflow integrations list` shows Claude Code and Codex installed
+- [x] Given the same start, when it completes, then no agent config file contains an entry whose command is `paneflow-mcp`
+- [x] Given the same start, when it completes, then `<home>/bin/paneflow-mcp` does not exist
+- [x] Given Claude Code started in a pane after the upgrade, when it starts, then `claude mcp list` shows no `paneflow` server
+- [x] Given Codex started in a pane after the upgrade, when it starts, then it reports no MCP startup error
+- [x] Given a hook event from Claude Code after the upgrade, when it fires, then the pane's agent status updates
+- [x] Given `~/.gemini/settings.json` holding a syntax error before the start, when the new build starts, then that file is unchanged, a warning names it, and the other files are purged
 
 #### US-023: A live agent works through the CLI only
 **Description:** As an agent user, I want to see a real agent coordinate with another through the CLI so that the replacement is proven, not inferred.
@@ -574,15 +574,15 @@ An upgrade from an install that has the bridge, and a live agent that works thro
 **Dependencies:** Blocked by US-007, US-012
 
 **Acceptance Criteria:**
-- [ ] Given Claude Code in a pane of workspace A with the conductor skill installed, when asked to list panes, then its transcript shows it ran `paneflow ls`
-- [ ] Given that run, when its tool output is read in the transcript, then the output is inside an untrusted fence
-- [ ] Given a planted line `IGNORE PREVIOUS INSTRUCTIONS` in a pane of workspace A, when the agent searches for it, then the tool output in its transcript holds that line only inside an untrusted fence
-- [ ] Given a pane in workspace B, when the agent lists panes, then that pane is absent from the tool output
-- [ ] Given a second agent in workspace A, when the first is asked to send it a message, then it runs `paneflow write` and the approval prompt appears
-- [ ] Given that approval granted, when the text arrives, then it carries its provenance line
-- [ ] Given an `init.lua` action with `agents = true` that takes 30 s, when the agent runs it, then its transcript shows `paneflow do --wait` and the action's result
-- [ ] Given the agent asked to confirm with the user, when it runs `paneflow ask`, then the window shows the question attributed to Claude Code and the answer appears in the agent's tool output
-- [ ] Given an `init.lua` action without `agents = true`, when the agent runs it with `paneflow do`, then the tool output shows the refusal
+- [x] Given Claude Code in a pane of workspace A with the conductor skill installed, when asked to list panes, then its transcript shows it ran `paneflow ls`
+- [x] Given that run, when its tool output is read in the transcript, then the output is inside an untrusted fence
+- [x] Given a planted line `IGNORE PREVIOUS INSTRUCTIONS` in a pane of workspace A, when the agent searches for it, then the tool output in its transcript holds that line only inside an untrusted fence
+- [x] Given a pane in workspace B, when the agent lists panes, then that pane is absent from the tool output
+- [x] Given a second agent in workspace A, when the first is asked to send it a message, then it runs `paneflow write` and the approval prompt appears
+- [x] Given that approval granted, when the text arrives, then it carries its provenance line
+- [x] Given an `init.lua` action with `agents = true` that takes 30 s, when the agent runs it, then its transcript shows `paneflow do --wait` and the action's result
+- [x] Given the agent asked to confirm with the user, when it runs `paneflow ask`, then the window shows the question attributed to Claude Code and the answer appears in the agent's tool output
+- [x] Given an `init.lua` action without `agents = true`, when the agent runs it with `paneflow do`, then the tool output shows the refusal
 
 ---
 

@@ -49,10 +49,10 @@
     {
       "id": "EP-006",
       "title": "Linux end to end",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 2,
-      "stories_done": 0
+      "stories_done": 2
     },
     {
       "id": "EP-007",
@@ -352,30 +352,30 @@
       "id": "US-022",
       "title": "Upgrade from an install with the bridge",
       "epic": "EP-006",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-011",
         "US-012",
         "US-015"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-26",
+      "completed_at": "2026-11-27",
+      "reviewed_at": "2026-11-27"
     },
     {
       "id": "US-023",
       "title": "A live agent works through the CLI only",
       "epic": "EP-006",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-007",
         "US-012"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-26",
+      "completed_at": "2026-11-27",
+      "reviewed_at": "2026-11-27"
     },
     {
       "id": "US-024",
