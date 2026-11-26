@@ -29,7 +29,7 @@ SHA-256 and size of each artifact:
 |---|---|---|
 | `desktop` | `paneflow` | `target/release/` (or `target/<target>/release/`) |
 | `host` | `paneflow-host` | same directory as the desktop |
-| `helper.paneflow-shim`, `helper.paneflow-ai-hook`, `helper.paneflow-mcp` | embedded helpers | `target/embed-build/<target>/release-min/` |
+| `helper.paneflow-shim`, `helper.paneflow-ai-hook` | embedded helpers | `target/embed-build/<target>/release-min/` |
 | `engine.manifest`, `engine.<archive>` | libghostty pin and the prebuilt archives | `native/libghostty/manifest.toml`, `native/libghostty/prebuilt/<target>/lib/` |
 | `conpty.manifest`, `conpty.dll`, `conpty.openconsole` | bundled ConPTY (Windows targets only) | `native/conpty/manifest.json`, `native/conpty/prebuilt/x86_64-pc-windows-msvc/` |
 

@@ -40,12 +40,25 @@ Everywhere else, take the build for your machine from the [latest release](https
 Let one agent read another agent's pane, so you stop copy-pasting scrollback between them.
 
 ```bash
-paneflow mcp install
+paneflow integrations install claude-code
+paneflow integrations install codex
 ```
 
-This registers a local MCP bridge for supported agents it detects: Claude Code, Codex, Gemini CLI, and OpenCode. Its read tools are `list_panes`, `read_pane`, and `search_pane`, and terminal output comes back wrapped as untrusted data for the reading agent to analyze. Its one write tool, `write_pane`, sends a message to another agent's pane only after you allow that pair of agent sessions in Paneflow.
+This installs the agent's hooks, its status line, and the `paneflow-conductor` skill, which teaches the agent to drive Paneflow through the `paneflow` CLI from its shell tool. Gemini CLI and OpenCode read the same skill once you add it with `bunx skills add https://github.com/arthjean/paneflow/tree/main/skills/paneflow-conductor`.
 
-[Bridge docs →](docs/user/scripting.md)
+```bash
+paneflow read reviewer --lines 200          # another pane's scrollback
+paneflow search cargo-run "panicked"       # matching lines only
+paneflow write reviewer "the tests pass"     # message another agent
+paneflow ask "Deploy now?" --option yes --option no
+paneflow do deploy env=prod --wait 20s       # run an init.lua action
+```
+
+From inside a pane, reads and writes stay in that pane's workspace. `paneflow read`, `search`, and `ls` wrap terminal text as untrusted data for the reading agent to analyze, never to obey. `paneflow write` reaches another agent's pane only after you allow that pair of agent sessions in Paneflow, and `paneflow ask` shows its question in the window, naming the agent that asked.
+
+Upgrading from a version that shipped `paneflow mcp` removes the `paneflow` MCP server entries Paneflow wrote into your agents' configs on the first start. `paneflow mcp uninstall` removes them by hand.
+
+[Scripting docs →](docs/user/scripting.md)
 
 ### 3. Coordinate a fleet
 

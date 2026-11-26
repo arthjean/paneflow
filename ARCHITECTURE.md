@@ -8,7 +8,7 @@ terminal emulation is provided by a pinned, statically linked
 [`libghostty-vt`](https://github.com/ghostty-org/ghostty) engine on every
 shipping target. It is the only engine: there is no second parser and no
 runtime fallback. Paneflow owns PTY lifecycle orchestration, rendering, and
-integration with agent tracking, IPC, the MCP bridge, and self-update.
+integration with agent tracking, IPC, the agent-facing CLI, and self-update.
 
 This document describes how the pieces fit together. It is aimed at
 contributors and at anyone curious how you build a multiplexing terminal app
@@ -35,8 +35,7 @@ focused library crates:
 | `paneflow-peer` | `crates/paneflow-peer/` | The process at the other end of an IPC connection, read from the kernel, and whether it runs inside a pane (pane leaders, Windows pane jobs, parent walks) |
 | `paneflow-shim` | `crates/paneflow-shim/` | PATH shim wrapping every agent CLI of the `runtimes/` catalog so Paneflow can observe its lifecycle |
 | `paneflow-ai-hook` | `crates/paneflow-ai-hook/` | The hook binary agent CLIs invoke to report session events back over IPC |
-| `paneflow-ipc-client` | `crates/paneflow-ipc-client/` | Blocking JSON-RPC client for the local IPC socket (shared by the MCP bridge and the CLI) |
-| `paneflow-mcp` | `crates/paneflow-mcp/` | Stdio MCP server exposing pane reads (`list_panes`, `read_pane`, `search_pane`) and `write_pane`, a relay to the host's human-approved `pane.write` |
+| `paneflow-ipc-client` | `crates/paneflow-ipc-client/` | Blocking JSON-RPC client for the local IPC socket, shared by the CLI, the hook helper, the worker and the host, with the untrusted-output fence they all apply |
 | `paneflow-agent-integrations` | `crates/paneflow-agent-integrations/` | GPU-free install engine behind `paneflow integrations`: hooks, status line and conductor skill per the catalog `[integration]` section, idempotent merge written through symlinks, refuses entries another Paneflow home owns without `--force`, and purges the MCP entries older versions wrote |
 | `paneflow-process` | `crates/paneflow-process/` | Bounded external-process execution (wall-clock deadline + stdout cap) shared across crates |
 | `paneflow-acp` | `crates/paneflow-acp/` | Legacy Claude/Codex identity enum plus the `CLAUDECODE` environment scrub |
@@ -47,9 +46,9 @@ focused library crates:
 
 `src-app` is the default workspace member, so bare `cargo run` starts the
 desktop app instead of becoming ambiguous across helper binaries. The split is
-deliberate: anything that runs *outside* the GUI process (shim, hook, MCP
-bridge, MCP installer logic) must stay GPU-free and tiny, so it lives in its
-own crate and never links GPUI.
+deliberate: anything that runs *outside* the GUI process (the shim, the hook
+helper, the integration installer) must stay GPU-free and tiny, so it lives in
+its own crate and never links GPUI.
 
 ## Detached panes
 
@@ -640,7 +639,7 @@ agent CLI (claude, codex, opencode, …)
   program's exit releases `working`, `blocked` and `idle` and keeps `done` and
   `error`, which leave on the first keystroke typed in an attached window
   (never on input a control client sends, such as `paneflow send` or
-  `write_pane`), on `clear`, on RIS, or on a manual reset. A manual reset is a
+  `paneflow write`), on `clear`, on RIS, or on a manual reset. A manual reset is a
   RIS: records, OSC 9;4 progress and title are emptied. Pending status events
   are budgeted at 256 KiB per terminal; a burst past it clears every record
   and the progress instead of keeping a partial state, and logs a warning.
@@ -681,7 +680,7 @@ The default loop is human-in-the-loop: Paneflow pre-fills prompts into real PTY
 sessions and the user submits them. Auto-submit exists only as an explicit,
 gated scripting path.
 
-## IPC and the MCP bridge
+## IPC and the agent-facing CLI
 
 A JSON-RPC 2.0 endpoint (Unix socket at `$XDG_RUNTIME_DIR/paneflow/`, named
 pipe on Windows; an isolated `PANEFLOW_HOME` owns `paneflow-ipc-<fp>` beside
@@ -707,18 +706,26 @@ close that would discard unsaved files, and `-32800`
 a search superseded by a newer search on the same pane. Text budgets count the
 JSON-escaped size, so a reply always fits the 256 KiB frame.
 
-The MCP bridge re-exposes a slice of this to agents themselves:
-`paneflow mcp install` registers a stdio MCP server with Claude Code, Codex,
-Gemini CLI and opencode, giving any agent the ability to read other panes'
-scrollback. An agent debugging a failing dev server can read the server pane's
-output directly instead of asking you to paste it. Its one write tool,
-`write_pane`, only relays to the host's `pane.write`: the host binds each
-(source, target) pair of agent occurrences to a human approval granted from the
-window over `approval.follow` / `approval.decide`, which only a client that
-attaches a terminal engine may call, then sanitizes, rate-limits and prefixes
-the text with its provenance (`crates/paneflow-host/src/agent_write.rs`). The
-bridge binary ships embedded in the main binary and is extracted to a stable
-path at launch, so there is nothing extra to install.
+Agents reach the same surface through the `paneflow` CLI from their shell
+tool, guided by the `paneflow-conductor` skill that
+`paneflow integrations install` places beside the hooks. An agent debugging a
+failing dev server runs `paneflow read` on the server pane instead of asking
+you to paste its output. The servers apply the agent's safe defaults to every
+client: `surface.list`, `surface.read` and `surface.search` are scoped to a
+pane caller's own workspace (`ScopeRule::WorkspaceUnlessAll`, reaching other
+workspaces only with `scope: "all"` when orchestration is open), and
+`surface.read` and `surface.search` fence pane text as
+`<untrusted_terminal_output>` by default (`ai_injection_fence`) unless the
+caller asks for raw text.
+`paneflow write`, and any Lua script calling `paneflow.pane.write`, reach the
+host's `pane.write`: the host binds each (source, target) pair of agent
+occurrences to a human approval granted from the window over
+`approval.follow` / `approval.decide`, which only a client that attaches a
+terminal engine may call, then sanitizes, rate-limits and prefixes the text
+with its provenance (`crates/paneflow-host/src/agent_write.rs`).
+`paneflow ask` reaches `prompt.request`, whose question the window attributes
+to the calling agent, and `paneflow do <action> --wait` runs an `init.lua`
+action in bounded `action.wait` slices.
 
 ### Caller identity and authorization
 
@@ -887,7 +894,7 @@ app state.
 ## The worker between the core and its Controllers
 
 `paneflow-serve` is the per-home worker. It sits between the PTY core and
-every Controller (the GPUI app, the `paneflow` CLI, the MCP bridge) and owns
+every Controller (the GPUI app, the `paneflow` CLI, a Lua script) and owns
 the concerns that must survive a restart of the UI but not of the terminals:
 the layout model and `session.json`, the activity reducer, the session
 projection, and the capability set it advertises at bootstrap.
@@ -1029,7 +1036,7 @@ stale code.
   the registry build, and every call is validated against its declared
   parameter schema. It still forwards nothing to the core, because it is
   replaced on every update and owns no terminal: a request relayed through it
-  would add a hop and fail whenever an update swaps it. The CLI and MCP reach
+  would add a hop and fail whenever an update swaps it. The CLI and Lua reach
   `session.*` and `surface.*` on the host endpoint directly when no desktop is
   running, and a client routes each method to its owner from the descriptor.
   A new method family also enters `protocol/host-capabilities-v1.json`, and
@@ -1181,7 +1188,7 @@ stale code.
   in their own tasks and carry none. The window admits a request whose grant
   it minted and has not revoked, and revokes it when the `action.invoke` reply
   arrives or after `ACTION_REPLY_DEADLINE`. The same action run from the CLI,
-  the MCP bridge, an agent or a timer has no grant and stays gated, and an
+  `paneflow do`, an agent or a timer has no grant and stays gated, and an
   `origin` of `key` or `palette` sent by any other client grants nothing.
 
 ### Plan usage and the activity ledger
@@ -1256,7 +1263,7 @@ refused when the folder exists or an account already names it. The name is
 chosen at creation only, because the directory is the account's identity
 everywhere else (plans, ledger, default account, spaces, and on macOS Claude
 Code's keychain service name). Paneflow then creates the folder with an agent
-profile named `Claude Code <suffix>` pointing at it, installs Hooks and MCP
+profile named `Claude Code <suffix>` pointing at it, installs the hooks
 there when the agent's default directory has them, and signs in without
 leaving the page.
 `paneflow_serve::usage::login` drives the agent's own sign-in on a background

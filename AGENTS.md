@@ -163,10 +163,10 @@ the two you did.
 - **The render thread never blocks.** No synchronous file I/O, git subprocess,
   or recursive directory walk on the GPUI main thread. Push that work through
   `smol::unblock` or the bootstrap path.
-- **Three embedded helper binaries have hard size caps** enforced by
+- **Two embedded helper binaries have hard size caps** enforced by
   `scripts/check-helper-sizes.sh` in the `Tests (Linux x86_64)` job:
-  `paneflow-shim` 512 KiB, `paneflow-ai-hook` ~375 KB, `paneflow-mcp` 512 KiB,
-  and the combined cap the script reads from `src-app/build.rs`. They build
+  `paneflow-shim` 512 KiB and `paneflow-ai-hook` 375 KiB, plus the combined
+  cap the script reads from `src-app/build.rs` (908,288 B, their sum). They build
   under the `release-min` profile with every build of `paneflow-app`, so run
   the script after `cargo nextest run` on Linux x86_64 to measure them locally.
   Do not add heavy dependencies to them; `toml_edit`, for instance, is

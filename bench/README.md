@@ -129,7 +129,7 @@ every timing within 3.5 % of the old pin
 ([summary](results/gpui-bump-c016f436-2026-11-25.md)).
 
 Since 2026-11-26, `startup` of `linux-x86_64` points at `0cca9fa3`, the commit
-that removes the MCP bridge (US-016 of `tasks/prd-mcp-removal.md`): the
+that drops the third embedded helper (US-016 of `tasks/prd-mcp-removal.md`): the
 `bridge_extracted` mark became `helpers_extracted`, which now covers two
 helpers and measures 6.7 to 7.0 ms against 7.3 to 7.5 ms before. The first
 frame of every scenario reads 39 to 51 ms above the `226032bf` baseline, and
@@ -993,8 +993,8 @@ Nested counters are addressed with dots, for example
 
 `system.counters` sits next to `system.identify` in the IPC server: same
 connection checks, served on the connection thread, listed in
-`system.capabilities`. The helper binaries (`paneflow-shim`,
-`paneflow-ai-hook`, `paneflow-mcp`) do not depend on these crates. The cost
+`system.capabilities`. The helper binaries (`paneflow-shim` and
+`paneflow-ai-hook`) do not depend on these crates. The cost
 bound is the ignored test
 `work_counters::tests::an_increment_costs_less_than_fifty_nanoseconds_in_release`:
 
