@@ -25,7 +25,7 @@
       <li>Git branches and optional worktrees to separate parallel tasks</li>
       <li>Agent activity tracking and notifications when input is needed</li>
       <li>Checkout diffs against HEAD and an integrated file editor with Git markers</li>
-      <li>Read-only MCP bridge for sharing terminal context between agents</li>
+      <li>Agents read other panes through the CLI, as fenced untrusted output scoped to their workspace</li>
       <li>CLI control and declarative workflows with explicit permissions</li>
       <li>Native Rust/GPUI rendering with Wayland and X11 support on Linux</li>
     </ul>

@@ -574,9 +574,9 @@ changes in a native interface built with Rust and GPUI.
 
 Organize projects into tabs and split panes, use Git worktrees to separate
 tasks, and follow agent activity. Inspect checkout changes against HEAD in
-the diff viewer and edit files in the integrated editor. A read-only MCP
-bridge shares terminal context; the CLI controls panes with explicit
-permissions. The Linux package supports Wayland and X11."""
+the diff viewer and edit files in the integrated editor. Agents read other
+panes through the CLI as fenced untrusted output, and the CLI controls panes
+with explicit permissions. The Linux package supports Wayland and X11."""
 assets = [
     ["target/release/paneflow", "usr/bin/", "755"],
     ["target/release/paneflow-host", "usr/bin/", "755"],
