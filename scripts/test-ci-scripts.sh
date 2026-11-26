@@ -573,9 +573,6 @@ helper_size_cases() {
   if [ "$reported" != "2" ]; then
     echo "FAIL the size check reports exactly the two helpers: got $reported helper line(s)"
     failures=$((failures + 1))
-  elif "$check" "$dir" | grep -q 'paneflow-mcp'; then
-    echo "FAIL the size check still names the removed bridge"
-    failures=$((failures + 1))
   else
     echo "ok   the size check reports exactly the two helpers"
   fi
@@ -617,11 +614,12 @@ candidate_manifest_cases() {
     echo "FAIL a candidate manifest records both helpers"
     sed 's/^/    /' "$manifest"
     failures=$((failures + 1))
-  elif grep -q 'helper.paneflow-mcp' "$manifest"; then
-    echo "FAIL a candidate manifest has no helper.paneflow-mcp key"
+  elif [ "$(grep -oE '"helper\.[a-z-]+"' "$manifest" | sort -u | wc -l | tr -d ' ')" != "2" ]; then
+    echo "FAIL a candidate manifest records exactly two helper keys"
+    sed 's/^/    /' "$manifest"
     failures=$((failures + 1))
   else
-    echo "ok   a candidate manifest records the two helpers and no bridge"
+    echo "ok   a candidate manifest records exactly the two helpers"
   fi
 
   dir="$(helper_dir candidate-missing 400000 300000)"

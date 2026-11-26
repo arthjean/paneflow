@@ -1278,7 +1278,7 @@ fn launch_env_identifies_the_durable_session_and_drops_forbidden_keys() {
     );
     assert!(
         !env.contains_key("PANEFLOW_WORKSPACE_ID"),
-        "the legacy integer marker is never forged from a UUID; the MCP bridge parses it as u64"
+        "the legacy integer marker is never forged from a UUID; a client reading it parses it as u64"
     );
     assert_eq!(
         env.get("PANEFLOW_WORKSPACE_UUID"),
