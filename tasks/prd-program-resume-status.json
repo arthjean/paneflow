@@ -49,10 +49,10 @@
     {
       "id": "EP-006",
       "title": "Linux end to end and documentation",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 4,
-      "stories_done": 0
+      "stories_done": 4
     },
     {
       "id": "EP-007",
@@ -361,54 +361,54 @@
       "id": "US-023",
       "title": "Host crash end-to-end test",
       "epic": "EP-006",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-017"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-26",
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26"
     },
     {
       "id": "US-024",
       "title": "Pi live validation on Linux (validation)",
       "epic": "EP-006",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-019"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-26",
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26"
     },
     {
       "id": "US-025",
       "title": "Architecture and threat-model documentation",
       "epic": "EP-006",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-023"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-26",
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26"
     },
     {
       "id": "US-026",
       "title": "Manual GUI pass on Linux",
       "epic": "EP-006",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-018",
         "US-022"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-26",
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26"
     },
     {
       "id": "US-027",

@@ -10,6 +10,8 @@
 | 1.2 | 2026-11-26 | Arthur Jean | Technical corrections from the EP-003 implementation. TD-08: fish receives the handoff path in a second `--init-command` that sets shell globals, because fish runs its config before any init command and an environment variable would reach `config.fish`; a restart now keeps the integration arguments Paneflow built (`--rcfile`, the fish `--init-command`, the pwsh `-NoLogo -NoExit -Command`), which a bash resume needs and which a restart used to drop. TD-09: the hook sends no `start_time`, the host reads it from the pid itself, which keeps the hook inside its size margin and does not trust a reported value. TD-11: the summary object is `resume_candidate`, beside a `resume_attempt` object (attempt, record, outcome `prepared`, `started`, `settled`, `failed` or `refused`, reason, program, pid), because the flattened manifest already uses the `program_resume` key for the record store. Refusal reasons gained `unsettled`, `unknown_record`, `unknown_attempt`, `launcher_missing`, `invalid_command` and `handoff_unwritable`; a refused restart or create still starts a plain shell and names its reason in `resume_attempt`. The handoff format lives in a new dependency-free crate, `paneflow-resume-handoff`, shared by the host and the launcher. |
 | 1.3 | 2026-11-26 | Arthur Jean | Technical corrections from the EP-004 implementation. TD-11: `terminal.program_resume` is read leniently by the loader (a bad `mode` or a non-bare trusted name is reported naming the key, the rest of the file applies) but is not yet in `schemas/paneflow.schema.json`, because a schema test requires every public key to be documented in `docs/user/`, a mirror this PRD does not modify (Q4); the schema entry lands with the site documentation. The host reads the mode from `paneflow.json` at each spawn, as it reads the checksum settings. The desktop follows a prepared attempt with `session.inspect` every 250 ms for at most 30 s, off the render thread, since the agent stream passes through the worker and carries no attempt. An unsettled record is offered before any agent rule applies. "Could not resume `<cmd>`" names argv[0]. Restarts that carry `resume` are spaced by `RESUME_SPACING` through one desktop-wide slot reservation, in reservation order. The desktop engine now logs an unknown OSC by its number and length only, never its body. |
 | 1.4 | 2026-11-26 | Arthur Jean | Technical corrections from the EP-005 implementation and review. TD-13: a lost conversation pane no longer opens its shell before its turn; it waits in the conversation queue without a shell and its `session.create` carries `resume: { argv, cwd }`, so creates are spaced by `RESUME_SPACING` and no shell output is awaited. A create that carries `resume` goes to the host directly, never through the worker route, whose launch parameters carry no resume. When the request has no recorded `cwd`, the desktop fills it with the spawn directory. A create refused with `shell_unsupported`, `launcher_missing` or `handoff_unwritable` falls back to today's quiet wait and typed command. Every typed path (the `OfferResume` and `SharedFolder` banners, a shell that settles after a refused create, a legacy layout without a host session) first asks `session.prepare_resume { argv, cwd }` and types the launcher and handoff paths, and types the catalog command only when the host refuses. A `failed` launcher report shows "could not start `<program>`: `<reason>`" in the "Resume failed" banner and forgets the conversation. |
+| 1.5 | 2026-11-26 | Arthur Jean | Technical correction from the EP-006 live Pi run (US-024). The launcher `exec`s the agent shim, which starts Pi as its child, so TD-09's ownership transfer gave the record to the shim's pid while Pi reported under its own: two records, an attempt that never settled (so the next crash only offered), and after `/new` a stale record of the previous session that ancestor preference chose at the next restore. A record moved by `started` is now marked `handed_off`, and an accepted report from a descendant of its owner replaces it and settles the attempt (`RecordStore::insert`, `settle_reported_attempt`). Pi's two argv shapes match the `native_argv` templates as written (A3), and Pi removes `OSC7577_TOKEN` before running tools (A4, observed). |
+| 1.6 | 2026-11-26 | Arthur Jean | UI correction from the US-026 pass. The offer banner names the command as a question (`Resume <argv>?`, with the unsettled, agent-shape and agents-off reasons as their own sentences) and shows the directory on a second muted line abbreviated with `~` and truncated from its start. The banner shared by resume offers, conversation offers and write requests is now a toast at the bottom right of its pane, 16 px inset, 340 px wide at most, on the Settings dialog surface (opaque `ink.dialog`, 1 px `dialog_edge`, a short shadow, radius 12, padding 16), with 28 px pill buttons aligned to the end: the secondary action first, the primary last in the toggle blue `#339cff` under a white label (`kit::Tone::Accent`). Write requests keep Deny and Allow both secondary. |
 
 ## Problem Statement
 
@@ -188,7 +190,7 @@ The banner renders `Offered`, `Blocked` and `Failed`.
 | A1 | The bundled ConPTY passes OSC 7577 to the host byte for byte. Inferred from the OSC 7501 tests that emit through PowerShell (`src-app/tests/cli_delivery.rs:182`). | High | US-027 |
 | A2 | The pinned libghostty reports a whole 7577 sequence through the unknown-sequence callback, in stream order, on every target (R5 states it; no test exists). | High | US-006 (Linux), US-028, US-030 |
 | A3 | Pi's report passes Paneflow's validation (Pi's own pid, inside the pane session, under the shim), and its argv takes exactly the two shapes in TD-12. | High | US-024 |
-| A4 | Pi removes `OSC7577_TOKEN` from the tools it runs. Unknown. TD-12's argv templates bound the damage: a forged Pi record with another shape only gets the banner. | Medium | US-024 records the observed behavior |
+| A4 | Pi removes `OSC7577_TOKEN` from the tools it runs. Observed on 2026-11-26 (US-024, Pi from source at 390eae46): a command run by Pi's bash tool saw no token. Paneflow does not enforce it; TD-12's argv templates bound the damage: a forged Pi record with another shape only gets the banner. | Medium | US-024 records the observed behavior |
 | A5 | 16 records per session are enough: the reporting processes alive in one pane are a wrapper, a program and nested programs. No evidence; the least recently updated record is evicted beyond 16. | Low | Revisit on a user report |
 | A6 | zsh, fish and PowerShell consume the handoff as bash does. CI runners install only bash for these tests (`.github/workflows/run_tests.yml` installs no zsh or fish). | Medium | US-015 (local zsh and fish), US-029, US-031 |
 | A7 | On Windows, the default ACL of the user profile keeps the handoff file and the manifest private: no explicit ACL is set today (`manifest.rs:232-249`). | Medium | US-028 |
@@ -616,10 +618,10 @@ The full path is proven on Linux with the real host, a real shell and a real Pi,
 **Dependencies:** Blocked by US-017
 
 **Acceptance Criteria:**
-- [ ] Given a hosted bash pane running the fixture in `resume-report` mode, when the host is killed with SIGKILL and a new host restarts the session with `resume`, then the fixture runs again with its reported argv
-- [ ] Given the resumed fixture, when it reports again, then the record's owner is its new pid and the attempt is settled
-- [ ] Given the resumed fixture's argv[0] removed from `PATH` before the restart, when the restart runs, then the record is removed and the pane shows a plain shell
-- [ ] Given the test, when it waits for outcomes, then it uses deadlines measured in seconds and no `elapsed()` budget (`scripts/check-test-wallclock.sh`)
+- [x] Given a hosted bash pane running the fixture in `resume-report` mode, when the host is killed with SIGKILL and a new host restarts the session with `resume`, then the fixture runs again with its reported argv
+- [x] Given the resumed fixture, when it reports again, then the record's owner is its new pid and the attempt is settled
+- [x] Given the resumed fixture's argv[0] removed from `PATH` before the restart, when the restart runs, then the record is removed and the pane shows a plain shell
+- [x] Given the test, when it waits for outcomes, then it uses deadlines measured in seconds and no `elapsed()` budget (`scripts/check-test-wallclock.sh`)
 
 #### US-024: Pi live validation on Linux (validation)
 **Description:** As a maintainer, I want Pi's real reports checked against Paneflow so that A3 and A4 are settled before relying on them.
@@ -628,12 +630,12 @@ The full path is proven on Linux with the real host, a real shell and a real Pi,
 **Dependencies:** Blocked by US-019
 
 **Acceptance Criteria:**
-- [ ] Given Pi started from a Paneflow pane, when it reports, then the host accepts the report and stores Pi's own pid as owner
-- [ ] Given Pi's records, when their argv is read, then each matches one of the two `native_argv` templates, or the templates are corrected and the PRD changelog says so
-- [ ] Given the host killed with SIGKILL, when Paneflow restores, then Pi resumes the same session automatically
-- [ ] Given Pi's `/new`, when it runs, then the previous record is cleared and a new one is accepted
-- [ ] Given a Pi tool command printing `$OSC7577_TOKEN`, when it runs, then the observed value (present or absent) is recorded under A4
-- [ ] Given the run, when it ends, then the evidence (Pi version, records, logs without the token) is in `tasks/program-resume-evidence/` (local evidence)
+- [x] Given Pi started from a Paneflow pane, when it reports, then the host accepts the report and stores Pi's own pid as owner
+- [x] Given Pi's records, when their argv is read, then each matches one of the two `native_argv` templates, or the templates are corrected and the PRD changelog says so
+- [x] Given the host killed with SIGKILL, when Paneflow restores, then Pi resumes the same session automatically
+- [x] Given Pi's `/new`, when it runs, then the previous record is cleared and a new one is accepted
+- [x] Given a Pi tool command printing `$OSC7577_TOKEN`, when it runs, then the observed value (present or absent) is recorded under A4
+- [x] Given the run, when it ends, then the evidence (Pi version, records, logs without the token) is in `tasks/program-resume-evidence/` (local evidence)
 
 #### US-025: Architecture and threat-model documentation
 **Description:** As a maintainer, I want ARCHITECTURE.md to explain the 7577 path so that later changes keep its guarantees.
@@ -642,11 +644,11 @@ The full path is proven on Linux with the real host, a real shell and a real Pi,
 **Dependencies:** Blocked by US-023
 
 **Acceptance Criteria:**
-- [ ] Given ARCHITECTURE.md, when it is read, then a section names the token lifecycle, the record store, the persistence class, the launcher and the attempt states with their files
-- [ ] Given the lifecycle table at `ARCHITECTURE.md:1344`, when it is read, then each row states what happens to resume records
-- [ ] Given a lifecycle row whose event leaves records untouched (a controller pipe that closes), when it is read, then it says "records unchanged" instead of leaving the column empty
-- [ ] Given the section, when it is read, then it lists the threat model's accepted risks: same-user processes, Pi's tools (A4), the "Stop everything and quit" departure (TD-06)
-- [ ] Given `CHANGELOG.md`, when it is read, then an Unreleased entry describes program resume in user terms
+- [x] Given ARCHITECTURE.md, when it is read, then a section names the token lifecycle, the record store, the persistence class, the launcher and the attempt states with their files
+- [x] Given the lifecycle table at `ARCHITECTURE.md:1344`, when it is read, then each row states what happens to resume records
+- [x] Given a lifecycle row whose event leaves records untouched (a controller pipe that closes), when it is read, then it says "records unchanged" instead of leaving the column empty
+- [x] Given the section, when it is read, then it lists the threat model's accepted risks: same-user processes, Pi's tools (A4), the "Stop everything and quit" departure (TD-06)
+- [x] Given `CHANGELOG.md`, when it is read, then an Unreleased entry describes program resume in user terms
 
 #### US-026: Manual GUI pass on Linux
 **Description:** As Arthur, I want to see the banners and resumes in the real app so that the UI meets DESIGN.md before release.
@@ -655,10 +657,10 @@ The full path is proven on Linux with the real host, a real shell and a real Pi,
 **Dependencies:** Blocked by US-018, US-022
 
 **Acceptance Criteria:**
-- [ ] Given a tagged dev home (`scripts/dev.sh --tag resume`) with nvim, lazygit and Pi panes, when its host is stopped with `kill -9` by PID and the app restarts, then each pane behaves per its mode, recorded as screenshots
-- [ ] Given the banner on Wayland and X11, when it renders, then it passes the DESIGN.md UI delivery gate
-- [ ] Given a failure (program removed), when the pane restores, then the banner names the command and the reason from Edge Cases, and its Dismiss button removes it
-- [ ] Given the installed app, when the pass runs, then the installed app's host is never stopped (`AGENTS.md`)
+- [x] Given a tagged dev home (`scripts/dev.sh --tag resume`) with nvim, lazygit and Pi panes, when its host is stopped with `kill -9` by PID and the app restarts, then each pane behaves per its mode, recorded as screenshots
+- [x] Given the banner on Wayland and X11, when it renders, then it passes the DESIGN.md UI delivery gate
+- [x] Given a failure (program removed), when the pane restores, then the banner names the command and the reason from Edge Cases, and its Dismiss button removes it
+- [x] Given the installed app, when the pass runs, then the installed app's host is never stopped (`AGENTS.md`)
 
 ---
 
