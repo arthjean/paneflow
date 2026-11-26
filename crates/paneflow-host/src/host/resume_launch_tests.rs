@@ -136,10 +136,12 @@ impl Bench {
 
     fn end(&self, session: &SessionId) {
         self.host.input(session, None, b"exit\n".to_vec()).unwrap();
-        assert!(wait_until(|| self
-            .host
-            .inspect(session)
-            .is_ok_and(|summary| !summary.live && !summary.pending_launch)));
+        assert!(wait_until(|| self.host.inspect(session).is_ok_and(
+            |summary| !summary.live
+                && !summary.pending_launch
+                && summary.descendants_unresolved == 0
+                && matches!(summary.manifest.lifecycle, SessionLifecycle::Exited { .. })
+        )));
     }
 
     fn screen_line(&self, session: &SessionId, command: &str, prefix: &str) -> String {
