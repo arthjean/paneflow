@@ -37,7 +37,7 @@ focused library crates:
 | `paneflow-ai-hook` | `crates/paneflow-ai-hook/` | The hook binary agent CLIs invoke to report session events back over IPC |
 | `paneflow-ipc-client` | `crates/paneflow-ipc-client/` | Blocking JSON-RPC client for the local IPC socket (shared by the MCP bridge and the CLI) |
 | `paneflow-mcp` | `crates/paneflow-mcp/` | Stdio MCP server exposing pane reads (`list_panes`, `read_pane`, `search_pane`) and `write_pane`, a relay to the host's human-approved `pane.write` |
-| `paneflow-mcp-install` | `crates/paneflow-mcp-install/` | GPU-free install engine behind `paneflow integrations` and `paneflow mcp`: hooks, MCP entry and conductor skill per the catalog `[integration]` section, idempotent merge written through symlinks, refuses entries another Paneflow home owns without `--force` |
+| `paneflow-agent-integrations` | `crates/paneflow-agent-integrations/` | GPU-free install engine behind `paneflow integrations`: hooks, status line and conductor skill per the catalog `[integration]` section, idempotent merge written through symlinks, refuses entries another Paneflow home owns without `--force`, and purges the MCP entries older versions wrote |
 | `paneflow-process` | `crates/paneflow-process/` | Bounded external-process execution (wall-clock deadline + stdout cap) shared across crates |
 | `paneflow-acp` | `crates/paneflow-acp/` | Legacy Claude/Codex identity enum plus the `CLAUDECODE` environment scrub |
 | `paneflow-colrv1` | `crates/paneflow-colrv1/` | COLRv1 color-glyph rasterizer (skrifa paint graph onto tiny-skia, gradients interpolated in linear light) called by the vendored `vendor/gpui_wgpu` Linux text system, whose swash backend reads only COLRv0 and CBDT emoji |

@@ -3,7 +3,7 @@ use gpui::{
     prelude::*, px,
 };
 
-use paneflow_mcp_install::{InstallKind, OverallState, StatusKind};
+use paneflow_agent_integrations::{InstallKind, OverallState, StatusKind};
 
 use crate::PaneFlowApp;
 use crate::settings::kit::{self, Ink, Size, Text, Tone};
@@ -42,7 +42,7 @@ impl PaneFlowApp {
         let state = self
             .mcp_status
             .as_deref()
-            .map(paneflow_mcp_install::overall_state);
+            .map(paneflow_agent_integrations::overall_state);
 
         let (label, enabled): (SharedString, bool) = if self.mcp_busy {
             ("Installing…".into(), false)
@@ -195,7 +195,7 @@ impl PaneFlowApp {
         cx.spawn(async move |this, cx| {
             let status = smol::unblock(|| {
                 let bridge = crate::runtime_paths::bridge_binary_path();
-                paneflow_mcp_install::status_all(bridge.as_deref())
+                paneflow_agent_integrations::status_all(bridge.as_deref())
             })
             .await;
             let _ = this.update(cx, |this, cx| {
@@ -223,8 +223,8 @@ impl PaneFlowApp {
                         crate::runtime_paths::bridge_binary_path()
                     }
                 };
-                let install = paneflow_mcp_install::install_all(bridge.as_deref(), false);
-                let status = paneflow_mcp_install::status_all(bridge.as_deref());
+                let install = paneflow_agent_integrations::install_all(bridge.as_deref(), false);
+                let status = paneflow_agent_integrations::status_all(bridge.as_deref());
                 (install, status)
             })
             .await;

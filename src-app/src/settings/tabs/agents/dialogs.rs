@@ -2,7 +2,7 @@ use gpui::{
     AnyElement, ClickEvent, Context, CursorStyle, Div, InteractiveElement, IntoElement,
     KeyDownEvent, ParentElement, SharedString, Styled, Window, div, prelude::*, px,
 };
-use paneflow_mcp_install::IntegrationState;
+use paneflow_agent_integrations::IntegrationState;
 
 use super::{AgentAccountNamer, AgentProfileEditor, input_box_sized};
 use crate::PaneFlowApp;

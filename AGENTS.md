@@ -170,7 +170,7 @@ the two you did.
   under the `release-min` profile with every build of `paneflow-app`, so run
   the script after `cargo nextest run` on Linux x86_64 to measure them locally.
   Do not add heavy dependencies to them; `toml_edit`, for instance, is
-  deliberately confined to `paneflow-mcp-install`.
+  deliberately confined to `paneflow-agent-integrations`.
 - **GPUI is pinned to an exact upstream Zed revision** across every `rev` value
   in `src-app/Cargo.toml`, dev-dependencies included, and `gpui_platform` must keep
   `features = ["font-kit"]` or macOS renders empty glyph bitmaps. Linux's

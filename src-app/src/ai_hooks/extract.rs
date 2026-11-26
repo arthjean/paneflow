@@ -131,6 +131,31 @@ pub(crate) fn extract_bridge_in_home(home: &Path) -> Result<PathBuf> {
     extract_single_helper(&crate::runtime_paths::bridge_binary_path_in(home))
 }
 
+pub(crate) fn remove_retired_bridge_in_home(home: &Path) -> Result<Option<PathBuf>> {
+    let path = crate::runtime_paths::bridge_binary_path_in(home);
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(Some(path)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error).with_context(|| format!("remove {}", path.display())),
+    }
+}
+
+pub fn remove_retired_bridge_off_thread(
+    resolve_home: impl FnOnce() -> Option<PathBuf> + Send + 'static,
+) -> std::io::Result<std::thread::JoinHandle<()>> {
+    std::thread::Builder::new()
+        .name("paneflow-retired-bridge".into())
+        .spawn(move || match resolve_home().map(|home| remove_retired_bridge_in_home(&home)) {
+            None | Some(Ok(None)) => {}
+            Some(Ok(Some(path))) => {
+                log::info!("paneflow: removed the retired MCP bridge at {}", path.display())
+            }
+            Some(Err(error)) => log::warn!(
+                "paneflow: cannot remove the retired MCP bridge ({error:#}); the next start tries again"
+            ),
+        })
+}
+
 pub fn ensure_ai_hook_extracted() -> Result<PathBuf> {
     let home = crate::runtime_paths::data_dir().ok_or_else(|| {
         anyhow!(
@@ -568,6 +593,56 @@ mod tests {
         let home = tempfile::TempDir::new().unwrap();
         let dir = extract_binaries_in_home(home.path()).unwrap();
         assert!(!dir.join(format!("fx{}", exe_suffix())).exists());
+    }
+
+    #[test]
+    fn startup_deletes_the_retired_bridge_and_a_failed_deletion_is_retried_next_start() {
+        let home = tempfile::TempDir::new().unwrap();
+        assert_eq!(remove_retired_bridge_in_home(home.path()).unwrap(), None);
+
+        let bridge = extract_bridge_in_home(home.path()).unwrap();
+        let hook = extract_ai_hook_in_home(home.path()).unwrap();
+        assert_eq!(
+            remove_retired_bridge_in_home(home.path()).unwrap(),
+            Some(bridge.clone())
+        );
+        assert!(!bridge.exists());
+        assert!(hook.is_file(), "only the bridge goes");
+
+        std::fs::create_dir_all(bridge.join("busy")).unwrap();
+        let error = remove_retired_bridge_in_home(home.path()).unwrap_err();
+        assert!(
+            format!("{error:#}").contains(&bridge.display().to_string()),
+            "{error:#}"
+        );
+        assert!(
+            bridge.exists(),
+            "a failed deletion leaves the file for the next start"
+        );
+
+        std::fs::remove_dir_all(&bridge).unwrap();
+        std::fs::write(&bridge, b"stale bridge").unwrap();
+        assert_eq!(
+            remove_retired_bridge_in_home(home.path()).unwrap(),
+            Some(bridge.clone())
+        );
+        assert!(!bridge.exists());
+    }
+
+    #[test]
+    fn the_retired_bridge_removal_runs_on_its_own_thread() {
+        let home = tempfile::TempDir::new().unwrap();
+        let bridge = extract_bridge_in_home(home.path()).unwrap();
+        let caller = std::thread::current().id();
+        let given = home.path().to_path_buf();
+        let handle = remove_retired_bridge_off_thread(move || {
+            assert_ne!(std::thread::current().id(), caller);
+            Some(given)
+        })
+        .unwrap();
+        assert_eq!(handle.thread().name(), Some("paneflow-retired-bridge"));
+        handle.join().unwrap();
+        assert!(!bridge.exists());
     }
 
     #[test]

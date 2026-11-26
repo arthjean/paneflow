@@ -21,7 +21,6 @@ strip_inherited = []
 [integration]
 summary = "Paneflow shows OpenCode's turn status when OpenCode reports it through OSC 7501."
 hook_adapter = "none"
-mcp_config = "opencode"
 
 [resume]
 session_argv = ["opencode", "--session", "{session_id}"]

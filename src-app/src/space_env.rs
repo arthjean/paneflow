@@ -79,7 +79,7 @@ pub(crate) fn claude_paths(
 pub(crate) fn integration_target(
     config: &PaneFlowConfig,
     space: &SpaceId,
-) -> Option<paneflow_mcp_install::IntegrationTarget> {
+) -> Option<paneflow_agent_integrations::IntegrationTarget> {
     let env = declared_space_env(config, Some(space))?;
     integration_target_in(
         &paneflow_home::paneflow_home()?,
@@ -98,7 +98,7 @@ pub(crate) fn integration_target_in(
     home: Option<PathBuf>,
     default_claude: Option<paneflow_agent_config::ClaudePaths>,
     default_codex: Option<PathBuf>,
-) -> Option<paneflow_mcp_install::IntegrationTarget> {
+) -> Option<paneflow_agent_integrations::IntegrationTarget> {
     let lookup = |name: &str| env.get(name).map(std::ffi::OsString::from);
     let claude = env
         .contains_key("CLAUDE_CONFIG_DIR")
@@ -109,7 +109,7 @@ pub(crate) fn integration_target_in(
         .get("CODEX_HOME")
         .and_then(|value| paneflow_agent_config::absolute_env_dir("CODEX_HOME", Some(value.into())))
         .filter(|dir| Some(dir) != default_codex.as_ref());
-    let target = paneflow_mcp_install::IntegrationTarget::for_space(
+    let target = paneflow_agent_integrations::IntegrationTarget::for_space(
         paneflow_home,
         &space.to_string(),
         claude,

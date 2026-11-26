@@ -4430,6 +4430,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "paneflow-agent-integrations"
+version = "0.20.0"
+dependencies = [
+ "anyhow",
+ "dirs",
+ "paneflow-agent-config",
+ "paneflow-home",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "toml_edit 0.22.27",
+ "which",
+]
+
+[[package]]
 name = "paneflow-ai-hook"
 version = "0.20.0"
 dependencies = [
@@ -4486,6 +4501,7 @@ dependencies = [
  "objc2-metal 0.3.2",
  "open",
  "paneflow-agent-config",
+ "paneflow-agent-integrations",
  "paneflow-api",
  "paneflow-config",
  "paneflow-dock-tile",
@@ -4497,7 +4513,6 @@ dependencies = [
  "paneflow-launch",
  "paneflow-layout",
  "paneflow-lsp",
- "paneflow-mcp-install",
  "paneflow-minisign",
  "paneflow-peer",
  "paneflow-process",
@@ -4747,21 +4762,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "paneflow-mcp-install"
-version = "0.20.0"
-dependencies = [
- "anyhow",
- "dirs",
- "paneflow-agent-config",
- "paneflow-home",
- "serde_json",
- "sha2 0.10.9",
- "tempfile",
- "toml_edit 0.22.27",
- "which",
-]
-
-[[package]]
 name = "paneflow-minisign"
 version = "0.1.0"
 dependencies = [
@@ -4826,6 +4826,7 @@ dependencies = [
  "log",
  "notify",
  "paneflow-agent-config",
+ "paneflow-agent-integrations",
  "paneflow-api",
  "paneflow-config",
  "paneflow-git",
@@ -4834,7 +4835,6 @@ dependencies = [
  "paneflow-ipc-client",
  "paneflow-launch",
  "paneflow-layout",
- "paneflow-mcp-install",
  "paneflow-peer",
  "paneflow-process",
  "paneflow-script",

@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use gpui::{Context, Window};
 use paneflow_agent_config::usage::accounts::{UsageAgent, account_dir_key, canonical_account_dir};
+use paneflow_agent_integrations::{IntegrationState, IntegrationTarget};
 use paneflow_config::schema::{AgentProfileConfig, SpaceId};
-use paneflow_mcp_install::{IntegrationState, IntegrationTarget};
 
 use super::{AgentAccountNamer, NewAccount, is_account_profile, profile_base, usage_agent};
 use crate::PaneFlowApp;
@@ -208,13 +208,11 @@ fn prepare_account_dir(
     let installed = paneflow_home::paneflow_home()
         .ok_or_else(|| "the Paneflow home directory cannot be resolved".to_string())
         .and_then(|home| {
-            let binaries = paneflow_mcp_install::IntegrationBinaries {
+            let binaries = paneflow_agent_integrations::IntegrationBinaries {
                 hook_binary: crate::ai_hooks::extract::ensure_ai_hook_extracted()
                     .map_err(|error| format!("hook extraction failed: {error:#}"))?,
-                bridge_binary: crate::ai_hooks::extract::ensure_bridge_extracted()
-                    .map_err(|error| format!("bridge extraction failed: {error:#}"))?,
             };
-            paneflow_mcp_install::install_target_integration(
+            paneflow_agent_integrations::install_target_integration(
                 &account_target(&home, agent, slug, dir),
                 integration,
                 &binaries,

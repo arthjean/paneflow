@@ -588,6 +588,72 @@ mod tests {
         assert_eq!(json["terminal"]["color_emoji"], json!(true));
     }
 
+    fn top_level_keys(path: &std::path::Path) -> Vec<String> {
+        let root: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        root.as_object().unwrap().keys().cloned().collect()
+    }
+
+    #[test]
+    fn a_setting_save_keeps_every_other_key_of_an_unsorted_paneflow_json_in_place() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("paneflow.json");
+        std::fs::write(
+            &p,
+            r#"{"theme": "One Dark", "font_size": 13.0, "zoom": 1, "terminal": {"cursor_shape": "bar", "blink": true}, "agent_prompts": "paneflow"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            save_setting_ordered_at(&p, false, "font_size", json!(15.0), 1),
+            SettingWrite::Written
+        );
+        assert_eq!(
+            save_setting_ordered_at(&p, false, "new_key", json!(true), 1),
+            SettingWrite::Written
+        );
+        assert_eq!(
+            save_setting_ordered_at(&p, true, "cursor_shape", json!("block"), 1),
+            SettingWrite::Written
+        );
+
+        assert_eq!(
+            top_level_keys(&p),
+            [
+                "theme",
+                "font_size",
+                "zoom",
+                "terminal",
+                "agent_prompts",
+                "new_key"
+            ]
+        );
+        let root = load_raw_config(&p).unwrap();
+        assert_eq!(
+            root["terminal"]
+                .as_object()
+                .unwrap()
+                .keys()
+                .collect::<Vec<_>>(),
+            ["cursor_shape", "blink"]
+        );
+        assert_eq!(root["font_size"], json!(15.0));
+        assert_eq!(root["terminal"]["cursor_shape"], json!("block"));
+    }
+
+    #[test]
+    fn a_setting_save_into_a_paneflow_json_with_a_syntax_error_fails_and_leaves_it_unchanged() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("paneflow.json");
+        let broken = "{\n  \"theme\": \"One Dark\",\n  \"font_size\": \n}\n";
+        std::fs::write(&p, broken).unwrap();
+
+        assert_eq!(
+            save_setting_ordered_at(&p, false, "font_size", json!(15.0), 1),
+            SettingWrite::Failed
+        );
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), broken);
+    }
+
     #[test]
     fn an_older_setting_write_never_lands_after_a_newer_one() {
         let dir = tempfile::TempDir::new().unwrap();

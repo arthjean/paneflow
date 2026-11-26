@@ -26,7 +26,7 @@
 - [Config crate](crates/paneflow-config/) - config schema, loader, resolver, and watcher logic.
 - [IPC client crate](crates/paneflow-ipc-client/) - blocking JSON-RPC client used by CLI and MCP.
 - [MCP crate](crates/paneflow-mcp/) - read-only MCP server implementation.
-- [MCP install crate](crates/paneflow-mcp-install/) - per-agent MCP config installer.
+- [Agent integrations crate](crates/paneflow-agent-integrations/) - per-agent hooks, status line and conductor skill installer, and the purge of legacy MCP entries.
 - [Shim crate](crates/paneflow-shim/) - helper for agent lifecycle hooks.
 - [AI hook crate](crates/paneflow-ai-hook/) - lightweight hook callback binary.
 - [Process crate](crates/paneflow-process/) - bounded external process execution helpers.

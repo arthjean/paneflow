@@ -3,10 +3,10 @@ use gpui::{
     MouseButton, ParentElement, PathPromptOptions, SharedString, StatefulInteractiveElement,
     Styled, Window, div, prelude::*, px, svg,
 };
+use paneflow_agent_integrations::IntegrationStatus;
 use paneflow_config::schema::{
     DEFAULT_SPACE_NAME, MAX_SPACES, SpaceColor, SpaceConfig, SpaceId, validate_space_name,
 };
-use paneflow_mcp_install::IntegrationStatus;
 
 use std::collections::BTreeMap;
 
@@ -220,27 +220,25 @@ fn space_integration_statuses(
             crate::space_env::integration_target(config, &space.id).map(|target| {
                 (
                     space.id.clone(),
-                    paneflow_mcp_install::list_target_integrations(&target),
+                    paneflow_agent_integrations::list_target_integrations(&target),
                 )
             })
         })
         .collect()
 }
 
-fn integration_binaries() -> Result<paneflow_mcp_install::IntegrationBinaries, String> {
-    Ok(paneflow_mcp_install::IntegrationBinaries {
+fn integration_binaries() -> Result<paneflow_agent_integrations::IntegrationBinaries, String> {
+    Ok(paneflow_agent_integrations::IntegrationBinaries {
         hook_binary: crate::ai_hooks::extract::ensure_ai_hook_extracted()
             .map_err(|error| format!("hook extraction failed: {error:#}"))?,
-        bridge_binary: crate::ai_hooks::extract::ensure_bridge_extracted()
-            .map_err(|error| format!("bridge extraction failed: {error:#}"))?,
     })
 }
 
 fn failed_for_every_runtime(
-    target: &paneflow_mcp_install::IntegrationTarget,
+    target: &paneflow_agent_integrations::IntegrationTarget,
     error: &str,
 ) -> IntegrationResults {
-    paneflow_mcp_install::list_target_integrations(target)
+    paneflow_agent_integrations::list_target_integrations(target)
         .into_iter()
         .map(|status| (status.slug.to_string(), Err(error.to_string())))
         .collect()
@@ -253,19 +251,20 @@ pub(crate) fn mirror_into_space(
     let Some(target) = crate::space_env::integration_target(config, space) else {
         return Vec::new();
     };
-    let installed = paneflow_mcp_install::list_integrations();
+    let installed = paneflow_agent_integrations::list_integrations();
     match integration_binaries() {
-        Ok(binaries) => {
-            paneflow_mcp_install::mirror_installed_integrations(&installed, &target, &binaries)
-        }
+        Ok(binaries) => paneflow_agent_integrations::mirror_installed_integrations(
+            &installed, &target, &binaries,
+        ),
         Err(error) => failed_for_every_runtime(&target, &error),
     }
 }
 
 pub(crate) fn launch_refresh_groups(
-    targets: Vec<(SpaceId, paneflow_mcp_install::IntegrationTarget)>,
-) -> Vec<Vec<(SpaceId, paneflow_mcp_install::IntegrationTarget)>> {
-    let mut groups: Vec<Vec<(SpaceId, paneflow_mcp_install::IntegrationTarget)>> = Vec::new();
+    targets: Vec<(SpaceId, paneflow_agent_integrations::IntegrationTarget)>,
+) -> Vec<Vec<(SpaceId, paneflow_agent_integrations::IntegrationTarget)>> {
+    let mut groups: Vec<Vec<(SpaceId, paneflow_agent_integrations::IntegrationTarget)>> =
+        Vec::new();
     for (space, target) in targets {
         match groups
             .iter_mut()
@@ -289,15 +288,33 @@ fn refresh_at_launch(
                 .map(|target| (space.id.clone(), target))
         })
         .collect();
+    refresh_targets_at_launch(targets, integration_binaries())
+}
+
+pub(crate) fn refresh_targets_at_launch(
+    targets: Vec<(SpaceId, paneflow_agent_integrations::IntegrationTarget)>,
+    binaries: Result<paneflow_agent_integrations::IntegrationBinaries, String>,
+) -> Vec<(SpaceId, IntegrationResults)> {
     if targets.is_empty() {
         return Vec::new();
     }
-    let binaries = integration_binaries();
+    let purged = paneflow_agent_integrations::purge_target_legacy_mcp(
+        &targets
+            .iter()
+            .map(|(_, target)| target.clone())
+            .collect::<Vec<_>>(),
+    );
+    for line in purged.lines() {
+        log::info!("spaces: {line}");
+    }
+    for warning in &purged.warnings {
+        log::warn!("spaces: {warning}");
+    }
     launch_refresh_groups(targets)
         .into_iter()
         .flat_map(|group| {
             let results = match &binaries {
-                Ok(binaries) => paneflow_mcp_install::refresh_target_integrations(
+                Ok(binaries) => paneflow_agent_integrations::refresh_target_integrations(
                     &group
                         .iter()
                         .map(|(_, target)| target.clone())
@@ -626,8 +643,12 @@ impl PaneFlowApp {
             let install_slug = slug.clone();
             let result = smol::unblock(move || {
                 let binaries = integration_binaries()?;
-                paneflow_mcp_install::install_target_integration(&target, &install_slug, &binaries)
-                    .map(|_| ())
+                paneflow_agent_integrations::install_target_integration(
+                    &target,
+                    &install_slug,
+                    &binaries,
+                )
+                .map(|_| ())
             })
             .await;
             let _ = this.update(cx, |this, cx| {
@@ -2058,7 +2079,7 @@ mod tests {
         };
         let target = |n: u8, dir: &str| {
             let id = space(n, "x").id;
-            let target = paneflow_mcp_install::IntegrationTarget::for_space(
+            let target = paneflow_agent_integrations::IntegrationTarget::for_space(
                 home,
                 &id.to_string(),
                 claude(dir),
@@ -2074,6 +2095,53 @@ mod tests {
         let sizes: Vec<usize> = groups.iter().map(Vec::len).collect();
         assert_eq!(sizes, vec![2, 1]);
         assert_eq!(groups[0][1].0, space(3, "x").id);
+    }
+
+    #[test]
+    fn a_launch_refresh_purges_the_legacy_mcp_entries_of_every_space_directory() {
+        let root = tempfile::TempDir::new().unwrap();
+        let bridge = "/home/alice/.paneflow/bin/paneflow-mcp";
+        let claude_dir = root.path().join("work").join(".claude");
+        let codex_dir = root.path().join("work").join(".codex");
+        std::fs::create_dir_all(&claude_dir).unwrap();
+        std::fs::create_dir_all(&codex_dir).unwrap();
+        let claude_json = claude_dir.join(".claude.json");
+        std::fs::write(
+            &claude_json,
+            format!(r#"{{"keep":1,"mcpServers":{{"paneflow":{{"command":"{bridge}"}}}}}}"#),
+        )
+        .unwrap();
+        let codex_toml = codex_dir.join("config.toml");
+        std::fs::write(
+            &codex_toml,
+            format!("model = \"gpt-6\"\n\n[mcp_servers.paneflow]\ncommand = \"{bridge}\"\n"),
+        )
+        .unwrap();
+        let id = space(1, "Work").id;
+        let target = paneflow_agent_integrations::IntegrationTarget::for_space(
+            &root.path().join(".paneflow"),
+            &id.to_string(),
+            Some(paneflow_agent_config::ClaudePaths {
+                config_dir: claude_dir.clone(),
+                global_config: claude_json.clone(),
+            }),
+            Some(codex_dir.clone()),
+        );
+
+        let results = refresh_targets_at_launch(
+            vec![(id.clone(), target)],
+            Err("hook extraction failed".to_string()),
+        );
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, id);
+        let claude: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&claude_json).unwrap()).unwrap();
+        assert_eq!(claude, serde_json::json!({"keep": 1, "mcpServers": {}}));
+        assert_eq!(
+            std::fs::read_to_string(&codex_toml).unwrap(),
+            "model = \"gpt-6\"\n"
+        );
     }
 
     #[test]

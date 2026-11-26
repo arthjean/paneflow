@@ -22,7 +22,6 @@ strip_inherited = ["CODEX_CI", "CODEX_SHELL", "CODEX_THREAD_ID", "CODEX_TUI_RECO
 summary = "Installs Paneflow hooks in Codex's global hooks file so its conversations can be resumed; its turn status comes from OSC 7501."
 post_install_step = "Trust the Paneflow hooks once in Codex with /hooks."
 hook_adapter = "codex"
-mcp_config = "codex"
 skills_dir = "agents"
 
 [resume]

@@ -250,30 +250,81 @@ impl Worker {
 }
 
 pub fn refresh_integrations(home: &Path) {
-    refresh_integrations_as(home, cfg!(debug_assertions));
+    for (level, message) in refresh_integrations_as(home, cfg!(debug_assertions)) {
+        log::log!(level, "{message}");
+    }
 }
 
-fn refresh_integrations_as(home: &Path, debug_build: bool) -> bool {
-    remove_legacy_project_hooks(home);
+pub fn refresh_integrations_as(home: &Path, debug_build: bool) -> Vec<(log::Level, String)> {
+    let mut logs = remove_legacy_project_hooks(home);
     if debug_build {
-        log::info!(
-            "paneflow-serve: a debug build leaves the agent integrations untouched; `paneflow integrations install <runtime> --force` points them at it"
-        );
-        return false;
+        logs.push((
+            log::Level::Info,
+            "paneflow-serve: a debug build leaves the agent integrations untouched; `paneflow integrations install <runtime> --force` points them at it".to_string(),
+        ));
+        return logs;
     }
-    let Some(binaries) = crate::integrations::resolve_binaries(home) else {
-        log::info!("paneflow-serve: no helper binaries staged; integrations are left untouched");
-        return false;
-    };
-    for (runtime, result) in paneflow_mcp_install::adopt_and_refresh_installed(home, &binaries) {
-        match result {
-            Ok(()) => log::info!("paneflow-serve: refreshed the {runtime} integration"),
-            Err(error) => {
-                log::warn!("paneflow-serve: {runtime} integration refresh failed: {error}")
-            }
+    logs.extend(purge_legacy_mcp_entries(home));
+    let binaries = match crate::integrations::resolve_binaries(home) {
+        Ok(binaries) => binaries,
+        Err(missing) => {
+            logs.push((
+                log::Level::Warn,
+                format!(
+                    "paneflow-serve: the hook helper is missing at {}; the agent integrations are left untouched until Paneflow extracts it again",
+                    missing.display()
+                ),
+            ));
+            return logs;
         }
+    };
+    for (runtime, result) in
+        paneflow_agent_integrations::adopt_and_refresh_installed(home, &binaries)
+    {
+        logs.push(match result {
+            Ok(()) => (
+                log::Level::Info,
+                format!("paneflow-serve: refreshed the {runtime} integration"),
+            ),
+            Err(error) => (
+                log::Level::Warn,
+                format!("paneflow-serve: {runtime} integration refresh failed: {error}"),
+            ),
+        });
     }
-    true
+    logs
+}
+
+fn purge_legacy_mcp_entries(home: &Path) -> Vec<(log::Level, String)> {
+    use paneflow_agent_config::usage::accounts::UsageAgent;
+    use paneflow_agent_integrations::legacy_mcp;
+
+    let mut files = legacy_mcp::default_home_files();
+    for (agent, dir) in
+        crate::usage::configured_accounts(home, paneflow_agent_config::home_dir().as_deref())
+    {
+        let claude = paneflow_agent_config::ClaudePaths {
+            global_config: dir.join(".claude.json"),
+            config_dir: dir.clone(),
+        };
+        files.extend(match agent {
+            UsageAgent::ClaudeCode => legacy_mcp::account_files(Some(&claude), None),
+            UsageAgent::Codex => legacy_mcp::account_files(None, Some(&dir)),
+            UsageAgent::Grok => Vec::new(),
+        });
+    }
+    let report = legacy_mcp::purge(&files);
+    report
+        .lines()
+        .into_iter()
+        .map(|line| (log::Level::Info, format!("paneflow-serve: {line}")))
+        .chain(
+            report
+                .warnings
+                .into_iter()
+                .map(|warning| (log::Level::Warn, format!("paneflow-serve: {warning}"))),
+        )
+        .collect()
 }
 
 fn session_project_dirs(session: &[u8]) -> Vec<PathBuf> {
@@ -298,24 +349,29 @@ fn session_project_dirs(session: &[u8]) -> Vec<PathBuf> {
     dirs
 }
 
-fn remove_legacy_project_hooks(home: &Path) {
+fn remove_legacy_project_hooks(home: &Path) -> Vec<(log::Level, String)> {
     let Ok(session) = std::fs::read(home.join("session.json")) else {
-        return;
+        return Vec::new();
     };
-    for (path, result) in
-        paneflow_mcp_install::remove_legacy_project_hooks(&session_project_dirs(&session))
-    {
-        match result {
-            Ok(()) => log::info!(
-                "paneflow-serve: removed pre-0.17 Paneflow hooks from {}",
-                path.display()
+    paneflow_agent_integrations::remove_legacy_project_hooks(&session_project_dirs(&session))
+        .into_iter()
+        .map(|(path, result)| match result {
+            Ok(()) => (
+                log::Level::Info,
+                format!(
+                    "paneflow-serve: removed pre-0.17 Paneflow hooks from {}",
+                    path.display()
+                ),
             ),
-            Err(error) => log::warn!(
-                "paneflow-serve: cannot remove pre-0.17 Paneflow hooks from {}: {error}",
-                path.display()
+            Err(error) => (
+                log::Level::Warn,
+                format!(
+                    "paneflow-serve: cannot remove pre-0.17 Paneflow hooks from {}: {error}",
+                    path.display()
+                ),
             ),
-        }
-    }
+        })
+        .collect()
 }
 
 pub fn run(home: &Path) -> Result<(), WorkerError> {
@@ -723,9 +779,12 @@ mod tests {
         )
         .unwrap();
 
+        let logs = refresh_integrations_as(home.path(), true);
         assert!(
-            !refresh_integrations_as(home.path(), true),
-            "a debug worker never rewrites the user's agent integrations"
+            logs.iter()
+                .any(|(_, line)| line
+                    .contains("a debug build leaves the agent integrations untouched")),
+            "a debug worker never rewrites the user's agent integrations: {logs:?}"
         );
 
         let cleaned: Value = serde_json::from_slice(

@@ -1,4 +1,3 @@
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
@@ -7,87 +6,12 @@ use paneflow_agent_config::jsonc;
 use crate::agents::{InstallOutcome, StatusOutcome, UninstallOutcome};
 use crate::{io, merge};
 
+pub(crate) use crate::legacy_mcp::{claude_config, codex_config, opencode_configs};
+
 pub(crate) const ENTRY: &str = "paneflow";
 
-pub(crate) fn claude_config() -> Option<PathBuf> {
-    paneflow_agent_config::ClaudePaths::current().map(|paths| paths.global_config)
-}
-
-pub(crate) fn codex_config() -> Option<PathBuf> {
-    codex_config_from(dirs::home_dir(), std::env::var_os("CODEX_HOME"))
-}
-
-fn codex_config_from(home: Option<PathBuf>, codex_home: Option<OsString>) -> Option<PathBuf> {
-    paneflow_agent_config::codex_home_from(codex_home, home).map(|h| h.join("config.toml"))
-}
-
 pub(crate) fn gemini_config() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".gemini").join("settings.json"))
-}
-
-pub(crate) fn opencode_configs() -> Vec<PathBuf> {
-    opencode_configs_from(
-        dirs::home_dir(),
-        dirs::config_dir(),
-        std::env::var_os("XDG_CONFIG_HOME"),
-        std::env::var_os("OPENCODE_CONFIG"),
-        std::env::var_os("OPENCODE_CONFIG_DIR"),
-    )
-}
-
-fn opencode_configs_from(
-    home: Option<PathBuf>,
-    _platform_config_dir: Option<PathBuf>,
-    _xdg_config_home: Option<OsString>,
-    opencode_config: Option<OsString>,
-    opencode_config_dir: Option<OsString>,
-) -> Vec<PathBuf> {
-    if let Some(config) = opencode_config
-        .map(PathBuf::from)
-        .filter(|p| !p.as_os_str().is_empty())
-    {
-        return vec![config];
-    }
-
-    let mut out = Vec::new();
-    if let Some(dir) =
-        paneflow_agent_config::absolute_env_dir("OPENCODE_CONFIG_DIR", opencode_config_dir)
-    {
-        push_opencode_files(&mut out, &dir);
-        return out;
-    }
-
-    #[cfg(windows)]
-    {
-        if let Some(home) = home.clone() {
-            push_opencode_names(&mut out, home.join(".config"));
-        }
-        if let Some(dir) = _platform_config_dir {
-            push_opencode_names(&mut out, dir);
-        }
-    }
-
-    #[cfg(not(windows))]
-    {
-        if let Some(dir) = _xdg_config_home
-            .map(PathBuf::from)
-            .filter(|p| !p.as_os_str().is_empty())
-            .or_else(|| home.map(|h| h.join(".config")))
-        {
-            push_opencode_names(&mut out, dir);
-        }
-    }
-
-    out
-}
-
-fn push_opencode_names(out: &mut Vec<PathBuf>, config_base: PathBuf) {
-    push_opencode_files(out, &config_base.join("opencode"));
-}
-
-fn push_opencode_files(out: &mut Vec<PathBuf>, dir: &Path) {
-    out.push(dir.join("opencode.jsonc"));
-    out.push(dir.join("opencode.json"));
+    crate::legacy_mcp::gemini_config_in(dirs::home_dir().as_deref())
 }
 
 pub(crate) fn json_install(
@@ -380,74 +304,6 @@ mod tests {
 
     fn validate_string_entry(entry: &serde_json::Value, expected: Option<&Path>) -> StatusOutcome {
         classify_entry(string_command(entry), expected, true, "shape mismatch")
-    }
-
-    #[test]
-    fn codex_config_honors_codex_home() {
-        let codex_home = std::env::temp_dir().join("codex-home");
-        assert_eq!(
-            codex_config_from(
-                Some(PathBuf::from("/home/alice")),
-                Some(codex_home.clone().into_os_string())
-            )
-            .unwrap(),
-            codex_home.join("config.toml")
-        );
-        assert_eq!(
-            codex_config_from(
-                Some(PathBuf::from("/home/alice")),
-                Some(OsString::from("relative"))
-            )
-            .unwrap(),
-            PathBuf::from("/home/alice")
-                .join(".codex")
-                .join("config.toml")
-        );
-    }
-
-    #[test]
-    fn opencode_config_candidates_prefer_custom_path() {
-        assert_eq!(
-            opencode_configs_from(
-                Some(PathBuf::from("/home/alice")),
-                None,
-                None,
-                Some(OsString::from("/tmp/opencode.jsonc")),
-                None,
-            ),
-            vec![PathBuf::from("/tmp/opencode.jsonc")]
-        );
-    }
-
-    #[test]
-    fn opencode_config_dir_holds_the_config_files_directly() {
-        let dir = std::env::temp_dir().join("opencode-config");
-        assert_eq!(
-            opencode_configs_from(
-                Some(PathBuf::from("/home/alice")),
-                None,
-                None,
-                None,
-                Some(dir.clone().into_os_string()),
-            ),
-            vec![dir.join("opencode.jsonc"), dir.join("opencode.json")]
-        );
-    }
-
-    #[test]
-    fn a_relative_opencode_config_dir_is_ignored() {
-        let home = std::env::temp_dir().join("alice");
-        let defaults = opencode_configs_from(Some(home.clone()), None, None, None, None);
-        assert_eq!(
-            opencode_configs_from(
-                Some(home),
-                None,
-                None,
-                None,
-                Some(OsString::from("relative/opencode")),
-            ),
-            defaults
-        );
     }
 
     #[test]

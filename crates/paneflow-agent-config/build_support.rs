@@ -68,8 +68,6 @@ pub struct Integration {
     pub post_install_step: Option<String>,
     pub hook_adapter: HookAdapter,
     #[serde(default)]
-    pub mcp_config: Option<McpConfig>,
-    #[serde(default)]
     pub skills_dir: Option<SkillsDir>,
     #[serde(default)]
     pub program_resume: Option<ProgramResumeReporting>,
@@ -96,47 +94,7 @@ impl TryFrom<String> for ProgramResumeReporting {
     }
 }
 
-pub const ACCEPTED_MCP_CONFIGS: &str = "claude, codex, gemini, opencode, fx";
 pub const ACCEPTED_SKILLS_DIRS: &str = "claude, agents";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(try_from = "String")]
-pub enum McpConfig {
-    Claude,
-    Codex,
-    Gemini,
-    OpenCode,
-    Fx,
-}
-
-impl McpConfig {
-    fn variant(self) -> &'static str {
-        match self {
-            Self::Claude => "Claude",
-            Self::Codex => "Codex",
-            Self::Gemini => "Gemini",
-            Self::OpenCode => "OpenCode",
-            Self::Fx => "Fx",
-        }
-    }
-}
-
-impl TryFrom<String> for McpConfig {
-    type Error = String;
-
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        match value.as_str() {
-            "claude" => Ok(Self::Claude),
-            "codex" => Ok(Self::Codex),
-            "gemini" => Ok(Self::Gemini),
-            "opencode" => Ok(Self::OpenCode),
-            "fx" => Ok(Self::Fx),
-            other => Err(format!(
-                "integration.mcp_config '{other}' has no MCP config writer; accepted writers: {ACCEPTED_MCP_CONFIGS}"
-            )),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(try_from = "String")]
@@ -176,20 +134,6 @@ pub enum HookAdapter {
     Claude,
     Codex,
     None,
-}
-
-impl HookAdapter {
-    fn has_installer(self) -> bool {
-        matches!(self, Self::Claude | Self::Codex)
-    }
-
-    fn name(self) -> &'static str {
-        match self {
-            Self::Claude => "claude",
-            Self::Codex => "codex",
-            Self::None => "none",
-        }
-    }
 }
 
 impl TryFrom<String> for HookAdapter {
@@ -470,14 +414,6 @@ fn validate(descriptors: &[LocatedDescriptor]) -> Result<(), String> {
             errors.push(format!(
                 "{}: detection.title_prefix must not be blank",
                 path.display()
-            ));
-        }
-        let adapter = runtime.integration.hook_adapter;
-        if adapter.has_installer() && runtime.integration.mcp_config.is_none() {
-            errors.push(format!(
-                "{}: integration.hook_adapter = '{}' installs the MCP bridge with the hooks and requires an integration.mcp_config; accepted writers: {ACCEPTED_MCP_CONFIGS}",
-                path.display(),
-                adapter.name()
             ));
         }
         if parse_tint(runtime.display.tint.as_deref()).is_err() {
@@ -872,17 +808,10 @@ pub fn generate_catalog(descriptors: &[LocatedDescriptor]) -> Result<String, Str
             strings(&runtime.environment.strip_inherited)
         ));
         output.push_str(&format!(
-            "integration: RuntimeIntegration {{ summary: {:?}, post_install_step: {}, hook_adapter: RuntimeHookAdapter::{}, mcp_config: {}, skills_dir: {}, reports_program_resume: {} }},\n",
+            "integration: RuntimeIntegration {{ summary: {:?}, post_install_step: {}, hook_adapter: RuntimeHookAdapter::{}, skills_dir: {}, reports_program_resume: {} }},\n",
             runtime.integration.summary,
             option_string(runtime.integration.post_install_step.as_deref()),
             hook_adapter(runtime.integration.hook_adapter),
-            runtime
-                .integration
-                .mcp_config
-                .map_or("None".to_string(), |config| format!(
-                    "Some(RuntimeMcpConfig::{})",
-                    config.variant()
-                )),
             runtime
                 .integration
                 .skills_dir
@@ -1283,29 +1212,54 @@ command = "{alias}"
     }
 
     #[test]
-    fn an_installer_adapter_requires_an_mcp_writer_and_unknown_writers_are_named() {
+    fn an_installer_adapter_without_an_mcp_config_is_accepted() {
         let temp = tempfile::TempDir::new().unwrap();
         let text = descriptor("alpha", "com.example.alpha", "alpha")
             .replace("hook_adapter = \"none\"", "hook_adapter = \"claude\"");
         write_runtime(temp.path(), "alpha", &text);
-        let error = discover_and_validate(temp.path()).unwrap_err();
+        let descriptors = discover_and_validate(temp.path()).unwrap();
+        assert_eq!(descriptors.len(), 1);
+        let generated = generate_catalog(&descriptors).unwrap();
         assert!(
-            error.contains("requires an integration.mcp_config"),
-            "{error}"
+            generated.contains("RuntimeHookAdapter::Claude"),
+            "{generated}"
         );
+        assert!(!generated.contains("mcp"), "{generated}");
+    }
 
+    #[test]
+    fn a_descriptor_that_still_declares_mcp_config_fails_with_the_unknown_field_naming_the_file() {
         let temp = tempfile::TempDir::new().unwrap();
         let text = descriptor("alpha", "com.example.alpha", "alpha").replace(
             "hook_adapter = \"none\"",
-            "hook_adapter = \"none\"\nmcp_config = \"cursor\"\nskills_dir = \"gemini\"",
+            "hook_adapter = \"claude\"\nmcp_config = \"claude\"",
         );
         write_runtime(temp.path(), "alpha", &text);
         let error = discover_and_validate(temp.path()).unwrap_err();
         assert!(
-            error.contains("integration.mcp_config 'cursor'")
-                && error.contains(ACCEPTED_MCP_CONFIGS),
+            error.contains(&format!(
+                "{}",
+                temp.path().join("alpha").join("runtime.toml").display()
+            )),
             "{error}"
         );
+        assert!(error.contains("unknown field `mcp_config`"), "{error}");
+    }
+
+    #[test]
+    fn no_shipped_descriptor_declares_mcp_config() {
+        let runtimes = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtimes");
+        let descriptors = discover_and_validate(&runtimes).unwrap();
+        assert!(descriptors
+            .iter()
+            .any(|located| located.descriptor.integration.hook_adapter != HookAdapter::None));
+        for entry in fs::read_dir(&runtimes).unwrap() {
+            let source = entry.unwrap().path().join("runtime.toml");
+            if source.is_file() {
+                let text = fs::read_to_string(&source).unwrap();
+                assert!(!text.contains("mcp_config"), "{}", source.display());
+            }
+        }
     }
 
     #[test]

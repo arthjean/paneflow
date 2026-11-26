@@ -3,7 +3,6 @@ use std::path::Path;
 use anyhow::Result;
 
 use crate::detect::Presence;
-use paneflow_agent_config::{RuntimeMcpConfig, RUNTIMES};
 
 pub mod claude_code;
 pub mod codex;
@@ -11,9 +10,6 @@ pub mod fx;
 pub mod gemini;
 pub mod opencode;
 mod support;
-
-#[cfg(test)]
-pub(crate) use support::CODEX_BRIDGE_ENV_VARS;
 
 #[cfg(test)]
 pub(crate) mod testutil;
@@ -66,20 +62,11 @@ pub trait AgentConfigWriter {
 
 #[must_use]
 pub fn default_writers() -> Vec<Box<dyn AgentConfigWriter>> {
-    RUNTIMES
-        .iter()
-        .filter_map(|runtime| runtime.integration.mcp_config)
-        .map(writer_for)
-        .collect()
-}
-
-#[must_use]
-pub fn writer_for(config: RuntimeMcpConfig) -> Box<dyn AgentConfigWriter> {
-    match config {
-        RuntimeMcpConfig::Claude => Box::new(claude_code::ClaudeCode::new()),
-        RuntimeMcpConfig::Codex => Box::new(codex::Codex::new()),
-        RuntimeMcpConfig::Gemini => Box::new(gemini::Gemini::new()),
-        RuntimeMcpConfig::OpenCode => Box::new(opencode::OpenCode::new()),
-        RuntimeMcpConfig::Fx => Box::new(fx::Fx::new()),
-    }
+    vec![
+        Box::new(claude_code::ClaudeCode::new()),
+        Box::new(codex::Codex::new()),
+        Box::new(gemini::Gemini::new()),
+        Box::new(opencode::OpenCode::new()),
+        Box::new(fx::Fx::new()),
+    ]
 }

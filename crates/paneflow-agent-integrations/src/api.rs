@@ -3,6 +3,8 @@ use std::path::Path;
 use crate::agents::{self, AgentConfigWriter, InstallOutcome, StatusOutcome, UninstallOutcome};
 use crate::integrations::{self, InstallMode};
 
+const MCP_HELPER: &str = "paneflow-mcp";
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InstallKind {
     Installed,
@@ -101,7 +103,7 @@ pub(crate) fn install_with(
     for (w, &present) in writers.iter().zip(&presences) {
         let kind = match (present, bridge) {
             (false, _) => InstallKind::SkippedAbsent,
-            (true, Some(b)) => match integrations::install_mcp_entry(w.as_ref(), b, mode) {
+            (true, Some(b)) => match install_mcp_entry(w.as_ref(), b, mode) {
                 Ok(InstallOutcome::Installed) => InstallKind::Installed,
                 Ok(InstallOutcome::Updated) => InstallKind::Updated,
                 Ok(InstallOutcome::AlreadyCurrent) => InstallKind::AlreadyCurrent,
@@ -204,6 +206,36 @@ pub(crate) fn uninstall_with(
             }
         })
         .collect()
+}
+
+pub(crate) fn install_mcp_entry(
+    writer: &dyn AgentConfigWriter,
+    bridge: &Path,
+    mode: InstallMode,
+) -> anyhow::Result<InstallOutcome> {
+    guard_mcp_entry(writer, bridge, mode)?;
+    writer.install(bridge)
+}
+
+fn guard_mcp_entry(
+    writer: &dyn AgentConfigWriter,
+    bridge: &Path,
+    mode: InstallMode,
+) -> anyhow::Result<()> {
+    let found = match writer.status(Some(bridge))? {
+        StatusOutcome::StalePath { found, .. } => found,
+        StatusOutcome::NeedsRepair {
+            path: Some(found), ..
+        } => found,
+        _ => return Ok(()),
+    };
+    integrations::refuse_foreign_owner(
+        &format!("the {} `paneflow` MCP entry", writer.label()),
+        Path::new(&found),
+        bridge,
+        MCP_HELPER,
+        mode,
+    )
 }
 
 #[cfg(test)]

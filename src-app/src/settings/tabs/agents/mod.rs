@@ -578,7 +578,7 @@ impl PaneFlowApp {
 
     pub(crate) fn refresh_integration_status(&self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
-            let statuses = smol::unblock(paneflow_mcp_install::list_integrations).await;
+            let statuses = smol::unblock(paneflow_agent_integrations::list_integrations).await;
             let _ = this.update(cx, |this, cx| {
                 this.integration_status = Some(statuses);
                 cx.notify();
@@ -600,22 +600,17 @@ impl PaneFlowApp {
                 if install {
                     let hook_binary = crate::ai_hooks::extract::ensure_ai_hook_extracted()
                         .map_err(|error| format!("hook extraction failed: {error:#}"))?;
-                    let bridge_binary = crate::ai_hooks::extract::ensure_bridge_extracted()
-                        .map_err(|error| format!("bridge extraction failed: {error:#}"))?;
-                    paneflow_mcp_install::install_integration(
+                    paneflow_agent_integrations::install_integration(
                         &action_slug,
-                        &paneflow_mcp_install::IntegrationBinaries {
-                            hook_binary,
-                            bridge_binary,
-                        },
+                        &paneflow_agent_integrations::IntegrationBinaries { hook_binary },
                         false,
                     )
                 } else {
-                    paneflow_mcp_install::remove_integration(&action_slug)
+                    paneflow_agent_integrations::remove_integration(&action_slug)
                 }
             })
             .await;
-            let statuses = smol::unblock(paneflow_mcp_install::list_integrations).await;
+            let statuses = smol::unblock(paneflow_agent_integrations::list_integrations).await;
             let _ = this.update(cx, |this, cx| {
                 this.integration_busy = None;
                 this.integration_status = Some(statuses);

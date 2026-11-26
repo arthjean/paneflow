@@ -1,0 +1,30 @@
+[package]
+name = "paneflow-agent-integrations"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "GPU-free agent integration engine: per-agent hooks, status line and conductor skill install, idempotent config merge, backup and atomic-write primitives, and the purge of the MCP entries older Paneflow versions wrote."
+
+[dependencies]
+# `preserve_order` keeps an agent config's existing key order on merge
+# (IndexMap, not the default sorted BTreeMap), so a hook install or a purge
+# rewrites only the keys it owns. src-app declares the same feature for
+# paneflow.json; neither relies on Cargo feature unification.
+serde_json = { workspace = true, features = ["preserve_order"] }
+# Format-preserving TOML editing (comments + key order) for Codex's
+# `~/.codex/config.toml`. Kept out of the size-capped helpers: this crate
+# links only into paneflow-app and paneflow-serve.
+toml_edit = "0.22"
+which.workspace = true
+dirs.workspace = true
+anyhow.workspace = true
+paneflow-agent-config = { workspace = true, features = ["config-io"] }
+paneflow-home.workspace = true
+sha2 = "0.10"
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

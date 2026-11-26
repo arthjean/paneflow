@@ -9,13 +9,13 @@ use paneflow_agent_config::usage::status_line::{
     reconcile_status_line, remove_managed_status_line, status_line_command,
 };
 use paneflow_agent_config::{
-    runtime_by_command_alias, runtime_by_slug, Runtime, RuntimeHookAdapter, RuntimeMcpConfig,
-    RuntimeSkillsDir, RUNTIMES,
+    runtime_by_command_alias, runtime_by_slug, Runtime, RuntimeHookAdapter, RuntimeSkillsDir,
+    RUNTIMES,
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
-use crate::agents::{self, AgentConfigWriter, InstallOutcome, StatusOutcome};
+use crate::legacy_mcp::{self, LegacyMcpFile, PurgeReport};
 use crate::{io, merge};
 
 const CODEX_EVENTS: &[&str] = &[
@@ -38,8 +38,7 @@ pub(crate) const FORCE_FLAG: &str = "--force";
 const CONDUCTOR_SKILL: &str = "paneflow-conductor";
 const CONDUCTOR_SKILL_SOURCE: &str = include_str!("../../../skills/paneflow-conductor/SKILL.md");
 const HOOK_HELPER: &str = "paneflow-ai-hook";
-const MCP_HELPER: &str = "paneflow-mcp";
-const EXE_SUFFIX: &str = if cfg!(windows) { ".exe" } else { "" };
+pub(crate) const EXE_SUFFIX: &str = if cfg!(windows) { ".exe" } else { "" };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct InstallMode {
@@ -79,7 +78,6 @@ pub struct IntegrationStatus {
 #[derive(Clone, Debug)]
 pub struct IntegrationBinaries {
     pub hook_binary: PathBuf,
-    pub bridge_binary: PathBuf,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -133,7 +131,7 @@ struct ConfigPaths {
     claude_skills: PathBuf,
     agents_skills: Option<PathBuf>,
     claude_settings: PathBuf,
-    claude_mcp: PathBuf,
+    claude_global: PathBuf,
     codex_hooks: PathBuf,
     codex_config: PathBuf,
     plan_limits: bool,
@@ -203,7 +201,7 @@ impl ConfigPaths {
             claude_skills: claude.config_dir.join("skills"),
             agents_skills: None,
             claude_settings: claude.settings(),
-            claude_mcp: claude.global_config,
+            claude_global: claude.global_config,
             codex_hooks: codex_home.join("hooks.json"),
             codex_config: codex_home.join("config.toml"),
             plan_limits: true,
@@ -211,20 +209,14 @@ impl ConfigPaths {
         }
     }
 
-    fn mcp_writer(&self, runtime: &Runtime) -> Result<Box<dyn AgentConfigWriter>> {
-        let config = runtime
-            .integration
-            .mcp_config
-            .ok_or_else(|| anyhow!("{} declares no MCP config", runtime.label))?;
-        Ok(match config {
-            RuntimeMcpConfig::Claude => {
-                Box::new(agents::claude_code::ClaudeCode::at(self.claude_mcp.clone()))
-            }
-            RuntimeMcpConfig::Codex => {
-                Box::new(agents::codex::Codex::at(self.codex_config.clone()))
-            }
-            other => agents::writer_for(other),
-        })
+    fn legacy_mcp_files(&self) -> [LegacyMcpFile; 2] {
+        [
+            LegacyMcpFile::new(
+                legacy_mcp::LegacyAgent::ClaudeCode,
+                self.claude_global.clone(),
+            ),
+            LegacyMcpFile::new(legacy_mcp::LegacyAgent::Codex, self.codex_config.clone()),
+        ]
     }
 
     fn conductor_skill(&self, runtime: &Runtime) -> Option<PathBuf> {
@@ -283,6 +275,23 @@ pub fn install_target_integration(
         InstallMode::for_this_build(false),
     )
     .map_err(format_error)
+}
+
+#[must_use]
+pub fn purge_target_legacy_mcp(targets: &[IntegrationTarget]) -> PurgeReport {
+    let files: Vec<LegacyMcpFile> = targets
+        .iter()
+        .flat_map(|target| {
+            legacy_mcp::account_files(target.claude.as_ref(), target.codex_home.as_deref())
+        })
+        .collect();
+    legacy_mcp::purge(&files)
+}
+
+fn purge_notes(report: PurgeReport) -> Vec<String> {
+    let mut notes = report.lines();
+    notes.extend(report.warnings);
+    notes
 }
 
 pub fn mirror_installed_integrations(
@@ -356,7 +365,7 @@ fn status_for(runtime: &'static Runtime, paths: Option<&ConfigPaths>) -> Integra
     } else if !has_installer(runtime) {
         IntegrationState::DetectionOnly
     } else if paths.is_some_and(|paths| {
-        paths.marker(runtime.slug).is_file() && installed_evidence(paths, runtime)
+        paths.marker(runtime.slug).is_file() && owned_hooks_present(paths, runtime)
     }) {
         IntegrationState::Installed
     } else {
@@ -373,16 +382,6 @@ fn status_for(runtime: &'static Runtime, paths: Option<&ConfigPaths>) -> Integra
     }
 }
 
-fn installed_evidence(paths: &ConfigPaths, runtime: &Runtime) -> bool {
-    if !owned_hooks_present(paths, runtime) {
-        return false;
-    }
-    paths
-        .mcp_writer(runtime)
-        .and_then(|writer| writer.status(None))
-        .is_ok_and(|status| status != StatusOutcome::NotInstalled)
-}
-
 fn has_installer(runtime: &Runtime) -> bool {
     matches!(
         runtime.integration.hook_adapter,
@@ -396,43 +395,47 @@ pub fn install_integration(
     force: bool,
 ) -> Result<IntegrationStatus, String> {
     let paths = ConfigPaths::current().map_err(format_error)?;
-    install_integration_at(
+    install_purging_at(
         &paths,
         slug,
         binaries,
-        None,
         InstallMode::for_this_build(force),
+        &legacy_mcp::default_home_files(),
     )
     .map_err(format_error)
 }
 
-pub fn install_mcp_entry(
-    writer: &dyn AgentConfigWriter,
-    bridge: &Path,
+fn install_purging_at(
+    paths: &ConfigPaths,
+    slug: &str,
+    binaries: &IntegrationBinaries,
     mode: InstallMode,
-) -> Result<InstallOutcome> {
-    guard_mcp_entry(writer, bridge, mode)?;
-    writer.install(bridge)
+    legacy: &[LegacyMcpFile],
+) -> Result<IntegrationStatus> {
+    let purged = purge_home_legacy_mcp(paths, legacy);
+    let mut status = install_integration_at(paths, slug, binaries, None, mode)?;
+    status.notes.extend(purge_notes(purged));
+    Ok(status)
 }
 
-fn guard_mcp_entry(writer: &dyn AgentConfigWriter, bridge: &Path, mode: InstallMode) -> Result<()> {
-    let found = match writer.status(Some(bridge))? {
-        StatusOutcome::StalePath { found, .. } => found,
-        StatusOutcome::NeedsRepair {
-            path: Some(found), ..
-        } => found,
-        _ => return Ok(()),
-    };
-    refuse_foreign_owner(
-        &format!("the {} `paneflow` MCP entry", writer.label()),
-        Path::new(&found),
-        bridge,
-        MCP_HELPER,
-        mode,
-    )
+fn purge_home_legacy_mcp(paths: &ConfigPaths, legacy: &[LegacyMcpFile]) -> PurgeReport {
+    let mut files = paths.legacy_mcp_files().to_vec();
+    files.extend_from_slice(legacy);
+    legacy_mcp::purge(&files)
 }
 
-fn refuse_foreign_owner(
+fn remove_purging_at(
+    paths: &ConfigPaths,
+    slug: &str,
+    legacy: &[LegacyMcpFile],
+) -> Result<IntegrationStatus> {
+    let purged = purge_home_legacy_mcp(paths, legacy);
+    let mut status = remove_integration_at(paths, slug)?;
+    status.notes.extend(purge_notes(purged));
+    Ok(status)
+}
+
+pub(crate) fn refuse_foreign_owner(
     entry: &str,
     found: &Path,
     ours: &Path,
@@ -536,14 +539,7 @@ fn install_integration_at(
             binaries.hook_binary.display()
         );
     }
-    if !binaries.bridge_binary.is_file() {
-        bail!(
-            "MCP bridge is missing at {}",
-            binaries.bridge_binary.display()
-        );
-    }
-    let writer = paths.mcp_writer(runtime)?;
-    preflight_install(paths, runtime, binaries, writer.as_ref(), mode)?;
+    preflight_install(paths, runtime, binaries, mode)?;
     let unix_reporter = write_unix_reporter(&binaries.hook_binary)?;
     match runtime.integration.hook_adapter {
         RuntimeHookAdapter::Claude => {
@@ -553,10 +549,6 @@ fn install_integration_at(
             install_codex_hooks(paths, &unix_reporter, binaries)?;
         }
         _ => bail!("{} offers detection only", runtime.label),
-    }
-    install_mcp_entry(writer.as_ref(), &binaries.bridge_binary, mode)?;
-    if runtime.integration.mcp_config == Some(RuntimeMcpConfig::Claude) {
-        remove_legacy_claude_mcp_entries(&paths.claude_mcp)?;
     }
     write_marker(paths, runtime.slug, adopted_from)?;
     let mut status = status_for(runtime, Some(paths));
@@ -682,7 +674,6 @@ fn preflight_install(
     paths: &ConfigPaths,
     runtime: &Runtime,
     binaries: &IntegrationBinaries,
-    writer: &dyn AgentConfigWriter,
     mode: InstallMode,
 ) -> Result<()> {
     let reporter = binaries
@@ -701,14 +692,6 @@ fn preflight_install(
     if !hooks.is_object() {
         bail!("{}: config root is not a JSON object", hooks_file.display());
     }
-    if runtime.integration.mcp_config == Some(RuntimeMcpConfig::Claude)
-        && !merge::read_json_or_default(&paths.claude_mcp)?.is_object()
-    {
-        bail!(
-            "{}: config root is not a JSON object",
-            paths.claude_mcp.display()
-        );
-    }
     for reporter in hook_reporters(&hooks) {
         refuse_foreign_owner(
             &format!("the Paneflow hook set in {}", hooks_file.display()),
@@ -718,12 +701,12 @@ fn preflight_install(
             mode,
         )?;
     }
-    guard_mcp_entry(writer, &binaries.bridge_binary, mode)
+    Ok(())
 }
 
 pub fn remove_integration(slug: &str) -> Result<IntegrationStatus, String> {
     let paths = ConfigPaths::current().map_err(format_error)?;
-    remove_integration_at(&paths, slug).map_err(format_error)
+    remove_purging_at(&paths, slug, &legacy_mcp::default_home_files()).map_err(format_error)
 }
 
 pub fn run_integrations_cli(args: &[String], binaries: Option<IntegrationBinaries>) -> i32 {
@@ -808,7 +791,6 @@ fn remove_integration_at(paths: &ConfigPaths, slug: &str) -> Result<IntegrationS
         )?,
         _ => bail!("{} offers detection only", runtime.label),
     }
-    paths.mcp_writer(runtime)?.uninstall()?;
     let skill_note = remove_conductor_skill(paths, runtime)?;
     let marker = paths.marker(runtime.slug);
     if let Err(error) = std::fs::remove_file(&marker) {
@@ -1032,20 +1014,6 @@ fn install_claude_hooks(
             .then(|| status_line_command(reporter, paneflow_agent_config::home_dir().as_deref()));
         reconcile_status_line(&mut root, status_line.as_deref());
         io::write_if_changed_unlocked(&paths.claude_settings, &merge::json_to_bytes(&root)?)?;
-        Ok(())
-    })
-}
-
-fn remove_legacy_claude_mcp_entries(path: &Path) -> Result<()> {
-    io::with_config_lock(path, || {
-        let mut root = merge::read_json_or_default(path)?;
-        let removed = ["paneflow-dev", "paneflow-mcp"]
-            .into_iter()
-            .filter(|legacy| merge::remove_json_entry(&mut root, "mcpServers", legacy))
-            .count();
-        if removed > 0 {
-            io::write_if_changed_unlocked(path, &merge::json_to_bytes(&root)?)?;
-        }
         Ok(())
     })
 }
@@ -1343,13 +1311,7 @@ mod tests {
         } else {
             "paneflow-ai-hook"
         });
-        let bridge_binary = bin.join(if cfg!(windows) {
-            "paneflow-mcp.exe"
-        } else {
-            "paneflow-mcp"
-        });
         std::fs::write(&hook_binary, b"hook").expect("hook binary");
-        std::fs::write(&bridge_binary, b"bridge").expect("bridge binary");
         let paths = ConfigPaths {
             marker_home: root.join("paneflow-home"),
             marker_dir: root.join("paneflow-home").join("integrations"),
@@ -1357,20 +1319,13 @@ mod tests {
             claude_skills: root.join("claude").join("skills"),
             agents_skills: Some(root.join(".agents").join("skills")),
             claude_settings: root.join("claude").join("settings.json"),
-            claude_mcp: root.join(".claude.json"),
+            claude_global: root.join(".claude.json"),
             codex_hooks: root.join("codex").join("hooks.json"),
             codex_config: root.join("codex").join("config.toml"),
             plan_limits: true,
             agent_prompts: false,
         };
-        (
-            directory,
-            paths,
-            IntegrationBinaries {
-                hook_binary,
-                bridge_binary,
-            },
-        )
+        (directory, paths, IntegrationBinaries { hook_binary })
     }
 
     #[test]
@@ -1577,11 +1532,17 @@ mod tests {
     }
 
     #[test]
-    fn the_worker_refresh_updates_the_codex_entry_in_place_and_keeps_every_user_key() {
+    fn the_worker_refresh_rewrites_the_codex_hooks_and_never_touches_config_toml() {
         let (_directory, paths, binaries) = fixture();
         install_integration_at(&paths, "codex", &binaries, None, InstallMode::default())
             .expect("install");
-        std::fs::write(&paths.codex_config, "# user\n[mcp_servers.paneflow]\ncommand = \"/old/paneflow-mcp\"\nargs = [\"--stale\"]\nenv_vars = [\"MY_TOKEN\", \"PANEFLOW_HOME\"]\nenabled = false\nrequired = true\nstartup_timeout_sec = 20\nstartup_timeout_ms = 20000\ntool_timeout_sec = 90\ncwd = \"/work\"\nenabled_tools = [\"list_panes\"]\ndisabled_tools = [\"search_pane\"]\n\n[mcp_servers.paneflow.env]\nRUST_LOG = \"debug\"\n\n[mcp_servers.paneflow.tools.read_pane]\napproval_mode = \"approve\"\n").expect("user entry");
+        assert!(
+            !paths.codex_config.exists(),
+            "the install writes no MCP entry"
+        );
+        let user = "# user\nmodel = \"gpt-6\"\n\n[mcp_servers.other]\ncommand = \"other\"\n";
+        std::fs::write(&paths.codex_config, user).expect("user config");
+        std::fs::write(&paths.codex_hooks, b"{}").expect("hooks wiped by the user");
 
         let results = adopt_and_refresh_installed_at(&paths, &binaries, InstallMode::default());
 
@@ -1591,42 +1552,14 @@ mod tests {
                 .any(|(slug, result)| slug == "codex" && result.is_ok()),
             "{results:?}"
         );
-        let text = std::fs::read_to_string(&paths.codex_config).expect("config");
-        let doc = text.parse::<toml_edit::DocumentMut>().expect("TOML");
-        let entry = &doc["mcp_servers"]["paneflow"];
         assert_eq!(
-            entry["command"].as_str(),
-            Some(binaries.bridge_binary.display().to_string().as_str())
+            std::fs::read_to_string(&paths.codex_config).expect("config"),
+            user
         );
-        assert_eq!(entry["args"].as_array().map(|args| args.len()), Some(0));
-        let env_vars: Vec<&str> = entry["env_vars"]
-            .as_array()
-            .expect("env_vars")
-            .iter()
-            .filter_map(|name| name.as_str())
-            .collect();
-        assert_eq!(&env_vars[..2], ["MY_TOKEN", "PANEFLOW_HOME"]);
-        for name in crate::agents::CODEX_BRIDGE_ENV_VARS {
-            assert_eq!(
-                env_vars.iter().filter(|seen| *seen == name).count(),
-                1,
-                "{name}"
-            );
-        }
-        assert_eq!(entry["enabled"].as_bool(), Some(false));
-        assert_eq!(entry["required"].as_bool(), Some(true));
-        assert_eq!(entry["startup_timeout_sec"].as_integer(), Some(20));
-        assert_eq!(entry["startup_timeout_ms"].as_integer(), Some(20000));
-        assert_eq!(entry["tool_timeout_sec"].as_integer(), Some(90));
-        assert_eq!(entry["cwd"].as_str(), Some("/work"));
-        assert_eq!(entry["enabled_tools"][0].as_str(), Some("list_panes"));
-        assert_eq!(entry["disabled_tools"][0].as_str(), Some("search_pane"));
-        assert_eq!(entry["env"]["RUST_LOG"].as_str(), Some("debug"));
-        assert_eq!(
-            entry["tools"]["read_pane"]["approval_mode"].as_str(),
-            Some("approve")
-        );
-        assert!(text.starts_with("# user\n"));
+        let hooks: Value =
+            serde_json::from_slice(&std::fs::read(&paths.codex_hooks).expect("hooks"))
+                .expect("hooks JSON");
+        assert!(hooks["hooks"]["Stop"].is_array(), "{hooks}");
     }
 
     #[test]
@@ -1655,7 +1588,6 @@ mod tests {
         std::fs::write(&hook_binary, b"hook").expect("hook binary");
         let spaced_binaries = IntegrationBinaries {
             hook_binary: hook_binary.clone(),
-            bridge_binary: binaries.bridge_binary.clone(),
         };
         install_integration_at(
             &paths,
@@ -1821,17 +1753,13 @@ mod tests {
             .expect("second thread")
             .expect("second install");
         let hooks = std::fs::read(&paths.codex_hooks).expect("hooks");
-        let config = std::fs::read(&paths.codex_config).expect("config");
         install_integration_at(&paths, "codex", &binaries, None, InstallMode::default())
             .expect("single install");
         assert_eq!(
             hooks,
             std::fs::read(&paths.codex_hooks).expect("hooks again")
         );
-        assert_eq!(
-            config,
-            std::fs::read(&paths.codex_config).expect("config again")
-        );
+        assert!(!paths.codex_config.exists());
     }
 
     fn link_to(target: &Path, link: &Path) {
@@ -1853,11 +1781,8 @@ mod tests {
         let dotfiles = paths.marker_home.join("dotfiles");
         std::fs::create_dir_all(&dotfiles).expect("dotfiles");
         let settings_target = dotfiles.join("settings.json");
-        let mcp_target = dotfiles.join("claude.json");
         std::fs::write(&settings_target, br#"{"keep":true}"#).expect("settings target");
-        std::fs::write(&mcp_target, br#"{"keep":true}"#).expect("MCP target");
         link_to(&settings_target, &paths.claude_settings);
-        link_to(&mcp_target, &paths.claude_mcp);
 
         install_integration_at(
             &paths,
@@ -1869,19 +1794,11 @@ mod tests {
         .expect("install through the symlinks");
 
         assert!(is_link(&paths.claude_settings));
-        assert!(is_link(&paths.claude_mcp));
         let settings: Value =
             serde_json::from_slice(&std::fs::read(&settings_target).expect("settings"))
                 .expect("settings JSON");
         assert_eq!(settings["keep"], json!(true));
         assert!(settings["hooks"]["Stop"].is_array());
-        let mcp: Value =
-            serde_json::from_slice(&std::fs::read(&mcp_target).expect("MCP")).expect("MCP JSON");
-        assert_eq!(mcp["keep"], json!(true));
-        assert_eq!(
-            mcp["mcpServers"]["paneflow"]["command"],
-            json!(binaries.bridge_binary.display().to_string())
-        );
     }
 
     fn other_home(paths: &ConfigPaths, name: &str) -> IntegrationBinaries {
@@ -1894,10 +1811,8 @@ mod tests {
         std::fs::create_dir_all(&bin).expect("other bin");
         let binaries = IntegrationBinaries {
             hook_binary: bin.join(format!("{HOOK_HELPER}{EXE_SUFFIX}")),
-            bridge_binary: bin.join(format!("{MCP_HELPER}{EXE_SUFFIX}")),
         };
         std::fs::write(&binaries.hook_binary, b"hook").expect("other hook");
-        std::fs::write(&binaries.bridge_binary, b"bridge").expect("other bridge");
         binaries
     }
 
@@ -1926,8 +1841,7 @@ mod tests {
             .expect("release install");
         }
         let settings = std::fs::read(&paths.claude_settings).expect("settings");
-        let claude_mcp = std::fs::read(&paths.claude_mcp).expect("claude MCP");
-        let codex_config = std::fs::read(&paths.codex_config).expect("codex config");
+        let codex_hooks = std::fs::read(&paths.codex_hooks).expect("codex hooks");
 
         for (slug, debug_build) in [
             ("claude-code", false),
@@ -1961,12 +1875,8 @@ mod tests {
             settings
         );
         assert_eq!(
-            std::fs::read(&paths.claude_mcp).expect("claude MCP"),
-            claude_mcp
-        );
-        assert_eq!(
-            std::fs::read(&paths.codex_config).expect("codex config"),
-            codex_config
+            std::fs::read(&paths.codex_hooks).expect("codex hooks"),
+            codex_hooks
         );
         assert!(!paths.marker("claude-code").exists());
 
@@ -1981,12 +1891,12 @@ mod tests {
             },
         )
         .expect("--force takes the entries over");
-        let mcp: Value =
-            serde_json::from_slice(&std::fs::read(&paths.claude_mcp).expect("claude MCP"))
-                .expect("MCP JSON");
+        let settings: Value =
+            serde_json::from_slice(&std::fs::read(&paths.claude_settings).expect("settings"))
+                .expect("settings JSON");
         assert_eq!(
-            mcp["mcpServers"]["paneflow"]["command"],
-            json!(binaries.bridge_binary.display().to_string())
+            hook_reporters(&settings),
+            std::slice::from_ref(&binaries.hook_binary)
         );
         install_integration_at(
             &release,
@@ -2020,7 +1930,7 @@ mod tests {
             std::fs::read(&paths.claude_settings).expect("settings after"),
             b"{ not json"
         );
-        assert!(!paths.claude_mcp.exists());
+        assert!(!paths.claude_global.exists());
         assert!(!paths.marker("claude-code").exists());
         assert!(!binaries
             .hook_binary
@@ -2028,37 +1938,6 @@ mod tests {
             .expect("bin")
             .join("paneflow-ai-hook.sh")
             .exists());
-    }
-
-    #[test]
-    fn an_invalid_later_config_refuses_before_any_file_changes() {
-        let (_directory, paths, binaries) = fixture();
-        std::fs::create_dir_all(paths.claude_settings.parent().expect("parent"))
-            .expect("config directory");
-        let settings = br#"{"theme":"dark"}"#;
-        std::fs::write(&paths.claude_settings, settings).expect("settings");
-        std::fs::write(&paths.claude_mcp, b"{ broken").expect("invalid MCP config");
-        let error =
-            install_integration_at(&paths, "claude", &binaries, None, InstallMode::default())
-                .expect_err("invalid config refused");
-        assert!(error
-            .to_string()
-            .contains(&paths.claude_mcp.display().to_string()));
-        assert_eq!(
-            std::fs::read(&paths.claude_settings).expect("settings after"),
-            settings
-        );
-        assert_eq!(
-            std::fs::read(&paths.claude_mcp).expect("MCP config after"),
-            b"{ broken"
-        );
-        assert!(!binaries
-            .hook_binary
-            .parent()
-            .expect("bin")
-            .join("paneflow-ai-hook.sh")
-            .exists());
-        assert!(!paths.marker("claude-code").exists());
     }
 
     fn conductor_skill_path(paths: &ConfigPaths) -> PathBuf {
@@ -2068,6 +1947,59 @@ mod tests {
     fn install_claude(paths: &ConfigPaths, binaries: &IntegrationBinaries) -> IntegrationStatus {
         install_integration_at(paths, "claude-code", binaries, None, InstallMode::default())
             .expect("install")
+    }
+
+    #[test]
+    fn a_hooks_install_with_no_bridge_writes_no_mcp_entry_and_leaves_claude_json_alone() {
+        let (_directory, paths, binaries) = fixture();
+        assert!(!binaries
+            .hook_binary
+            .with_file_name(format!("paneflow-mcp{EXE_SUFFIX}"))
+            .exists());
+        std::fs::write(&paths.claude_global, br#"{"zeta":1,"alpha":2}"#).expect("claude.json");
+
+        let status = install_claude(&paths, &binaries);
+
+        assert_eq!(status.state, IntegrationState::Installed);
+        assert!(status.notes.is_empty(), "{:?}", status.notes);
+        let settings = read_settings(&paths);
+        assert!(settings["hooks"]["Stop"].is_array(), "{settings}");
+        assert_eq!(
+            settings["statusLine"]["command"],
+            json!(expected_status_line(&binaries))
+        );
+        assert!(conductor_skill_path(&paths).is_file());
+        assert_eq!(
+            std::fs::read(&paths.claude_global).expect("claude.json"),
+            br#"{"zeta":1,"alpha":2}"#
+        );
+
+        std::fs::write(&paths.claude_global, b"{ broken").expect("invalid claude.json");
+        let status = install_claude(&paths, &binaries);
+        assert_eq!(status.state, IntegrationState::Installed);
+        assert_eq!(
+            std::fs::read(&paths.claude_global).expect("claude.json after"),
+            b"{ broken"
+        );
+    }
+
+    #[test]
+    fn installed_hooks_without_any_mcp_entry_are_reported_installed() {
+        let (_directory, paths, binaries) = fixture();
+        for slug in ["claude-code", "codex"] {
+            install_integration_at(&paths, slug, &binaries, None, InstallMode::default())
+                .expect("install");
+        }
+        assert!(!paths.claude_global.exists());
+        assert!(!paths.codex_config.exists());
+        let listed = list_integrations_in(&paths);
+        for slug in ["claude-code", "codex"] {
+            let status = listed
+                .iter()
+                .find(|status| status.slug == slug)
+                .expect("listed");
+            assert_eq!(status.state, IntegrationState::Installed, "{slug}");
+        }
     }
 
     #[test]
@@ -2265,9 +2197,7 @@ mod tests {
             serde_json::from_slice(&std::fs::read(&paths.claude_settings).expect("settings"))
                 .expect("settings JSON");
         assert!(settings["hooks"]["Stop"].is_array());
-        let mcp: Value = serde_json::from_slice(&std::fs::read(&paths.claude_mcp).expect("MCP"))
-            .expect("MCP JSON");
-        assert!(mcp["mcpServers"]["paneflow"].is_object());
+        assert!(!paths.claude_global.exists());
         assert!(!paths.skill_record("claude-code").exists());
     }
 
@@ -2618,7 +2548,7 @@ mod tests {
             launch_time_evidence: false,
             claude_skills: claude.config_dir.join("skills"),
             claude_settings: claude.settings(),
-            claude_mcp: claude.global_config.clone(),
+            claude_global: claude.global_config.clone(),
             ..paths.clone()
         };
         install_integration_at(
@@ -2920,27 +2850,7 @@ mod tests {
                 .contains(&user_stop_hook()["hooks"]["Stop"][0]),
             "an entry not marked as managed is untouched: {opted}"
         );
-        assert_eq!(
-            read_mcp_timeout(&paths),
-            None,
-            "the installer writes no per-server MCP timeout, opted in or not"
-        );
-        std::fs::write(
-            &paths.claude_mcp,
-            br#"{"mcpServers":{"paneflow":{"type":"stdio","command":"/old/paneflow-mcp","args":[],"timeout":30000}}}"#,
-        )
-        .expect("an entry with a user timeout");
-        install_claude(&paths, &binaries);
-        assert_eq!(
-            read_mcp_timeout(&paths),
-            Some(30_000),
-            "no tool call waits past 20 s, so a timeout already set stays as it is"
-        );
-    }
-
-    fn read_mcp_timeout(paths: &ConfigPaths) -> Option<u64> {
-        let root: Value = serde_json::from_slice(&std::fs::read(&paths.claude_mcp).ok()?).ok()?;
-        root["mcpServers"]["paneflow"]["timeout"].as_u64()
+        assert!(!paths.claude_global.exists());
     }
 
     #[test]
@@ -3034,5 +2944,149 @@ mod tests {
         }
         std::fs::write(&config, br#"{"agent_prompts": "paneflow"}"#).expect("config");
         assert!(agent_prompts_in_paneflow(&config));
+    }
+
+    const BRIDGE: &str = "/home/alice/.paneflow/bin/paneflow-mcp";
+
+    fn seed_legacy_entries(paths: &ConfigPaths) -> Vec<LegacyMcpFile> {
+        let root = paths.marker_home.parent().expect("root").to_path_buf();
+        std::fs::write(
+            &paths.claude_global,
+            format!(
+                r#"{{"theme":"dark","mcpServers":{{"paneflow":{{"type":"stdio","command":"{BRIDGE}"}},"paneflow-dev":{{"command":"{BRIDGE}"}},"mine":{{"command":"mine"}}}}}}"#
+            ),
+        )
+        .expect("claude.json");
+        std::fs::create_dir_all(paths.codex_config.parent().expect("codex")).expect("codex");
+        std::fs::write(
+            &paths.codex_config,
+            format!(
+                "# mine\nmodel = \"gpt-6\"\n\n[mcp_servers.paneflow]\ncommand = \"{BRIDGE}\"\n"
+            ),
+        )
+        .expect("config.toml");
+        let others = [
+            (legacy_mcp::LegacyAgent::Gemini, root.join(".gemini").join("settings.json"), format!("{{\n  // keep\n  \"mcpServers\": {{ \"paneflow\": {{ \"command\": \"{BRIDGE}\" }} }}\n}}\n")),
+            (legacy_mcp::LegacyAgent::OpenCode, root.join(".config").join("opencode").join("opencode.json"), format!(r#"{{"mcp":{{"paneflow":{{"type":"local","command":["{BRIDGE}"]}}}}}}"#)),
+            (legacy_mcp::LegacyAgent::Fx, root.join(".fx").join("mcp.json"), format!(r#"{{"mcp":{{"paneflow":{{"type":"local","command":["{BRIDGE}"]}}}}}}"#)),
+        ];
+        others
+            .into_iter()
+            .map(|(agent, path, text)| {
+                std::fs::create_dir_all(path.parent().expect("parent")).expect("directory");
+                std::fs::write(&path, text).expect("config");
+                LegacyMcpFile::new(agent, path)
+            })
+            .collect()
+    }
+
+    fn assert_no_bridge_entry(paths: &ConfigPaths, others: &[LegacyMcpFile]) {
+        for path in [&paths.claude_global, &paths.codex_config]
+            .into_iter()
+            .chain(others.iter().map(|file| &file.path))
+        {
+            let text = std::fs::read_to_string(path).expect("config");
+            assert!(!text.contains("paneflow-mcp"), "{}: {text}", path.display());
+        }
+        let claude: Value =
+            serde_json::from_slice(&std::fs::read(&paths.claude_global).expect("claude.json"))
+                .expect("claude JSON");
+        assert_eq!(claude["theme"], json!("dark"));
+        assert_eq!(claude["mcpServers"]["mine"]["command"], json!("mine"));
+        assert!(std::fs::read_to_string(&paths.codex_config)
+            .expect("config.toml")
+            .starts_with("# mine\nmodel"));
+    }
+
+    #[test]
+    fn an_integrations_install_purges_every_legacy_mcp_entry_of_the_default_home() {
+        let (_directory, paths, binaries) = fixture();
+        let others = seed_legacy_entries(&paths);
+
+        let status = install_purging_at(
+            &paths,
+            "claude-code",
+            &binaries,
+            InstallMode::default(),
+            &others,
+        )
+        .expect("install");
+
+        assert_eq!(status.state, IntegrationState::Installed);
+        assert_no_bridge_entry(&paths, &others);
+        let removed: Vec<&String> = status
+            .notes
+            .iter()
+            .filter(|note| note.starts_with("removed the "))
+            .collect();
+        assert_eq!(removed.len(), 6, "{:?}", status.notes);
+        assert!(status
+            .notes
+            .iter()
+            .any(|note| note.contains(&paths.codex_config.display().to_string())));
+    }
+
+    #[test]
+    fn an_integrations_remove_purges_every_legacy_mcp_entry_of_the_default_home() {
+        let (_directory, paths, binaries) = fixture();
+        install_integration_at(&paths, "codex", &binaries, None, InstallMode::default())
+            .expect("install");
+        let others = seed_legacy_entries(&paths);
+
+        let status = remove_purging_at(&paths, "codex", &others).expect("remove");
+
+        assert_eq!(status.state, IntegrationState::NotInstalled);
+        assert_no_bridge_entry(&paths, &others);
+        assert_eq!(
+            status
+                .notes
+                .iter()
+                .filter(|note| note.starts_with("removed the "))
+                .count(),
+            6,
+            "{:?}",
+            status.notes
+        );
+    }
+
+    #[test]
+    fn a_space_account_refresh_purges_the_entries_in_its_own_directories() {
+        let (_directory, paths, binaries) = fixture();
+        let installed = space_target(&paths, "work");
+        let bare = space_target(&paths, "home");
+        for target in [&installed, &bare] {
+            let claude = target.claude.as_ref().expect("claude");
+            std::fs::create_dir_all(&claude.config_dir).expect("claude dir");
+            std::fs::write(
+                &claude.global_config,
+                format!(r#"{{"mcpServers":{{"paneflow":{{"command":"{BRIDGE}"}}}}}}"#),
+            )
+            .expect("account claude.json");
+            let codex = target.codex_home.as_ref().expect("codex");
+            std::fs::create_dir_all(codex).expect("codex dir");
+            std::fs::write(
+                codex.join("config.toml"),
+                format!("[mcp_servers.paneflow]\ncommand = \"{BRIDGE}\"\n"),
+            )
+            .expect("account config.toml");
+        }
+        install_target_integration(&installed, "claude-code", &binaries).expect("install");
+        let report = purge_target_legacy_mcp(&[installed.clone(), bare.clone()]);
+
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        for target in [&installed, &bare] {
+            let claude = target.claude.as_ref().expect("claude");
+            let codex = target
+                .codex_home
+                .as_ref()
+                .expect("codex")
+                .join("config.toml");
+            for path in [&claude.global_config, &codex] {
+                let text = std::fs::read_to_string(path).expect("config");
+                assert!(!text.contains("paneflow-mcp"), "{}: {text}", path.display());
+            }
+        }
+        assert_eq!(report.removed.len(), 4, "{:?}", report.removed);
+        assert!(!paths.claude_global.exists());
     }
 }

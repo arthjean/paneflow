@@ -36,15 +36,6 @@ pub struct RuntimeEnvironment {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RuntimeMcpConfig {
-    Claude,
-    Codex,
-    Gemini,
-    OpenCode,
-    Fx,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeSkillsDir {
     Claude,
     Agents,
@@ -55,7 +46,6 @@ pub struct RuntimeIntegration {
     pub summary: &'static str,
     pub post_install_step: Option<&'static str>,
     pub hook_adapter: RuntimeHookAdapter,
-    pub mcp_config: Option<RuntimeMcpConfig>,
     pub skills_dir: Option<RuntimeSkillsDir>,
     pub reports_program_resume: bool,
 }

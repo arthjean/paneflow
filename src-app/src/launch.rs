@@ -24,22 +24,11 @@ fn should_extract_mcp_bridge_for_cli(args: &[String]) -> bool {
 
 fn extract_integration_binaries(
     command: &str,
-) -> Option<paneflow_mcp_install::IntegrationBinaries> {
-    match (
-        ai_hooks::extract::ensure_ai_hook_extracted(),
-        ai_hooks::extract::ensure_bridge_extracted(),
-    ) {
-        (Ok(hook_binary), Ok(bridge_binary)) => Some(paneflow_mcp_install::IntegrationBinaries {
-            hook_binary,
-            bridge_binary,
-        }),
-        (hook, bridge) => {
-            if let Err(error) = hook {
-                eprintln!("{command}: hook extraction failed: {error:#}");
-            }
-            if let Err(error) = bridge {
-                eprintln!("{command}: bridge extraction failed: {error:#}");
-            }
+) -> Option<paneflow_agent_integrations::IntegrationBinaries> {
+    match ai_hooks::extract::ensure_ai_hook_extracted() {
+        Ok(hook_binary) => Some(paneflow_agent_integrations::IntegrationBinaries { hook_binary }),
+        Err(error) => {
+            eprintln!("{command}: hook extraction failed: {error:#}");
             None
         }
     }
@@ -326,7 +315,10 @@ pub(crate) fn run() {
         } else {
             runtime_paths::bridge_binary_path()
         };
-        std::process::exit(paneflow_mcp_install::run_cli(&args[2..], bridge_path));
+        std::process::exit(paneflow_agent_integrations::run_cli(
+            &args[2..],
+            bridge_path,
+        ));
     }
 
     if is_hooks_subcommand {
@@ -335,7 +327,10 @@ pub(crate) fn run() {
         } else {
             None
         };
-        std::process::exit(paneflow_mcp_install::run_hooks_cli(&args[2..], binaries));
+        std::process::exit(paneflow_agent_integrations::run_hooks_cli(
+            &args[2..],
+            binaries,
+        ));
     }
 
     if is_integrations_subcommand {
@@ -344,7 +339,7 @@ pub(crate) fn run() {
         } else {
             None
         };
-        std::process::exit(paneflow_mcp_install::run_integrations_cli(
+        std::process::exit(paneflow_agent_integrations::run_integrations_cli(
             &args[2..],
             binaries,
         ));
@@ -363,11 +358,9 @@ pub(crate) fn run() {
 
     warn_if_legacy_run_install();
 
-    match ai_hooks::extract::ensure_bridge_extracted() {
-        Ok(path) => log::info!("paneflow: MCP bridge ready at {}", path.display()),
-        Err(e) => log::warn!(
-            "paneflow: MCP bridge extraction failed ({e:#}); `paneflow mcp install` will be unavailable until resolved"
-        ),
+    if let Err(error) = ai_hooks::extract::remove_retired_bridge_off_thread(runtime_paths::data_dir)
+    {
+        log::warn!("paneflow: cannot start the retired MCP bridge removal ({error})");
     }
     if let Err(error) = ai_hooks::extract::ensure_ai_hook_extracted() {
         log::warn!("paneflow: AI hook extraction failed ({error:#})");

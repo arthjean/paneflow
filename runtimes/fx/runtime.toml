@@ -22,7 +22,6 @@ strip_inherited = []
 [integration]
 summary = "fx is confirmed from its terminal title; Paneflow shows its turn status when fx reports it through OSC 7501."
 hook_adapter = "none"
-mcp_config = "fx"
 
 [resume]
 session_argv = ["fx", "--resume", "{session_id}"]

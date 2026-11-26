@@ -6,8 +6,8 @@ use gpui::{
     ParentElement, SharedString, Styled, div, prelude::*, px, svg,
 };
 use paneflow_agent_config::usage::accounts::{UsageAgent, account_dir_key, canonical_account_dir};
+use paneflow_agent_integrations::IntegrationState;
 use paneflow_config::schema::{SpaceConfig, SpaceId};
-use paneflow_mcp_install::IntegrationState;
 
 use crate::PaneFlowApp;
 use crate::agent_launcher::TerminalAgent;

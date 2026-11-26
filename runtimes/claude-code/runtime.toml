@@ -23,7 +23,6 @@ strip_inherited = ["CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_ENTRY
 [integration]
 summary = "Installs Paneflow hooks in Claude Code's global settings so its conversations can be resumed; its turn status comes from OSC 7501."
 hook_adapter = "claude"
-mcp_config = "claude"
 skills_dir = "claude"
 
 [resume]

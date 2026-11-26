@@ -21,7 +21,6 @@ strip_inherited = []
 [integration]
 summary = "Paneflow shows Gemini CLI's turn status when Gemini CLI reports it through OSC 7501."
 hook_adapter = "none"
-mcp_config = "gemini"
 
 [resume]
 session_argv = ["gemini", "--resume", "{session_id}"]
