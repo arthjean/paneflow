@@ -11,11 +11,11 @@ Canonical: https://paneflow.dev/docs/settings
 Paneflow's Settings panel is the human UI for common preferences. It is
 not the full configuration reference. Use it for the settings you adjust
 often: editor, shell, theme, shortcuts, notifications, terminal display,
-workspace templates, agent launchers, AI access, and MCP setup.
+workspace templates, agent launchers, agent hooks, and AI access.
 
 **TL;DR.** Most Settings rows write to `paneflow.json` and hot-reload
-after the file is saved. Plugins is different: it installs or
-repairs Paneflow's MCP bridge in supported agent configs. Advanced keys
+after the file is saved. The **Hooks** toggle of Settings > Agents is
+different: it writes the agent's own config files. Advanced keys
 remain available in [`paneflow.json`](/docs/configuration/schema).
 
 ## Settings map
@@ -28,11 +28,10 @@ remain available in [`paneflow.json`](/docs/configuration/schema).
 | Terminal | Cursor shape and color, font family, font size, font weight, line height, cell width, integrated glyphs, color emoji, and minimum contrast. | `terminal.cursor_shape`, `terminal.cursor_color`, `font_family`, `font_size`, `font_weight`, `line_height`, `cell_width`, `terminal.integrated_glyphs`, `terminal.color_emoji`, `terminal.minimum_contrast` | Display controls hot-reload. Cursor shape applies to the next new terminal. |
 | Editor | Semantic highlighting from a language server, and a reset of the language server permissions you granted. | `editor.semantic_tokens` | Hot-reloads. |
 | Workspaces | Reusable workspace templates with panes, agents, shell commands, cwd, env, and prompt prefill. | `commands[].workspace` | Templates run through the same workspace launch path as `paneflow up`. |
-| Spaces | The spaces that group workspaces: `Default` first, then each space with its name, image, color, environment variables, the state of the Claude Code and Codex hooks and MCP in the config directories it sets, and a delete action that moves its workspaces to `Default` after a confirmation. Up to 9 spaces. | `spaces`; images go to `avatars/` in the Paneflow home | Names, images, and colors hot-reload. An environment applies to terminals opened after the change. |
+| Spaces | The spaces that group workspaces: `Default` first, then each space with its name, image, color, environment variables, the state of the Claude Code and Codex hooks in the config directories it sets, and a delete action that moves its workspaces to `Default` after a confirmation. Up to 9 spaces. | `spaces`; images go to `avatars/` in the Paneflow home | Names, images, and colors hot-reload. An environment applies to terminals opened after the change. |
 | Worktrees | Root directory for the worktrees Paneflow creates, automatic removal with a keep limit, the list of managed worktrees with a remove action, and the snapshots taken before a removal with restore and delete actions. | `worktrees.dir`, `worktrees.auto_remove`, `worktrees.keep_limit` | Hot-reloads. The root applies to worktrees created from then on. |
-| Agents | Which agents the launcher shows, with their installed version and hook state, a **Hooks and MCP** switch in the settings dialog of Claude Code and of Codex, custom agent profiles, Claude Code full access, AI free access, and the injection fence. | `*_button_visible`, `agent_profiles`, `claude_code_bypass_permissions`, `ai_unrestricted`, `ai_injection_fence`; the **Hooks and MCP** switch writes the agent's own hook config | Launcher and access changes hot-reload. |
+| Agents | Which agents the launcher shows, with their installed version and hook state, a **Hooks** switch in the settings dialog of Claude Code and of Codex, custom agent profiles, Claude Code full access, AI free access, and the injection fence. | `*_button_visible`, `agent_profiles`, `claude_code_bypass_permissions`, `ai_unrestricted`, `ai_injection_fence`; the **Hooks** switch writes the agent's own hook config and installs the `paneflow-conductor` skill | Launcher and access changes hot-reload. |
 | Usage | One tile per Claude Code and Codex account with its week and session meters, a refresh, which agents the sidebar gauge shows, and an import of past activity. | `usage.sidebar_agents` | Hot-reloads. |
-| Plugins | Installs or repairs the bundled `paneflow-mcp` bridge for Claude Code, Codex, Gemini, and opencode. | Agent config files, not `paneflow.json` | Re-run after a Paneflow update or when an agent config changes. |
 
 ## Interface style
 
@@ -256,7 +255,7 @@ variable from its rc file, for example `.zshrc`, overrides the space's
 value inside that terminal.
 
 When a space moves `CLAUDE_CONFIG_DIR` or `CODEX_HOME` away from the
-default, saving it installs Paneflow's hooks and MCP bridge in that
+default, saving it installs Paneflow's hooks and the conductor skill in that
 directory for each agent already installed in **Settings > Agents**, so the
 sidebar still shows when the agent works and waits. Each launch of a
 release build refreshes them, once per distinct pair of Claude Code and
@@ -266,18 +265,31 @@ hooks are in its account, with **Add hooks** when they are not and
 
 Deleting a space leaves its hooks in place. To remove them, delete the
 entries marked `"_paneflow_managed": true` from the `hooks` of
-`settings.json` in the space's `CLAUDE_CONFIG_DIR`, the `paneflow` server
-from its `.claude.json`, and its `skills/paneflow-conductor/SKILL.md`; for
-Codex, delete the same entries from `hooks.json` and the
-`[mcp_servers.paneflow]` table from `config.toml` in its `CODEX_HOME`. The
-space's records live under `~/.paneflow/integrations/spaces/<space id>/`
-and can be deleted too.
+`settings.json` in the space's `CLAUDE_CONFIG_DIR` and its
+`skills/paneflow-conductor/SKILL.md`; for Codex, delete the same entries
+from `hooks.json` in its `CODEX_HOME`. The space's records live under
+`~/.paneflow/integrations/spaces/<space id>/` and can be deleted too.
+
+### MCP entries from older versions
+
+Paneflow 0.20 and earlier wrote a `paneflow` MCP server into your
+agents' configs. The first start after upgrading removes
+every entry Paneflow wrote, in your default agent directories and in each
+space's `CLAUDE_CONFIG_DIR` and `CODEX_HOME`, and deletes the old MCP
+helper from `~/.paneflow/bin`. An entry named `paneflow`
+that points at another program is yours and stays.
+
+To remove them by hand, run `paneflow mcp uninstall`, which prints each
+entry it removed with its file, or `no Paneflow MCP entry found`. You can
+also delete them yourself: `mcpServers.paneflow` in `~/.claude.json`,
+`[mcp_servers.paneflow]` in `~/.codex/config.toml`, `mcpServers.paneflow`
+in `~/.gemini/settings.json`, and `mcp.paneflow` in your OpenCode config.
 
 A space organizes work; it is not a security boundary. Every terminal still
 runs as you, and a value in `paneflow.json` is readable by anything that
 can read your home directory.
 
-## AI access vs MCP
+## AI access
 
 The Agents page controls how Paneflow launches agents and how much
 automation a trusted conductor can perform.
@@ -285,12 +297,12 @@ automation a trusted conductor can perform.
 `claude_code_bypass_permissions` only affects Claude Code launches. When
 enabled, Paneflow launches Claude Code with
 `--permission-mode bypassPermissions`. It does not change Codex,
-OpenCode, Gemini, or MCP behavior.
+OpenCode, or Gemini.
 
-Plugins is a separate operational page. It registers the bundled
-`paneflow-mcp` server so supported agents can list, read, and search
-Paneflow panes. It touches the agents' own config files and can be run
-again safely.
+The **Hooks** toggle is separate. It installs the hooks that report an
+agent's session to Paneflow and the `paneflow-conductor` skill, which
+teaches the agent to list, read, and search Paneflow panes through the
+CLI. It touches the agents' own config files and can be run again safely.
 
 ## Config-only controls
 

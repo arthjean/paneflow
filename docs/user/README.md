@@ -9,7 +9,7 @@
 - [Conductor reference](conductor/reference.md): CLI verbs, JSON-RPC methods, fields, events, config keys, and exit codes for the Paneflow Conductor control plane.
 - [Configuration](configuration.md): Customize Paneflow with a single paneflow.json file - default shell, theme, keybindings, window decorations, and more.
 - [paneflow.json Schema Reference](configuration/schema.md): Every paneflow.json key with its type, default, apply timing, and runtime notes.
-- [Features](features.md): Run coding agents in parallel, keep terminal sessions running, review diffs, edit files, and coordinate panes with Git worktrees, MCP, and the Paneflow CLI.
+- [Features](features.md): Run coding agents in parallel, keep terminal sessions running, review diffs, edit files, and coordinate panes with Git worktrees and the Paneflow CLI.
 - [Get started](index.md): Install Paneflow, open a terminal pane, and run your first coding agent. Review its changes and keep its session running when you close the app.
 - [Install Paneflow](installation.md): Choose the Paneflow installer for Linux, macOS, or Windows, then follow the guide to install it and verify that it works.
 - [Install Paneflow on Linux](installation/linux.md): Install Paneflow on Linux with AppImage, .deb, .rpm, or .tar.gz. Choose a package for x86_64 or ARM64, check Vulkan requirements, and resolve FUSE or PATH errors.
@@ -17,8 +17,9 @@
 - [Paneflow on Windows](installation/windows.md): Install Paneflow on Windows with the signed MSI. Verify the installation, fix command lookup, and choose the Linux build for WSL2.
 - [Shortcuts and actions](keybindings.md): Find Paneflow keyboard shortcuts and customize their actions in paneflow.json.
 - [Layouts](layouts.md): Arrange the active tab's panes in a row, column, or grid, keep one pane on the left, and balance pane sizes with Paneflow's layout shortcuts.
-- [CLI automation and the MCP bridge in Paneflow](scripting.md): Drive a running Paneflow from a shell or AI agent with the CLI, local JSON-RPC, event streams, declarative workspaces, flow files, the MCP bridge that reads panes and relays approved messages between agents, and lifecycle hooks.
-- [Scripting reference](scripting/reference.md): CLI verbs, selectors, JSON-RPC methods, event frames, config keys, workspace specs, flow specs, MCP tools, hooks, and exit codes for Paneflow automation.
+- [CLI automation for agents and scripts in Paneflow](scripting.md): Drive a running Paneflow from a shell or AI agent with the CLI, local JSON-RPC, event streams, declarative workspaces, flow files, agent messaging with human approval, and lifecycle hooks.
+- [Lua scripting](scripting/lua.md): Script a running Paneflow in Lua 5.4 with paneflow do, declare init.lua actions that you and your agents can run, ask the user with paneflow.ui.input and paneflow.ui.pick, and discover every method with paneflow api.
+- [Scripting reference](scripting/reference.md): CLI verbs, selectors, JSON-RPC methods, event frames, config keys, workspace specs, flow specs, agent verbs, hooks, and exit codes for Paneflow automation.
 - [Settings](settings.md): Understand what Paneflow's Settings panel controls, what it writes to paneflow.json, and which advanced keys stay config-only.
 - [Themes](themes.md): Choose from five Paneflow palettes, switch between light and dark modes, or follow your system appearance. Changes apply without restarting.
 - [Troubleshooting](troubleshooting.md): Resolve Paneflow launch, graphics, configuration, shortcut, theme, PATH, and signing problems. Check the symptom and collect the details needed for a bug report.

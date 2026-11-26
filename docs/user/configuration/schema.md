@@ -80,6 +80,7 @@ JetBrains IDEs, Helix, and other JSON Schema-aware editors:
 | `shell_integration` | boolean/null | `true` | New terminal | Enables Paneflow shell snippets for OSC 7 CWD and OSC 133 command marks. |
 | `editor` | object/null | defaults below | Hot reload | How the code editor and the dock's file viewers show a file: `minimap`, `scrollbar`, `word_wrap`, `markdown_rendered`, `csv_table`, and `semantic_tokens`. See [`editor`](#editor). |
 | `language_servers` | object | rust-analyzer and zls built in | Next file opened | Language servers for semantic highlighting, by server id. See [`language_servers`](#language_servers). |
+| `browser` | object/null | defaults below | Hot reload | The Paneflow browser, the browser tab of the dock and of panes: `open_local_links` and `display`. See [`browser`](#browser). |
 | `automation` | object/null | all off | Hot reload | Background work run after an agent turn: `tab_auto_naming` summarizes the session's recent exchange into a 2-5 word tab name through the agent's own CLI (`claude -p`, `codex exec`, `opencode run`, `pi --print`) with tools disabled, at most once per three minutes per session and only when the conversation grew. A name you typed is never replaced; "Reset name" reopens the tab to it. |
 | `submit_paste_delay_ms` | integer/null | `70` | IPC send | Floor delay between bracketed paste and Enter for `paneflow send --submit`. Range `10` to `5000`. |
 | `external_editor` | string/null | `auto` | Next open action | Editor that opens file links, including terminal file links: `auto`, `system`, `zed`, `cursor`, `webstorm`, `code`, or `visual_studio`. `auto` uses `$VISUAL`, then `$EDITOR`, then the first known editor on `PATH`; `system` always uses the OS opener. A named editor that is not on `PATH` falls back to `auto`, and so does the former value `windsurf`. |
@@ -155,6 +156,13 @@ and macOS keep every agent below.
 | `editor.markdown_rendered` | boolean/null | `false` | Hot reload | Shows Markdown files rendered in the dock rather than as source. **Show rendered markdown** and **Show markdown source** in the file header set it for every Markdown file. A file opened at a requested line always shows its source. |
 | `editor.csv_table` | boolean/null | `true` | Hot reload | Shows `.csv` and `.tsv` files of up to 10 MB as a read-only table in the dock rather than as source. **Show source** and **Show table** in the file header set it for every delimited file; `false` opens them as editable text. |
 | `editor.semantic_tokens` | boolean/null | `false` | Hot reload | Colors code with the semantic tokens of a language server from [`language_servers`](#language_servers), over the syntax colors. Toggled from Settings > Editor > Semantic highlighting. |
+
+## `browser`
+
+| Key | Type | Default | Applied | Notes |
+| --- | --- | --- | --- | --- |
+| `browser.open_local_links` | boolean/null | `false` | Hot reload | Opens a loopback URL activated in a terminal, or a detected port opened from the sidebar, in a browser tab of the workspace's dock instead of the system browser. Other URLs, and every URL while the browser engine is not installed, still open in the system browser. Right-clicking a URL in a terminal offers **Open in Paneflow browser** whatever this setting says. |
+| `browser.display` | boolean/null | `false` | Hot reload | Shows pages in browser tabs. Off by default: while a page plays, the window redraws at the page's frame rate, and on a native Wayland window that raised the 99th percentile of terminal keystroke latency from at most 5.8 ms to 8.6 to 9.5 ms. A tab with display off says so and offers **Show pages**; the command palette's **Show browser pages** toggles it. Agents drive browser tabs whatever this setting says. |
 
 ## `agent_panel`
 

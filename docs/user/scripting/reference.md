@@ -1,6 +1,6 @@
 # Scripting reference
 
-> CLI verbs, selectors, JSON-RPC methods, event frames, config keys, workspace specs, flow specs, MCP tools, hooks, and exit codes for Paneflow automation.
+> CLI verbs, selectors, JSON-RPC methods, event frames, config keys, workspace specs, flow specs, agent verbs, hooks, and exit codes for Paneflow automation.
 
 Canonical: https://paneflow.dev/docs/scripting/reference
 
@@ -19,9 +19,9 @@ launching the app.
 
 | Verb | Primary method or engine | Writes to panes? | Use |
 | --- | --- | --- | --- |
-| `ls [--human]` | `surface.list` | No | List panes in the active workspace |
-| `read <target>` | `surface.read` | No | Read pane scrollback |
-| `search <target> <pattern>` | `surface.search` | No | Search pane scrollback |
+| `ls [--human] [--raw]` | `surface.list` | No | List panes in the active workspace, fenced when printed to a program |
+| `read <target> [--raw]` | `surface.read` | No | Read pane scrollback, fenced unless `--raw` |
+| `search <target> <pattern> [--raw]` | `surface.search` | No | Search pane scrollback, fenced unless `--raw` |
 | `ps [--json]` | `fleet.list` | No | List detected agents across workspaces |
 | `status <target> [--json]` | `surface.status` | No | Read one pane's agent state |
 | `new [--name] [--cwd] [--space]` | `workspace.create` | No | Create a workspace, in the active space unless `--space` names another |
@@ -35,6 +35,15 @@ launching the app.
 | `up <file>` | Workspace spec engine | Prefill only | Create a declarative workspace |
 | `flow run <file>` | Flow engine | Gated for submitting steps | Run a local multi-agent DAG |
 | `sessions [--json] [--follow]` | Worker session stream | No | Read agent session state, with or without a window |
+| `write <target> <text> [--submit]` | `pane.write` | After a human allows the pair | Message another agent's pane |
+| `ask <question> [--option <text>]...` | `prompt.request`, `prompt.wait` | No | Ask the user in the window and print the answer |
+| `do <script\|action> [key=value]...` | Lua runtime, `action.invoke` | When the script writes | Run Lua or an `init.lua` action |
+| `actions [--json]` | `action.list` | No | List the `init.lua` actions |
+| `api list\|describe\|call` | Method registry | When the method writes | List, describe, or call any JSON-RPC method |
+
+From a pane, `ls`, `read`, `search`, and `write` stay in that pane's
+workspace; `--scope all` reaches every workspace once `ipc.orchestration`
+is `true` in `paneflow.json`.
 
 Aliases accepted by the CLI: `list_panes` maps to `ls`,
 `read_pane` maps to `read`, and `search_pane` maps to `search`.
@@ -60,7 +69,7 @@ except commands that explicitly accept multiple matches such as
 | `1` | Runtime failure: instance unreachable, pane closed, gate refused, or handler error |
 | `2` | CLI usage error |
 | `3` | Target not found or ambiguous, or `send` refused a target agent that waits for a decision or left the foreground |
-| `4` | `wait` timeout or flow ready timeout |
+| `4` | `wait` timeout, flow ready timeout, `ask` still `pending <id>`, or `do --wait` still `running <run_id>` |
 
 ## Write gates
 
@@ -295,29 +304,24 @@ The first frame acknowledges the subscription.
 After a `dropped` frame, resync with `paneflow ps --json` or
 `paneflow status <target> --json`.
 
-## MCP bridge
+## Agent verbs
 
-`paneflow-mcp` is a stdio MCP server over the same Paneflow
-socket.
+Agents drive Paneflow through the CLI from their shell tool; there is no
+MCP server.
 
-| Tool | Params | Returns |
+| Verb | Prints | Exit |
 | --- | --- | --- |
-| `list_panes` | - | Panes with `surface_id`, `name`, `title`, `cwd`, `cmd`, `workspace` |
-| `read_pane` | `target`, `lines?`, `offset?` | Scrollback text |
-| `search_pane` | `target`, `pattern`, `max_matches?` | Matching lines |
-| `write_pane` | `target`, `text`, `submit?` | `approval_pending` until a human allows the pair, then the delivery result; with `submit`, also `started` and `state` |
-| `ask_human` | `question`, `options?`, `multiple?`, `prompt_id?` | Waits up to 20 s for the user's answer in Paneflow's prompt: `{status: "answered", answer}`, or `{status: "pending", prompt_id}` to call again with; `cancelled`, `timeout`, `no_window`, `busy`, `rate_limited`, and `failed` end the question |
-| `list_actions` | - | The `init.lua` actions marked `agents = true`, each with `name`, `title`, `description`, and the JSON Schema of its `args` |
-| `run_action` | `name`, `args?`, `run_id?` | Waits up to 20 s for the action: `{status: "done", result}`, or `{status: "running", run_id}` to call again with; `rate_limited` past a burst of 3 runs or questions, then 1 per second |
+| `write <target> <text>` | `written`, `approval_pending <request>` until a human allows the pair, or `no_window`; `--json` prints the whole reply | `0`, `0`, `1` |
+| `ask <question>` | The answer, one picked option per line, or `pending <id>` after `--timeout` (20 s by default) | `0`, `0`, `4` |
+| `ask --resume <id>` | The answer to a question still pending | `0` or `4` |
+| `do <action> --wait <duration>` | The action's result, or `running <run_id>` once the wait passes | `0` or `4` |
+| `do --resume <run_id> [--wait <duration>]` | The result of a run still going | `0` or `4` |
 
-`write_pane` writes into another agent's pane, and only after a human
-allows that pair of agent sessions in Paneflow; the
-[automation guide](/docs/scripting) describes its controls. `ask_human`
-shows a question and writes into no pane. `run_action` runs only an
-action marked `agents = true`, with the calling agent's pane as its
-caller, so the write gates still decide what it may do; it is annotated
-`destructiveHint: true`. No tool sends keystrokes. Returned terminal
-output is fenced as untrusted data.
+`write` is the only agent verb that writes into a pane, and only after a
+human allows that pair of agent sessions in Paneflow; the
+[automation guide](/docs/scripting) describes its controls. Terminal text
+from `read`, `search`, and `ls` is fenced as `<untrusted_terminal_output>`
+when printed to a program, and an agent never passes `--raw`.
 
 ## Lifecycle hooks
 
@@ -330,10 +334,11 @@ identity and session metadata to `ps`, `status`, `watch`, and
 | Command | Effect |
 | --- | --- |
 | `paneflow integrations list` | List the runtimes that have an installer and their state |
-| `paneflow integrations install <runtime>` | Install the hooks for `claude-code` (or `claude`) or `codex`, and register the `paneflow` MCP server |
+| `paneflow integrations install <runtime>` | Install the hooks, the status line, and the `paneflow-conductor` skill for `claude-code` (or `claude`) or `codex` |
 | `paneflow integrations remove <runtime>` | Remove Paneflow's own handlers; a handler of yours in the same hook group is kept |
 | `paneflow hooks setup` | Install every detected runtime that has an installer |
-| `paneflow hooks uninstall` | Remove the integrations and the `paneflow` MCP entry |
+| `paneflow hooks uninstall` | Remove the integrations |
+| `paneflow mcp uninstall` | Remove the `paneflow` MCP entries an older Paneflow wrote, printing each one |
 | `paneflow hooks status` | Print one `<runtime>: <state>` line per runtime; always exits `0` |
 
 Hooks are installed once per machine, from the CLI or **Settings > Agents**.

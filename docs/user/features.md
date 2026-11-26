@@ -1,6 +1,6 @@
 # Features
 
-> Run coding agents in parallel, keep terminal sessions running, review diffs, edit files, and coordinate panes with Git worktrees, MCP, and the Paneflow CLI.
+> Run coding agents in parallel, keep terminal sessions running, review diffs, edit files, and coordinate panes with Git worktrees and the Paneflow CLI.
 
 Canonical: https://paneflow.dev/docs/features
 
@@ -81,9 +81,10 @@ shows exactly that. Lifecycle hooks for Claude Code and Codex let Paneflow
 resume their conversations and name their tabs. Install these once per
 machine with `paneflow integrations install claude-code` or
 `paneflow integrations install codex`. Codex asks you to trust the hooks
-through `/hooks`. You can also turn on the **Hooks and MCP** switch in an agent's settings dialog in the
-[agent settings](/docs/settings). The same command registers the Paneflow
-MCP bridge and, for Claude Code, the conductor skill. An entry that another
+through `/hooks`. You can also turn on the **Hooks** toggle of an agent in the
+[agent settings](/docs/settings). The same command installs the
+`paneflow-conductor` skill, which tells the agent how to drive Paneflow
+through its CLI. An entry that another
 Paneflow home owns (a debug build next to a release, or a second
 `PANEFLOW_HOME`) is left alone: the command names both homes, and `--force`
 takes the entry over.
@@ -373,21 +374,19 @@ Separate checkouts do not prevent merge conflicts or isolate running
 programs. The [worktree guide](/docs/worktrees) covers creation, reuse,
 cleanup, and snapshots of uncommitted files before removal.
 
-## Share pane output through MCP
+## Share pane output between agents
 
-Install the local MCP bridge with `paneflow mcp install` for Claude Code,
-Codex, Gemini CLI, or OpenCode. Its `list_panes`, `read_pane`, and
-`search_pane` tools let an agent read another pane's output without you
-copying terminal history between conversations.
+An agent reads another pane's output with `paneflow read` and
+`paneflow search` from its shell tool, so you stop copying terminal
+history between conversations. The conductor skill teaches Claude Code
+and Codex these commands; Gemini CLI and OpenCode can add the same skill.
 
-Output is returned as untrusted data for the reading agent to analyze.
-`write_pane` sends a message to another agent's pane only after you
-allow that pair of agent sessions in Paneflow. `ask_human` asks you a
-question in Paneflow's own prompt, and `run_action` runs one of the
-`init.lua` actions you marked `agents = true`, as the agent's own pane
-and under the same write gates. The bridge cannot send keystrokes or
-control panes in any other way. See
-[MCP setup and behavior](/docs/scripting).
+Output is returned as untrusted data for the reading agent to analyze,
+and a pane reads only its own workspace unless you open orchestration.
+`paneflow write` sends a message to another agent's pane only after you
+allow that pair of agent sessions in Paneflow, and cannot send keystrokes
+or control panes in any other way. `paneflow ask` lets an agent ask you a
+question in the window. See [agent messaging](/docs/scripting).
 
 ## Coordinate panes with the CLI
 

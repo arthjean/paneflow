@@ -234,7 +234,7 @@ never removes a worktree it did not create.
 
 ## Two tasks, then one integration
 
-For Paneflow 0.20.0, start from a committed base in a disposable Git project.
+For Paneflow 0.19.1, start from a committed base in a disposable Git project.
 Use the existing **New branch...** procedure above with **Worktree** enabled:
 
 1. Create `feat/api-validation` from the chosen base for one task and

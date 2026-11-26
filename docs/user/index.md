@@ -137,7 +137,7 @@ confirmation before running commands or an installer.
 
 ## Next steps
 
-- [Features](/docs/features): Learn how panes, agent status, sessions, MCP, and worktrees fit together.
+- [Features](/docs/features): Learn how panes, agent status, sessions, the CLI, and worktrees fit together.
 - [Configuration](/docs/configuration): Set your shell, theme, and defaults in paneflow.json.
 - [Shortcuts and actions](/docs/keybindings): Find the default shortcuts and customize their actions.
 - [Troubleshooting](/docs/troubleshooting): Resolve installation, startup, graphics, and shell problems.
