@@ -128,6 +128,18 @@ except `shape_cold_60_rows`, 960 bytes more per iteration (0.05 %), and put
 every timing within 3.5 % of the old pin
 ([summary](results/gpui-bump-c016f436-2026-11-25.md)).
 
+Since 2026-11-26, `startup` of `linux-x86_64` points at `0cca9fa3`, the commit
+that removes the MCP bridge (US-016 of `tasks/prd-mcp-removal.md`): the
+`bridge_extracted` mark became `helpers_extracted`, which now covers two
+helpers and measures 6.7 to 7.0 ms against 7.3 to 7.5 ms before. The first
+frame of every scenario reads 39 to 51 ms above the `226032bf` baseline, and
+the whole difference sits in two steps the removal does not touch:
+`window_created` (36 to 47 ms, the GPU window from the compositor) and
+`login_shell_env_loaded` (10 ms in the three scenarios that spawn the login
+shell). Two earlier runs that day, under a load average of 6 to 9 from other
+work on the machine, spread wider (p95 up to 619 ms); the recorded run started
+at a load average under 2.
+
 The first three suites share one harness, `src-app/src/bench_harness.rs`: the metric
 type, the timing helpers, the JSON document, the comparison table, and the
 single `#[global_allocator]` the test binary installs. That allocator counts
