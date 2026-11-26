@@ -1,6 +1,8 @@
 use std::time::{Duration, Instant};
 
-use paneflow_config::schema::AgentSessionRef;
+use paneflow_config::schema::{AgentSessionRef, PaneFlowConfig};
+use paneflow_host::host::{AttemptOutcome, ResumeAttemptReport, ResumeRequest};
+use paneflow_program_resume::AttemptId;
 
 use super::*;
 use crate::agent_launcher::TerminalAgent;
@@ -93,6 +95,77 @@ pub(crate) fn resume_input(quoting: ShellQuoting, command: &str) -> Vec<u8> {
     bytes
 }
 
+pub(crate) fn conversation_resume_request(
+    recorded: &AgentSessionRef,
+    config: &PaneFlowConfig,
+) -> Option<ResumeRequest> {
+    let agent = TerminalAgent::from_runtime_id(&recorded.runtime)?;
+    let argv = crate::agent_resume::conversation_argv(
+        agent,
+        ConversationTemplate::Resume,
+        &recorded.id,
+        config,
+    )?;
+    Some(ResumeRequest {
+        argv: Some(argv),
+        cwd: recorded.cwd.clone(),
+        ..ResumeRequest::default()
+    })
+}
+
+pub(crate) fn handed_off_attempt(report: Option<&ResumeAttemptReport>) -> Option<AttemptId> {
+    report
+        .filter(|report| report.outcome == AttemptOutcome::Prepared && report.record.is_none())
+        .and_then(|report| report.attempt.clone())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum AttemptVerdict {
+    Pending,
+    Started,
+    Failed(String),
+}
+
+pub(crate) fn attempt_verdict(
+    report: Option<&ResumeAttemptReport>,
+    attempt: &AttemptId,
+) -> AttemptVerdict {
+    let Some(report) = report.filter(|report| report.attempt.as_ref() == Some(attempt)) else {
+        return AttemptVerdict::Pending;
+    };
+    match report.outcome {
+        AttemptOutcome::Prepared => AttemptVerdict::Pending,
+        AttemptOutcome::Started | AttemptOutcome::Settled => AttemptVerdict::Started,
+        AttemptOutcome::Failed | AttemptOutcome::Refused => {
+            let program = report.program.as_deref().map_or_else(
+                || "the agent".to_string(),
+                paneflow_program_resume::escape_for_display,
+            );
+            let reason = report.reason.as_deref().unwrap_or_default();
+            AttemptVerdict::Failed(format!(
+                "could not start {program}: {}",
+                crate::terminal::program_resume::failure_wording(reason)
+            ))
+        }
+    }
+}
+
+pub(crate) fn typed_resume_input(
+    quoting: ShellQuoting,
+    prepared: Result<&paneflow_host::host::PreparedResume, &str>,
+    command: &str,
+) -> Vec<u8> {
+    match prepared {
+        Ok(prepared) => crate::terminal::program_resume::launcher_input(
+            quoting,
+            &prepared.launcher,
+            &prepared.handoff,
+            true,
+        ),
+        Err(_) => resume_input(quoting, command),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct WriteRequest {
     pub(crate) id: u64,
@@ -152,13 +225,15 @@ enum ResumeWrite {
     Skip,
     Offer(ConversationBanner),
     Type,
+    Handoff,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum RestorePhase {
     AwaitingHost { duplicate_of: Option<String> },
     AwaitingFreshShell,
-    AwaitingShell,
+    AwaitingTurn,
+    Launching,
     Settling,
     Ready,
 }
@@ -379,20 +454,105 @@ impl TerminalView {
     }
 
     pub(crate) fn conversation_restore_ready(&self) -> bool {
-        self.conversation.restore == Some(RestorePhase::Ready)
+        matches!(
+            self.conversation.restore,
+            Some(RestorePhase::Ready | RestorePhase::AwaitingTurn)
+        )
     }
 
-    pub(super) fn conversation_host_attached(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn conversation_host_attached(
+        &mut self,
+        report: Option<&ResumeAttemptReport>,
+        cx: &mut Context<Self>,
+    ) {
         match self.conversation.restore {
             Some(RestorePhase::AwaitingHost { .. }) => self.conversation.restore = None,
             Some(RestorePhase::AwaitingFreshShell) => {
                 self.check_recorded_cwd(Self::fresh_shell_checked, cx);
             }
-            Some(RestorePhase::AwaitingShell) => {
-                self.conversation.restore = Some(RestorePhase::Settling);
-                self.spawn_resume_settle(cx);
-            }
+            Some(RestorePhase::Launching) => match handed_off_attempt(report) {
+                Some(attempt) => self.conversation_started_by_handoff(attempt, cx),
+                None => {
+                    self.conversation.restore = Some(RestorePhase::Settling);
+                    self.spawn_resume_settle(cx);
+                }
+            },
             _ => {}
+        }
+    }
+
+    fn conversation_started_by_handoff(&mut self, attempt: AttemptId, cx: &mut Context<Self>) {
+        self.conversation.restore = None;
+        let Some(agent) = self.conversation_agent() else {
+            return;
+        };
+        let epoch = self.next_watch_epoch();
+        self.declare_launched_agent(agent);
+        cx.emit(TerminalEvent::AgentDeclared);
+        self.conversation.live = true;
+        tracing::info!(
+            target: "paneflow_app::conversation",
+            runtime = agent.runtime().id,
+            "resumed a recorded conversation through the launcher handoff"
+        );
+        self.arm_failure_watch(agent, 0, epoch, cx);
+        self.watch_conversation_attempt(attempt, epoch, cx);
+    }
+
+    fn watch_conversation_attempt(
+        &mut self,
+        attempt: AttemptId,
+        epoch: u64,
+        cx: &mut Context<Self>,
+    ) {
+        let session = self.terminal.session_id.clone();
+        let executor = cx.background_executor().clone();
+        let deadline = Instant::now() + crate::terminal::program_resume::RESUME_OUTCOME_DEADLINE;
+        cx.spawn(
+            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                loop {
+                    executor
+                        .timer(crate::terminal::program_resume::RESUME_OUTCOME_POLL)
+                        .await;
+                    let inspected = session.clone();
+                    let report = executor
+                        .spawn(async move { host_link::resume_attempt_of(&inspected) })
+                        .await
+                        .ok()
+                        .flatten();
+                    let expired = Instant::now() >= deadline;
+                    let done = this
+                        .update(cx, |view, cx| {
+                            if view.conversation.watch_epoch != epoch {
+                                return true;
+                            }
+                            view.apply_attempt_verdict(
+                                attempt_verdict(report.as_ref(), &attempt),
+                                cx,
+                            ) || expired
+                        })
+                        .unwrap_or(true);
+                    if done {
+                        break;
+                    }
+                }
+            },
+        )
+        .detach();
+    }
+
+    pub(crate) fn apply_attempt_verdict(
+        &mut self,
+        verdict: AttemptVerdict,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        match verdict {
+            AttemptVerdict::Pending => false,
+            AttemptVerdict::Started => true,
+            AttemptVerdict::Failed(reason) => {
+                self.fail_conversation_start(reason, cx);
+                true
+            }
         }
     }
 
@@ -401,6 +561,10 @@ impl TerminalView {
         kind: &HostLinkEndKind,
         cx: &mut Context<Self>,
     ) {
+        if self.conversation.restore == Some(RestorePhase::Launching) {
+            self.conversation.restore = None;
+            return;
+        }
         let Some(RestorePhase::AwaitingHost { duplicate_of }) = self.conversation.restore.clone()
         else {
             return;
@@ -477,26 +641,37 @@ impl TerminalView {
         exists: bool,
         cx: &mut Context<Self>,
     ) {
+        if self.plan_reopen(recorded_cwd, exists, cx) {
+            self.start_hosted_session(SessionIntent::Create, true, cx);
+        }
+    }
+
+    fn plan_reopen(
+        &mut self,
+        recorded_cwd: Option<std::path::PathBuf>,
+        exists: bool,
+        cx: &mut Context<Self>,
+    ) -> bool {
         if !matches!(
             self.conversation.restore,
             Some(RestorePhase::AwaitingHost { .. })
         ) {
-            return;
+            return false;
         }
+        self.launch.confine_to = None;
+        self.launch.fallback_to = None;
         match recorded_cwd {
             Some(cwd) if !exists => {
                 self.forget_conversation_of_missing_folder(&cwd, cx);
                 self.launch.cwd = dirs::home_dir();
+                return true;
             }
-            Some(cwd) => {
-                self.conversation.restore = Some(RestorePhase::AwaitingShell);
-                self.launch.cwd = Some(cwd);
-            }
-            None => self.conversation.restore = Some(RestorePhase::AwaitingShell),
+            Some(cwd) => self.launch.cwd = Some(cwd),
+            None => {}
         }
-        self.launch.confine_to = None;
-        self.launch.fallback_to = None;
-        self.start_hosted_session(SessionIntent::Create, true, cx);
+        self.conversation.restore = Some(RestorePhase::AwaitingTurn);
+        cx.emit(TerminalEvent::ConversationReady);
+        false
     }
 
     fn spawn_resume_settle(&mut self, cx: &mut Context<Self>) {
@@ -530,6 +705,7 @@ impl TerminalView {
     }
 
     pub(crate) fn write_conversation_resume(&mut self, cx: &mut Context<Self>) {
+        let needs_shell = self.awaits_its_turn_to_launch();
         match self.take_resume_write() {
             ResumeWrite::Skip => {}
             ResumeWrite::Offer(banner) => {
@@ -537,10 +713,32 @@ impl TerminalView {
                 cx.notify();
             }
             ResumeWrite::Type => self.type_conversation_resume(cx),
+            ResumeWrite::Handoff => self.stage_conversation_handoff(cx),
+        }
+        if needs_shell {
+            self.start_hosted_session(SessionIntent::Create, true, cx);
+        }
+    }
+
+    fn awaits_its_turn_to_launch(&self) -> bool {
+        self.conversation.restore == Some(RestorePhase::AwaitingTurn)
+            && matches!(self.terminal.host_link, HostLinkState::Ended(_))
+    }
+
+    fn stage_conversation_handoff(&mut self, cx: &gpui::App) {
+        let config = crate::config_snapshot::current(cx);
+        self.pending_resume = self
+            .conversation
+            .recorded
+            .as_ref()
+            .and_then(|recorded| conversation_resume_request(recorded, &config));
+        if self.pending_resume.is_some() {
+            self.conversation.restore = Some(RestorePhase::Launching);
         }
     }
 
     fn take_resume_write(&mut self) -> ResumeWrite {
+        let needs_shell = self.awaits_its_turn_to_launch();
         if self.conversation.restore.take().is_none() {
             return ResumeWrite::Skip;
         }
@@ -553,6 +751,9 @@ impl TerminalView {
         }
         if self.terminal.input_sent() {
             return ResumeWrite::Offer(ConversationBanner::OfferResume);
+        }
+        if needs_shell {
+            return ResumeWrite::Handoff;
         }
         ResumeWrite::Type
     }
@@ -570,32 +771,65 @@ impl TerminalView {
         Some((agent, command))
     }
 
+    fn conversation_handoff_target(&self, cx: &gpui::App) -> Option<(Vec<String>, String)> {
+        let recorded = self.conversation.recorded.as_ref()?;
+        let request = conversation_resume_request(recorded, &crate::config_snapshot::current(cx))?;
+        let cwd = request
+            .cwd
+            .or_else(|| self.terminal.current_cwd.clone())
+            .or_else(|| {
+                self.launch
+                    .cwd
+                    .as_ref()
+                    .map(|cwd| cwd.display().to_string())
+            })?;
+        Some((request.argv?, cwd))
+    }
+
     fn type_conversation_resume(&mut self, cx: &mut Context<Self>) {
         let Some((agent, command)) = self.conversation_resume_command(cx) else {
             return;
         };
+        let target = self.conversation_handoff_target(cx);
         let epoch = self.next_watch_epoch();
         let backend = self.terminal.session_backend();
+        let session = self.terminal.session_id.clone();
+        let executor = cx.background_executor().clone();
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 let baseline = smol::unblock(move || backend.screen_text())
                     .await
                     .map_or(0, |text| text.len());
+                let prepared = match target {
+                    Some((argv, cwd)) => executor
+                        .spawn(
+                            async move { host_link::prepare_command_resume(&session, argv, cwd) },
+                        )
+                        .await,
+                    None => Err(String::new()),
+                };
                 let _ = this.update(cx, |view, cx| {
                     if view.conversation.watch_epoch != epoch {
                         return;
                     }
-                    view.terminal
-                        .write_to_pty(resume_input(view.terminal.shell_quoting, &command));
+                    view.terminal.write_to_pty(typed_resume_input(
+                        view.terminal.shell_quoting,
+                        prepared.as_ref().map_err(String::as_str),
+                        &command,
+                    ));
                     view.declare_launched_agent(agent);
                     cx.emit(TerminalEvent::AgentDeclared);
                     view.conversation.live = true;
                     tracing::info!(
                         target: "paneflow_app::conversation",
                         runtime = agent.runtime().id,
-                        "typed the resume command of a recorded conversation"
+                        handoff = prepared.is_ok(),
+                        "typed the resume of a recorded conversation"
                     );
                     view.arm_failure_watch(agent, baseline, epoch, cx);
+                    if let Ok(prepared) = prepared {
+                        view.watch_conversation_attempt(prepared.attempt, epoch, cx);
+                    }
                 });
             },
         )
@@ -607,9 +841,13 @@ impl TerminalView {
         location: String,
         cx: &mut Context<Self>,
     ) {
+        let needs_shell = self.awaits_its_turn_to_launch();
         self.conversation.restore = None;
         self.conversation.banner = Some(ConversationBanner::AlreadyResumed { location });
         self.set_recorded_agent_session(None, cx);
+        if needs_shell {
+            self.start_hosted_session(SessionIntent::Create, true, cx);
+        }
         cx.notify();
     }
 
@@ -1398,6 +1636,273 @@ mod tests {
         });
         cx.run_until_parked();
         assert_eq!(declared.get(), 1);
+    }
+
+    const ATTEMPT: &str = "0123456789abcdef0123456789abcdef";
+
+    fn attempt() -> AttemptId {
+        AttemptId::parse(ATTEMPT).expect("a 32-hex attempt id")
+    }
+
+    fn report(outcome: AttemptOutcome, reason: Option<&str>) -> ResumeAttemptReport {
+        ResumeAttemptReport {
+            attempt: Some(attempt()),
+            record: None,
+            outcome,
+            reason: reason.map(str::to_string),
+            program: Some("claude".to_string()),
+            pid: None,
+        }
+    }
+
+    fn lost_end() -> host_link::HostLinkEnd {
+        host_link::HostLinkEnd::from_reconnection(
+            paneflow_host::host::SessionReconnection::Lost,
+            paneflow_config::schema::SessionGeneration::FIRST,
+        )
+    }
+
+    fn count_ready(
+        view: &gpui::Entity<TerminalView>,
+        cx: &mut gpui::TestAppContext,
+    ) -> (std::rc::Rc<std::cell::Cell<usize>>, gpui::Subscription) {
+        let hits = std::rc::Rc::new(std::cell::Cell::new(0usize));
+        let sink = hits.clone();
+        let subscription = cx.update(|cx| {
+            cx.subscribe(view, move |_, event: &TerminalEvent, _| {
+                if matches!(event, TerminalEvent::ConversationReady) {
+                    sink.set(sink.get() + 1);
+                }
+            })
+        });
+        (hits, subscription)
+    }
+
+    #[gpui::test]
+    fn a_lost_claude_conversation_waits_its_turn_then_stages_a_create_handoff_and_types_nothing(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let view = view(cx);
+        let (ready, _subscription) = count_ready(&view, cx);
+        let folder = tempfile::tempdir().expect("a conversation folder");
+        let cwd = folder.path().display().to_string();
+        view.update(cx, |view, cx| {
+            view.restore_agent_session(
+                Some(AgentSessionRef {
+                    runtime: CLAUDE.to_string(),
+                    id: CLAUDE_STARTUP_ID.to_string(),
+                    cwd: Some(cwd.clone()),
+                }),
+                true,
+            );
+            view.terminal
+                .mark_host_link(HostLinkState::Ended(lost_end()));
+            assert!(
+                !view.plan_reopen(Some(folder.path().to_path_buf()), true, cx),
+                "no shell starts before the conversation's turn"
+            );
+            assert_eq!(view.conversation.restore, Some(RestorePhase::AwaitingTurn));
+            assert!(view.conversation_restore_ready());
+            assert_eq!(view.launch.cwd.as_deref(), Some(folder.path()));
+            assert!(view.awaits_its_turn_to_launch());
+            assert_eq!(view.take_resume_write(), ResumeWrite::Handoff);
+            view.conversation.restore = Some(RestorePhase::AwaitingTurn);
+            view.stage_conversation_handoff(cx);
+            let config = crate::config_snapshot::current(cx);
+            let argv = crate::agent_resume::conversation_argv(
+                TerminalAgent::ClaudeCode,
+                ConversationTemplate::Resume,
+                CLAUDE_STARTUP_ID,
+                &config,
+            )
+            .expect("Claude resumes by id");
+            assert_eq!(argv[..3], ["claude", "--resume", CLAUDE_STARTUP_ID]);
+            assert_eq!(
+                view.pending_resume,
+                Some(ResumeRequest {
+                    argv: Some(argv),
+                    cwd: Some(cwd.clone()),
+                    ..ResumeRequest::default()
+                })
+            );
+            assert_eq!(view.conversation.restore, Some(RestorePhase::Launching));
+            assert!(view.terminal.queued_raw_input_for_test().is_empty());
+        });
+        cx.run_until_parked();
+        assert_eq!(ready.get(), 1, "the pane asks the queue for its turn once");
+    }
+
+    #[gpui::test]
+    fn a_missing_conversation_folder_shows_folder_missing_and_stages_no_handoff(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let view = view(cx);
+        let missing = std::path::PathBuf::from("/gone/project");
+        view.update(cx, |view, cx| {
+            view.restore_agent_session(recorded(CLAUDE, CLAUDE_STARTUP_ID), true);
+            assert!(
+                view.plan_reopen(Some(missing.clone()), false, cx),
+                "a plain shell starts at once"
+            );
+            assert_eq!(
+                view.conversation_banner(),
+                Some(&ConversationBanner::FolderMissing {
+                    path: missing.display().to_string()
+                })
+            );
+            assert!(!view.conversation_restore_pending());
+            assert_eq!(view.agent_session(), None);
+            assert_eq!(view.pending_resume, None);
+        });
+    }
+
+    #[gpui::test]
+    fn a_handed_off_resume_skips_the_quiet_wait_and_still_catches_a_missing_conversation(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.executor().allow_parking();
+        let view = view(cx);
+        let backend = view.read_with(cx, |view, _| view.terminal.session_backend());
+        view.update(cx, |view, cx| {
+            view.restore_agent_session(recorded(CLAUDE, CLAUDE_STARTUP_ID), true);
+            view.conversation.restore = Some(RestorePhase::Launching);
+            view.terminal.detected_agent = None;
+            view.conversation_host_attached(Some(&report(AttemptOutcome::Prepared, None)), cx);
+            assert_eq!(
+                view.conversation.restore, None,
+                "the launcher starts at the first prompt, so nothing settles or waits"
+            );
+            assert!(view.conversation_is_live());
+            assert_eq!(
+                view.terminal.detected_agent,
+                Some(TerminalAgent::ClaudeCode)
+            );
+            assert!(
+                view.conversation.watch.is_some(),
+                "the failure watch is armed"
+            );
+            assert!(view.terminal.queued_raw_input_for_test().is_empty());
+        });
+        backend.write_output_for_test(
+            b"No conversation found with session ID: 3922faec-860a-47b1-8f2d-e6b9488c467c\r\n",
+        );
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while view.read_with(cx, |view, _| view.conversation_banner().is_none()) {
+            assert!(Instant::now() < deadline, "the failure watch never fired");
+            cx.run_until_parked();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(
+            view.read_with(cx, |view, _| view.conversation_banner().cloned()),
+            Some(ConversationBanner::ResumeFailed {
+                reason: "No conversation found with session ID".to_string()
+            })
+        );
+    }
+
+    #[gpui::test]
+    fn a_refused_handoff_falls_back_to_the_typed_command_once_the_shell_settles(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let view = view(cx);
+        view.update(cx, |view, cx| {
+            view.restore_agent_session(recorded(CLAUDE, CLAUDE_STARTUP_ID), true);
+            view.conversation.restore = Some(RestorePhase::Launching);
+            let refused = ResumeAttemptReport {
+                attempt: None,
+                reason: Some("shell_unsupported".to_string()),
+                program: None,
+                ..report(AttemptOutcome::Refused, None)
+            };
+            view.conversation_host_attached(Some(&refused), cx);
+            assert_eq!(view.conversation.restore, Some(RestorePhase::Settling));
+            view.conversation.restore = Some(RestorePhase::Ready);
+            assert!(!view.awaits_its_turn_to_launch());
+            assert_eq!(view.take_resume_write(), ResumeWrite::Type);
+        });
+    }
+
+    #[gpui::test]
+    fn a_launcher_failure_forgets_the_conversation_like_a_failed_resume(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let view = view(cx);
+        view.update(cx, |view, cx| {
+            view.restore_agent_session(recorded(CLAUDE, CLAUDE_STARTUP_ID), true);
+            assert!(!view.apply_attempt_verdict(
+                attempt_verdict(Some(&report(AttemptOutcome::Prepared, None)), &attempt()),
+                cx
+            ));
+            assert_eq!(view.conversation_banner(), None);
+            let failed = report(AttemptOutcome::Failed, Some("not_found"));
+            assert!(view.apply_attempt_verdict(attempt_verdict(Some(&failed), &attempt()), cx));
+            assert_eq!(
+                view.conversation_banner(),
+                Some(&ConversationBanner::ResumeFailed {
+                    reason: "could not start claude: not found".to_string()
+                })
+            );
+            assert_eq!(view.agent_session(), None);
+            assert_eq!(
+                view.conversation_banner()
+                    .and_then(ConversationBanner::primary_label),
+                Some("New session")
+            );
+        });
+    }
+
+    #[test]
+    fn an_attempt_verdict_ignores_other_attempts_and_counts_a_settled_start_as_started() {
+        let other = ResumeAttemptReport {
+            attempt: AttemptId::parse("ffffffffffffffffffffffffffffffff").ok(),
+            ..report(AttemptOutcome::Failed, Some("not_found"))
+        };
+        assert_eq!(
+            attempt_verdict(Some(&other), &attempt()),
+            AttemptVerdict::Pending
+        );
+        assert_eq!(attempt_verdict(None, &attempt()), AttemptVerdict::Pending);
+        for outcome in [AttemptOutcome::Started, AttemptOutcome::Settled] {
+            assert_eq!(
+                attempt_verdict(Some(&report(outcome, None)), &attempt()),
+                AttemptVerdict::Started
+            );
+        }
+        assert_eq!(
+            handed_off_attempt(Some(&report(AttemptOutcome::Prepared, None))),
+            Some(attempt())
+        );
+        let program_record = ResumeAttemptReport {
+            record: Some(paneflow_program_resume::RecordId::from(3)),
+            ..report(AttemptOutcome::Prepared, None)
+        };
+        assert_eq!(handed_off_attempt(Some(&program_record)), None);
+        assert_eq!(handed_off_attempt(None), None);
+    }
+
+    #[test]
+    fn the_offered_resume_types_the_launcher_and_handoff_paths_never_the_conversation_id() {
+        let command = format!("claude --resume {CLAUDE_STARTUP_ID}");
+        let prepared = paneflow_host::host::PreparedResume {
+            attempt: attempt(),
+            launcher: "/home/u/.paneflow/bin/paneflow-resume".to_string(),
+            handoff: "/home/u/.paneflow/sessions/s/handoff-ab".to_string(),
+            record: None,
+        };
+        let typed = typed_resume_input(ShellQuoting::Posix, Ok(&prepared), &command);
+        let text = String::from_utf8(typed.clone()).expect("UTF-8 input");
+        assert!(
+            typed.starts_with(READLINE_LINE_RESET),
+            "the line is reset first"
+        );
+        assert!(text.contains(&prepared.launcher) && text.contains(&prepared.handoff));
+        assert!(!text.contains(CLAUDE_STARTUP_ID), "{text}");
+        assert!(!text.contains("--resume"), "{text}");
+        assert_eq!(
+            typed_resume_input(ShellQuoting::Posix, Err("shell_unsupported"), &command),
+            resume_input(ShellQuoting::Posix, &command),
+            "a shell the host cannot hand off to keeps today's typed command"
+        );
     }
 
     const FX: &str = "sh.fx.cli";

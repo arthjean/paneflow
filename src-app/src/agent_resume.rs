@@ -101,11 +101,50 @@ pub(crate) fn conversation_command(
     conversation_spec(agent, template, session_id, config).map(|spec| spec.render_shell_command())
 }
 
+pub(crate) fn conversation_argv(
+    agent: TerminalAgent,
+    template: ConversationTemplate,
+    session_id: &str,
+    config: &PaneFlowConfig,
+) -> Option<Vec<String>> {
+    conversation_spec(agent, template, session_id, config).map(|spec| spec.argv())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const UUID: &str = "019dc9ea-38d7-7372-9cc4-253ce944d41b";
+
+    #[test]
+    fn the_resume_argv_holds_the_same_elements_as_the_typed_command() {
+        let config = PaneFlowConfig::default();
+        for agent in [
+            TerminalAgent::ClaudeCode,
+            TerminalAgent::Codex,
+            TerminalAgent::Opencode,
+        ] {
+            let id = match agent {
+                TerminalAgent::Opencode => "ses_abc",
+                _ => UUID,
+            };
+            let argv = conversation_argv(agent, ConversationTemplate::Resume, id, &config)
+                .expect("a resumable runtime");
+            let command = conversation_command(agent, ConversationTemplate::Resume, id, &config)
+                .expect("a resumable runtime");
+            assert_eq!(argv.join(" "), command, "{agent:?}");
+            assert!(argv.iter().any(|element| element == id), "{agent:?}");
+        }
+        assert_eq!(
+            conversation_argv(
+                TerminalAgent::ClaudeCode,
+                ConversationTemplate::Resume,
+                "-rf",
+                &config
+            ),
+            None
+        );
+    }
 
     #[test]
     fn fork_commands_use_the_verified_cli_flags() {

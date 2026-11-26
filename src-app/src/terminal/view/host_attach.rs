@@ -97,6 +97,7 @@ impl TerminalView {
         let ghostty_pending = pending.ghostty;
         let profile = params.profile;
         let config_dirs = self.launch.space_config_dirs(&params.env);
+        let resume = self.pending_resume.take();
         let request = AttachRequest {
             intent,
             session: self.terminal.session_id.clone(),
@@ -110,8 +111,7 @@ impl TerminalView {
                     width: size.cell_width,
                     height: size.cell_height,
                 }),
-            resume: self.pending_resume.take(),
-            route: (intent == SessionIntent::Create)
+            route: (intent == SessionIntent::Create && resume.is_none())
                 .then(|| self.worker_route.clone())
                 .flatten()
                 .map(|launcher| host_link::WorkerRoute {
@@ -119,6 +119,7 @@ impl TerminalView {
                     surface_id: self.launch.surface_id,
                     user_env: self.launch.user_env.clone(),
                 }),
+            resume,
         };
         let spawn_rule = crate::workspace::SpawnCwd {
             cwd: None,
@@ -152,6 +153,12 @@ impl TerminalView {
                             }
                             .resolve(crate::workspace::CONFINE_TIMEOUT)
                             .unwrap_or(requested);
+                        }
+                        if let Some(resume) = request.resume.as_mut()
+                            && resume.argv.is_some()
+                            && resume.cwd.is_none()
+                        {
+                            resume.cwd = Some(request.params.cwd.display().to_string());
                         }
                         (request, dir_errors)
                     })
@@ -240,12 +247,13 @@ impl TerminalView {
                             view.saved_scrollback = None;
                             view.needs_initial_clear
                                 .store(false, std::sync::atomic::Ordering::Relaxed);
-                            view.program_resume_attached(hosted.resume_attempt.as_ref(), cx);
+                            let attempt = hosted.resume_attempt.clone();
+                            view.program_resume_attached(attempt.as_ref(), cx);
                             view.terminal.promote_hosted(*hosted);
                             if let Some(size) = view.recorded_window_size() {
                                 view.terminal.notify_window_size(size);
                             }
-                            view.conversation_host_attached(cx);
+                            view.conversation_host_attached(attempt.as_ref(), cx);
                         }
                         AttachOutcome::Ended(end, final_text) => {
                             match final_text {

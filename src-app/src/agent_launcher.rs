@@ -212,6 +212,12 @@ impl AgentCommandSpec {
         self.args.extend(args.into_iter().map(str::to_string));
     }
 
+    pub(crate) fn argv(&self) -> Vec<String> {
+        std::iter::once(self.program.to_string())
+            .chain(self.args.iter().cloned())
+            .collect()
+    }
+
     pub(crate) fn render_shell_command(&self) -> String {
         debug_assert!(is_plain_shell_token(self.program));
         let mut command = self.program.to_string();

@@ -310,7 +310,7 @@ fn refusal_named(reason: &str) -> Option<ResumeRefusal> {
     .find(|refusal| refusal.reason() == reason)
 }
 
-fn failure_wording(reason: &str) -> String {
+pub(crate) fn failure_wording(reason: &str) -> String {
     match reason {
         "not_found" => "not found".to_string(),
         "not_executable" => "not executable".to_string(),

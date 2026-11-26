@@ -7,9 +7,14 @@ use paneflow_program_resume::RecordId;
 use super::*;
 use crate::terminal::program_resume::{ResumePolicy, ResumeState, launcher_input, restore_state};
 use crate::terminal::types::ShellQuoting;
+use crate::terminal::view::conversation::{
+    AttemptVerdict, attempt_verdict, conversation_resume_request, handed_off_attempt,
+    typed_resume_input,
+};
 
 const DEADLINE: Duration = Duration::from_secs(30);
 const DUMP: &str = "paneflow-argv-dump";
+const CLAUDE_ID: &str = "3922faec-860a-47b1-8f2d-e6b9488c467c";
 const BASH: &str = "/bin/bash";
 const REPORTER: &str = "#!/bin/sh\n\
 printf '%s %s\\n' \"$$\" \"$OSC7577_TOKEN\" > \"$1/owner.tmp\"\n\
@@ -132,6 +137,62 @@ impl Bench {
             .unwrap()
             .manifest
             .session
+    }
+
+    fn conversation(&self) -> paneflow_config::schema::AgentSessionRef {
+        write_script(&self.tools.join("claude"), DUMPER);
+        paneflow_config::schema::AgentSessionRef {
+            runtime: "com.anthropic.claude-code".to_string(),
+            id: CLAUDE_ID.to_string(),
+            cwd: Some(self.work.display().to_string()),
+        }
+    }
+
+    fn create_resuming(
+        &self,
+        shell: &str,
+        integration: bool,
+        resume: paneflow_host::host::ResumeRequest,
+    ) -> HostedAttachment {
+        let mut env = HashMap::new();
+        let extra_args = if integration {
+            paneflow_launch::shell::setup_shell_integration(
+                Some(&self.home.path().join("shell")),
+                shell,
+                &mut env,
+            )
+        } else {
+            Vec::new()
+        };
+        env.insert("HOME".into(), self.home.path().display().to_string());
+        env.insert(
+            "PATH".into(),
+            format!("{}:/usr/bin:/bin", self.tools.display()),
+        );
+        let mut request = self.request(SessionIntent::Create, &SessionId::new());
+        request.params.shell = shell.to_owned();
+        request.params.extra_args = extra_args;
+        request.params.env = env;
+        request.params.cwd = self.home.path().to_path_buf();
+        request.resume = Some(resume);
+        match resolve_at(request, self.target()) {
+            Ok(ResolveOutcome::Attached(hosted, _)) => *hosted,
+            Ok(ResolveOutcome::Ended(end, _)) => panic!("the create ended: {:?}", end.kind),
+            Ok(ResolveOutcome::Starting) => panic!("the create is still starting"),
+            Err(error) => panic!("the create failed: {error}"),
+        }
+    }
+
+    fn verdict(&self, hosted: &HostedAttachment) -> AttemptVerdict {
+        let attempt = handed_off_attempt(hosted.resume_attempt.as_ref())
+            .expect("the create prepared a conversation handoff");
+        wait_for("the launcher reporting the conversation attempt", || {
+            let report = resume_attempt_at(&self.endpoint, &hosted.attachment.session).ok()?;
+            match attempt_verdict(report.as_ref(), &attempt) {
+                AttemptVerdict::Pending => None,
+                verdict => Some(verdict),
+            }
+        })
     }
 
     fn type_bytes(&self, session: &SessionId, bytes: &[u8]) {
@@ -393,4 +454,113 @@ fn a_program_missing_at_resume_fails_with_its_name_and_drops_the_record() {
             .is_empty()
             .then_some(())
     });
+}
+
+fn resume_a_lost_claude_conversation_in(shell: &str) {
+    let bench = Bench::new();
+    let recorded = bench.conversation();
+    let resume = conversation_resume_request(
+        &recorded,
+        &paneflow_config::schema::PaneFlowConfig::default(),
+    )
+    .expect("Claude resumes by id");
+    let argv = resume.argv.clone().expect("the request carries the argv");
+    assert_eq!(argv[..3], ["claude", "--resume", CLAUDE_ID]);
+    let hosted = bench.create_resuming(shell, true, resume);
+    let session = hosted.attachment.session.clone();
+    assert_eq!(bench.dump(), argv[1..]);
+    assert_eq!(bench.verdict(&hosted), AttemptVerdict::Started);
+    let report = resume_attempt_at(&bench.endpoint, &session)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        report.outcome,
+        AttemptOutcome::Started,
+        "no session.input reached the host, so the attempt never settled on input"
+    );
+}
+
+#[test]
+fn a_lost_claude_conversation_is_created_with_its_handoff_and_starts_without_a_keystroke() {
+    resume_a_lost_claude_conversation_in(BASH);
+}
+
+#[test]
+fn zsh_resumes_a_lost_claude_conversation_through_the_same_handoff() {
+    if let Some(zsh) = ["/usr/bin/zsh", "/bin/zsh"]
+        .into_iter()
+        .find(|path| Path::new(path).is_file())
+    {
+        resume_a_lost_claude_conversation_in(zsh);
+    }
+}
+
+#[test]
+fn a_shell_without_integration_refuses_the_handoff_so_the_desktop_keeps_typing() {
+    let bench = Bench::new();
+    let resume = conversation_resume_request(
+        &bench.conversation(),
+        &paneflow_config::schema::PaneFlowConfig::default(),
+    )
+    .unwrap();
+    let hosted = bench.create_resuming(BASH, false, resume);
+    let report = hosted
+        .resume_attempt
+        .clone()
+        .expect("the refusal is reported");
+    assert_eq!(report.outcome, AttemptOutcome::Refused);
+    assert_eq!(report.reason.as_deref(), Some("shell_unsupported"));
+    assert_eq!(handed_off_attempt(Some(&report)), None);
+    assert!(
+        !std::fs::exists(bench.work.join("argv.dump")).unwrap(),
+        "nothing ran from a handoff the shell cannot consume"
+    );
+}
+
+#[test]
+fn the_offered_conversation_types_only_the_launcher_and_handoff_paths() {
+    let bench = Bench::new();
+    let session = bench.create_bash();
+    let resume = conversation_resume_request(
+        &bench.conversation(),
+        &paneflow_config::schema::PaneFlowConfig::default(),
+    )
+    .unwrap();
+    let argv = resume.argv.clone().unwrap();
+    let command = argv.join(" ");
+    let prepared = prepare_command_resume_at(
+        &bench.endpoint,
+        &session,
+        argv.clone(),
+        bench.work.display().to_string(),
+    )
+    .unwrap();
+    assert_eq!(prepared.record, None);
+    let typed = typed_resume_input(ShellQuoting::Posix, Ok(&prepared), &command);
+    let text = String::from_utf8(typed.clone()).unwrap();
+    assert!(
+        !text.contains(CLAUDE_ID),
+        "the conversation id was typed: {text}"
+    );
+    bench.type_bytes(&session, &typed);
+    assert_eq!(bench.dump(), argv[1..]);
+}
+
+#[test]
+fn a_conversation_whose_agent_is_missing_reports_a_failed_attempt() {
+    let bench = Bench::new();
+    let resume = paneflow_host::host::ResumeRequest {
+        argv: Some(vec![
+            "paneflow-missing-agent".to_string(),
+            "--resume".to_string(),
+            CLAUDE_ID.to_string(),
+        ]),
+        cwd: Some(bench.work.display().to_string()),
+        ..paneflow_host::host::ResumeRequest::default()
+    };
+    let hosted = bench.create_resuming(BASH, true, resume);
+    assert_eq!(
+        bench.verdict(&hosted),
+        AttemptVerdict::Failed("could not start paneflow-missing-agent: not found".to_string())
+    );
 }

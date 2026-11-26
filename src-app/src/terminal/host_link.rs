@@ -559,13 +559,16 @@ fn ended_with_final_text(
 }
 
 pub(in crate::terminal) fn create_request(request: &AttachRequest) -> CreateSession {
-    paneflow_launch::create_request(
-        &request.params.launch(),
-        request.session.clone(),
-        request.workspace.clone(),
-        Some(request.appearance.clone()),
-        request.cell,
-    )
+    CreateSession {
+        resume: request.resume.clone(),
+        ..paneflow_launch::create_request(
+            &request.params.launch(),
+            request.session.clone(),
+            request.workspace.clone(),
+            Some(request.appearance.clone()),
+            request.cell,
+        )
+    }
 }
 
 fn worker_launch_params(request: &AttachRequest, route: &WorkerRoute) -> serde_json::Value {
@@ -895,6 +898,34 @@ pub(crate) fn prepare_resume_at(
                 &paneflow_host::host::ResumeRequest {
                     record: Some(record),
                     confirmed: true,
+                    ..paneflow_host::host::ResumeRequest::default()
+                },
+            )
+        })
+        .map_err(|error| refusal_or_message(&error))
+}
+
+pub(crate) fn prepare_command_resume(
+    session: &SessionId,
+    argv: Vec<String>,
+    cwd: String,
+) -> Result<paneflow_host::host::PreparedResume, String> {
+    prepare_command_resume_at(&window_endpoint()?, session, argv, cwd)
+}
+
+pub(crate) fn prepare_command_resume_at(
+    endpoint: &Path,
+    session: &SessionId,
+    argv: Vec<String>,
+    cwd: String,
+) -> Result<paneflow_host::host::PreparedResume, String> {
+    connect(endpoint)
+        .and_then(|mut client| {
+            client.prepare_resume(
+                session,
+                &paneflow_host::host::ResumeRequest {
+                    argv: Some(argv),
+                    cwd: Some(cwd),
                     ..paneflow_host::host::ResumeRequest::default()
                 },
             )
