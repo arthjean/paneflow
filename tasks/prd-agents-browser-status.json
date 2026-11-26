@@ -41,9 +41,9 @@
     {
       "id": "EP-005",
       "title": "GPU presentation on Linux",
-      "status": "TODO",
+      "status": "IN_PROGRESS",
       "priority": "P1",
-      "stories_total": 5,
+      "stories_total": 10,
       "stories_done": 0
     },
     {
@@ -485,12 +485,12 @@
       "id": "US-031",
       "title": "Add the external-texture seam to the vendored renderer",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "blocked_by": [
         "US-025"
       ],
-      "started_at": null,
+      "started_at": "2026-11-26T10:59:45+01:00",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -498,12 +498,12 @@
       "id": "US-032",
       "title": "Export frames from the host as owned dmabufs",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "blocked_by": [
         "US-031"
       ],
-      "started_at": null,
+      "started_at": "2026-11-26T11:23:32+01:00",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -511,13 +511,13 @@
       "id": "US-033",
       "title": "Import and present GPU frames in the window",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "blocked_by": [
         "US-032",
         "US-034"
       ],
-      "started_at": null,
+      "started_at": "2026-11-26T11:46:19+01:00",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -525,12 +525,77 @@
       "id": "US-034",
       "title": "Make the fallback explicit",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "blocked_by": [
         "US-025",
         "US-021"
       ],
+      "started_at": "2026-11-26T11:06:46+01:00",
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-058",
+      "title": "Compose a displayed tab's frames in a Wayland subsurface",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-033"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-059",
+      "title": "Place, scale and hide the subsurface with the page",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-058"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-060",
+      "title": "Draw Paneflow's own surfaces above a page",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-058",
+        "US-031"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-061",
+      "title": "Fall back when the compositor cannot take the page",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-058",
+        "US-034"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-062",
+      "title": "Attribute the window's cost in the latency A/B",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
@@ -542,9 +607,14 @@
       "status": "TODO",
       "priority": "P1",
       "blocked_by": [
-        "US-033"
+        "US-033",
+        "US-058",
+        "US-059",
+        "US-060",
+        "US-061",
+        "US-062"
       ],
-      "started_at": null,
+      "started_at": "2026-11-26T11:57:25+01:00",
       "completed_at": null,
       "reviewed_at": null
     },
