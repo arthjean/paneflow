@@ -23,6 +23,7 @@ summary = "Installs Paneflow hooks in Codex's global hooks file so its conversat
 post_install_step = "Trust the Paneflow hooks once in Codex with /hooks."
 hook_adapter = "codex"
 mcp_config = "codex"
+skills_dir = "agents"
 
 [resume]
 session_argv = ["codex", "-c", "check_for_update_on_startup=false", "resume", "{session_id}"]

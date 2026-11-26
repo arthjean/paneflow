@@ -14,7 +14,8 @@ use paneflow_serve::controller::{EventFrame, EventRequest, EventStream};
 use serde_json::{Map, Value, json};
 
 use super::router::{self, Endpoints};
-use super::{CliError, EXIT_RUNTIME};
+use super::sliced_wait::{Budget, Clock, SystemClock};
+use super::{CliError, EXIT_RUNTIME, EXIT_TIMEOUT};
 
 #[derive(Args, Debug)]
 pub(super) struct DoArgs {
@@ -71,6 +72,20 @@ pub(super) struct DoArgs {
         help = "Load the script as a configuration such as init.lua and run this action from it, in this process; the worker's loaded configuration is untouched"
     )]
     action: Option<String>,
+    #[arg(
+        long,
+        value_name = "DURATION",
+        conflicts_with_all = ["chunk", "action"],
+        help = "For an action name: wait at most this long, such as 30s or 10m. If the action still runs, print `running <run_id>` and exit 4; without --wait, wait until it ends"
+    )]
+    wait: Option<String>,
+    #[arg(
+        long,
+        value_name = "RUN_ID",
+        conflicts_with_all = ["chunk", "action", "items", "args"],
+        help = "Keep waiting for the action run a previous `paneflow do <action> --wait` printed as `running <run_id>`; with --wait, wait at most that long"
+    )]
+    resume: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -561,11 +576,127 @@ pub(super) fn invoke_on_worker(
         .cloned())
 }
 
+pub(super) enum RunStart {
+    Invoke { name: String, args: Value },
+    Resume(String),
+}
+
+pub(super) enum RunEnded {
+    Done(Option<Value>),
+    Running(String),
+}
+
+pub(super) fn sliced_run(
+    call: &mut dyn FnMut(&str, Value) -> Result<Value, CliError>,
+    clock: &dyn Clock,
+    limit: Option<Duration>,
+    start: RunStart,
+    context: &paneflow_api::methods::config::InvokeContext,
+) -> Result<RunEnded, CliError> {
+    use paneflow_api::methods::config::MAX_ACTION_WAIT_MS;
+    let budget = Budget::new(clock, limit, MAX_ACTION_WAIT_MS);
+    let (mut reply, mut run_id) = match start {
+        RunStart::Invoke { name, args } => (
+            call(
+                "action.invoke",
+                json!({
+                    "name": name,
+                    "args": args,
+                    "ctx": serde_json::to_value(context).unwrap_or_else(|_| json!({})),
+                    "wait_ms": budget.slice_ms(),
+                }),
+            )?,
+            None,
+        ),
+        RunStart::Resume(run_id) => (
+            call(
+                "action.wait",
+                json!({"run_id": run_id, "wait_ms": budget.slice_ms()}),
+            )?,
+            Some(run_id),
+        ),
+    };
+    loop {
+        match reply["status"].as_str() {
+            Some("running") => {
+                let Some(running) = reply["run_id"]
+                    .as_str()
+                    .map(str::to_string)
+                    .or_else(|| run_id.clone())
+                else {
+                    return Err(CliError::runtime(
+                        "the worker reported a running action without its run id",
+                    ));
+                };
+                if budget.spent() {
+                    return Ok(RunEnded::Running(running));
+                }
+                reply = call(
+                    "action.wait",
+                    json!({"run_id": running, "wait_ms": budget.slice_ms()}),
+                )?;
+                run_id = Some(running);
+            }
+            Some("rate_limited") => {
+                return Err(CliError::runtime(
+                    "rate limited: an agent runs at most 3 actions in a burst, then 1 per second; retry in a second",
+                ));
+            }
+            _ => {
+                return Ok(RunEnded::Done(
+                    reply
+                        .get("result")
+                        .filter(|value| !value.is_null())
+                        .cloned(),
+                ));
+            }
+        }
+    }
+}
+
+fn run_with_wait(start: RunStart, args: &DoArgs) -> i32 {
+    let limit = match args.wait.as_deref().map(parse_duration).transpose() {
+        Ok(limit) => limit,
+        Err(error) => return report_error(&error.message),
+    };
+    let owners = match router::Owners::from_environment() {
+        Ok(owners) => owners,
+        Err(error) => return report_error(&error.message),
+    };
+    let clock = SystemClock::start();
+    match sliced_run(
+        &mut |method, params| owners.call(method, params),
+        &clock,
+        limit,
+        start,
+        &invoke_context(),
+    ) {
+        Ok(RunEnded::Done(value)) => {
+            print_result(value.as_ref(), args.json);
+            super::EXIT_OK
+        }
+        Ok(RunEnded::Running(run_id)) => {
+            println!("running {run_id}");
+            EXIT_TIMEOUT
+        }
+        Err(error) => report_error(&error.message),
+    }
+}
+
 fn run_worker_action(name: &str, pairs: &[String], args: &DoArgs) -> i32 {
     let values = match script_args(pairs, args.args.as_deref()) {
         Ok(values) => values,
         Err(error) => return report_error(&error.message),
     };
+    if args.wait.is_some() {
+        return run_with_wait(
+            RunStart::Invoke {
+                name: name.to_string(),
+                args: values,
+            },
+            args,
+        );
+    }
     match invoke_on_worker(name, values, invoke_context()) {
         Ok(value) => {
             print_result(value.as_ref(), args.json);
@@ -632,6 +763,9 @@ fn run_local_action(action: &str, path: &std::path::Path, pairs: &[String], args
 }
 
 pub(super) fn run(args: DoArgs) -> i32 {
+    if let Some(run_id) = args.resume.clone() {
+        return run_with_wait(RunStart::Resume(run_id), &args);
+    }
     match (
         classify(args.chunk.as_deref(), &args.items),
         args.action.as_deref(),
@@ -645,6 +779,11 @@ pub(super) fn run(args: DoArgs) -> i32 {
         (Ok(_), Some(_)) => {
             return report_error(
                 "--action needs a configuration file such as ~/.paneflow/init.lua",
+            );
+        }
+        (Ok(_), None) if args.wait.is_some() => {
+            return report_error(
+                "--wait applies to an action of init.lua, run by its name; a script runs in this process until it ends",
             );
         }
         _ => {}
@@ -845,10 +984,145 @@ mod tests {
             memory_limit: None,
             deadline: None,
             action: None,
+            wait: None,
+            resume: None,
         };
         let options = options(&args, None, json!({})).unwrap();
         assert_eq!(options.memory_limit, None);
         assert_eq!(options.deadline, None);
         assert_eq!(options.run_for, None);
+    }
+
+    struct ScriptedRun<'c> {
+        clock: &'c super::super::sliced_wait::fake::FakeClock,
+        ends_at_ms: u64,
+        calls: Vec<(String, Value)>,
+    }
+
+    impl ScriptedRun<'_> {
+        fn call(&mut self, method: &str, params: Value) -> Result<Value, CliError> {
+            self.calls.push((method.to_string(), params.clone()));
+            if method == "action.wait" && params["run_id"] != "r1" {
+                return Err(CliError::runtime("no action run r9"));
+            }
+            let wait = params["wait_ms"].as_u64().unwrap_or(0);
+            let now = self.clock.now_ms();
+            if now + wait >= self.ends_at_ms {
+                self.clock.advance_ms(self.ends_at_ms.saturating_sub(now));
+                return Ok(json!({"status": "done", "result": {"deployed": true}}));
+            }
+            self.clock.advance_ms(wait);
+            Ok(json!({"status": "running", "run_id": "r1"}))
+        }
+    }
+
+    fn invoke(name: &str) -> RunStart {
+        RunStart::Invoke {
+            name: name.to_string(),
+            args: json!({}),
+        }
+    }
+
+    #[test]
+    fn an_action_of_forty_seconds_ends_through_waits_of_at_most_twenty_five_seconds() {
+        let clock = super::super::sliced_wait::fake::FakeClock::default();
+        let mut scripted = ScriptedRun {
+            clock: &clock,
+            ends_at_ms: 40_000,
+            calls: Vec::new(),
+        };
+        let ended = sliced_run(
+            &mut |method, params| scripted.call(method, params),
+            &clock,
+            Some(Duration::from_secs(60)),
+            invoke("deploy"),
+            &invoke_context(),
+        )
+        .unwrap();
+        assert!(matches!(ended, RunEnded::Done(Some(ref value)) if value["deployed"] == true));
+        let methods: Vec<&str> = scripted.calls.iter().map(|(m, _)| m.as_str()).collect();
+        assert_eq!(methods, ["action.invoke", "action.wait"]);
+        for (_, params) in &scripted.calls {
+            assert!(params["wait_ms"].as_u64().unwrap() <= 25_000, "{params}");
+        }
+        assert_eq!(scripted.calls[0].1["wait_ms"], 25_000);
+        assert_eq!(scripted.calls[1].1["run_id"], "r1");
+    }
+
+    #[test]
+    fn a_run_still_going_when_the_wait_passes_hands_back_its_run_id() {
+        let clock = super::super::sliced_wait::fake::FakeClock::default();
+        let mut scripted = ScriptedRun {
+            clock: &clock,
+            ends_at_ms: 5_000,
+            calls: Vec::new(),
+        };
+        let ended = sliced_run(
+            &mut |method, params| scripted.call(method, params),
+            &clock,
+            Some(Duration::from_secs(1)),
+            invoke("deploy"),
+            &invoke_context(),
+        )
+        .unwrap();
+        assert!(matches!(ended, RunEnded::Running(ref id) if id == "r1"));
+        assert_eq!(scripted.calls.len(), 1);
+        assert_eq!(scripted.calls[0].1["wait_ms"], 1_000);
+    }
+
+    #[test]
+    fn a_resume_without_a_wait_follows_the_run_to_its_end() {
+        let clock = super::super::sliced_wait::fake::FakeClock::default();
+        let mut scripted = ScriptedRun {
+            clock: &clock,
+            ends_at_ms: 90_000,
+            calls: Vec::new(),
+        };
+        let ended = sliced_run(
+            &mut |method, params| scripted.call(method, params),
+            &clock,
+            None,
+            RunStart::Resume("r1".into()),
+            &invoke_context(),
+        )
+        .unwrap();
+        assert!(matches!(ended, RunEnded::Done(Some(_))));
+        assert!(
+            scripted
+                .calls
+                .iter()
+                .all(|(method, params)| method == "action.wait"
+                    && params["wait_ms"].as_u64().unwrap() <= 25_000)
+        );
+        assert_eq!(scripted.calls.len(), 4);
+
+        let refused = sliced_run(
+            &mut |method, params| scripted.call(method, params),
+            &clock,
+            None,
+            RunStart::Resume("r9".into()),
+            &invoke_context(),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(refused.message, "no action run r9");
+    }
+
+    #[test]
+    fn a_rate_limited_run_is_an_error() {
+        let refused = sliced_run(
+            &mut |_, _| Ok(json!({"status": "rate_limited"})),
+            &super::super::sliced_wait::fake::FakeClock::default(),
+            Some(Duration::from_secs(1)),
+            invoke("deploy"),
+            &invoke_context(),
+        )
+        .err()
+        .unwrap();
+        assert!(
+            refused.message.starts_with("rate limited"),
+            "{}",
+            refused.message
+        );
     }
 }

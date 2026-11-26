@@ -47,6 +47,7 @@ pub enum RuntimeMcpConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeSkillsDir {
     Claude,
+    Agents,
 }
 
 #[derive(Debug, Clone, Copy)]

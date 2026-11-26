@@ -4,6 +4,7 @@ use paneflow_ipc_client::{IpcClient, IpcTransport};
 use serde_json::Value;
 
 pub(crate) mod api_cmd;
+mod ask_cmd;
 mod config_cmd;
 mod control_cmds;
 mod do_cmd;
@@ -19,12 +20,14 @@ mod selector;
 mod send_cmd;
 mod serve_cmd;
 mod sessions_cmd;
+mod sliced_wait;
 mod surface_read;
 mod up_cmd;
 mod wait_cmd;
 mod watch_cmd;
 mod worker_state;
 mod workspace_spec;
+mod write_cmd;
 
 pub const EXIT_OK: i32 = 0;
 pub const EXIT_RUNTIME: i32 = 1;
@@ -46,6 +49,8 @@ const VERBS: &[&str] = &[
     "select",
     "split",
     "send",
+    "write",
+    "ask",
     "up",
     "wait",
     "watch",
@@ -201,7 +206,7 @@ enum Commands {
     Api(api_cmd::ApiCommand),
     #[command(
         about = "Run a Lua script against Paneflow: a file, -e '<chunk>' or - for stdin",
-        long_about = "Run a Lua 5.4 script in this process against Paneflow. The script reaches every method as paneflow.<namespace>.<method>{...}, reacts to events with paneflow.on and paneflow.wait, sets timers with paneflow.after and paneflow.every, and runs programs with paneflow.exec.\n\nkey=value pairs after the script fill paneflow.args, typed by spelling (n=2 is a number, on=true a boolean). A returned value is printed as one line of JSON. An error prints `Error: <message>` and exits 1; paneflow.stop(n) exits n; Ctrl-C exits 130.\n\nExamples:\n  paneflow do ./split.lua\n  paneflow do -e 'return paneflow.surface.list()'\n  echo 'return paneflow.args.n * 2' | paneflow do - n=21"
+        long_about = "Run a Lua 5.4 script in this process against Paneflow. The script reaches every method as paneflow.<namespace>.<method>{...}, reacts to events with paneflow.on and paneflow.wait, sets timers with paneflow.after and paneflow.every, and runs programs with paneflow.exec.\n\nkey=value pairs after the script fill paneflow.args, typed by spelling (n=2 is a number, on=true a boolean). A returned value is printed as one line of JSON. An error prints `Error: <message>` and exits 1; paneflow.stop(n) exits n; Ctrl-C exits 130.\n\nExamples:\n  paneflow do ./split.lua\n  paneflow do -e 'return paneflow.surface.list()'\n  echo 'return paneflow.args.n * 2' | paneflow do - n=21\n\nA name instead of a script runs that action of init.lua on the worker. With --wait it waits at most that long: an action still running prints `running <run_id>` and exits 4, and `paneflow do --resume <run_id>` keeps waiting.\n\n  paneflow do deploy env=prod --wait 20s\n  paneflow do --resume 3f2a --wait 20s"
     )]
     Do(do_cmd::DoArgs),
     #[command(
@@ -400,6 +405,16 @@ enum Commands {
         )]
         scope: String,
     },
+    #[command(
+        about = "Relay a message into another agent's pane once a human allows the pair of panes",
+        long_about = "Relay a message into another agent's pane once a human allows the pair of panes.\n\nRun it from a Paneflow pane. Paneflow prefixes the message with a line naming the calling pane. The first write between two panes asks the human in the Paneflow window: it prints `approval_pending <request>` and exits 0 without writing anything; run the same command again once the human allows the pair. It prints `written` when the message is delivered, and `no_window` with exit 1 when no window can ask the human.\n\nExamples:\n  paneflow write reviewer \"the tests pass on main\"\n  paneflow write 12 \"rebase on main\" --submit"
+    )]
+    Write(write_cmd::WriteArgs),
+    #[command(
+        about = "Ask the user a question in the Paneflow window and print the answer",
+        long_about = "Ask the user a question in the Paneflow window and print the answer.\n\nWithout --option the user types a line; with options the user picks one, or several with --multiple, each printed on its own line. It waits 20s by default; past --timeout it prints `pending <id>` and exits 4, and `paneflow ask --resume <id>` keeps waiting.\n\nExamples:\n  paneflow ask \"Deploy now?\" --option yes --option no\n  paneflow ask \"Branch name?\" --timeout 2m\n  paneflow ask --resume 7"
+    )]
+    Ask(ask_cmd::AskArgs),
     #[command(about = "Give a targeted surface the keyboard focus")]
     Focus {
         #[arg(help = "Target: surface id, name, `cmdline:<substr>`, or `cwd:<path>`")]
@@ -642,6 +657,26 @@ pub fn run() -> i32 {
 
     if let Commands::Do(args) = command {
         return do_cmd::run(args);
+    }
+
+    if let Commands::Write(args) = command {
+        return match write_cmd::run(&args) {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("paneflow: {}", e.message);
+                e.code
+            }
+        };
+    }
+
+    if let Commands::Ask(args) = command {
+        return match ask_cmd::run(&args) {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("paneflow: {}", e.message);
+                e.code
+            }
+        };
     }
 
     if let Commands::Actions { json } = command {
@@ -1066,6 +1101,8 @@ fn dispatch(command: Commands, client: &CliTransport) -> Result<i32, CliError> {
             None => Err(CliTransport::no_controller("paneflow watch")),
         },
         Commands::Api(command) => api_cmd::run(command),
+        Commands::Write(args) => write_cmd::run(&args),
+        Commands::Ask(args) => ask_cmd::run(&args),
         Commands::Do(args) => Ok(do_cmd::run(args)),
         Commands::Actions { json } => config_cmd::actions(json),
         Commands::Config(command) => config_cmd::run(command),

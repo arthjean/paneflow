@@ -162,6 +162,26 @@ pub(super) fn send(
     }
 }
 
+pub(super) struct Owners {
+    catalog: Catalog,
+    endpoints: Endpoints,
+}
+
+impl Owners {
+    pub(super) fn from_environment() -> Result<Self, CliError> {
+        Ok(Self {
+            catalog: paneflow_api::catalog()
+                .map_err(|error| CliError::runtime(error.to_string()))?,
+            endpoints: Endpoints::from_environment(),
+        })
+    }
+
+    pub(super) fn call(&self, method: &str, params: Value) -> Result<Value, CliError> {
+        let endpoint = route(&self.catalog, &self.endpoints, method)?;
+        send(&self.catalog, &endpoint, method, params)
+    }
+}
+
 pub(super) fn worker_listens(endpoints: &Endpoints) -> bool {
     endpoints
         .worker

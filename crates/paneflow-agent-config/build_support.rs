@@ -97,7 +97,7 @@ impl TryFrom<String> for ProgramResumeReporting {
 }
 
 pub const ACCEPTED_MCP_CONFIGS: &str = "claude, codex, gemini, opencode, fx";
-pub const ACCEPTED_SKILLS_DIRS: &str = "claude";
+pub const ACCEPTED_SKILLS_DIRS: &str = "claude, agents";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(try_from = "String")]
@@ -142,12 +142,14 @@ impl TryFrom<String> for McpConfig {
 #[serde(try_from = "String")]
 pub enum SkillsDir {
     Claude,
+    Agents,
 }
 
 impl SkillsDir {
     fn variant(self) -> &'static str {
         match self {
             Self::Claude => "Claude",
+            Self::Agents => "Agents",
         }
     }
 }
@@ -158,6 +160,7 @@ impl TryFrom<String> for SkillsDir {
     fn try_from(value: String) -> Result<Self, Self::Error> {
         match value.as_str() {
             "claude" => Ok(Self::Claude),
+            "agents" => Ok(Self::Agents),
             other => Err(format!(
                 "integration.skills_dir '{other}' is not a verified skills directory; accepted directories: {ACCEPTED_SKILLS_DIRS}"
             )),
@@ -1302,6 +1305,35 @@ command = "{alias}"
             error.contains("integration.mcp_config 'cursor'")
                 && error.contains(ACCEPTED_MCP_CONFIGS),
             "{error}"
+        );
+    }
+
+    #[test]
+    fn an_unknown_skills_dir_fails_naming_the_accepted_directories() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let text = descriptor("alpha", "com.example.alpha", "alpha").replace(
+            "hook_adapter = \"none\"",
+            "hook_adapter = \"none\"\nskills_dir = \"gemini\"",
+        );
+        write_runtime(temp.path(), "alpha", &text);
+        let error = discover_and_validate(temp.path()).unwrap_err();
+        assert!(
+            error.contains("integration.skills_dir 'gemini'")
+                && error.contains("claude, agents")
+                && error.contains("alpha"),
+            "{error}"
+        );
+
+        let temp = tempfile::TempDir::new().unwrap();
+        let text = descriptor("alpha", "com.example.alpha", "alpha").replace(
+            "hook_adapter = \"none\"",
+            "hook_adapter = \"none\"\nskills_dir = \"agents\"",
+        );
+        write_runtime(temp.path(), "alpha", &text);
+        let catalog = discover_and_validate(temp.path()).unwrap();
+        assert_eq!(
+            catalog[0].descriptor.integration.skills_dir,
+            Some(SkillsDir::Agents)
         );
     }
 

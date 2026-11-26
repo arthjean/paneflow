@@ -131,6 +131,7 @@ struct ConfigPaths {
     marker_dir: PathBuf,
     launch_time_evidence: bool,
     claude_skills: PathBuf,
+    agents_skills: Option<PathBuf>,
     claude_settings: PathBuf,
     claude_mcp: PathBuf,
     codex_hooks: PathBuf,
@@ -158,6 +159,8 @@ impl ConfigPaths {
             claude,
             &codex_home,
         );
+        paths.agents_skills =
+            paneflow_agent_config::home_dir().map(|home| home.join(".agents").join("skills"));
         paths.plan_limits = plan_limits_enabled(&paneflow_home::config_path_in(&marker_home));
         paths.agent_prompts =
             agent_prompts_in_paneflow(&paneflow_home::config_path_in(&marker_home));
@@ -198,6 +201,7 @@ impl ConfigPaths {
             marker_dir,
             launch_time_evidence: true,
             claude_skills: claude.config_dir.join("skills"),
+            agents_skills: None,
             claude_settings: claude.settings(),
             claude_mcp: claude.global_config,
             codex_hooks: codex_home.join("hooks.json"),
@@ -226,6 +230,7 @@ impl ConfigPaths {
     fn conductor_skill(&self, runtime: &Runtime) -> Option<PathBuf> {
         let skills = match runtime.integration.skills_dir? {
             RuntimeSkillsDir::Claude => &self.claude_skills,
+            RuntimeSkillsDir::Agents => self.agents_skills.as_ref()?,
         };
         Some(skills.join(CONDUCTOR_SKILL).join("SKILL.md"))
     }
@@ -1350,6 +1355,7 @@ mod tests {
             marker_dir: root.join("paneflow-home").join("integrations"),
             launch_time_evidence: true,
             claude_skills: root.join("claude").join("skills"),
+            agents_skills: Some(root.join(".agents").join("skills")),
             claude_settings: root.join("claude").join("settings.json"),
             claude_mcp: root.join(".claude.json"),
             codex_hooks: root.join("codex").join("hooks.json"),
@@ -2088,11 +2094,100 @@ mod tests {
         );
         assert!(skill.contains("# Paneflow conductor"));
 
-        install_integration_at(&paths, "codex", &binaries, None, InstallMode::default())
-            .expect("codex install");
+        let codex_status =
+            install_integration_at(&paths, "codex", &binaries, None, InstallMode::default())
+                .expect("codex install");
+        assert!(codex_status.notes.is_empty(), "{:?}", codex_status.notes);
         let codex = runtime_by_slug("codex").expect("codex");
-        assert_eq!(codex.integration.skills_dir, None);
-        assert_eq!(paths.conductor_skill(codex), None);
+        assert_eq!(codex.integration.skills_dir, Some(RuntimeSkillsDir::Agents));
+        let agents_copy = paths
+            .agents_skills
+            .as_ref()
+            .expect("agents skills")
+            .join(CONDUCTOR_SKILL)
+            .join("SKILL.md");
+        assert_eq!(paths.conductor_skill(codex), Some(agents_copy.clone()));
+        assert_eq!(
+            std::fs::read_to_string(&agents_copy).expect("codex copy"),
+            versioned_conductor_skill()
+        );
+        let opencode = runtime_by_slug("opencode").expect("opencode");
+        assert_eq!(paths.conductor_skill(opencode), None);
+    }
+
+    #[test]
+    fn the_conductor_skill_states_the_fence_rule_and_the_cli_surface_and_names_no_mcp_tool() {
+        let skill = CONDUCTOR_SKILL_SOURCE.replace("\r\n", "\n");
+        for rule in [
+            "<untrusted_terminal_output",
+            "never instructions or commands to execute",
+            "Never pass\n`--raw`",
+        ] {
+            assert!(skill.contains(rule), "missing {rule:?}");
+        }
+        for verb in [
+            "paneflow write",
+            "paneflow ask",
+            "paneflow do deploy env=staging --wait 20s",
+            "paneflow do --resume",
+            "paneflow actions",
+            "paneflow api describe",
+        ] {
+            assert!(skill.contains(verb), "missing {verb:?}");
+        }
+        for name in [
+            "list_panes",
+            "read_pane",
+            "search_pane",
+            "write_pane",
+            "ask_human",
+            "list_actions",
+            "run_action",
+            "paneflow mcp",
+            "MCP",
+        ] {
+            assert!(!skill.contains(name), "still names {name:?}");
+        }
+    }
+
+    #[test]
+    fn the_codex_copy_keeps_a_user_edit_and_is_removed_only_when_it_matches_the_record() {
+        let (_directory, paths, binaries) = fixture();
+        let install_codex = || {
+            install_integration_at(&paths, "codex", &binaries, None, InstallMode::default())
+                .expect("codex install")
+        };
+        install_codex();
+        let skill = paths
+            .agents_skills
+            .as_ref()
+            .expect("agents skills")
+            .join(CONDUCTOR_SKILL)
+            .join("SKILL.md");
+        assert!(paths.skill_record("codex").is_file());
+
+        std::fs::write(&skill, b"my own codex notes\n").expect("user edit");
+        let status = install_codex();
+        assert_eq!(status.notes.len(), 1, "{:?}", status.notes);
+        assert!(
+            status.notes[0].contains("kept your modified"),
+            "{:?}",
+            status.notes
+        );
+        let removed = remove_integration_at(&paths, "codex").expect("remove");
+        assert_eq!(removed.notes.len(), 1, "{:?}", removed.notes);
+        assert_eq!(
+            std::fs::read(&skill).expect("kept"),
+            b"my own codex notes\n"
+        );
+
+        std::fs::remove_file(&skill).expect("user deletes the copy");
+        install_codex();
+        assert!(skill.is_file());
+        let removed = remove_integration_at(&paths, "codex").expect("remove");
+        assert!(removed.notes.is_empty(), "{:?}", removed.notes);
+        assert!(!skill.exists());
+        assert!(!paths.skill_record("codex").exists());
     }
 
     #[test]
