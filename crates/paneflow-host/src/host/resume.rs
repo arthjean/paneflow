@@ -55,6 +55,10 @@ impl SessionHost {
             _ => None,
         };
         let owner = program_resume::accepted_owner(&outcome, admission.as_ref());
+        let lineage: Vec<u32> = admission
+            .as_ref()
+            .map(|admission| admission.ancestors.iter().map(|stamp| stamp.pid).collect())
+            .unwrap_or_default();
         let now = now_ms();
         let mut changed = false;
         self.commit(
@@ -73,18 +77,24 @@ impl SessionHost {
             && changed
         {
             self.watch_resume_owner(&session, manifest, durability, owner);
-            self.settle_reported_attempt(&session, owner.pid);
+            self.settle_reported_attempt(&session, owner.pid, &lineage);
         }
     }
 
-    fn settle_reported_attempt(&self, session: &SessionId, pid: u32) {
+    fn settle_reported_attempt(&self, session: &SessionId, pid: u32, lineage: &[u32]) {
         if let Some(report) = self
             .lock_sessions()
             .get_mut(session)
             .and_then(|record| record.resume_attempt.as_mut())
-            .filter(|report| report.outcome == AttemptOutcome::Started && report.pid == Some(pid))
+            .filter(|report| {
+                report.outcome == AttemptOutcome::Started
+                    && report
+                        .pid
+                        .is_some_and(|started| started == pid || lineage.contains(&started))
+            })
         {
             report.outcome = AttemptOutcome::Settled;
+            report.pid = Some(pid);
         }
     }
 

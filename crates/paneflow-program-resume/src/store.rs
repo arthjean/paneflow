@@ -179,6 +179,8 @@ pub struct Record {
     pub attempt: Option<Attempt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sandbox: Option<SandboxStamp>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub handed_off: bool,
 }
 
 impl Record {
@@ -439,6 +441,7 @@ impl RecordStore {
         record.owner = owner;
         record.ancestors = ancestors;
         record.first_process = false;
+        record.handed_off = true;
         record.exited_at_ms = None;
         record.revision = revision;
         record.attempt = Some(Attempt {
@@ -510,7 +513,10 @@ impl RecordStore {
             return false;
         };
         self.replay.note(pid, time, now_ms / 1000);
-        self.records.retain(|record| record.owner.pid != pid);
+        self.records.retain(|record| {
+            record.owner.pid != pid
+                && !(record.handed_off && admission.ancestors.contains(&record.owner))
+        });
         if self.records.len() >= MAX_RECORDS
             && let Some(oldest) = self
                 .records
@@ -547,6 +553,7 @@ impl RecordStore {
             exited_at_ms: None,
             attempt: None,
             sandbox: admission.sandbox,
+            handed_off: false,
         });
         true
     }
@@ -967,6 +974,103 @@ mod tests {
             store.attempt_failed(&attempt_id(1), AttemptFailure::NotFound),
             Err(AttemptError::UnknownAttempt)
         );
+    }
+
+    #[test]
+    fn a_report_from_a_child_of_the_resumed_launcher_replaces_the_handed_off_record() {
+        let mut store = RecordStore::new();
+        assert!(accept(
+            &mut store,
+            argv_report(4242, &["pi", "--session", "old"]),
+            vec![stamp(100)]
+        ));
+        let id = store.records()[0].id;
+        store
+            .begin_attempt(id, attempt_id(1))
+            .expect("the record exists");
+        store
+            .attempt_started(&attempt_id(1), stamp(5000), vec![stamp(100)])
+            .expect("the attempt is prepared");
+        assert!(store.records()[0].handed_off);
+        assert!(accept(
+            &mut store,
+            argv_report(5001, &["pi", "--session", "old"]),
+            vec![stamp(5000), stamp(100)]
+        ));
+        assert_eq!(store.records().len(), 1, "{:?}", store.records());
+        let record = &store.records()[0];
+        assert_eq!(record.owner, stamp(5001));
+        assert!(record.settled());
+        assert!(!record.handed_off);
+
+        let clear = Report {
+            pid: 5001,
+            time: NOW_SECS + 1,
+            action: Action::Clear,
+            cwd: None,
+        };
+        assert!(store.apply(
+            Outcome::Accepted(clear),
+            |_| Some(admission(
+                stamp(5001).started_at,
+                vec![stamp(5000), stamp(100)]
+            )),
+            NOW_MS + 1000
+        ));
+        assert!(
+            store.candidate().is_none(),
+            "a cleared session leaves no stale handed-off command behind"
+        );
+    }
+
+    #[test]
+    fn a_child_report_keeps_the_record_of_an_ancestor_that_reported_itself() {
+        let mut store = RecordStore::new();
+        assert!(accept(
+            &mut store,
+            argv_report(4242, &["resume-wrap", "ssh"]),
+            vec![]
+        ));
+        let id = store.records()[0].id;
+        store
+            .begin_attempt(id, attempt_id(1))
+            .expect("the record exists");
+        store
+            .attempt_started(&attempt_id(1), stamp(5000), vec![])
+            .expect("the attempt is prepared");
+        assert!(accept(
+            &mut store,
+            argv_report(5000, &["resume-wrap", "ssh"]),
+            vec![]
+        ));
+        assert!(accept(
+            &mut store,
+            argv_report(5001, &["ssh", "devbox"]),
+            vec![stamp(5000)]
+        ));
+        assert_eq!(store.records().len(), 2);
+        assert_eq!(
+            store.candidate().map(|record| record.argv.clone()),
+            Some(vec!["resume-wrap".to_owned(), "ssh".to_owned()])
+        );
+    }
+
+    #[test]
+    fn the_handed_off_mark_survives_a_save_and_is_absent_from_an_ordinary_record() {
+        let mut store = RecordStore::new();
+        assert!(accept(&mut store, argv_report(4242, &["nvim"]), vec![]));
+        let plain = serde_json::to_value(&store).unwrap();
+        assert!(plain["records"][0].get("handed_off").is_none());
+        let id = store.records()[0].id;
+        store
+            .begin_attempt(id, attempt_id(1))
+            .expect("the record exists");
+        store
+            .attempt_started(&attempt_id(1), stamp(5000), vec![])
+            .expect("the attempt is prepared");
+        let saved = serde_json::to_string(&store).unwrap();
+        let read: RecordStore = serde_json::from_str(&saved).unwrap();
+        assert!(read.records()[0].handed_off);
     }
 
     #[test]
