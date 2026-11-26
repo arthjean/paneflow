@@ -1,0 +1,482 @@
+{
+  "prd": {
+    "file": "tasks/prd-program-resume.md",
+    "title": "OSC 7577 Program Resume Protocol in Paneflow",
+    "created_at": "2026-11-26",
+    "status": "IN_PROGRESS"
+  },
+  "epics": [
+    {
+      "id": "EP-001",
+      "title": "Protocol core",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 4,
+      "stories_done": 4
+    },
+    {
+      "id": "EP-002",
+      "title": "The host as the OSC 7577 terminal",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 5,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-003",
+      "title": "Resume launcher and first-prompt handoff",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 6,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-004",
+      "title": "Restore policy and banners in the desktop",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 5,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-005",
+      "title": "Catalog conversations ride the launcher",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 2,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-006",
+      "title": "Linux end to end and documentation",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 4,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-007",
+      "title": "Windows hardware proofs",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 3,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-008",
+      "title": "macOS hardware proofs",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 2,
+      "stories_done": 0
+    }
+  ],
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Strict report parser",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "blocked_by": [],
+      "started_at": "2026-11-26",
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26"
+    },
+    {
+      "id": "US-002",
+      "title": "MAC, time and outcome classification",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": "2026-11-26",
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26"
+    },
+    {
+      "id": "US-003",
+      "title": "Record store and record choice",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "blocked_by": [
+        "US-002"
+      ],
+      "started_at": "2026-11-26",
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26"
+    },
+    {
+      "id": "US-004",
+      "title": "Property tests and fuzz target",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P1",
+      "blocked_by": [
+        "US-001"
+      ],
+      "started_at": "2026-11-26",
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26"
+    },
+    {
+      "id": "US-005",
+      "title": "Per-generation token in the pane environment",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-006",
+      "title": "Ingest reports from the unknown-sequence callback",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-003",
+        "US-005"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-007",
+      "title": "Owner validation and ancestry capture",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-006"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-008",
+      "title": "Durable, private record persistence and inspection",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-007"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-009",
+      "title": "Owner lifetime through kernel exit notification",
+      "epic": "EP-002",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-008"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-010",
+      "title": "`paneflow-resume` launcher mode in the shim",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-011",
+      "title": "Resume attempt reports and ownership transfer",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-008",
+        "US-010"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-012",
+      "title": "Handoff consumption in the shell integration",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-010"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-013",
+      "title": "Host restart with a resume handoff",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-011",
+        "US-012"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-014",
+      "title": "Live-session and catalog handoff entry points",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-013"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-015",
+      "title": "Exact argv delivery across shells (validation)",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-013"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-016",
+      "title": "`terminal.program_resume` configuration",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-005"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-017",
+      "title": "Restore decision for lost sessions",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-013",
+        "US-016"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-018",
+      "title": "Resume offer banner with an escaped command",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-014",
+        "US-017"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-019",
+      "title": "Agent records follow agent rules",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-017"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-020",
+      "title": "The shim strips the token from agents without native reporting",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-005"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-021",
+      "title": "Automatic conversation resume through the handoff",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-014"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-022",
+      "title": "Offer and fallback paths without argument typing",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-021"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-023",
+      "title": "Host crash end-to-end test",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-017"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-024",
+      "title": "Pi live validation on Linux (validation)",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-019"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-025",
+      "title": "Architecture and threat-model documentation",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-023"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-026",
+      "title": "Manual GUI pass on Linux",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-018",
+        "US-022"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-027",
+      "title": "ConPTY carries OSC 7577 intact (validation)",
+      "epic": "EP-007",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-006"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-028",
+      "title": "Windows owner validation, exit notification and private files",
+      "epic": "EP-007",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-009",
+        "US-027"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-029",
+      "title": "PowerShell handoff and the launcher on Windows",
+      "epic": "EP-007",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-013",
+        "US-027"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-030",
+      "title": "macOS owner validation and kqueue exit",
+      "epic": "EP-008",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-009"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-031",
+      "title": "zsh handoff, launcher exec and Pi resume on macOS",
+      "epic": "EP-008",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-013",
+        "US-019"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    }
+  ]
+}
