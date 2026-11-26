@@ -33,10 +33,10 @@
     {
       "id": "EP-004",
       "title": "The bridge is gone",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 5,
-      "stories_done": 0
+      "stories_done": 5
     },
     {
       "id": "EP-005",
@@ -209,7 +209,7 @@
       "id": "US-012",
       "title": "Delete the bridge and its embedding",
       "epic": "EP-004",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-001",
@@ -220,61 +220,61 @@
         "US-011"
       ],
       "started_at": "2026-11-26",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26"
     },
     {
       "id": "US-013",
       "title": "paneflow mcp names the replacement",
       "epic": "EP-004",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-011",
         "US-012"
       ],
       "started_at": "2026-11-26",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26"
     },
     {
       "id": "US-014",
       "title": "Settings and the palette lose the MCP",
       "epic": "EP-004",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-012"
       ],
       "started_at": "2026-11-26",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26"
     },
     {
       "id": "US-015",
       "title": "Build and packaging scripts serve two helpers",
       "epic": "EP-004",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-012"
       ],
       "started_at": "2026-11-26",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26"
     },
     {
       "id": "US-016",
       "title": "Workflows, bench baseline and policy tests serve two helpers",
       "epic": "EP-004",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-012"
       ],
       "started_at": "2026-11-26",
-      "completed_at": null,
-      "reviewed_at": null
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26"
     },
     {
       "id": "US-017",

@@ -459,7 +459,7 @@ The bridge crate, its manifests, its embedding, its UI and its verb are deleted,
 **Acceptance Criteria:**
 - [x] Given `.github/workflows/release-linux.yml`, when the glibc-floor step runs, then it checks the two helpers
 - [x] Given `.github/workflows/run_tests.yml`, when its `rust` path filter is read, then it has no `mcps/**` line
-- [x ] Given `bench/baselines/linux-x86_64/startup.json`, when it is read, then it has `helpers_extracted` metrics produced by `scripts/bench-startup.sh --set-baseline` on a clean tree and no `bridge_extracted` metric
+- [x] Given `bench/baselines/linux-x86_64/startup.json`, when it is read, then it has `helpers_extracted` metrics produced by `scripts/bench-startup.sh --set-baseline` on a clean tree and no `bridge_extracted` metric
 - [x] Given `src-app/tests/dependency_source_policy.rs`, when it runs, then its helper list has two entries
 - [x] Given a helper added to the embed list without a policy entry, when `dependency_source_policy` runs, then it fails naming the helper
 
