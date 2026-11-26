@@ -7,7 +7,6 @@ BUILD_RS="${PANEFLOW_BUILD_RS:-$ROOT/src-app/build.rs}"
 
 SHIM_HARD=524288
 HOOK_HARD=384000
-MCP_HARD=524288
 SHIM_SOFT=614400
 HOOK_SOFT=307200
 MARGIN_WARN=4096
@@ -49,7 +48,6 @@ measure() {
 
 measure paneflow-shim "$SHIM_HARD" "$SHIM_SOFT"
 measure paneflow-ai-hook "$HOOK_HARD" "$HOOK_SOFT"
-measure paneflow-mcp "$MCP_HARD" 0
 
 total_margin=$((total_hard - total))
 echo "embedded helpers = $total B (hard cap $total_hard B, margin $total_margin B)"

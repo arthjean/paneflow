@@ -5,7 +5,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const EMBED_SIZE_LIMIT_BYTES: u64 = 1_835_008;
+const EMBED_SIZE_LIMIT_BYTES: u64 = 908_288;
+const EMBEDDED_HELPERS: [&str; 2] = ["paneflow-shim", "paneflow-ai-hook"];
 fn main() {
     println!("cargo:rerun-if-env-changed=PANEFLOW_SKIP_EMBED_BUILD");
 
@@ -49,10 +50,6 @@ fn main() {
     );
     println!(
         "cargo:rerun-if-changed={}",
-        workspace_root.join("crates/paneflow-mcp").display()
-    );
-    println!(
-        "cargo:rerun-if-changed={}",
         workspace_root.join("Cargo.toml").display()
     );
     let skip_nested_build =
@@ -88,8 +85,6 @@ fn stage_ai_hook_binaries(workspace_root: &Path, target: &str, embed_dir: &Path)
         .arg("paneflow-shim")
         .arg("-p")
         .arg("paneflow-ai-hook")
-        .arg("-p")
-        .arg("paneflow-mcp")
         .env_remove("CARGO_TARGET_DIR");
 
     let status = cmd
@@ -97,7 +92,7 @@ fn stage_ai_hook_binaries(workspace_root: &Path, target: &str, embed_dir: &Path)
         .unwrap_or_else(|e| panic!("US-008: failed to spawn nested cargo build: {e}"));
     if !status.success() {
         panic!(
-            "US-008: nested `cargo build --profile {profile} -p paneflow-shim -p paneflow-ai-hook -p paneflow-mcp --target {target}` \
+            "US-008: nested `cargo build --profile {profile} -p paneflow-shim -p paneflow-ai-hook --target {target}` \
              failed with {status}. Re-run the outer build with verbose logging to see the child cargo output."
         );
     }
@@ -110,7 +105,9 @@ fn stage_ai_hook_binaries(workspace_root: &Path, target: &str, embed_dir: &Path)
         ""
     };
 
-    for bin in ["paneflow-shim", "paneflow-ai-hook", "paneflow-mcp"] {
+    remove_retired_helpers(embed_dir, bin_exe);
+
+    for bin in EMBEDDED_HELPERS {
         let src = artifact_dir.join(format!("{bin}{bin_exe}"));
         let dst = embed_dir.join(format!("{bin}{bin_exe}"));
 
@@ -126,6 +123,32 @@ fn stage_ai_hook_binaries(workspace_root: &Path, target: &str, embed_dir: &Path)
                 "US-008: copy {} → {} failed: {e}",
                 src.display(),
                 dst.display()
+            )
+        });
+    }
+}
+
+fn remove_retired_helpers(embed_dir: &Path, bin_exe: &str) {
+    let iter = match fs::read_dir(embed_dir) {
+        Ok(iter) => iter,
+        Err(e) => panic!(
+            "US-008: cannot read embed staging dir {}: {e}",
+            embed_dir.display()
+        ),
+    };
+    let staged: Vec<String> = EMBEDDED_HELPERS
+        .iter()
+        .map(|bin| format!("{bin}{bin_exe}"))
+        .collect();
+    for entry in iter.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if staged.contains(&name) || !entry.path().is_file() {
+            continue;
+        }
+        fs::remove_file(entry.path()).unwrap_or_else(|e| {
+            panic!(
+                "US-012: cannot remove the retired helper {} from the embed staging dir: {e}",
+                entry.path().display()
             )
         });
     }
@@ -163,7 +186,7 @@ fn enforce_embed_size_budget(embed_dir: &Path) {
             "US-008/EP-001: embedded binaries exceed the {EMBED_SIZE_LIMIT_BYTES}-byte cap ({total} bytes).\n\
              Staging dir: {}\n\
              Per-file:\n{details}\
-             Shrink shim/ai-hook/paneflow-mcp via smaller deps or a tighter release-min profile, \
+             Shrink shim/ai-hook via smaller deps or a tighter release-min profile, \
              or raise EMBED_SIZE_LIMIT_BYTES with a fresh measurement note.",
             embed_dir.display()
         );

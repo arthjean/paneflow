@@ -40,7 +40,6 @@ impl PaneFlowApp {
         if section == SettingsSection::Shortcuts {
             self.rebuild_shortcut_rows(cx);
         }
-        self.refresh_mcp_status(cx);
         if section == SettingsSection::Agents {
             self.probe_agent_versions(cx);
             self.refresh_integration_status(cx);

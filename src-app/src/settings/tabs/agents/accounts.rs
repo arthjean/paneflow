@@ -208,19 +208,31 @@ fn prepare_account_dir(
     let installed = paneflow_home::paneflow_home()
         .ok_or_else(|| "the Paneflow home directory cannot be resolved".to_string())
         .and_then(|home| {
-            let binaries = paneflow_agent_integrations::IntegrationBinaries {
-                hook_binary: crate::ai_hooks::extract::ensure_ai_hook_extracted()
-                    .map_err(|error| format!("hook extraction failed: {error:#}"))?,
-            };
-            paneflow_agent_integrations::install_target_integration(
-                &account_target(&home, agent, slug, dir),
-                integration,
-                &binaries,
-            )
+            let hook_binary = crate::ai_hooks::extract::ensure_ai_hook_extracted()
+                .map_err(|error| format!("hook extraction failed: {error:#}"))?;
+            install_account_hooks(&home, hook_binary, agent, slug, dir, integration)
         });
-    Ok(installed
-        .err()
-        .map(|error| format!("Hooks and MCP were not added to this account: {error}")))
+    Ok(installed.err().map(|error| account_hooks_error(&error)))
+}
+
+fn install_account_hooks(
+    paneflow_home: &Path,
+    hook_binary: PathBuf,
+    agent: UsageAgent,
+    slug: &str,
+    dir: &Path,
+    integration: &str,
+) -> Result<(), String> {
+    paneflow_agent_integrations::install_target_integration(
+        &account_target(paneflow_home, agent, slug, dir),
+        integration,
+        &paneflow_agent_integrations::IntegrationBinaries { hook_binary },
+    )
+    .map(drop)
+}
+
+fn account_hooks_error(error: &str) -> String {
+    format!("Hooks were not added to this account: {error}")
 }
 
 impl PaneFlowApp {
@@ -683,6 +695,39 @@ mod tests {
         let cleared = default_accounts_with(&chosen, UsageAgent::ClaudeCode, None);
         assert!(!cleared.contains_key("claude-code"));
         assert_eq!(cleared.len(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_account_whose_folder_is_not_writable_reports_that_its_hooks_were_not_added() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let paneflow = root.path().join(".paneflow-dev");
+        let hook = paneflow.join("bin").join("paneflow-ai-hook");
+        std::fs::create_dir_all(hook.parent().unwrap()).unwrap();
+        std::fs::write(&hook, b"hook").unwrap();
+        let dir = root.path().join(".claude-work");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let error = install_account_hooks(
+            &paneflow,
+            hook,
+            UsageAgent::ClaudeCode,
+            "work",
+            &dir,
+            "claude-code",
+        )
+        .expect_err("a read-only account folder refuses the hooks");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let message = account_hooks_error(&error);
+        assert_eq!(
+            message,
+            format!("Hooks were not added to this account: {error}")
+        );
+        assert!(!message.contains("MCP"), "{message}");
+        assert!(!dir.join("settings.json").exists());
     }
 
     #[test]

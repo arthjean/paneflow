@@ -156,13 +156,6 @@ pub(crate) const USAGE_ACTIVITY: SettingCopy = SettingCopy {
     title: "Activity by agent",
     description: "Daily turns, tokens, and active time of each agent over the last year.",
 };
-pub(crate) const MCP_BRIDGE: SettingCopy = SettingCopy {
-    title: "Read your panes from your agents",
-    description: "Registers the bundled paneflow-mcp bridge with every detected CLI agent \
-                  (Claude Code, Codex, Gemini, opencode) so they can read other panes' output. \
-                  Idempotent, backed up, and only touches the paneflow entry. Re-run after an \
-                  update if a path goes stale.",
-};
 pub(crate) const CLAUDE_FULL_ACCESS: SettingCopy = SettingCopy {
     title: "Full access for Claude Code",
     description: "Edits any file and runs networked commands without asking. No protection \
@@ -225,7 +218,6 @@ const EDITOR_COPIES: &[&SettingCopy] = &[&SEMANTIC_HIGHLIGHTING, &LANGUAGE_SERVE
 const EDITOR_HEADERS: &[&str] = &["Language servers"];
 const WORKTREES_COPIES: &[&SettingCopy] =
     &[&WORKTREE_ROOT, &AUTO_REMOVE_WORKTREES, &WORKTREE_KEEP_LIMIT];
-const MCP_COPIES: &[&SettingCopy] = &[&MCP_BRIDGE];
 const USAGE_COPIES: &[&SettingCopy] = &[
     &USAGE_PLAN_LIMITS,
     &USAGE_SIDEBAR_CLAUDE_CODE,
@@ -253,7 +245,6 @@ const AGENTS_HEADERS: &[&str] = &[
     "Other launch presets",
     "Permissions",
 ];
-const MCP_HEADERS: &[&str] = &["MCP bridge"];
 const USAGE_HEADERS: &[&str] = &["Plan limits", "Sidebar", "Activity by agent"];
 const WORKSPACES_HEADERS: &[&str] = &["Workspace templates"];
 const SPACES_HEADERS: &[&str] = &["Spaces"];
@@ -266,7 +257,6 @@ fn section_copies(section: SettingsSection) -> &'static [&'static SettingCopy] {
         SettingsSection::Terminal => TERMINAL_COPIES,
         SettingsSection::Worktrees => WORKTREES_COPIES,
         SettingsSection::Editor => EDITOR_COPIES,
-        SettingsSection::McpServers => MCP_COPIES,
         SettingsSection::Agents => AGENTS_COPIES,
         SettingsSection::Usage => USAGE_COPIES,
         SettingsSection::Workspaces | SettingsSection::Spaces | SettingsSection::Shortcuts => &[],
@@ -280,7 +270,6 @@ fn section_headers(section: SettingsSection) -> &'static [&'static str] {
         SettingsSection::Terminal => TERMINAL_HEADERS,
         SettingsSection::Agents => AGENTS_HEADERS,
         SettingsSection::Usage => USAGE_HEADERS,
-        SettingsSection::McpServers => MCP_HEADERS,
         SettingsSection::Workspaces => WORKSPACES_HEADERS,
         SettingsSection::Spaces => SPACES_HEADERS,
         SettingsSection::Worktrees => WORKTREES_HEADERS,
@@ -547,7 +536,7 @@ mod tests {
         assert!(section_matches(SettingsSection::Terminal, "hot-reloads"));
         assert!(section_matches(SettingsSection::Terminal, "contrast"));
         assert!(section_matches(SettingsSection::Worktrees, "snapshots"));
-        assert!(!section_matches(SettingsSection::McpServers, "worktree"));
+        assert!(!section_matches(SettingsSection::Usage, "worktree"));
     }
 
     #[test]
@@ -558,7 +547,6 @@ mod tests {
             SettingsSection::Terminal,
             SettingsSection::Agents,
             SettingsSection::Usage,
-            SettingsSection::McpServers,
             SettingsSection::Workspaces,
             SettingsSection::Spaces,
             SettingsSection::Worktrees,
@@ -605,7 +593,6 @@ mod tests {
             SettingsSection::Terminal,
             SettingsSection::Agents,
             SettingsSection::Usage,
-            SettingsSection::McpServers,
             SettingsSection::Workspaces,
             SettingsSection::Spaces,
             SettingsSection::Worktrees,

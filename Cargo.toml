@@ -18,7 +18,6 @@ members = [
     "crates/paneflow-layout",
     "crates/paneflow-libghostty-sys",
     "crates/paneflow-lsp",
-    "crates/paneflow-mcp",
     "crates/paneflow-minisign",
     "crates/paneflow-peer",
     "crates/paneflow-process",

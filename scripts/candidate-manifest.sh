@@ -6,11 +6,13 @@ cd "$(dirname "$0")/.."
 profile="release"
 target=""
 out=""
+helper_dir=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --profile) shift; profile="${1:-release}" ;;
     --target) shift; target="${1:-}" ;;
     --out) shift; out="${1:-}" ;;
+    --helper-dir) shift; helper_dir="${1:-}" ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
@@ -28,7 +30,9 @@ bin_dir="target/$profile"
 if [ -d "target/$target/$profile" ]; then
   bin_dir="target/$target/$profile"
 fi
-helper_dir="target/embed-build/$target/release-min"
+if [ -z "$helper_dir" ]; then
+  helper_dir="target/embed-build/$target/release-min"
+fi
 
 sha=$(git rev-parse HEAD)
 dirty=false
@@ -66,7 +70,7 @@ add_artifact() {
 add_artifact desktop "$bin_dir/paneflow$exe" true true
 add_artifact host "$bin_dir/paneflow-host$exe" true true
 add_artifact fixture "$bin_dir/paneflow-session-fixture$exe" false true
-for helper in paneflow-shim paneflow-ai-hook paneflow-mcp; do
+for helper in paneflow-shim paneflow-ai-hook; do
   add_artifact "helper.$helper" "$helper_dir/$helper$exe" true true
 done
 add_artifact engine.manifest native/libghostty/manifest.toml true false

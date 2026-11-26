@@ -288,6 +288,14 @@ pub fn purge_target_legacy_mcp(targets: &[IntegrationTarget]) -> PurgeReport {
     legacy_mcp::purge(&files)
 }
 
+pub fn purge_default_home_legacy_mcp() -> Result<PurgeReport, String> {
+    let paths = ConfigPaths::current().map_err(format_error)?;
+    Ok(purge_home_legacy_mcp(
+        &paths,
+        &legacy_mcp::default_home_files(),
+    ))
+}
+
 fn purge_notes(report: PurgeReport) -> Vec<String> {
     let mut notes = report.lines();
     notes.extend(report.warnings);

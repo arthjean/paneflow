@@ -2,7 +2,8 @@
 param(
     [string]$Profile = "release",
     [string]$Target = "",
-    [string]$Out = ""
+    [string]$Out = "",
+    [string]$HelperDir = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,7 +17,7 @@ $binDir = "target/$Profile"
 if (Test-Path "target/$Target/$Profile") {
     $binDir = "target/$Target/$Profile"
 }
-$helperDir = "target/embed-build/$Target/release-min"
+$helperDir = if ($HelperDir) { $HelperDir } else { "target/embed-build/$Target/release-min" }
 
 $sha = (git rev-parse HEAD).Trim()
 $dirty = [bool](git status --porcelain --untracked-files=no)
@@ -46,7 +47,7 @@ function Add-Artifact {
 Add-Artifact "desktop" "$binDir/paneflow$exe" $true
 Add-Artifact "host" "$binDir/paneflow-host$exe" $true
 Add-Artifact "fixture" "$binDir/paneflow-session-fixture$exe" $false
-foreach ($helper in @("paneflow-shim", "paneflow-ai-hook", "paneflow-mcp")) {
+foreach ($helper in @("paneflow-shim", "paneflow-ai-hook")) {
     Add-Artifact "helper.$helper" "$helperDir/$helper$exe" $true
 }
 Add-Artifact "engine.manifest" "native/libghostty/manifest.toml" $true

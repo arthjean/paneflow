@@ -98,7 +98,6 @@ jobs:
               - 'schemas/**'
               - 'examples/**'
               - 'runtimes/**'
-              - 'mcps/**'
               - 'fuzz/**'
               - 'vendor/**'
               - '**/Cargo.toml'

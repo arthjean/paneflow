@@ -75,10 +75,6 @@ const HELP_VERB: &str = "help";
 
 const EXTERNAL_VERBS: &[(&str, &str)] = &[
     (
-        "mcp",
-        "Install, inspect or remove the MCP bridge (install | status | uninstall)",
-    ),
-    (
         "integrations",
         "List, install or remove agent integrations (list | install | remove)",
     ),
@@ -174,7 +170,7 @@ pub fn global_help(version: &str, macos: bool) -> String {
          \n\
          Agent workflow:\n\
          \x20 Launch Claude Code, Codex, opencode, Pi, or any CLI agent in panes\n\
-         \x20 Use `paneflow mcp install` so capable agents can read pane output\n\
+         \x20 Run `paneflow integrations install <agent>` for status hooks and the conductor skill\n\
          \n\
          Keybindings:\n\
          {keybindings}\n\
@@ -1196,6 +1192,12 @@ mod tests {
                 );
             }
             assert!(help.contains("paneflow help"));
+            assert!(
+                !help
+                    .lines()
+                    .any(|line| line.split([',', ' ']).any(|word| word == "mcp")),
+                "the removed bridge verb is not listed:\n{help}"
+            );
         }
     }
 

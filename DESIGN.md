@@ -1679,7 +1679,7 @@ an update is pending, the open sessions it will not reach, then `Update to
 `Installation`, one card holds `Update with` (a 220 px select, only when
 several methods apply, with its errors and second copy warning), `Update
 command`, and `Location`, the last two in the terminal font with a copy
-button. Under `Integration`, `Hooks and MCP` carries its toggle. Under
+button. Under `Integration`, `Hooks` carries its toggle. Under
 `Profiles`, with a soft `New profile` once one exists, inset rows show each
 profile's name over its variables and arguments as chips, and a pencil
 appears on hover; with none, one row offers `New profile`. Clicking a row
@@ -1818,8 +1818,8 @@ size resolves, then cached per color and size, because GPUI scales an image
 without mipmaps and a large plate shrunk to 16 px aliases into hard stripes.
 While a plate loads, the mark shows its ink mixed 45 percent into its ground.
 
-The Usage page (`src-app/src/app/usage/page.rs`), under Integrations between
-Agents and Plugins with the 15 px `chart-bar-line` glyph, has the kit heading
+The Usage page (`src-app/src/app/usage/page.rs`), under Integrations after
+Agents with the 15 px `chart-bar-line` glyph, has the kit heading
 with `Updated {relative time}` at 12 px in the tertiary ink and a `Refresh`
 icon button at its trailing edge, which reprobes the accounts and reloads the
 ledger, over the page description. Under the `Plan limits` eyebrow,
@@ -1859,11 +1859,7 @@ a single card says so over a link row to Settings › Agents; with no activity
 anywhere, the register card is one row behind the chart disc.
 
 The General page holds `Defaults` (the editor, shell and on-quit selects as
-kit rows) and `Notifications` (the native notifications switch). The Plugins
-page holds the `MCP bridge` row, whose button reads `Install MCP bridge`,
-`Repair`, or `Reinstall` (Secondary once every agent has it) and spins while it
-runs, a failure row in `vc_deleted` under it, then an `Agents` card with one
-row per detected agent and its state at the trailing edge.
+kit rows) and `Notifications` (the native notifications switch).
 
 ### 5.6 Menus, selects, tooltips
 

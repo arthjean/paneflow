@@ -167,12 +167,11 @@ pub fn data_dir() -> Option<PathBuf> {
     Some(dir)
 }
 
-pub fn bridge_binary_path() -> Option<PathBuf> {
-    Some(bridge_binary_path_in(&data_dir()?))
-}
-
-pub fn bridge_binary_path_in(home: &std::path::Path) -> PathBuf {
-    helper_binary_path_in(home, "paneflow-mcp")
+pub fn retired_bridge_path_in(home: &std::path::Path) -> PathBuf {
+    helper_binary_path_in(
+        home,
+        paneflow_agent_integrations::legacy_mcp::LEGACY_BRIDGE_STEM,
+    )
 }
 
 pub fn ai_hook_binary_path_in(home: &std::path::Path) -> PathBuf {

@@ -4752,16 +4752,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "paneflow-mcp"
-version = "0.20.0"
-dependencies = [
- "paneflow-home",
- "paneflow-ipc-client",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "paneflow-minisign"
 version = "0.1.0"
 dependencies = [

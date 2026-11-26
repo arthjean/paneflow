@@ -120,19 +120,8 @@ fn packaged_bin_dir_if_complete() -> Option<PathBuf> {
     Some(dir)
 }
 
-pub fn ensure_bridge_extracted() -> Result<PathBuf> {
-    let home = crate::runtime_paths::data_dir().ok_or_else(|| {
-        anyhow!("EP-001 US-003: data_dir() unresolvable/unwritable; cannot extract paneflow-mcp")
-    })?;
-    extract_bridge_in_home(&home)
-}
-
-pub(crate) fn extract_bridge_in_home(home: &Path) -> Result<PathBuf> {
-    extract_single_helper(&crate::runtime_paths::bridge_binary_path_in(home))
-}
-
 pub(crate) fn remove_retired_bridge_in_home(home: &Path) -> Result<Option<PathBuf>> {
-    let path = crate::runtime_paths::bridge_binary_path_in(home);
+    let path = crate::runtime_paths::retired_bridge_path_in(home);
     match std::fs::remove_file(&path) {
         Ok(()) => Ok(Some(path)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -349,6 +338,13 @@ mod tests {
     const FAKE_SHIM: &[u8] = b"paneflow-shim synthetic bytes v0";
     const FAKE_HOOK: &[u8] = b"paneflow-ai-hook synthetic bytes v0";
 
+    fn seed_retired_bridge(home: &Path) -> PathBuf {
+        let bridge = crate::runtime_paths::retired_bridge_path_in(home);
+        std::fs::create_dir_all(bridge.parent().unwrap()).unwrap();
+        std::fs::write(&bridge, b"retired bridge").unwrap();
+        bridge
+    }
+
     fn synthetic_entries() -> Vec<Entry<'static>> {
         let suffix = exe_suffix();
         vec![
@@ -543,7 +539,20 @@ mod tests {
     #[test]
     fn bins_embed_contains_all_staged_binaries() {
         let suffix = exe_suffix();
-        for src in ["paneflow-shim", "paneflow-ai-hook", "paneflow-mcp"] {
+        let prefix = format!("bin/{TARGET_TRIPLE}/");
+        let mut staged: Vec<String> = Bins::iter()
+            .filter_map(|key| key.strip_prefix(&prefix).map(str::to_string))
+            .collect();
+        staged.sort();
+        assert_eq!(
+            staged,
+            [
+                format!("paneflow-ai-hook{suffix}"),
+                format!("paneflow-shim{suffix}")
+            ],
+            "the release build embeds exactly the two helpers"
+        );
+        for src in ["paneflow-shim", "paneflow-ai-hook"] {
             let name = format!("{src}{suffix}");
             let bytes = embedded_bytes(&name).unwrap_or_else(|e| {
                 panic!("US-008/EP-001: Bins must contain `bin/{TARGET_TRIPLE}/{name}`: {e}")
@@ -600,7 +609,7 @@ mod tests {
         let home = tempfile::TempDir::new().unwrap();
         assert_eq!(remove_retired_bridge_in_home(home.path()).unwrap(), None);
 
-        let bridge = extract_bridge_in_home(home.path()).unwrap();
+        let bridge = seed_retired_bridge(home.path());
         let hook = extract_ai_hook_in_home(home.path()).unwrap();
         assert_eq!(
             remove_retired_bridge_in_home(home.path()).unwrap(),
@@ -632,7 +641,7 @@ mod tests {
     #[test]
     fn the_retired_bridge_removal_runs_on_its_own_thread() {
         let home = tempfile::TempDir::new().unwrap();
-        let bridge = extract_bridge_in_home(home.path()).unwrap();
+        let bridge = seed_retired_bridge(home.path());
         let caller = std::thread::current().id();
         let given = home.path().to_path_buf();
         let handle = remove_retired_bridge_off_thread(move || {
@@ -646,22 +655,10 @@ mod tests {
     }
 
     #[test]
-    fn ensure_bridge_extracted_produces_stable_path() {
+    fn the_hook_helper_path_is_stable_non_versioned_and_outside_the_cache() {
         let home = tempfile::TempDir::new().unwrap();
-        let path = extract_bridge_in_home(home.path()).unwrap();
-        assert!(
-            path.is_file(),
-            "EP-001 US-003: ensure_bridge_extracted must produce {}",
-            path.display()
-        );
-        let suffix = exe_suffix();
-        assert_eq!(
-            path,
-            home.path()
-                .join("bin")
-                .join(format!("paneflow-mcp{suffix}"))
-        );
         let hook = extract_ai_hook_in_home(home.path()).unwrap();
+        let suffix = exe_suffix();
         assert_eq!(
             hook,
             home.path()
@@ -669,24 +666,9 @@ mod tests {
                 .join(format!("paneflow-ai-hook{suffix}"))
         );
         assert!(hook.is_file());
-    }
-
-    #[test]
-    fn bridge_path_is_non_versioned_and_distinct_from_cache() {
-        let home = tempfile::TempDir::new().unwrap();
-        let bridge = extract_bridge_in_home(home.path()).unwrap();
-        let bridge_str = bridge.to_string_lossy();
-        let version = env!("CARGO_PKG_VERSION");
-        assert!(
-            !bridge_str.contains(version),
-            "EP-001 US-003: bridge path {bridge_str} must NOT embed the version {version}"
-        );
+        assert!(!hook.to_string_lossy().contains(VERSION));
         let cache = extract_binaries_in_home(home.path()).unwrap();
-        assert_ne!(
-            bridge.parent(),
-            Some(cache.as_path()),
-            "EP-001 US-003: bridge dir must differ from the versioned cache dir"
-        );
+        assert_ne!(hook.parent(), Some(cache.as_path()));
     }
 
     #[test]

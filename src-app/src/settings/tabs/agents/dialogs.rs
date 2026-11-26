@@ -21,8 +21,8 @@ const SELECT_WIDTH: f32 = 156.;
 const ENV_NAME_WIDTH: f32 = 160.;
 const FORM_GAP: f32 = 16.;
 const ENV_GAP: f32 = 6.;
-const HOOKS_DESCRIPTION: &str =
-    "Lets Paneflow resume its conversations and registers the Paneflow MCP server.";
+const HOOKS_DESCRIPTION: &str = "Lets Paneflow follow this agent's status and resume its conversations, \
+     and installs the conductor skill where the agent reads skills.";
 const LAUNCH_PRESETS_DESCRIPTION: &str =
     "A named way to start this agent with its own variables and arguments.";
 const COPY_ICON: &str = "icons/settings/copy-01.svg";
@@ -388,7 +388,7 @@ impl PaneFlowApp {
             kit::row(
                 ink,
                 None,
-                Text::new("Hooks and MCP")
+                Text::new("Hooks")
                     .line(kit::line(ink, description))
                     .maybe_line(error),
                 Some(control),

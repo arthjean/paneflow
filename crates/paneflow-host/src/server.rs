@@ -4599,11 +4599,17 @@ mod tests {
             .expect_err("a pane cannot write into another workspace");
         assert!(refused.contains(&theirs.to_string()), "{refused}");
         assert!(refused.contains("--scope all"), "{refused}");
-        assert!(
-            refused.contains("ipc.orchestration") && refused.contains("PANEFLOW_MCP_SCOPE=all"),
-            "{refused}"
-        );
+        assert!(refused.contains("ipc.orchestration"), "{refused}");
+        assert!(!refused.contains("PANEFLOW_MCP_SCOPE"), "{refused}");
         assert!(!refused.contains("PANEFLOW_IPC_"), "{refused}");
+        let relayed = pane_write(&transport, caller, &foreign.0, "echo pf-cross-relay")
+            .expect_err("pane.write honors the same scope");
+        assert!(relayed.contains(&theirs.to_string()), "{relayed}");
+        assert!(
+            relayed.contains("ipc.orchestration") && relayed.contains("--scope all"),
+            "{relayed}"
+        );
+        assert!(!relayed.contains("PANEFLOW_MCP_SCOPE"), "{relayed}");
         let raw_input = transport
             .call(
                 "session.input",
@@ -4816,7 +4822,7 @@ mod tests {
                 "activity": {"state": "waiting_for_input", "message": "Allow Bash?"}
             }]),
         );
-        let agent = HostTransport::connect(server.endpoint(), "paneflow-mcp").unwrap();
+        let agent = HostTransport::connect(server.endpoint(), "paneflow-write-test").unwrap();
 
         let refused = pane_write(&agent, &source, &target, "echo pf-should-not-land")
             .expect_err("a blocked target is refused");
@@ -4872,7 +4878,7 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(20));
         }
-        let agent = HostTransport::connect(server.endpoint(), "paneflow-mcp").unwrap();
+        let agent = HostTransport::connect(server.endpoint(), "paneflow-write-test").unwrap();
 
         let own = pane_write(&agent, &source, &source, "hi").expect_err("no self write");
         assert!(own.contains("its own pane"), "{own}");

@@ -9,7 +9,6 @@ pub(crate) enum SettingsSection {
     Editor,
     Agents,
     Usage,
-    McpServers,
     Workspaces,
     Spaces,
     Worktrees,

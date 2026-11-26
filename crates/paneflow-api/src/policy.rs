@@ -9,10 +9,7 @@ pub const OPEN_SCRIPTING: &str = "set ipc.scripting to true in paneflow.json";
 pub const OPEN_ORCHESTRATION: &str = "set ipc.orchestration to true in paneflow.json";
 
 pub fn cross_workspace_hint() -> String {
-    format!(
-        "to write across workspaces, {OPEN_ORCHESTRATION} and pass --scope all \
-         (PANEFLOW_MCP_SCOPE=all for the MCP bridge)"
-    )
+    format!("to write across workspaces, {OPEN_ORCHESTRATION} and pass --scope all")
 }
 
 pub fn cross_workspace_read_hint() -> String {

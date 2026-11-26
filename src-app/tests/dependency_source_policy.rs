@@ -6,6 +6,57 @@
 use std::path::Path;
 use std::process::Command;
 
+const POLICY_HELPERS: [&str; 2] = ["paneflow-shim", "paneflow-ai-hook"];
+
+fn embedded_helpers(build_rs: &str) -> Vec<String> {
+    let list = build_rs
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("const EMBEDDED_HELPERS:"))
+        .and_then(|rest| rest.split_once("= ["))
+        .and_then(|(_, rest)| rest.split_once(']'))
+        .map(|(list, _)| list)
+        .unwrap_or_else(|| panic!("src-app/build.rs declares no EMBEDDED_HELPERS list"));
+    list.split(',')
+        .map(|item| item.trim().trim_matches('"').to_string())
+        .filter(|item| !item.is_empty())
+        .collect()
+}
+
+fn helpers_without_policy(embedded: &[String]) -> Vec<String> {
+    embedded
+        .iter()
+        .filter(|helper| !POLICY_HELPERS.contains(&helper.as_str()))
+        .cloned()
+        .collect()
+}
+
+#[test]
+fn every_embedded_helper_has_a_dependency_policy_entry() {
+    let build_rs = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("build.rs"))
+        .unwrap_or_else(|error| panic!("read src-app/build.rs: {error}"));
+    let embedded = embedded_helpers(&build_rs);
+    assert_eq!(
+        embedded, POLICY_HELPERS,
+        "the embed list and the policy list"
+    );
+    let unpoliced = helpers_without_policy(&embedded);
+    assert!(
+        unpoliced.is_empty(),
+        "embedded helpers without a dependency policy entry: {}",
+        unpoliced.join(", ")
+    );
+
+    let grown = build_rs.replace(
+        "\"paneflow-ai-hook\"]",
+        "\"paneflow-ai-hook\", \"paneflow-extra\"]",
+    );
+    assert_eq!(
+        helpers_without_policy(&embedded_helpers(&grown)),
+        ["paneflow-extra"],
+        "a helper added to the embed list alone is named"
+    );
+}
+
 #[test]
 fn cargo_lock_git_sources_are_immutable() {
     let lock_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../Cargo.lock");
@@ -167,7 +218,7 @@ fn embedded_helpers_never_link_the_textdiff_crate() {
         false
     };
 
-    for helper in ["paneflow-shim", "paneflow-ai-hook", "paneflow-mcp"] {
+    for helper in POLICY_HELPERS {
         assert!(
             !reaches_textdiff(helper),
             "{helper} must not depend on paneflow-textdiff, transitively or otherwise"

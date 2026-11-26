@@ -16,12 +16,6 @@ fn should_load_login_shell_env_for_startup(
         || is_unknown_verb)
 }
 
-fn should_extract_mcp_bridge_for_cli(args: &[String]) -> bool {
-    args.get(1).map(String::as_str) == Some("mcp")
-        && args.get(2).map(String::as_str) == Some("install")
-        && args.len() == 3
-}
-
 fn extract_integration_binaries(
     command: &str,
 ) -> Option<paneflow_agent_integrations::IntegrationBinaries> {
@@ -303,22 +297,8 @@ pub(crate) fn run() {
         std::process::exit(run_update_and_exit());
     }
 
-    if args.get(1).map(String::as_str) == Some("mcp") {
-        let bridge_path = if should_extract_mcp_bridge_for_cli(&args) {
-            match ai_hooks::extract::ensure_bridge_extracted() {
-                Ok(p) => Some(p),
-                Err(e) => {
-                    log::warn!("paneflow mcp: bridge extraction failed ({e:#})");
-                    runtime_paths::bridge_binary_path()
-                }
-            }
-        } else {
-            runtime_paths::bridge_binary_path()
-        };
-        std::process::exit(paneflow_agent_integrations::run_cli(
-            &args[2..],
-            bridge_path,
-        ));
+    if is_mcp_subcommand {
+        std::process::exit(paneflow_agent_integrations::run_cli(&args[2..]));
     }
 
     if is_hooks_subcommand {
@@ -370,7 +350,7 @@ pub(crate) fn run() {
     }
     #[cfg(unix)]
     crate::tmux_compat::ensure_shim_link();
-    startup_trace::mark("bridge_extracted");
+    startup_trace::mark("helpers_extracted");
 
     host_bootstrap::start_in_background();
     worker_bootstrap::start_in_background();
@@ -542,7 +522,7 @@ mod windows_startup_console_tests {
 mod tests {
     use super::{
         DEFAULT_LOG_FILTER, MAIN_WINDOW_TITLE, main_window_titlebar,
-        should_extract_mcp_bridge_for_cli, should_load_login_shell_env_for_startup,
+        should_load_login_shell_env_for_startup,
     };
 
     #[test]
@@ -578,10 +558,6 @@ mod tests {
         assert!(!logs_by_default("wgpu_hal::vulkan", log::Level::Error));
     }
 
-    fn args(parts: &[&str]) -> Vec<String> {
-        parts.iter().map(|part| (*part).to_string()).collect()
-    }
-
     #[test]
     fn login_shell_env_capture_only_runs_for_gui_launches() {
         assert!(should_load_login_shell_env_for_startup(
@@ -602,23 +578,5 @@ mod tests {
         assert!(!should_load_login_shell_env_for_startup(
             false, false, false, false, false, true
         ));
-    }
-
-    #[test]
-    fn mcp_bridge_extraction_only_runs_for_exact_install_command() {
-        assert!(should_extract_mcp_bridge_for_cli(&args(&[
-            "paneflow", "mcp", "install"
-        ])));
-        assert!(!should_extract_mcp_bridge_for_cli(&args(&[
-            "paneflow", "mcp", "status"
-        ])));
-        assert!(!should_extract_mcp_bridge_for_cli(&args(&[
-            "paneflow",
-            "mcp",
-            "uninstall"
-        ])));
-        assert!(!should_extract_mcp_bridge_for_cli(&args(&[
-            "paneflow", "mcp", "install", "--help"
-        ])));
     }
 }

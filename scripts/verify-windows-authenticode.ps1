@@ -11,7 +11,7 @@ $helperDir = Join-Path $releaseDir 'paneflow-helpers'
 $files = [System.Collections.Generic.List[string]]::new()
 $files.Add((Join-Path $releaseDir 'paneflow.exe'))
 $files.Add((Join-Path $releaseDir 'paneflow-host.exe'))
-foreach ($name in @('paneflow-shim.exe', 'paneflow-ai-hook.exe', 'paneflow-mcp.exe')) {
+foreach ($name in @('paneflow-shim.exe', 'paneflow-ai-hook.exe')) {
     $files.Add((Join-Path $embedDir $name))
 }
 $packaged = @(Get-ChildItem -LiteralPath $helperDir -Filter '*.exe' -File -ErrorAction SilentlyContinue)

@@ -558,7 +558,6 @@ helper_dir() {
   mkdir -p "$dir"
   head -c "$2" /dev/zero > "$dir/paneflow-shim"
   head -c "$3" /dev/zero > "$dir/paneflow-ai-hook"
-  head -c "$4" /dev/zero > "$dir/paneflow-mcp"
   printf '%s' "$dir"
 }
 
@@ -566,28 +565,69 @@ helper_size_cases() {
   local check="$ROOT/scripts/check-helper-sizes.sh"
   local dir
 
-  dir="$(helper_dir within 400000 300000 400000)"
-  expect "helpers under every cap pass" 0 "embedded helpers = 1100000 B" "$check" "$dir"
+  dir="$(helper_dir within 400000 300000)"
+  expect "helpers under every cap pass" 0 "embedded helpers = 700000 B" "$check" "$dir"
+  local reported
+  reported="$("$check" "$dir" | grep -cE '^paneflow-[a-z-]+ = [0-9]+ B' || true)"
+  cases=$((cases + 1))
+  if [ "$reported" != "2" ]; then
+    echo "FAIL the size check reports exactly the two helpers: got $reported helper line(s)"
+    failures=$((failures + 1))
+  elif "$check" "$dir" | grep -q 'paneflow-mcp'; then
+    echo "FAIL the size check still names the removed bridge"
+    failures=$((failures + 1))
+  else
+    echo "ok   the size check reports exactly the two helpers"
+  fi
 
-  dir="$(helper_dir hook-over 400000 384001 400000)"
+  dir="$(helper_dir hook-over 400000 384001)"
   expect "a helper over its cap is named with its size and the cap" 1 "paneflow-ai-hook is 384001 B, over its hard cap of 384000 B" "$check" "$dir"
 
-  dir="$(helper_dir at-caps 524288 384000 524288)"
-  expect "helpers at their caps still fit the total cap" 0 "embedded helpers = 1432576 B" "$check" "$dir"
+  dir="$(helper_dir at-caps 524288 384000)"
+  expect "helpers at their caps fit the total cap exactly" 0 "embedded helpers = 908288 B \(hard cap 908288 B, margin 0 B\)" "$check" "$dir"
 
-  dir="$(helper_dir near-cap 400000 383000 400000)"
+  dir="$(helper_dir near-cap 400000 383000)"
   expect "a helper within 4 KiB of its cap warns and passes" 0 "::warning::paneflow-ai-hook is 383000 B, only 1000 B under its hard cap" "$check" "$dir"
 
-  dir="$(helper_dir missing 400000 300000 400000)"
-  rm "$dir/paneflow-mcp"
-  expect "a missing helper fails instead of passing an unmeasured build" 1 "paneflow-mcp is missing" "$check" "$dir"
+  dir="$(helper_dir missing 400000 300000)"
+  rm "$dir/paneflow-ai-hook"
+  expect "a missing helper fails instead of passing an unmeasured build" 1 "paneflow-ai-hook is missing" "$check" "$dir"
 
-  dir="$(helper_dir stale-total 400000 300000 400000)"
+  dir="$(helper_dir stale-total 400000 300000)"
   printf 'const OTHER: u64 = 1;\n' > "$WORK/build.rs"
   expect "an unreadable total cap fails" 1 "could not read EMBED_SIZE_LIMIT_BYTES" env PANEFLOW_BUILD_RS="$WORK/build.rs" "$check" "$dir"
 
-  printf 'const EMBED_SIZE_LIMIT_BYTES: u64 = 1_000_000;\n' > "$WORK/build.rs"
-  expect "helpers over the total cap of build.rs fail" 1 "the embedded helpers total 1100000 B, over the hard cap of 1000000 B" env PANEFLOW_BUILD_RS="$WORK/build.rs" "$check" "$dir"
+  printf 'const EMBED_SIZE_LIMIT_BYTES: u64 = 600_000;\n' > "$WORK/build.rs"
+  expect "helpers over the total cap of build.rs fail" 1 "the embedded helpers total 700000 B, over the hard cap of 600000 B" env PANEFLOW_BUILD_RS="$WORK/build.rs" "$check" "$dir"
+}
+
+candidate_manifest_cases() {
+  local script="$ROOT/scripts/candidate-manifest.sh"
+  local dir manifest
+
+  dir="$(helper_dir candidate-all 400000 300000)"
+  manifest="$WORK/candidate-all.json"
+  "$script" --target x86_64-unknown-linux-gnu --helper-dir "$dir" --out "$manifest" >/dev/null 2>&1 || true
+  cases=$((cases + 1))
+  if [ ! -f "$manifest" ]; then
+    echo "FAIL a candidate manifest is written: $manifest is missing"
+    failures=$((failures + 1))
+  elif ! grep -q '"helper.paneflow-shim": {[^}]*"present": true' "$manifest" \
+    || ! grep -q '"helper.paneflow-ai-hook": {[^}]*"present": true' "$manifest"; then
+    echo "FAIL a candidate manifest records both helpers"
+    sed 's/^/    /' "$manifest"
+    failures=$((failures + 1))
+  elif grep -q 'helper.paneflow-mcp' "$manifest"; then
+    echo "FAIL a candidate manifest has no helper.paneflow-mcp key"
+    failures=$((failures + 1))
+  else
+    echo "ok   a candidate manifest records the two helpers and no bridge"
+  fi
+
+  dir="$(helper_dir candidate-missing 400000 300000)"
+  rm "$dir/paneflow-ai-hook"
+  expect "a candidate manifest without a required helper fails naming it" 1 "missing required artifact helper.paneflow-ai-hook" \
+    "$script" --target x86_64-unknown-linux-gnu --helper-dir "$dir" --out "$WORK/candidate-missing.json"
 }
 
 fake_objdump() {
@@ -1221,6 +1261,7 @@ render_cask_cases
 published_stream_cases
 release_publication_cases
 helper_size_cases
+candidate_manifest_cases
 filter_coverage_cases
 glibc_floor_cases
 release_staging_cases

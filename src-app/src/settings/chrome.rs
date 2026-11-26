@@ -184,19 +184,6 @@ const NAV_GROUPS: &[NavGroup] = &[
                     "activity",
                 ],
             },
-            NavItem {
-                section: SettingsSection::McpServers,
-                label: "Plugins",
-                icon: "icons/settings/puzzle.svg",
-                keywords: &[
-                    "mcp",
-                    "bridge",
-                    "server",
-                    "integration",
-                    "plugin",
-                    "plugins",
-                ],
-            },
         ],
     },
 ];
@@ -245,7 +232,6 @@ pub(crate) fn section_title(section: SettingsSection) -> &'static str {
         SettingsSection::Editor => "Editor",
         SettingsSection::Agents => "Agents",
         SettingsSection::Usage => "Usage",
-        SettingsSection::McpServers => "Plugins",
         SettingsSection::Workspaces => "Workspaces",
         SettingsSection::Spaces => "Spaces",
         SettingsSection::Worktrees => "Worktrees",
@@ -576,8 +562,6 @@ impl PaneFlowApp {
             self.render_appearance_heading(title_text)
         } else if section == SettingsSection::General {
             self.render_general_heading(title_text)
-        } else if section == SettingsSection::McpServers {
-            self.render_mcp_heading(title_text)
         } else {
             title_text.pb(px(20.)).into_any_element()
         };
@@ -625,7 +609,6 @@ impl PaneFlowApp {
             SettingsSection::Editor => self.render_editor_content(cx).into_any_element(),
             SettingsSection::Agents => self.render_agents_content(cx),
             SettingsSection::Usage => self.render_usage_content(window, cx),
-            SettingsSection::McpServers => self.render_mcp_servers_content(cx).into_any_element(),
             SettingsSection::Workspaces => self.render_workspaces_content(cx).into_any_element(),
             SettingsSection::Spaces => self.render_spaces_content(cx).into_any_element(),
             SettingsSection::Worktrees => self.render_worktrees_content(cx).into_any_element(),
@@ -752,9 +735,6 @@ impl PaneFlowApp {
         }
         if section == SettingsSection::Worktrees {
             self.refresh_worktree_listings(cx);
-        }
-        if section == SettingsSection::McpServers {
-            self.refresh_mcp_status(cx);
         }
         if section == SettingsSection::Agents {
             self.probe_agent_versions(cx);
@@ -983,6 +963,29 @@ mod tests {
             "zoom the focused",
             &[]
         ));
+    }
+
+    #[test]
+    fn the_settings_have_no_plugins_page_and_mcp_finds_nothing() {
+        assert!(
+            NAV_GROUPS
+                .iter()
+                .flat_map(|group| group.items)
+                .all(|item| item.label != "Plugins")
+        );
+        let query = crate::settings::search::normalize("MCP");
+        for item in NAV_GROUPS.iter().flat_map(|group| group.items) {
+            assert!(!super::nav_item_named(item, &query), "{}", item.label);
+            assert!(
+                !crate::settings::search::section_matches(item.section, &query),
+                "{}",
+                item.label
+            );
+        }
+        let shortcuts = crate::keybindings::effective_shortcuts(&std::collections::HashMap::new());
+        assert!(shortcuts.iter().all(|entry| {
+            !entry.description.to_lowercase().contains("mcp") && !entry.action_name.contains("mcp")
+        }));
     }
 
     #[test]

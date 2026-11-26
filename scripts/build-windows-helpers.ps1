@@ -12,6 +12,5 @@ $cargo = if ([string]::IsNullOrEmpty($env:CARGO)) { 'cargo' } else { $env:CARGO 
   --target $Target `
   --target-dir target/embed-build `
   -p paneflow-shim `
-  -p paneflow-ai-hook `
-  -p paneflow-mcp
+  -p paneflow-ai-hook
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

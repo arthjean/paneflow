@@ -45,7 +45,6 @@ const AGENTS_LIST_KEYWORDS: &[&str] = &[
     "Update command",
     "Location",
     "Hooks",
-    "MCP",
 ];
 const ADD_ICON: &str = "icons/settings/add-01.svg";
 const SETTINGS_ICON: &str = "icons/settings/settings-02.svg";

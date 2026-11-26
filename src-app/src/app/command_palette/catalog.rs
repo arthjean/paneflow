@@ -464,27 +464,28 @@ fn action_values(entries: &[(&str, &'static str)]) -> Vec<ScopeValue> {
         .collect()
 }
 
+const SETTINGS_PAGES: [(&str, SettingsSection); 10] = [
+    ("General", SettingsSection::General),
+    ("Appearance", SettingsSection::Appearance),
+    ("Terminal", SettingsSection::Terminal),
+    ("Editor", SettingsSection::Editor),
+    ("Workspaces", SettingsSection::Workspaces),
+    ("Spaces", SettingsSection::Spaces),
+    ("Worktrees", SettingsSection::Worktrees),
+    ("Agents", SettingsSection::Agents),
+    ("Usage", SettingsSection::Usage),
+    ("Shortcuts", SettingsSection::Shortcuts),
+];
+
 fn settings_values(app: &PaneFlowApp) -> Vec<ScopeValue> {
-    [
-        ("General", SettingsSection::General),
-        ("Appearance", SettingsSection::Appearance),
-        ("Terminal", SettingsSection::Terminal),
-        ("Editor", SettingsSection::Editor),
-        ("Workspaces", SettingsSection::Workspaces),
-        ("Spaces", SettingsSection::Spaces),
-        ("Worktrees", SettingsSection::Worktrees),
-        ("Agents", SettingsSection::Agents),
-        ("Usage", SettingsSection::Usage),
-        ("MCP servers", SettingsSection::McpServers),
-        ("Shortcuts", SettingsSection::Shortcuts),
-    ]
-    .into_iter()
-    .map(|(label, section)| ScopeValue {
-        label: label.to_string(),
-        current: app.settings_section == Some(section),
-        apply: Apply::Settings(section),
-    })
-    .collect()
+    SETTINGS_PAGES
+        .into_iter()
+        .map(|(label, section)| ScopeValue {
+            label: label.to_string(),
+            current: app.settings_section == Some(section),
+            apply: Apply::Settings(section),
+        })
+        .collect()
 }
 
 fn font_values(app: &PaneFlowApp) -> Vec<ScopeValue> {
@@ -1646,7 +1647,7 @@ pub(crate) const COMMANDS: &[Command] = &[
     Command {
         label: "Automations",
         icon: Some("icons/palette/flash.svg"),
-        keywords: "help scripting cli mcp",
+        keywords: "help scripting cli lua",
         needs: Needs::Always,
         section: Section::Paneflow,
         kind: Kind::Run(|app, _window, cx| {
@@ -1844,6 +1845,34 @@ mod tests {
                 crate::assets::Assets::get(section.icon()).is_some(),
                 "{section:?} points at a missing icon"
             );
+        }
+    }
+
+    #[test]
+    fn the_palette_offers_no_mcp_page_and_no_command_answers_to_mcp() {
+        let automations = COMMANDS
+            .iter()
+            .find(|command| command.label == "Automations")
+            .expect("the scripting help entry");
+        assert!(
+            crate::app::command_palette::matcher::match_entry(
+                automations.label,
+                None,
+                automations.keywords,
+                "mcp"
+            )
+            .is_none()
+        );
+        for command in COMMANDS {
+            assert!(
+                !command.label.to_lowercase().contains("mcp")
+                    && !command.keywords.to_lowercase().contains("mcp"),
+                "{}",
+                command.label
+            );
+        }
+        for (label, _) in SETTINGS_PAGES {
+            assert!(!label.to_lowercase().contains("mcp"), "{label}");
         }
     }
 

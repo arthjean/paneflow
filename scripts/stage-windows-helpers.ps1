@@ -11,7 +11,7 @@ $packagedHelperDir = Join-Path (Join-Path 'target' $Target) 'release/paneflow-he
 New-Item -ItemType Directory -Path $embedDir -Force | Out-Null
 New-Item -ItemType Directory -Path $packagedHelperDir -Force | Out-Null
 
-foreach ($name in @('paneflow-shim.exe', 'paneflow-ai-hook.exe', 'paneflow-mcp.exe')) {
+foreach ($name in @('paneflow-shim.exe', 'paneflow-ai-hook.exe')) {
   $artifact = Join-Path $artifactDir $name
   if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) {
     throw "Expected helper artifact missing: $artifact"
