@@ -1,0 +1,21 @@
+[package]
+name = "paneflow-program-resume"
+version.workspace = true
+edition = "2024"
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "Terminal side of the OSC 7577 Program Resume Protocol: strict report parsing, MAC and time verification, and the record store, with no I/O"
+publish = false
+
+[dependencies]
+base64 = "0.22"
+serde.workspace = true
+sha2 = "0.10"
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

@@ -22,6 +22,7 @@ members = [
     "crates/paneflow-minisign",
     "crates/paneflow-peer",
     "crates/paneflow-process",
+    "crates/paneflow-program-resume",
     "crates/paneflow-script",
     "crates/paneflow-serve",
     "crates/paneflow-shim",
