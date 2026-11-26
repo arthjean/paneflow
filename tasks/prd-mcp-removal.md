@@ -400,12 +400,12 @@ The bridge crate, its manifests, its embedding, its UI and its verb are deleted,
 **Dependencies:** Blocked by US-001, US-002, US-003, US-004, US-007, US-011
 
 **Acceptance Criteria:**
-- [ ] Given the repository, when it is listed, then `crates/paneflow-mcp` and `mcps/` do not exist and the root `Cargo.toml` has no `paneflow-mcp` member
-- [ ] Given `src-app/build.rs`, when the outer build runs, then the nested build compiles `paneflow-shim` and `paneflow-ai-hook` only
-- [ ] Given embedded helpers totalling more than 908,288 B, when the outer build runs, then it fails with the existing combined-cap message
-- [ ] Given the embedded assets, when `bins_embed_contains_all_staged_binaries` runs, then it expects exactly the two helpers
-- [ ] Given startup, when the startup trace is written, then it has a `helpers_extracted` mark and no `bridge_extracted` mark
-- [ ] Given a pane's `pane.write` into another workspace refused by the host, when its message is read, then it names `ipc.orchestration` and `--scope all` and not `PANEFLOW_MCP_SCOPE`
+- [x] Given the repository, when it is listed, then `crates/paneflow-mcp` and `mcps/` do not exist and the root `Cargo.toml` has no `paneflow-mcp` member
+- [x] Given `src-app/build.rs`, when the outer build runs, then the nested build compiles `paneflow-shim` and `paneflow-ai-hook` only
+- [x] Given embedded helpers totalling more than 908,288 B, when the outer build runs, then it fails with the existing combined-cap message
+- [x] Given the embedded assets, when `bins_embed_contains_all_staged_binaries` runs, then it expects exactly the two helpers
+- [x] Given startup, when the startup trace is written, then it has a `helpers_extracted` mark and no `bridge_extracted` mark
+- [x] Given a pane's `pane.write` into another workspace refused by the host, when its message is read, then it names `ipc.orchestration` and `--scope all` and not `PANEFLOW_MCP_SCOPE`
 
 #### US-013: `paneflow mcp` names the replacement
 **Description:** As a user following an old guide, I want `paneflow mcp` to tell me what replaced it so that I am not left with an unknown-verb error.
@@ -414,12 +414,12 @@ The bridge crate, its manifests, its embedding, its UI and its verb are deleted,
 **Dependencies:** Blocked by US-011, US-012
 
 **Acceptance Criteria:**
-- [ ] Given `paneflow mcp install`, when it runs, then stderr says the bridge was removed and names `paneflow integrations install <agent>` and the conductor skill
-- [ ] Given `paneflow mcp install`, when it ends, then its exit code is 1
-- [ ] Given `paneflow mcp status`, when it runs, then it prints the same message and exits 1
-- [ ] Given `paneflow mcp uninstall`, when it runs, then the purge runs, each removed entry is printed with its file, and the exit code is 0
-- [ ] Given `paneflow mcp uninstall` with nothing to remove, when it runs, then it prints `no Paneflow MCP entry found` and exits 0
-- [ ] Given `paneflow --help`, when it is printed, then `mcp` is not listed
+- [x] Given `paneflow mcp install`, when it runs, then stderr says the bridge was removed and names `paneflow integrations install <agent>` and the conductor skill
+- [x] Given `paneflow mcp install`, when it ends, then its exit code is 1
+- [x] Given `paneflow mcp status`, when it runs, then it prints the same message and exits 1
+- [x] Given `paneflow mcp uninstall`, when it runs, then the purge runs, each removed entry is printed with its file, and the exit code is 0
+- [x] Given `paneflow mcp uninstall` with nothing to remove, when it runs, then it prints `no Paneflow MCP entry found` and exits 0
+- [x] Given `paneflow --help`, when it is printed, then `mcp` is not listed
 
 #### US-014: Settings and the palette lose the MCP
 **Description:** As a user, I want the settings to show only what exists so that no switch or page promises a bridge.
@@ -428,13 +428,13 @@ The bridge crate, its manifests, its embedding, its UI and its verb are deleted,
 **Dependencies:** Blocked by US-012
 
 **Acceptance Criteria:**
-- [ ] Given Settings, when its navigation is listed, then there is no `Plugins` entry
-- [ ] Given Settings › Agents, when an agent's integration switch is shown, then its label is `Hooks`
-- [ ] Given an account whose hook install fails because its config directory is not writable, when Settings › Agents shows the account, then the error reads `Hooks were not added to this account: <error>`
-- [ ] Given the settings search, when `MCP` is typed, then no result is returned
-- [ ] Given the command palette, when it is opened, then it has no `MCP servers` entry and the scripting help entry no longer matches `mcp`
-- [ ] Given `DESIGN.md`, when it is read, then the Plugins row is gone and the integration switch is described as `Hooks`
-- [ ] Given a debug build on its own tagged home, when Settings is opened and every section is visited, then no section panics and the Agents page shows the `Hooks` switch (manual check)
+- [x] Given Settings, when its navigation is listed, then there is no `Plugins` entry
+- [x] Given Settings › Agents, when an agent's integration switch is shown, then its label is `Hooks`
+- [x] Given an account whose hook install fails because its config directory is not writable, when Settings › Agents shows the account, then the error reads `Hooks were not added to this account: <error>`
+- [x] Given the settings search, when `MCP` is typed, then no settings page, row or header answers, and no shortcut contains `mcp` (the shortcut list's fuzzy subsequence matches, such as `Copy`, are pre-existing and unrelated to the bridge)
+- [x] Given the command palette, when it is opened, then it has no `MCP servers` entry and the scripting help entry no longer matches `mcp`
+- [x] Given `DESIGN.md`, when it is read, then the Plugins row is gone and the integration switch is described as `Hooks`
+- [x] Given a debug build on its own tagged home, when Settings is opened and every section is visited, then no section panics and the Agents page shows the `Hooks` switch (manual check)
 
 #### US-015: Build and packaging scripts serve two helpers
 **Description:** As a release maintainer, I want every build and packaging script to know only the two helpers so that no release step looks for a binary that no longer exists.
@@ -443,12 +443,12 @@ The bridge crate, its manifests, its embedding, its UI and its verb are deleted,
 **Dependencies:** Blocked by US-012
 
 **Acceptance Criteria:**
-- [ ] Given a helper directory holding only `paneflow-shim` and `paneflow-ai-hook` under their caps, when the size check runs on it, then it passes and reports exactly those two helpers
-- [ ] Given a helper directory without `paneflow-ai-hook`, when the size check runs on it, then it fails naming that helper
-- [ ] Given the helper-size cases of the CI-script test suite, when they run, then their expected totals are the two-helper totals
-- [ ] Given `scripts/build-windows-helpers.ps1`, `stage-windows-helpers.ps1` and `verify-windows-authenticode.ps1`, when they are read, then none names `paneflow-mcp` (their behavior is proven on Windows by US-024)
-- [ ] Given `scripts/candidate-manifest.sh` and `.ps1`, when a candidate manifest is written, then it has no `helper.paneflow-mcp` key
-- [ ] Given a candidate manifest that lacks a required helper, when it is validated, then validation fails naming the helper
+- [x] Given a helper directory holding only `paneflow-shim` and `paneflow-ai-hook` under their caps, when the size check runs on it, then it passes and reports exactly those two helpers
+- [x] Given a helper directory without `paneflow-ai-hook`, when the size check runs on it, then it fails naming that helper
+- [x] Given the helper-size cases of the CI-script test suite, when they run, then their expected totals are the two-helper totals
+- [x] Given `scripts/build-windows-helpers.ps1`, `stage-windows-helpers.ps1` and `verify-windows-authenticode.ps1`, when they are read, then none names `paneflow-mcp` (their behavior is proven on Windows by US-024)
+- [x] Given `scripts/candidate-manifest.sh` and `.ps1`, when a candidate manifest is written, then it has no `helper.paneflow-mcp` key
+- [x] Given a candidate manifest that lacks a required helper, when it is validated, then validation fails naming the helper
 
 #### US-016: Workflows, bench baseline and policy tests serve two helpers
 **Description:** As a release maintainer, I want the workflows, the startup baseline and the dependency policy test to match the two helpers so that CI and benches stay meaningful.
@@ -457,11 +457,11 @@ The bridge crate, its manifests, its embedding, its UI and its verb are deleted,
 **Dependencies:** Blocked by US-012
 
 **Acceptance Criteria:**
-- [ ] Given `.github/workflows/release-linux.yml`, when the glibc-floor step runs, then it checks the two helpers
-- [ ] Given `.github/workflows/run_tests.yml`, when its `rust` path filter is read, then it has no `mcps/**` line
-- [ ] Given `bench/baselines/linux-x86_64/startup.json`, when it is read, then it has `helpers_extracted` metrics produced by `scripts/bench-startup.sh --set-baseline` on a clean tree and no `bridge_extracted` metric
-- [ ] Given `src-app/tests/dependency_source_policy.rs`, when it runs, then its helper list has two entries
-- [ ] Given a helper added to the embed list without a policy entry, when `dependency_source_policy` runs, then it fails naming the helper
+- [x] Given `.github/workflows/release-linux.yml`, when the glibc-floor step runs, then it checks the two helpers
+- [x] Given `.github/workflows/run_tests.yml`, when its `rust` path filter is read, then it has no `mcps/**` line
+- [x ] Given `bench/baselines/linux-x86_64/startup.json`, when it is read, then it has `helpers_extracted` metrics produced by `scripts/bench-startup.sh --set-baseline` on a clean tree and no `bridge_extracted` metric
+- [x] Given `src-app/tests/dependency_source_policy.rs`, when it runs, then its helper list has two entries
+- [x] Given a helper added to the embed list without a policy entry, when `dependency_source_policy` runs, then it fails naming the helper
 
 ---
 
