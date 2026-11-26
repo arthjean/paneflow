@@ -18,6 +18,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
 
 [[package]]
+name = "base64"
+version = "0.22.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
+
+[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -165,12 +171,13 @@ name = "paneflow-libghostty-fuzz"
 version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
+ "paneflow-program-resume",
  "paneflow-terminal-ghostty",
 ]
 
 [[package]]
 name = "paneflow-libghostty-sys"
-version = "0.10.0"
+version = "0.20.0"
 dependencies = [
  "serde",
  "sha2",
@@ -178,9 +185,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "paneflow-terminal-ghostty"
-version = "0.10.0"
+name = "paneflow-program-resume"
+version = "0.20.0"
 dependencies = [
+ "base64",
+ "serde",
+ "sha2",
+]
+
+[[package]]
+name = "paneflow-terminal-ghostty"
+version = "0.20.0"
+dependencies = [
+ "libc",
  "paneflow-libghostty-sys",
  "regex",
  "serde_json",

@@ -13,6 +13,7 @@ native = ["paneflow-terminal-ghostty/native"]
 
 [dependencies]
 libfuzzer-sys = "=0.4.12"
+paneflow-program-resume = { path = "../crates/paneflow-program-resume" }
 paneflow-terminal-ghostty = { path = "../crates/paneflow-terminal-ghostty" }
 
 [[bin]]
@@ -25,6 +26,13 @@ bench = false
 [[bin]]
 name = "snapshot"
 path = "fuzz_targets/snapshot.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "program_resume"
+path = "fuzz_targets/program_resume.rs"
 test = false
 doc = false
 bench = false
