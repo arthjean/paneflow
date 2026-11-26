@@ -43,7 +43,7 @@
       "title": "GPU presentation on Linux",
       "status": "IN_PROGRESS",
       "priority": "P1",
-      "stories_total": 10,
+      "stories_total": 13,
       "stories_done": 0
     },
     {
@@ -539,12 +539,12 @@
       "id": "US-058",
       "title": "Compose a displayed tab's frames in a Wayland subsurface",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "blocked_by": [
         "US-033"
       ],
-      "started_at": null,
+      "started_at": "2026-11-26T14:04:09+01:00",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -552,12 +552,12 @@
       "id": "US-059",
       "title": "Place, scale and hide the subsurface with the page",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "blocked_by": [
         "US-058"
       ],
-      "started_at": null,
+      "started_at": "2026-11-26T14:04:09+01:00",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -565,13 +565,13 @@
       "id": "US-060",
       "title": "Draw Paneflow's own surfaces above a page",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "blocked_by": [
         "US-058",
         "US-031"
       ],
-      "started_at": null,
+      "started_at": "2026-11-26T14:04:09+01:00",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -579,13 +579,13 @@
       "id": "US-061",
       "title": "Fall back when the compositor cannot take the page",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "blocked_by": [
         "US-058",
         "US-034"
       ],
-      "started_at": null,
+      "started_at": "2026-11-26T14:04:09+01:00",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -593,9 +593,54 @@
       "id": "US-062",
       "title": "Attribute the window's cost in the latency A/B",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "blocked_by": [],
+      "started_at": "2026-11-26T14:04:09+01:00",
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-063",
+      "title": "Compose CPU frames in the subsurface through shared memory",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-058",
+        "US-061"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-064",
+      "title": "Place the page below the window and punch its area",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-058",
+        "US-059",
+        "US-060",
+        "US-063"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-065",
+      "title": "Measure every path and container against the window's root renders",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-062",
+        "US-063",
+        "US-064"
+      ],
       "started_at": null,
       "completed_at": null,
       "reviewed_at": null
@@ -612,7 +657,10 @@
         "US-059",
         "US-060",
         "US-061",
-        "US-062"
+        "US-062",
+        "US-063",
+        "US-064",
+        "US-065"
       ],
       "started_at": "2026-11-26T11:57:25+01:00",
       "completed_at": null,

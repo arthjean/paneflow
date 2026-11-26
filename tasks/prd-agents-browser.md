@@ -9,6 +9,7 @@
 | 2.0 | 2026-11-24 | Arthur Jean | Full rewrite from the research of 2026-11-24 (`tasks/research/agent-browser-architecture-2026-11-24.md`, local evidence) and a reading of Zeron and t3code. Same engine choice (CEF in its own host process, off-screen rendering), four changes: agent control is proven before the GPU path, an explicit CPU presentation path exists, the engine ships as a separately signed runtime, and Windows is recognised as the most expensive GPUI integration. The GPUI pin cited by v1.0 (`fecc3273`) is replaced by the current one (`c016f436`; the research read `703b5ac3`, and R1 to R3 were re-read at `c016f436` after `main` moved the same day). Every macOS test and validation story sits in a final epic, EP-008; every Windows test and validation story sits in a final epic after it, EP-009. 9 epics, 57 stories. Version 1.0 is in git history. |
 | 2.1 | 2026-11-25 | Arthur Jean | EP-001 run: "Kill test report" added. GO for the control plane; GO to build for the CPU and Linux GPU paths, which regress terminal latency on a native Wayland window (A3 failed there, holds on X11). A3 requires a revision; the external-Chrome fallback it names is rejected on the diagnostic evidence, pending Arthur's ratification (Open Questions), and US-025 and US-035 gain a latency gate on a native Wayland window with nine no-browser runs. Assumptions A1 to A5, A7, A8 and A15 marked. No story cancelled. |
 | 2.2 | 2026-11-25 | Arthur Jean | Before EP-004: Arthur ratified the rejection of A3's external-Chrome fallback (an external Chrome carries both measured causes, the redraw at the video's frame rate and Chromium's own load, and displays worse) and closed that open question. The US-025 latency gate was corrected before its run: the diagnostic campaign's "Chromium only, no redraw" medians (2.973 to 2.980 ms) already exceed the largest no-browser median (2.940 ms), so a gate against a no-browser arm fails for any display path and turning the display off does not remove that load. The control arm is now the host playing the video with its tab not displayed, and the gate judges the 99th percentile as well as the median. US-035 keeps its wording until EP-005. |
+| 2.4 | 2026-11-26 | Arthur Jean | After EP-005's second A/B round (the GPU path no longer redraws the window for page frames; the CPU path and any page in a pane still do), Arthur chose to remove the cause on every path and container rather than disable a path: US-063 composes CPU frames in the subsurface through `wl_shm`, US-064 places the page's subsurface below the window with its area punched transparent (an underlay, so Paneflow's own surfaces and the panes' rounded corners stay above the page without any frame-by-frame switch), and US-065 measures every path and container with a gate on the window's root renders. The external-texture seam gains the punch primitive (Files NOT to Modify). US-035's criterion is unchanged and now depends on the three; the open question on the CPU path is closed. |
 | 2.3 | 2026-11-26 | Arthur Jean | Additions at Arthur's request after the EP-004 manual pass, each recorded in "EP-004 review": Helium's location bar, loading line, omnibox and Site information; the Browser settings page after Zeron; the guard now follows the tab's owner (a tab a person drives holds no site); `browser.display` removed; Zeron's element picker behind the Pointer button, sending picks straight to the chosen agent's prompt; Chromium's developer tools docked on F12. The Non-Goal "DevTools for the human" is withdrawn. |
 
 ## Problem Statement
@@ -923,9 +924,9 @@ Verdict, 2026-11-26: EP-004 is DONE. Every criterion of US-023 to US-030 is prov
 
 ### EP-005: GPU presentation on Linux
 
-The shared-texture path under Wayland and X11, with the CPU path as its explicit fallback. On a native Wayland window a displayed tab is composed by the compositor in a subsurface of its own (US-058 to US-062, added 2026-11-26 after US-035 measured the cost of redrawing the window for every page frame). US-031, US-032, US-033 and US-035 are engaged only if US-007 recorded GO for the Linux GPU path. US-034 is platform-neutral (the per-tab presentation state, its indicator and its setting) and is built either way; no story outside this epic depends on the other four.
+The shared-texture path under Wayland and X11, with the CPU path as its explicit fallback. On a native Wayland window a displayed tab is composed by the compositor in a subsurface of its own (US-058 to US-062, added 2026-11-26 after US-035 measured the cost of redrawing the window for every page frame), whatever its transport and its container, below the window with its area punched transparent (US-063 to US-065, added the same day after the second A/B round). US-031, US-032, US-033 and US-035 are engaged only if US-007 recorded GO for the Linux GPU path. US-034 is platform-neutral (the per-tab presentation state, its indicator and its setting) and is built either way; no story outside this epic depends on the other four.
 
-**Definition of Done:** on the Linux development machine under native Wayland and under X11, a displayed tab presents through an imported dmabuf (composed in a subsurface on a native Wayland window, drawn by GPUI elsewhere), a forced import failure switches the tab to the CPU path with a visible indicator, and the A/B latency method of TD-17 shows no regression while the video fixture plays in the dock; the measurement is a section of this PRD.
+**Definition of Done:** on the Linux development machine under native Wayland and under X11, a displayed tab presents through an imported dmabuf (composed in a subsurface on a native Wayland window, drawn by GPUI elsewhere), a forced import failure switches the tab to the CPU path with a visible indicator, a page on either path in the dock or in a pane of a native Wayland window never makes the window redraw for its frames, and the A/B latency method of TD-17 shows no regression while the video fixture plays in the dock and in a pane; the measurement is a section of this PRD.
 
 #### US-031: Add the external-texture seam to the vendored renderer
 **Description:** As a maintainer, I want the vendored `gpui_wgpu` to draw an imported texture through the image atlas so that a GPU frame needs no change to the `gpui` core crate.
@@ -984,7 +985,7 @@ The shared-texture path under Wayland and X11, with the CPU path as its explicit
 **Description:** As a maintainer, I want evidence that the browser does not slow the terminal so that no performance claim ships unmeasured.
 
 **Priority:** P1
-**Dependencies:** Blocked by US-033, US-058, US-059, US-060, US-061, US-062
+**Dependencies:** Blocked by US-033, US-058, US-059, US-060, US-061, US-062, US-063, US-064, US-065
 
 **Acceptance Criteria:**
 - [x] Given the video fixture playing in the dock on the GPU path, when the A/B method of TD-17 is run in a debug build on a tagged home, then the nine no-browser medians (A15) and the with-browser medians are recorded in this PRD.
@@ -1000,12 +1001,12 @@ The shared-texture path under Wayland and X11, with the CPU path as its explicit
 **Dependencies:** Blocked by US-033
 
 **Acceptance Criteria:**
-- [ ] Given a tab displayed on the GPU path in a native Wayland window, when the window presents it, then `src-app` creates a `wl_subsurface` of the window's `wl_surface`, from the `wl_display` and `wl_surface` GPUI exposes through `raw-window-handle`, on an event queue of its own, desynchronized and with an empty input region, and `vendor/gpui_linux` is unchanged.
-- [ ] Given a pool announced by `GpuSurface`, when the presenter receives it, then each slot becomes one `wl_buffer` through `zwp_linux_dmabuf_v1` with the pool's fourcc, modifier and plane layout, created once per pool generation and destroyed when the generation is replaced.
-- [ ] Given a frame descriptor for the tab, when it arrives, then a presenter thread attaches the slot's buffer, damages it and commits the subsurface, and no call reaches the GPUI main thread and no redraw of the window is requested, proven by a counter of root renders that does not move while frames are committed.
-- [ ] Given the compositor sends `wl_buffer.release` for a slot, when the presenter dispatches it, then that slot is released to the host, and a slot is never released while the compositor holds it, proven against the in-process test compositor of this story.
-- [ ] Given the in-process test compositor (a `wayland-server` display in the test that records requests and sends releases on demand), when the tests run on the Linux CI runner, then they cover create, attach, commit, release, a new pool generation and the window closing, with no real compositor.
-- [ ] Given the window as an X11 client, when a tab is displayed, then it keeps the GPUI atlas path of US-033.
+- [x] Given a tab displayed on the GPU path in a native Wayland window, when the window presents it, then `src-app` creates a `wl_subsurface` of the window's `wl_surface`, from the `wl_display` and `wl_surface` GPUI exposes through `raw-window-handle`, on an event queue of its own, desynchronized and with an empty input region, and `vendor/gpui_linux` is unchanged.
+- [x] Given a pool announced by `GpuSurface`, when the presenter receives it, then each slot becomes one `wl_buffer` through `zwp_linux_dmabuf_v1` with the pool's fourcc, modifier and plane layout, created once per pool generation and destroyed when the generation is replaced.
+- [x] Given a frame descriptor for the tab, when it arrives, then a presenter thread attaches the slot's buffer, damages it and commits the subsurface, and no call reaches the GPUI main thread and no redraw of the window is requested, proven by a counter of root renders that does not move while frames are committed.
+- [x] Given the compositor sends `wl_buffer.release` for a slot, when the presenter dispatches it, then that slot is released to the host, and a slot is never released while the compositor holds it, proven against the in-process test compositor of this story.
+- [x] Given the in-process test compositor (a `wayland-server` display in the test that records requests and sends releases on demand), when the tests run on the Linux CI runner, then they cover create, attach, commit, release, a new pool generation and the window closing, with no real compositor.
+- [x] Given the window as an X11 client, when a tab is displayed, then it keeps the GPUI atlas path of US-033.
 
 #### US-059: Place, scale and hide the subsurface with the page
 **Description:** As a user, I want the page to sit exactly in its area at any scale so that the subsurface looks like the page GPUI would have drawn.
@@ -1014,12 +1015,12 @@ The shared-texture path under Wayland and X11, with the CPU path as its explicit
 **Dependencies:** Blocked by US-058
 
 **Acceptance Criteria:**
-- [ ] Given the page element's bounds in a frame, when its prepaint runs, then it publishes the bounds and visibility to the presenter without waiting on it, and the presenter applies `set_position` and a `wp_viewport` destination in logical pixels, the buffer staying in device pixels.
-- [ ] Given a fractional scale (1.25, 1.5, 1.75), when the page is presented, then the buffer size equals the destination size times the scale, rounded as GPUI rounds the page area, proven against the test compositor.
-- [ ] Given the page area resized, when frames of the new size arrive, then the old generation's buffers are destroyed after their release and no buffer of one size is shown at the other size's destination.
-- [ ] Given a tab hidden, a pane closed or the window minimized, when it is no longer displayed, then the subsurface has no buffer attached and its slots return to the host.
-- [ ] Given a page in a container whose corners are rounded, when it is displayed, then it keeps the atlas path, and DESIGN.md states which browser containers have square corners and therefore take the subsurface.
-- [ ] Given a live debug build on a tagged home under GNOME on Wayland, when the dock and a pane each show a page at scales 1 and 2, then screenshots show each page in its area with no offset, recorded in this PRD.
+- [x] Given the page element's bounds in a frame, when its prepaint runs, then it publishes the bounds and visibility to the presenter without waiting on it, and the presenter applies `set_position` and a `wp_viewport` destination in logical pixels, the buffer staying in device pixels.
+- [x] Given a fractional scale (1.25, 1.5, 1.75), when the page is presented, then the buffer size equals the destination size times the scale, rounded as GPUI rounds the page area, proven against the test compositor.
+- [x] Given the page area resized, when frames of the new size arrive, then the old generation's buffers are destroyed after their release and no buffer of one size is shown at the other size's destination.
+- [x] Given a tab hidden, a pane closed or the window minimized, when it is no longer displayed, then the subsurface has no buffer attached and its slots return to the host.
+- [x] Given a page in a container whose corners are rounded, when it is displayed, then it keeps the atlas path, and DESIGN.md states which browser containers have square corners and therefore take the subsurface.
+- [x] Given a live debug build on a tagged home under GNOME on Wayland, when the dock and a pane each show a page at scales 1 and 2, then screenshots show each page in its area with no offset, recorded in this PRD.
 
 #### US-060: Draw Paneflow's own surfaces above a page
 **Description:** As a user, I want Paneflow's menus, dialogs and tooltips to stay above the page so that the subsurface never hides them.
@@ -1028,11 +1029,11 @@ The shared-texture path under Wayland and X11, with the CPU path as its explicit
 **Dependencies:** Blocked by US-058, US-031
 
 **Acceptance Criteria:**
-- [ ] Given a frame of the window, when the scene is drawn, then the external-texture seam of `vendor/gpui_wgpu` reports for each registered page image whether any primitive drawn after its sprite intersects the sprite's bounds inside the content mask, and its `Cargo.toml` header names this extension.
-- [ ] Given a menu, the site information panel, a dialog, the omnibox suggestions or a tooltip crossing the page, when that frame is drawn, then the tab is drawn through the GPUI atlas in that frame and the subsurface has no buffer, and when nothing crosses it any more the tab returns to the subsurface.
-- [ ] Given a switch between the two, when it happens, then exactly one of them shows a page frame in every window frame, proven by a scene test that checks no frame shows both and none shows neither.
-- [ ] Given a page frame arriving while the tab is drawn through the atlas, when the presenter receives it, then it hands the frame to the window instead of committing it.
-- [ ] Given the seam's report, when the scene is drawn, then computing it adds no allocation per frame beyond the first, proven by the seam's tests.
+- [x] Given a frame of the window, when the scene is drawn, then the external-texture seam of `vendor/gpui_wgpu` reports for each registered page image whether any primitive drawn after its sprite intersects the sprite's bounds inside the content mask, and its `Cargo.toml` header names this extension.
+- [x] Given a menu, the site information panel, a dialog, the omnibox suggestions or a tooltip crossing the page, when that frame is drawn, then the tab is drawn through the GPUI atlas in that frame and the subsurface has no buffer, and when nothing crosses it any more the tab returns to the subsurface.
+- [x] Given a switch between the two, when it happens, then exactly one of them shows a page frame in every window frame, proven by a scene test that checks no frame shows both and none shows neither.
+- [x] Given a page frame arriving while the tab is drawn through the atlas, when the presenter receives it, then it hands the frame to the window instead of committing it.
+- [x] Given the seam's report, when the scene is drawn, then computing it adds no allocation per frame beyond the first, proven by the seam's tests.
 
 #### US-061: Fall back when the compositor cannot take the page
 **Description:** As a user, I want the page to keep showing when the compositor does not accept Chromium's buffers so that delegated compositing is an optimization and never a failure.
@@ -1041,11 +1042,11 @@ The shared-texture path under Wayland and X11, with the CPU path as its explicit
 **Dependencies:** Blocked by US-058, US-034
 
 **Acceptance Criteria:**
-- [ ] Given the compositor's dmabuf feedback, when the presenter starts, then it reads the formats and modifiers of every tranche and of the main device, and a pool whose fourcc and modifier the feedback lists takes the subsurface.
-- [ ] Given a pool the feedback does not list, when the window sees it, then it asks the host for a pool with a modifier from the feedback through a field of `Present`, and the host exports one when its device can, otherwise keeps its own.
-- [ ] Given neither, or a compositor without `zwp_linux_dmabuf_v1` version 4, `wl_subcompositor` or `wp_viewporter`, when a tab is displayed, then it stays on the GPUI atlas path, and `paneflow browser status --json` reports per tab how it is composed (`subsurface` or `window`) and why not the subsurface.
-- [ ] Given a buffer the compositor rejects (`zwp_linux_buffer_params_v1.failed`) or a protocol error on the presenter's queue, when it happens, then the tab moves to the atlas path for the rest of the session with the reason recorded, and the window keeps running, proven against the test compositor.
-- [ ] Given a fallback of this story, when the tab is displayed, then no indicator of US-034 is shown, since the page still comes from GPU memory.
+- [x] Given the compositor's dmabuf feedback, when the presenter starts, then it reads the formats and modifiers of every tranche and of the main device, and a pool whose fourcc and modifier the feedback lists takes the subsurface.
+- [x] Given a pool the feedback does not list, when the window sees it, then it asks the host for a pool with a modifier from the feedback through a field of `Present`, and the host exports one when its device can, otherwise keeps its own.
+- [x] Given neither, or a compositor without `zwp_linux_dmabuf_v1` version 4, `wl_subcompositor` or `wp_viewporter`, when a tab is displayed, then it stays on the GPUI atlas path, and `paneflow browser status --json` reports per tab how it is composed (`subsurface` or `window`) and why not the subsurface.
+- [x] Given a buffer the compositor rejects (`zwp_linux_buffer_params_v1.failed`) or a protocol error on the presenter's queue, when it happens, then the tab moves to the atlas path for the rest of the session with the reason recorded, and the window keeps running, proven against the test compositor.
+- [x] Given a fallback of this story, when the tab is displayed, then no indicator of US-034 is shown, since the page still comes from GPU memory.
 
 #### US-062: Attribute the window's cost in the latency A/B
 **Description:** As a maintainer, I want the A/B to tell the transport's cost from the window's redraw cost so that a regression names its cause.
@@ -1054,10 +1055,53 @@ The shared-texture path under Wayland and X11, with the CPU path as its explicit
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given `scripts/latency-ab.sh`, when it runs with `--path redraw`, then its third arm redraws an empty rectangle at the video's frame rate with no browser, as EP-001's diagnostic campaign did, and `verdict.py` judges it by the same rule.
-- [ ] Given every run, when its report is written, then it records how its tab was composed (`subsurface`, `window` or none) and the window's root renders per second, and a `gpu` run on a native Wayland window whose tab was not composed in the subsurface makes the campaign invalid.
+- [x] Given `scripts/latency-ab.sh`, when it runs with `--path redraw`, then its third arm redraws an empty rectangle at the video's frame rate with no browser, as EP-001's diagnostic campaign did, and `verdict.py` judges it by the same rule.
+- [x] Given every run, when its report is written, then it records how its tab was composed (`subsurface`, `window` or none) and the window's root renders per second, and a `gpu` run on a native Wayland window whose tab was not composed in the subsurface makes the campaign invalid.
+- [x] Given the measurement, when the test tree is searched, then no unit test asserts a duration for it.
+- [x] Given the method, when `bench/README.md` is read, then it documents the arms, the rule and the expected root renders per second while a page plays.
+
+#### US-063: Compose CPU frames in the subsurface through shared memory
+**Description:** As a user whose page is on the CPU path, I want the compositor to show its frames itself so that the fallback path never makes Paneflow's window redraw either.
+
+**Priority:** P1
+**Dependencies:** Blocked by US-058, US-061
+
+**Acceptance Criteria:**
+- [ ] Given a `Surface` announced by the host for a tab on the CPU path, when the presenter receives it, then each of its slots becomes one `wl_buffer` from a `wl_shm` pool over the slot's shared memory, with the format that matches the frame's pixel layout (`argb8888`, premultiplied, as GPUI draws it) and the surface's stride, created once per surface generation and destroyed after their release when the generation is replaced.
+- [ ] Given a shared-memory frame for a tab composed in the subsurface, when it arrives, then the presenter thread attaches, damages and commits the slot's buffer, and no frame reaches the window, proven against the test compositor by the router never being called and the root-render counter not moving.
+- [ ] Given the compositor holds a slot's buffer, when the host looks for a free slot, then that slot stays busy until `wl_buffer.release`, so the host never paints into a buffer on screen, proven against the test compositor.
+- [ ] Given a frame shown through `wl_shm`, when the test compositor reads its buffer, then its bytes equal the frame the window would have drawn, a page without a background included (opaque white, US-025).
+- [ ] Given the shared memory cannot back a `wl_shm` pool (the compositor refuses it, or the format is not offered), when a tab is displayed, then it keeps the window path with the reason in `paneflow browser status --json`, and no indicator of US-034 is shown.
+- [ ] Given a tab on the CPU path in a container that takes the subsurface, when `paneflow browser status --json` is read, then it reports `composition: subsurface`.
+
+#### US-064: Place the page below the window and punch its area
+**Description:** As a user, I want Paneflow's menus, tooltips and rounded corners to stay above a composed page without the page ever moving back into the window so that every browser container, panes included, gets the compositor's path.
+
+**Priority:** P1
+**Dependencies:** Blocked by US-058, US-059, US-060, US-063
+
+**Acceptance Criteria:**
+- [ ] Given a tab composed in a subsurface, when it is placed, then the subsurface sits below the window's surface (`wl_subsurface.place_below` its parent), and the window draws the page area as transparent pixels through a punch primitive of the external-texture seam that replaces the target's pixels instead of blending, and the header of `vendor/gpui_wgpu/Cargo.toml` names this extension.
+- [ ] Given the Linux shell, opaque by default, when a page is composed below the window, then the window's surface is transparent (GPUI's transparent background, presented with a premultiplied alpha mode, so it declares no opaque region with either decoration mode) while the window paints its shell opaque itself, as `linux_chrome_material` already does, and nothing else in the window changes color; where the surface offers no premultiplied alpha mode, the tab keeps the overlay of US-058 to US-060, with the reason in `paneflow browser status --json`.
+- [ ] Given a page in a pane's rounded card, when it is displayed, then it is composed below the window and the card's corners, drawn by the window, cover the page's corners, and DESIGN.md states that every browser container takes the subsurface.
+- [ ] Given a menu, the site information panel, a dialog, the omnibox suggestions or a tooltip crossing the page, when that frame is drawn, then the subsurface keeps its buffer and the window's pixels over the page area are that surface's where it is drawn and transparent elsewhere, proven by a scene test on GPUI's headless renderer, and no page frame reaches the window.
+- [ ] Given a fractional scale (1, 1.25, 1.5, 1.75, 2), when a page is composed, then the punched area and the subsurface cover the same device pixels, proven by a test that compares the punched rectangle with the subsurface's position and viewport destination.
+- [ ] Given the window's background blurred (`window_backdrop` set to `blurred`, which GPUI asks of the compositor through `ext-background-effect`), when a page is displayed, then it is not blurred: the page area is left out of the blur region, or, if that needs a change to `vendor/gpui_linux`, the tab keeps the overlay with the reason.
+- [ ] Given a live debug build on a tagged home under GNOME on Wayland, when the dock and a pane each show a page at scales 1 and 2 with a menu open over it, then screenshots show the page in its area with no offset and no seam line, the menu above it and the pane's corners rounded, recorded in this PRD.
+- [ ] Given the occlusion report of US-060, when a page is composed below the window, then no frame-by-frame switch happens; the report keeps serving the overlay fallback only.
+
+#### US-065: Measure every path and container against the window's root renders
+**Description:** As a maintainer, I want the latency A/B to cover the CPU path and the pane as well as the dock so that "the window never redraws for a page's frames" is measured where it can fail.
+
+**Priority:** P1
+**Dependencies:** Blocked by US-062, US-063, US-064
+
+**Acceptance Criteria:**
+- [ ] Given `scripts/latency-ab.sh`, when it runs with `--container pane`, then the path's runs show the video tab in a pane instead of the dock, every report records its container, and `rule.json` names it.
+- [ ] Given a `cpu` or `gpu` run on a native Wayland window, when its tab was not composed in the subsurface, then the campaign is invalid.
+- [ ] Given a campaign on a native Wayland window, when `verdict.py` judges it, then the path also regresses when any of its runs renders the root view more than 5 % more often per second than the most frequent control run, a rule written into `rule.json` before the first run.
+- [ ] Given the method, when `bench/README.md` is read, then it documents the container option, the root-render rule and the expected rate in every arm.
 - [ ] Given the measurement, when the test tree is searched, then no unit test asserts a duration for it.
-- [ ] Given the method, when `bench/README.md` is read, then it documents the arms, the rule and the expected root renders per second while a page plays.
 
 #### EP-005 implementation notes
 
@@ -1069,8 +1113,34 @@ Recorded 2026-11-26 by the implementation run, for the review.
 - **Fallback reasons in this version:** the host has no X display or no Vulkan device that shares dmabufs, Chromium painted the page in software, the window's device cannot import the modifier, or the browser engine was started without GPU presentation. After the first failure in a window, new tabs start on the CPU path (US-034).
 - **Tests.** Seam: `vendor/gpui_wgpu/tests/external_texture.rs` (`cargo test --locked -p gpui_wgpu -p paneflow-app --test external_texture`). Host, with the real engine: `crates/paneflow-browser-host/tests/gpu.rs`, which takes the GPU branch when the host reports it available and the fallback branch otherwise; `PANEFLOW_EXPECT_GPU_FRAMES=1` makes it fail unless the GPU branch runs, and `env -u DISPLAY` forces the fallback branch. Host presentation against a fake device: `present.rs`, module `gpu_path`. Window: `src-app/src/browser/gpu_frames.rs` on GPUI's headless renderer, and the ignored `a_page_painted_by_the_browser_host_is_imported_and_drawn_by_the_window`, which drives a real host (`PANEFLOW_BROWSER_HOST=crates/paneflow-browser-host/target/debug/paneflow-browser-host cargo nextest run -p paneflow-app --run-ignored only -E 'test(a_page_painted_by_the_browser_host)'`) and checks the color the window draws from the imported dmabuf. Presentation state: `crates/paneflow-browser-control/src/presentation.rs` and three tests in `control.rs`; the indicator: `a_tab_on_the_cpu_path_by_failure_shows_why_and_one_by_setting_shows_nothing`.
 - **Not verified:** `aarch64-unknown-linux-gnu` (A14), an Xorg server rather than XWayland, AMD and Intel GPUs (the development machine is NVIDIA, modifier `0x300000000606014`), and a window and host on two different GPUs.
+- **Delegated compositing (US-058 to US-061).** `src-app/src/browser/subsurface/` holds it. `for_window` (`mod.rs`) wraps GPUI's `wl_display` and `wl_surface` from `raw-window-handle` (`Backend::from_foreign_display`) and starts one `Presenter` per window (`presenter.rs`): a thread with its own event queue that binds `wl_compositor`, `wl_subcompositor`, `wp_viewporter` and `zwp_linux_dmabuf_v1` version 4 or 5, reads the default dmabuf feedback (`feedback.rs`, every tranche and the format table), and for each attached tab creates a desynchronized subsurface with an empty input region and a viewport. The router hands each page frame to the presenter first (`router.rs`, `subsurface::offer`): in the subsurface the frame is attached, damaged and committed on the presenter thread and the window is not woken; drawn by the window, the frame goes back through the router to `BrowserView::show_frame`. Buffers are created with the asynchronous `create` request, so a refused buffer is a `failed` event and not a protocol error; a slot returns to the host once the compositor, the atlas and the presenter's latest frame have all let go of it (`hold.rs`).
+- **Frame by frame (US-060).** The seam's report (`vendor/gpui_wgpu/src/external_texture.rs`, module `occlusion`) runs in `render_frame` after the atlas collects the frame and before anything is recorded; it calls the window's hook, which promotes or demotes each tab, then settles which page sprites the frame skips. A transition switches the subsurface to synchronized mode and attaches the buffer (or none) in the same window frame, so the compositor applies it with the window's commit; the next frame commit restores desynchronized mode. A page that nothing covers is not sampled by the atlas, and the seam releases at once a frame the atlas never sampled.
+- **Containers.** The dock's browser tab has square corners and takes the subsurface; a browser tab in a pane sits in the pane's rounded card and stays drawn by the window (DESIGN.md, browser section). An X11 window, the CPU path and a rounded container each keep the window path with their reason in `browser status --json` (`composition`, `composition_reason`); a sticky failure (a refused buffer, a lost presenter) keeps the tab in the window for the session.
+- **Modifiers (US-061).** `Present` carries an optional `modifiers` list (protocol version 9); the host re-exports its pool with the first modifier its device shares with that list, else keeps its own (`gpu::prefer`, `Presentation::prefer_modifiers`).
+- **Limit of the shared connection.** The presenter shares GPUI's `wl_display`, and libwayland makes a protocol error fatal to the whole connection, so the window cannot outlive a real protocol error on the presenter's objects. Prevention is what the code relies on: requests are validated against the feedback before they are sent and buffer creation is asynchronous. The test compositor proves the presenter's own handling (the thread ends, the tab falls back, nothing reaches the GPU failure indicator), not survival of the window's connection.
+- **Live pass, 2026-11-26 (US-059).** GNOME Shell 51.1 headless (`gnome-shell --headless --wayland --virtual-monitor`, its own D-Bus session, XWayland on demand for the host), debug build on throwaway homes, the window a native Wayland client, a page with a 4 CSS px magenta border and 24 CSS px green corners. Captures through the screenshot portal at scales 1 (1600x1000) and 2 (3200x2000, `gdctl set --scale 2`). Dock: `composition: subsurface`, the page's bounding box equals its corners' bounding box, borders 4 and 8 device px and corners 24 and 48 device px on all four sides, exactly as expected. Pane: `composition: window` (rounded container), the same at the top, right and bottom; on the left the window's 1 logical px sidebar divider, which runs the window's full height in every capture, covers the page's first column. The bottom right corner is clipped by the window's rounded corner. Captures, status, pixel measurements and scripts are local evidence in `tasks/evidence/agents-browser/ep005-us059/`.
 
 #### US-035 result
+
+**The CPU path still regresses terminal latency on a native Wayland window, in the 99th percentile; the GPU path no longer regresses in the quiet campaign, and its tail on the desktop is not settled.** With delegated compositing (US-058 to US-062), a page on the GPU path is composed by the compositor and the window renders its root view at the control arm's rate while the video plays (45.7 to 46.2 per second against 43.8 to 45.0 on the desktop; 23.9 to 24.0 against 22.6 to 23.7 in headless GNOME), where it rendered 64 to 68 times per second this morning. The CPU path is still drawn by the window, which redraws for every page frame, and the redraw arm shows that redraw alone regresses. The criterion "the affected path is disabled by default" is not met: the CPU path is the fallback when the GPU path is unavailable and pages always show, so disabling it is Arthur's decision (Open Questions), as is composing CPU frames in the subsurface through `wl_shm`, which no story covers. `browser.gpu_presentation` keeps its default, on.
+
+Second round, 2026-11-26 afternoon, with this epic's changes: the same method, now with the `redraw` arm and the `composition` and `root_renders_per_second` fields. Five campaigns ran in GNOME Shell 51.1 headless (its own D-Bus session, a 1600x1000 virtual monitor, XWayland on demand), out of reach of the desktop in use; its frame pacing raises every latency about sevenfold, so they compare arms within a campaign only. The decisive GPU campaign was run again on the desktop.
+
+| Campaign | Session | Window | Arm | Decision | Control medians (ms) | Control 99th (ms) | Arm medians (ms) | Arm 99th (ms) | Root renders per s, control / arm |
+|---|---|---|---|---|---|---|---|---|---|
+| `20261126T132129Z` | headless | Wayland | GPU, subsurface | no regression | 20.646 to 22.793 | 38.48 to 42.11 | 21.065, 22.615, 21.569 | 37.99, 38.46, 40.10 | 22.6 to 23.7 / 23.9 to 24.0 |
+| `20261126T133143Z` | headless | Wayland | CPU, window | **regression** (99th, runs 7 and 9) | 21.567 to 25.953 | 38.81 to 45.53 | 23.331, 24.497, 23.048 | 41.18, 48.14, 47.18 | 22.7 to 23.4 / 33.6 to 35.9 |
+| `20261126T134202Z` | headless | Wayland | redraw, no browser | **regression** (median, runs 1 and 11) | 20.570 to 24.492 | 39.02 to 46.19 | 25.413, 21.540, 25.474 | 42.54, 43.53, 45.02 | 22.5 to 23.2 / 34.3 to 35.5 |
+| `20261126T135206Z` | headless | X11 | GPU, window | no regression | 11.597 to 12.927 | 20.16 to 24.12 | 11.036, 12.022, 10.382 | 22.69, 23.17, 20.92 | 25.5 to 27.1 / 48.1 to 49.2 |
+| `20261126T140226Z` | headless | X11 | CPU, window | **regression** (99th, run 4: 22.53 against 21.96) | 11.943 to 12.721 | 20.36 to 21.96 | 11.015, 10.524, 11.049 | 22.53, 21.79, 21.26 | 25.1 to 26.1 / 47.9 to 48.3 |
+| `20261126T141319Z` | desktop | Wayland | GPU, subsurface | invalid: control run 2 at 14.487 ms, the desktop in use | 3.480 to 14.487 | 4.72 to 40.08 | 3.673, 3.412, 4.002 | 38.31, 5.66, 9.28 | 30.0 to 44.9 / 37.1 to 45.9 |
+| `20261126T142343Z` | desktop | Wayland | GPU, subsurface | no regression, only because control run 1 (99th 22.45 ms) lifted the reference; the other eight controls reach at most 13.33 ms and seven at most 8.67 ms, under two of the three GPU runs | 3.491 to 3.844 | 4.55 to 22.45 | 3.613, 3.039, 3.042 | 9.61, 10.13, 4.70 | 43.8 to 45.0 / 45.7 to 46.2 |
+
+- Every GPU run on a native Wayland window ended composed in the subsurface, every run played the video (736 to 797 frames), and no run had a problem other than the two outliers named. The X11 CPU regression is 0.57 ms over the largest control 99th percentile in one run of three; the X11 window never regressed on the desktop this morning.
+- The desktop GPU tail is not settled: the medians drop by 0.40 ms (bootstrap 95 % interval 0.36 to 0.44 ms) and the window no longer redraws for page frames, but two 99th percentiles sit above the quiet controls. A campaign on an idle desktop decides it.
+- Results are local evidence under `target/latency-ab/`; no unit test asserts a duration for this measurement.
+
+First round, 2026-11-26 morning, before delegated compositing:
 
 **The GPU path regresses terminal latency on a native Wayland window, in the 99th percentile** (6.57 to 8.29 ms against at most 5.27 ms with no page displayed), while its median drops (3.03 to 3.08 ms against 3.48 to 3.54 ms). The CPU path's tail is worse on the same window (7.19 to 16.60 ms). Neither path regresses on an X11 window. The criterion "the affected path is disabled by default" cannot be met as written, because both displayed paths pay the cost and pages always show (2026-11-25): on 2026-11-26 Arthur chose to remove the cause rather than pick a path, so this story is blocked on the proposal below, and `browser.gpu_presentation` keeps its default, on.
 
@@ -1087,6 +1157,16 @@ Method: `scripts/latency-ab.sh` (`bench/README.md`, "Browser latency A/B"), now 
 
 - Every run of the path played the video (735 to 754 frames decoded) and the window received 736 to 1490 frames; every GPU run ended on the GPU path. The window renders its root view 64 to 68 times per second while the page plays on Wayland, against 44 to 45 in the control arm: the cost EP-001's diagnostic campaign attributed to redrawing the whole window, not to the transport.
 - No unit test asserts a duration for this measurement; `scripts/check-test-wallclock.sh` passes.
+
+#### Underlay revision
+
+Written 2026-11-26 at Arthur's request after the second A/B round, and approved the same day: it became US-063 to US-065. The overlay of US-058 to US-060 removed the window's redraw for a GPU page in the dock only. A page on the CPU path is still drawn by the window, a page in a pane stays there because no subsurface can be clipped to rounded corners, and a menu over a composed page moves it back into the window for every frame the menu stays open.
+
+- **One invariant.** The window never redraws for a page's frames, whatever the transport (dmabuf or shared memory), the container (dock or pane) or what Paneflow draws above it. The A/B measures that invariant directly, through the window's root renders per second (US-065).
+- **Below, not above.** The page's subsurface is placed below the window's surface and the window punches the page area to transparent pixels, the underlay Android's `SurfaceView` uses by default and Chromium's overlay processor uses for video on ChromeOS. Everything Paneflow draws there, menus, tooltips, focus rings and the pane card's corners, is in the window's surface above the page, so it needs no promotion or demotion and clips the page for free. GPUI already provides what it needs: with a transparent background it declares no opaque region (`vendor/gpui_linux/src/linux/wayland/window.rs`, `update_window`) and presents with premultiplied alpha (`vendor/gpui_wgpu/src/wgpu_renderer.rs`). The Linux shell is opaque by default, so while a page is composed below it the window takes a transparent surface and paints its shell opaque itself, as `linux_chrome_material` already does. The only renderer change is the punch primitive, an extension of the US-031 seam.
+- **Shared memory too.** The CPU path's three shared-memory slots, already released explicitly by the window, become `wl_shm` buffers in the same presenter, as Firefox and Chromium hand software frames to a Wayland compositor.
+- **What stays.** The overlay of US-058 to US-060 remains the fallback where the underlay cannot work (no premultiplied alpha mode, a blur region that cannot exclude the page), and X11 keeps the atlas path. macOS (`CALayer` below a transparent hole) and Windows (a DirectComposition visual below the window's) take the same structure in EP-007.
+- **Risks to prove.** The compositor blends the whole window against the page below, and the shell painted opaque on a transparent surface must look exactly as the opaque shell does; the punched area and the subsurface must cover the same device pixels at fractional scales; a blurred window must not blur the page.
 
 #### Delegated compositing on Wayland
 
@@ -1450,6 +1530,8 @@ Everything that needs Windows, run in one pass on Windows 11 x64 after EP-008. N
 - **The NO-GO fallback.** If US-007 records NO-GO for the control plane, the alternative is an external Chrome over a pipe (TD-1). That would be a new PRD version, not a story swap.
 - **Link routing default.** US-029 kept the system browser as the default for loopback links; Arthur turned `browser.open_local_links` on by default on 2026-11-25, before any release, so a loopback link from a terminal or the sidebar opens in the dock unless the setting is turned off.
 
+- **The CPU path on a native Wayland window (US-035).** Closed 2026-11-26: Arthur chose to remove the cause on every path and container, through `wl_shm` buffers (US-063) and an underlay (US-064), measured by US-065; no path is disabled.
+
 ## Files NOT to Modify
 
 - `native/libghostty/**`: the terminal engine boundary, unrelated.
@@ -1458,7 +1540,7 @@ Everything that needs Windows, run in one pass on Windows 11 x64 after EP-008. N
 - `crates/paneflow-shim/**` and `crates/paneflow-ai-hook/**`: size-capped helpers with no browser role.
 - `crates/paneflow-host/src/sandbox/**`: the pane sandbox; the browser host is a child of the window and is not a pane.
 - `vendor/cosmic-text/**`: unrelated to the browser seam.
-- `vendor/gpui_wgpu/**` outside the external-texture seam of US-031 and its occlusion report of US-060, and `vendor/gpui_linux/**` entirely: upstream copies whose changes follow their `Cargo.toml` headers only. The Wayland subsurface of US-058 lives in `src-app`.
+- `vendor/gpui_wgpu/**` outside the external-texture seam of US-031, its occlusion report of US-060 and its punch primitive of US-064, and `vendor/gpui_linux/**` entirely: upstream copies whose changes follow their `Cargo.toml` headers only. The Wayland subsurface of US-058 lives in `src-app`.
 - `scripts/wallclock-allowlist.txt`: an entry may only go down.
 - `/home/arthur/dev/paneflow-browser/**`: an abandoned worktree, to be removed before work starts; never read or copied.
 [/PRD]
