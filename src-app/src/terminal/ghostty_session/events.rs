@@ -285,6 +285,33 @@ fn unknown_sequence_label(kind: ghostty::UnknownSequenceKind) -> &'static str {
     }
 }
 
+fn unknown_sequence_line(
+    kind: ghostty::UnknownSequenceKind,
+    content: &str,
+    truncated: bool,
+) -> String {
+    let number = match kind {
+        ghostty::UnknownSequenceKind::Osc(_) => content
+            .split_once(';')
+            .map_or(content, |(number, _)| number)
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect::<String>(),
+        ghostty::UnknownSequenceKind::Apc => String::new(),
+    };
+    let named = if number.is_empty() {
+        String::new()
+    } else {
+        format!(" {number}")
+    };
+    format!(
+        "Ghostty ignored an unsupported {}{named} of {} bytes{}",
+        unknown_sequence_label(kind),
+        content.len(),
+        if truncated { " (truncated)" } else { "" }
+    )
+}
+
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(super) struct EngineDrain {
     pub(super) program_reset: bool,
@@ -344,9 +371,8 @@ pub(super) fn handle_engine_events_to(
             } => {
                 log::debug!(
                     target: "paneflow::terminal::ghostty",
-                    "Ghostty ignored an unsupported {}{}: {content}",
-                    unknown_sequence_label(kind),
-                    if truncated { " (truncated)" } else { "" }
+                    "{}",
+                    unknown_sequence_line(kind, &content, truncated)
                 );
             }
             ghostty::BackendEvent::Bell => {}
@@ -427,6 +453,29 @@ mod tests {
         assert_eq!(
             unknown_sequence_label(ghostty::UnknownSequenceKind::Apc),
             "APC sequence"
+        );
+    }
+
+    #[test]
+    fn an_unknown_sequence_is_logged_by_number_and_length_never_by_body() {
+        let body = "7577;pid=74877:time=1795543200:argv=bnZpbQ==:mac=00";
+        let line = unknown_sequence_line(
+            ghostty::UnknownSequenceKind::Osc(ghostty::OscTerminator::St),
+            body,
+            false,
+        );
+        assert_eq!(
+            line,
+            format!(
+                "Ghostty ignored an unsupported OSC sequence ended by ST 7577 of {} bytes",
+                body.len()
+            )
+        );
+        assert!(!line.contains("argv"), "{line}");
+        assert!(!line.contains("bnZpbQ"), "{line}");
+        assert_eq!(
+            unknown_sequence_line(ghostty::UnknownSequenceKind::Apc, "Gsecret", true),
+            "Ghostty ignored an unsupported APC sequence of 7 bytes (truncated)"
         );
     }
 

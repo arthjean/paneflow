@@ -226,6 +226,7 @@ mod tests {
             appearance: fixed_appearance(),
             cell: case.cell,
             route: None,
+            resume: None,
         };
         let created = crate::terminal::host_link::create_request(&request);
         let mut text = serde_json::to_string_pretty(&created).expect("the request serializes");

@@ -71,6 +71,29 @@ pub struct Integration {
     pub mcp_config: Option<McpConfig>,
     #[serde(default)]
     pub skills_dir: Option<SkillsDir>,
+    #[serde(default)]
+    pub program_resume: Option<ProgramResumeReporting>,
+}
+
+pub const ACCEPTED_PROGRAM_RESUME: &str = "native";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "String")]
+pub enum ProgramResumeReporting {
+    Native,
+}
+
+impl TryFrom<String> for ProgramResumeReporting {
+    type Error = String;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        match value.as_str() {
+            "native" => Ok(Self::Native),
+            other => Err(format!(
+                "integration.program_resume '{other}' is not a reporting mode; the only accepted value is {ACCEPTED_PROGRAM_RESUME}"
+            )),
+        }
+    }
 }
 
 pub const ACCEPTED_MCP_CONFIGS: &str = "claude, codex, gemini, opencode, fx";
@@ -233,6 +256,7 @@ impl TryFrom<String> for SessionReader {
 }
 
 pub const SESSION_ID_PLACEHOLDER: &str = "{session_id}";
+pub const ABSOLUTE_PATH_PLACEHOLDER: &str = "{absolute_path}";
 pub const MAX_SESSION_ID_PATTERN_BYTES: usize = 1 << 20;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -243,6 +267,8 @@ pub struct Resume {
     pub fork_argv: Option<Vec<String>>,
     pub session_id_pattern: String,
     pub failure_markers: Vec<String>,
+    #[serde(default)]
+    pub native_argv: Vec<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -670,6 +696,9 @@ fn validate_resume(
             }
         }
     }
+    for (index, argv) in resume.native_argv.iter().enumerate() {
+        validate_native_argv(path, command_aliases, index, argv, errors);
+    }
     if let Err(error) = regex::RegexBuilder::new(&resume.session_id_pattern)
         .size_limit(MAX_SESSION_ID_PATTERN_BYTES)
         .build()
@@ -688,6 +717,55 @@ fn validate_resume(
             "{}: resume.failure_markers must not contain empty markers",
             path.display()
         ));
+    }
+}
+
+fn validate_native_argv(
+    path: &Path,
+    command_aliases: &[String],
+    index: usize,
+    argv: &[String],
+    errors: &mut Vec<String>,
+) {
+    let field = format!("resume.native_argv[{index}]");
+    let Some(program) = argv.first() else {
+        errors.push(format!("{}: {field} must not be empty", path.display()));
+        return;
+    };
+    if program == SESSION_ID_PLACEHOLDER || program == ABSOLUTE_PATH_PLACEHOLDER {
+        errors.push(format!(
+            "{}: {field} must not put {program} in program position",
+            path.display()
+        ));
+    } else if !command_aliases.contains(program) {
+        errors.push(format!(
+            "{}: {field} program '{program}' is not one of the runtime's detection.command_aliases",
+            path.display()
+        ));
+    }
+    let count = |placeholder: &str| argv.iter().filter(|arg| *arg == placeholder).count();
+    if count(SESSION_ID_PLACEHOLDER) != 1 {
+        errors.push(format!(
+            "{}: {field} must contain {SESSION_ID_PLACEHOLDER} exactly once as a whole argument",
+            path.display()
+        ));
+    }
+    if count(ABSOLUTE_PATH_PLACEHOLDER) > 1 {
+        errors.push(format!(
+            "{}: {field} must contain {ABSOLUTE_PATH_PLACEHOLDER} at most once",
+            path.display()
+        ));
+    }
+    for arg in argv.iter().skip(1) {
+        if arg != SESSION_ID_PLACEHOLDER
+            && arg != ABSOLUTE_PATH_PLACEHOLDER
+            && !is_plain_argument(arg)
+        {
+            errors.push(format!(
+                "{}: {field} argument '{arg}' must use only ASCII letters, digits, '-', '_', '.' or '='",
+                path.display()
+            ));
+        }
     }
 }
 
@@ -791,7 +869,7 @@ pub fn generate_catalog(descriptors: &[LocatedDescriptor]) -> Result<String, Str
             strings(&runtime.environment.strip_inherited)
         ));
         output.push_str(&format!(
-            "integration: RuntimeIntegration {{ summary: {:?}, post_install_step: {}, hook_adapter: RuntimeHookAdapter::{}, mcp_config: {}, skills_dir: {} }},\n",
+            "integration: RuntimeIntegration {{ summary: {:?}, post_install_step: {}, hook_adapter: RuntimeHookAdapter::{}, mcp_config: {}, skills_dir: {}, reports_program_resume: {} }},\n",
             runtime.integration.summary,
             option_string(runtime.integration.post_install_step.as_deref()),
             hook_adapter(runtime.integration.hook_adapter),
@@ -808,7 +886,8 @@ pub fn generate_catalog(descriptors: &[LocatedDescriptor]) -> Result<String, Str
                 .map_or("None".to_string(), |dir| format!(
                     "Some(RuntimeSkillsDir::{})",
                     dir.variant()
-                ))
+                )),
+            runtime.integration.program_resume.is_some()
         ));
         match &runtime.sessions {
             Some(sessions) => output.push_str(&format!(
@@ -908,6 +987,21 @@ pub fn generate_catalog(descriptors: &[LocatedDescriptor]) -> Result<String, Str
         }
     }
     output.push_str("_ => None,\n}\n}\n");
+    output.push_str("pub fn reports_program_resume_natively(alias: &str) -> bool {\n");
+    let native_aliases = descriptors
+        .iter()
+        .filter(|located| located.descriptor.integration.program_resume.is_some())
+        .flat_map(|located| located.descriptor.detection.command_aliases.iter())
+        .map(|alias| format!("{alias:?}"))
+        .collect::<Vec<_>>();
+    if native_aliases.is_empty() {
+        output.push_str("let _ = alias;\nfalse\n}\n");
+    } else {
+        output.push_str(&format!(
+            "matches!(alias, {})\n}}\n",
+            native_aliases.join(" | ")
+        ));
+    }
     output.push_str(
         "pub fn runtime_resume(runtime_id: &str) -> Option<&'static RuntimeResume> {\nmatch runtime_id {\n",
     );
@@ -917,13 +1011,19 @@ pub fn generate_catalog(descriptors: &[LocatedDescriptor]) -> Result<String, Str
             continue;
         };
         output.push_str(&format!(
-            "{:?} => Some(&RuntimeResume {{ session_argv: &{}, continue_argv: {}, fork_argv: {}, session_id_pattern: {:?}, failure_markers: &{} }}),\n",
+            "{:?} => Some(&RuntimeResume {{ session_argv: &{}, continue_argv: {}, fork_argv: {}, session_id_pattern: {:?}, failure_markers: &{}, native_argv: &[{}] }}),\n",
             runtime.id,
             strings(&resume.session_argv),
             option_strings(resume.continue_argv.as_deref()),
             option_strings(resume.fork_argv.as_deref()),
             resume.session_id_pattern,
-            strings(&resume.failure_markers)
+            strings(&resume.failure_markers),
+            resume
+                .native_argv
+                .iter()
+                .map(|argv| format!("&{}", strings(argv)))
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
     }
     output.push_str("_ => None,\n}\n}\n");
@@ -1349,6 +1449,95 @@ command = "{alias}"
             assert!(error.contains("runtime.toml"), "{invalid}: {error}");
             assert!(error.contains("display.status_since"), "{invalid}: {error}");
         }
+    }
+
+    #[test]
+    fn native_argv_templates_are_validated_and_generated() {
+        let generated = generate_catalog(&[LocatedDescriptor {
+            path: PathBuf::from("alpha/runtime.toml"),
+            descriptor: toml::from_str(&with_resume(
+                "session_argv = [\"alpha\", \"--session\", \"{session_id}\"]\nsession_id_pattern = \".*\"\nfailure_markers = []\nnative_argv = [[\"alpha\", \"--session\", \"{session_id}\"], [\"alpha\", \"--dir\", \"{absolute_path}\", \"--session\", \"{session_id}\"]]\n",
+            ))
+            .unwrap(),
+        }])
+        .unwrap();
+        assert!(
+            generated.contains("native_argv: &[&[\"alpha\", \"--session\", \"{session_id}\"], &[\"alpha\", \"--dir\", \"{absolute_path}\", \"--session\", \"{session_id}\"]]"),
+            "{generated}"
+        );
+        let error = resume_error(
+            "session_argv = [\"alpha\", \"{session_id}\"]\nsession_id_pattern = \".*\"\nfailure_markers = []\nnative_argv = [[\"alpha\", \"--session\"], [\"alpha\", \"{absolute_path}\", \"{absolute_path}\", \"{session_id}\"], [\"alpha\", \"$(id)\", \"{session_id}\"]]\n",
+        );
+        assert!(
+            error.contains("resume.native_argv[0] must contain {session_id} exactly once"),
+            "{error}"
+        );
+        assert!(
+            error.contains("resume.native_argv[1] must contain {absolute_path} at most once"),
+            "{error}"
+        );
+        assert!(
+            error.contains("resume.native_argv[2] argument '$(id)'"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_native_argv_with_a_placeholder_program_fails_naming_the_runtime() {
+        for program in ["{session_id}", "{absolute_path}"] {
+            let error = resume_error(&format!(
+                "session_argv = [\"alpha\", \"{{session_id}}\"]\nsession_id_pattern = \".*\"\nfailure_markers = []\nnative_argv = [[\"{program}\", \"{{session_id}}\"]]\n"
+            ));
+            assert!(error.contains("alpha/runtime.toml"), "{error}");
+            assert!(
+                error.contains(&format!(
+                    "resume.native_argv[0] must not put {program} in program position"
+                )),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_a_native_program_resume_value_compiles_and_it_is_generated_per_alias() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let text = descriptor("alpha", "com.example.alpha", "alpha").replace(
+            "hook_adapter = \"none\"",
+            "hook_adapter = \"none\"\nprogram_resume = \"always\"",
+        );
+        write_runtime(temp.path(), "alpha", &text);
+        let error = discover_and_validate(temp.path()).unwrap_err();
+        assert!(error.contains("alpha/runtime.toml"), "{error}");
+        assert!(
+            error.contains("integration.program_resume 'always' is not a reporting mode"),
+            "{error}"
+        );
+
+        let native = descriptor("alpha", "com.example.alpha", "alpha").replace(
+            "hook_adapter = \"none\"",
+            "hook_adapter = \"none\"\nprogram_resume = \"native\"",
+        );
+        let silent = descriptor("beta", "com.example.beta", "beta");
+        let located = |slug: &str, text: &str| LocatedDescriptor {
+            path: PathBuf::from(format!("{slug}/runtime.toml")),
+            descriptor: toml::from_str(text).unwrap(),
+        };
+        let generated =
+            generate_catalog(&[located("alpha", &native), located("beta", &silent)]).unwrap();
+        assert!(
+            generated.contains("pub fn reports_program_resume_natively(alias: &str) -> bool {\nmatches!(alias, \"alpha\")"),
+            "{generated}"
+        );
+        assert!(
+            generated.contains("reports_program_resume: true"),
+            "{generated}"
+        );
+        assert!(
+            generated.contains("reports_program_resume: false"),
+            "{generated}"
+        );
+        let none = generate_catalog(&[located("beta", &silent)]).unwrap();
+        assert!(none.contains("let _ = alias;\nfalse"), "{none}");
     }
 
     #[test]

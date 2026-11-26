@@ -369,6 +369,11 @@ impl TerminalView {
         }
     }
 
+    pub(super) fn conversation_yield_to_program_resume(&mut self) {
+        self.conversation.restore = None;
+        self.conversation.shared_folder = false;
+    }
+
     pub(crate) fn conversation_restore_pending(&self) -> bool {
         self.conversation.restore.is_some()
     }
@@ -789,6 +794,9 @@ impl TerminalView {
                 }),
             ));
         }
+        if let Some(banner) = self.render_program_resume_banner(ui, cx) {
+            return Some(banner);
+        }
         let banner = self.conversation.banner.as_ref()?;
         let mut buttons = Vec::with_capacity(2);
         if let Some(label) = banner.primary_label() {
@@ -833,7 +841,7 @@ pub(crate) fn write_request_banner(
     banner_frame(banner_bar(message, ui, buttons), ui)
 }
 
-fn banner_button(
+pub(super) fn banner_button(
     id: &'static str,
     label: &'static str,
     ui: crate::theme::UiColors,
@@ -845,7 +853,7 @@ fn banner_button(
         .max_w_full()
 }
 
-fn banner_bar(
+pub(super) fn banner_bar(
     message: String,
     ui: crate::theme::UiColors,
     buttons: Vec<gpui::Stateful<gpui::Div>>,
@@ -885,7 +893,7 @@ fn banner_bar(
         )
 }
 
-fn banner_frame(bar: gpui::Div, ui: crate::theme::UiColors) -> gpui::AnyElement {
+pub(super) fn banner_frame(bar: gpui::Div, ui: crate::theme::UiColors) -> gpui::AnyElement {
     div()
         .absolute()
         .top_0()

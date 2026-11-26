@@ -21,11 +21,16 @@ strip_inherited = []
 [integration]
 summary = "Paneflow shows Pi's turn status when Pi reports it through OSC 7501."
 hook_adapter = "none"
+program_resume = "native"
 
 [resume]
 session_argv = ["pi", "--session", "{session_id}"]
 session_id_pattern = '^[A-Za-z0-9_][A-Za-z0-9_-]*$'
 failure_markers = []
+native_argv = [
+    ["pi", "--session", "{session_id}"],
+    ["pi", "--session-dir", "{absolute_path}", "--session", "{session_id}"],
+]
 
 [sessions]
 reader = "pi"

@@ -6,6 +6,7 @@ mod identity;
 mod ipc;
 mod language_servers;
 mod layout;
+mod program_resume;
 mod session;
 mod space;
 mod terminal;
@@ -18,6 +19,7 @@ pub use identity::*;
 pub use ipc::*;
 pub use language_servers::*;
 pub use layout::*;
+pub use program_resume::*;
 pub use session::*;
 pub use space::*;
 pub use terminal::*;
@@ -175,6 +177,7 @@ mod tests {
                 open_links_in: Some(OpenLinksInConfig::Dock),
                 xt_checksum_report: Some(false),
                 xt_checksum_extension: Some(0),
+                program_resume: None,
             }),
             agent_panel: Some(AgentPanelConfig {
                 notify_when_agent_waiting: Some(NotifyWhenAgentWaiting::PrimaryScreen),

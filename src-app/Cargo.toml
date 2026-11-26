@@ -79,6 +79,7 @@ paneflow-launch.workspace = true
 paneflow-layout = { workspace = true }
 paneflow-home = { workspace = true }
 paneflow-agent-config = { workspace = true, features = ["config-io"] }
+paneflow-program-resume.workspace = true
 paneflow-resume-handoff.workspace = true
 paneflow-host = { workspace = true }
 paneflow-terminal-ghostty = { path = "../crates/paneflow-terminal-ghostty", features = [

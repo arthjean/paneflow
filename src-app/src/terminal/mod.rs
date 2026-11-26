@@ -17,6 +17,7 @@ mod path_picker;
 pub(crate) use path_picker::project_files;
 #[cfg(test)]
 mod perf_bench;
+pub(crate) mod program_resume;
 mod pty_session;
 pub(crate) use pty_session::INHERITED_AGENT_SESSION_ENV;
 mod scrollbar_reveal;

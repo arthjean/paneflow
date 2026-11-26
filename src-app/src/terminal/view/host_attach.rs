@@ -110,6 +110,7 @@ impl TerminalView {
                     width: size.cell_width,
                     height: size.cell_height,
                 }),
+            resume: self.pending_resume.take(),
             route: (intent == SessionIntent::Create)
                 .then(|| self.worker_route.clone())
                 .flatten()
@@ -132,6 +133,13 @@ impl TerminalView {
         let executor = cx.background_executor().clone();
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                if request.resume.is_some() {
+                    let now = std::time::Instant::now();
+                    let slot = crate::terminal::program_resume::resume_pacer().reserve(now);
+                    if slot > now {
+                        executor.timer(slot - now).await;
+                    }
+                }
                 let (request, dir_errors) = executor
                     .spawn(async move {
                         let dir_errors = crate::space_env::ensure_config_dirs(&config_dirs);
@@ -232,6 +240,7 @@ impl TerminalView {
                             view.saved_scrollback = None;
                             view.needs_initial_clear
                                 .store(false, std::sync::atomic::Ordering::Relaxed);
+                            view.program_resume_attached(hosted.resume_attempt.as_ref(), cx);
                             view.terminal.promote_hosted(*hosted);
                             if let Some(size) = view.recorded_window_size() {
                                 view.terminal.notify_window_size(size);
@@ -251,6 +260,7 @@ impl TerminalView {
                             view.needs_initial_clear
                                 .store(false, std::sync::atomic::Ordering::Relaxed);
                             let kind = end.kind.clone();
+                            view.plan_program_resume(recover, &end, cx);
                             let recovery = restore_recovery(
                                 recover,
                                 view.conversation_restore_pending(),
@@ -260,6 +270,7 @@ impl TerminalView {
                             view.terminal.mark_host_link(HostLinkState::Ended(end));
                             view.conversation_host_ended(&kind, cx);
                             if let Some((intent, fresh_identity)) = recovery {
+                                view.pending_resume = view.resume_request_for(intent);
                                 view.start_hosted_session(intent, fresh_identity, cx);
                             }
                         }

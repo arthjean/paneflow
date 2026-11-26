@@ -4501,6 +4501,7 @@ dependencies = [
  "paneflow-minisign",
  "paneflow-peer",
  "paneflow-process",
+ "paneflow-program-resume",
  "paneflow-resume-handoff",
  "paneflow-script",
  "paneflow-serve",

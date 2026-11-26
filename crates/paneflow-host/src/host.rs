@@ -257,7 +257,7 @@ pub struct SessionHost {
     genuine_callers: crate::genuine::GenuineCallers,
     sandbox_helper: Mutex<Option<PathBuf>>,
     submit_paste_delay: std::time::Duration,
-    xt_checksum: Mutex<crate::runtime::XtChecksum>,
+    spawn_settings: Mutex<SpawnSettings>,
     next_operation: AtomicU64,
     shutting_down: AtomicBool,
     resume_watches: Mutex<std::collections::HashSet<resume::OwnerKey>>,
@@ -392,7 +392,7 @@ impl SessionHost {
             genuine_callers: crate::genuine::GenuineCallers::of_this_installation(),
             sandbox_helper: Mutex::new(None),
             submit_paste_delay,
-            xt_checksum: Mutex::new(crate::runtime::XtChecksum::default()),
+            spawn_settings: Mutex::new(SpawnSettings::default()),
             next_operation: AtomicU64::new(1),
             shutting_down: AtomicBool::new(false),
             resume_watches: Mutex::new(std::collections::HashSet::new()),
@@ -418,15 +418,19 @@ impl SessionHost {
         Ok(host)
     }
 
-    fn current_xt_checksum(&self) -> crate::runtime::XtChecksum {
+    fn current_spawn_settings(&self) -> SpawnSettings {
         let mut applied = self
-            .xt_checksum
+            .spawn_settings
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(configured) = read_xt_checksum(&self.home) {
+        if let Some(configured) = read_spawn_settings(&self.home) {
             *applied = configured;
         }
         *applied
+    }
+
+    fn current_xt_checksum(&self) -> crate::runtime::XtChecksum {
+        self.current_spawn_settings().xt_checksum
     }
 
     pub fn run_maintenance(&self) {
@@ -1991,7 +1995,11 @@ impl SessionHost {
                 ));
             }
         }
-        let token = crate::program_resume::PaneToken::for_shell(&spec.shell);
+        let token = self
+            .current_spawn_settings()
+            .advertises_program_resume
+            .then(|| crate::program_resume::PaneToken::for_shell(&spec.shell))
+            .flatten();
         spec.program_resume.clone_from(&token);
         let observer = self.observer_for(Arc::clone(&manifest), durability, generation, token);
         let handle = match SessionRuntime::launch(spec, generation, observer) {
@@ -3520,27 +3528,46 @@ fn load_control_settings(home: &Path) -> (bool, std::time::Duration) {
     (config.ai_injection_fence_enabled(), delay)
 }
 
-fn read_xt_checksum(home: &Path) -> Option<crate::runtime::XtChecksum> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SpawnSettings {
+    xt_checksum: crate::runtime::XtChecksum,
+    advertises_program_resume: bool,
+}
+
+impl Default for SpawnSettings {
+    fn default() -> Self {
+        Self {
+            xt_checksum: crate::runtime::XtChecksum::default(),
+            advertises_program_resume: paneflow_config::schema::ProgramResumeMode::default()
+                .advertises(),
+        }
+    }
+}
+
+fn read_spawn_settings(home: &Path) -> Option<SpawnSettings> {
     let path = home.join("paneflow.json");
     let contents = match paneflow_config::loader::read_config_string(&path) {
         Ok(Some(contents)) => contents,
-        Ok(None) => return Some(crate::runtime::XtChecksum::default()),
+        Ok(None) => return Some(SpawnSettings::default()),
         Err(error) => {
-            log::warn!("paneflow-host: {error}; keeping the previous checksum settings");
+            log::warn!("paneflow-host: {error}; keeping the previous spawn settings");
             return None;
         }
     };
     match paneflow_config::loader::try_parse_and_validate(&contents) {
         Ok(config) => {
             let terminal = config.terminal.unwrap_or_default();
-            Some(crate::runtime::XtChecksum {
-                report: terminal.resolved_xt_checksum_report(),
-                extension: terminal.resolved_xt_checksum_extension(),
+            Some(SpawnSettings {
+                xt_checksum: crate::runtime::XtChecksum {
+                    report: terminal.resolved_xt_checksum_report(),
+                    extension: terminal.resolved_xt_checksum_extension(),
+                },
+                advertises_program_resume: terminal.program_resume_settings().mode.advertises(),
             })
         }
         Err(error) => {
             log::warn!(
-                "paneflow-host: invalid config {}: {error}; keeping the previous checksum settings",
+                "paneflow-host: invalid config {}: {error}; keeping the previous spawn settings",
                 path.display()
             );
             None

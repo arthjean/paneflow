@@ -27,6 +27,7 @@ use super::path_picker::{PathPicker, PathPickerEvent};
 
 pub(crate) mod conversation;
 mod host_attach;
+mod program_resume_banner;
 
 const RENDER_WAKEUP_IMMEDIATELY: bool = true;
 const SEARCH_REGEX_TOGGLE_LABEL: &str = "Regular expression";
@@ -372,6 +373,8 @@ pub struct TerminalView {
     recover_on_restore: bool,
     worker_route: Option<crate::terminal::host_link::LaunchRoute>,
     conversation: conversation::Conversation,
+    program_resume: crate::terminal::program_resume::ResumeState,
+    pending_resume: Option<paneflow_host::host::ResumeRequest>,
 }
 
 impl TerminalView {
@@ -867,6 +870,8 @@ impl TerminalView {
             recover_on_restore: false,
             worker_route: None,
             conversation: conversation::Conversation::default(),
+            program_resume: crate::terminal::program_resume::ResumeState::None,
+            pending_resume: None,
         }
     }
 

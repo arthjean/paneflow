@@ -256,6 +256,8 @@ pub struct TerminalConfig {
     pub xt_checksum_report: Option<bool>,
     #[serde(default, deserialize_with = "lenient_opt_xt_checksum_extension")]
     pub xt_checksum_extension: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program_resume: Option<serde_json::Value>,
 }
 
 impl TerminalConfig {

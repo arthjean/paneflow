@@ -56,9 +56,11 @@ pub struct RuntimeIntegration {
     pub hook_adapter: RuntimeHookAdapter,
     pub mcp_config: Option<RuntimeMcpConfig>,
     pub skills_dir: Option<RuntimeSkillsDir>,
+    pub reports_program_resume: bool,
 }
 
 pub const SESSION_ID_PLACEHOLDER: &str = "{session_id}";
+pub const ABSOLUTE_PATH_PLACEHOLDER: &str = "{absolute_path}";
 
 #[derive(Debug, Clone, Copy)]
 pub struct RuntimeResume {
@@ -67,6 +69,7 @@ pub struct RuntimeResume {
     pub fork_argv: Option<&'static [&'static str]>,
     pub session_id_pattern: &'static str,
     pub failure_markers: &'static [&'static str],
+    pub native_argv: &'static [&'static [&'static str]],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

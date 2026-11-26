@@ -75,6 +75,7 @@ fn test_terminal_ligatures_default_when_block_empty() {
             open_links_in: None,
             xt_checksum_report: None,
             xt_checksum_extension: None,
+            program_resume: None,
         })
     );
     assert_eq!(
@@ -95,6 +96,7 @@ fn test_terminal_ligatures_default_when_block_empty() {
             open_links_in: None,
             xt_checksum_report: None,
             xt_checksum_extension: None,
+            program_resume: None,
         })
     );
 }
@@ -120,6 +122,7 @@ fn test_terminal_ligatures_true() {
             open_links_in: None,
             xt_checksum_report: None,
             xt_checksum_extension: None,
+            program_resume: None,
         })
     );
 
@@ -149,6 +152,7 @@ fn test_terminal_ligatures_false() {
             open_links_in: None,
             xt_checksum_report: None,
             xt_checksum_extension: None,
+            program_resume: None,
         })
     );
 }
@@ -184,6 +188,7 @@ fn test_terminal_integrated_glyphs_default_on_and_false_opt_out() {
             open_links_in: None,
             xt_checksum_report: None,
             xt_checksum_extension: None,
+            program_resume: None,
         })
     );
     assert!(
@@ -227,6 +232,7 @@ fn test_terminal_color_emoji_default_on_and_false_opt_out() {
             open_links_in: None,
             xt_checksum_report: None,
             xt_checksum_extension: None,
+            program_resume: None,
         })
     );
     assert!(
@@ -267,6 +273,7 @@ fn test_terminal_scrollback_lines_clamps_out_of_range() {
         open_links_in: None,
         xt_checksum_report: None,
         xt_checksum_extension: None,
+        program_resume: None,
     };
     assert_eq!(
         tc.resolved_scrollback_lines(),
@@ -288,6 +295,7 @@ fn test_terminal_scrollback_lines_clamps_out_of_range() {
         open_links_in: None,
         xt_checksum_report: None,
         xt_checksum_extension: None,
+        program_resume: None,
     };
     assert_eq!(
         tc.resolved_scrollback_lines(),

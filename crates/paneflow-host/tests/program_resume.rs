@@ -240,6 +240,34 @@ fn a_restarted_generation_gets_a_new_token() {
     assert_ne!(before, after);
 }
 
+fn configure_program_resume(host: &Host, mode: &str) {
+    std::fs::write(
+        host.home.path().join("paneflow.json"),
+        format!(r#"{{"terminal": {{"program_resume": {{"mode": "{mode}"}}}}}}"#),
+    )
+    .unwrap();
+}
+
+#[test]
+fn mode_off_leaves_a_new_pane_without_the_token() {
+    let host = Host::start();
+    configure_program_resume(&host, "off");
+    let session = host.shell();
+    assert_eq!(host.pane_token(&session), "");
+}
+
+#[test]
+fn turning_mode_off_back_to_ask_sets_the_token_in_the_next_pane() {
+    let host = Host::start();
+    configure_program_resume(&host, "off");
+    let before = host.shell();
+    assert_eq!(host.pane_token(&before), "");
+    configure_program_resume(&host, "ask");
+    let after = host.shell();
+    assert_eq!(host.pane_token(&after).len(), 43);
+    assert_eq!(host.pane_token(&before), "");
+}
+
 #[test]
 fn a_signed_report_ended_by_st_or_bel_becomes_a_record() {
     let host = Host::start();

@@ -198,6 +198,7 @@ pub(crate) struct HostLinkEnd {
     pub(crate) kind: HostLinkEndKind,
     pub(crate) detail: String,
     observed_generation: Option<SessionGeneration>,
+    resume_candidate: Option<Box<paneflow_host::host::ResumeCandidate>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -278,6 +279,7 @@ impl HostLinkEnd {
             kind: HostLinkEndKind::Exited { code, signal },
             detail,
             observed_generation: None,
+            resume_candidate: None,
         }
     }
 
@@ -285,6 +287,7 @@ impl HostLinkEnd {
         Self {
             kind: HostLinkEndKind::Missing,
             observed_generation: None,
+            resume_candidate: None,
             detail: "Session ended: the local host has no record of it".to_string(),
         }
     }
@@ -293,6 +296,7 @@ impl HostLinkEnd {
         Self {
             kind: HostLinkEndKind::Incompatible,
             observed_generation: None,
+            resume_candidate: None,
             detail: format!(
                 "The running local host is incompatible with this build and keeps its sessions: {message}"
             ),
@@ -303,6 +307,7 @@ impl HostLinkEnd {
         Self {
             kind: HostLinkEndKind::Starting,
             observed_generation: None,
+            resume_candidate: None,
             detail: "The local host is still checking the process of this session".to_string(),
         }
     }
@@ -311,6 +316,7 @@ impl HostLinkEnd {
         Self {
             kind: HostLinkEndKind::Unverified,
             observed_generation: None,
+            resume_candidate: None,
             detail: format!(
                 "The local host still owns this process but could not verify it: {reason}"
             ),
@@ -321,6 +327,7 @@ impl HostLinkEnd {
         Self {
             kind: HostLinkEndKind::AttachRefused,
             observed_generation: None,
+            resume_candidate: None,
             detail: format!("The local host refused the attachment: {message}"),
         }
     }
@@ -329,6 +336,7 @@ impl HostLinkEnd {
         Self {
             kind: HostLinkEndKind::HostReplaced,
             observed_generation: None,
+            resume_candidate: None,
             detail: "A new local host owns this state home; the process of this session did not survive."
                 .to_string(),
         }
@@ -342,6 +350,7 @@ impl HostLinkEnd {
             SessionReconnection::Live => Self {
                 kind: HostLinkEndKind::Restarted { generation },
                 observed_generation: None,
+                resume_candidate: None,
                 detail: "This session was restarted elsewhere".to_string(),
             },
             SessionReconnection::Starting => Self::starting(),
@@ -352,17 +361,31 @@ impl HostLinkEnd {
             SessionReconnection::Failed { reason } => Self {
                 kind: HostLinkEndKind::Failed,
                 observed_generation: None,
+                resume_candidate: None,
                 detail: format!("The session failed to start: {reason}"),
             },
             SessionReconnection::HostReplaced { .. } => Self::host_replaced(),
             SessionReconnection::Lost => Self {
                 kind: HostLinkEndKind::Lost,
                 observed_generation: None,
+                resume_candidate: None,
                 detail: "Session lost: its process did not survive".to_string(),
             },
         };
         end.observed_generation = Some(generation);
         end
+    }
+
+    pub(crate) fn resume_candidate(&self) -> Option<&paneflow_host::host::ResumeCandidate> {
+        self.resume_candidate.as_deref()
+    }
+
+    pub(crate) fn with_resume_candidate(
+        mut self,
+        candidate: Option<paneflow_host::host::ResumeCandidate>,
+    ) -> Self {
+        self.resume_candidate = candidate.map(Box::new);
+        self
     }
 
     pub(crate) fn exit(&self) -> Option<(i32, Option<String>)> {
@@ -493,6 +516,7 @@ pub(crate) struct HostedAttachment {
     pub(crate) attachment: HostAttachment,
     pub(crate) pid: u32,
     pub(crate) cwd: String,
+    pub(crate) resume_attempt: Option<paneflow_host::host::ResumeAttemptReport>,
 }
 
 #[derive(Clone)]
@@ -504,6 +528,7 @@ pub(super) struct AttachRequest {
     pub(super) appearance: SessionAppearance,
     pub(super) cell: Option<CellSize>,
     pub(super) route: Option<WorkerRoute>,
+    pub(super) resume: Option<paneflow_host::host::ResumeRequest>,
 }
 
 pub(crate) enum ResolveOutcome {
@@ -601,6 +626,7 @@ fn inspect_optional(
 fn end_of(client: &HostClient, summary: &SessionSummary) -> HostLinkEnd {
     let owner = client.identity().host_instance.clone();
     HostLinkEnd::from_reconnection(summary.reconnection(&owner), summary.manifest.generation)
+        .with_resume_candidate(summary.resume_candidate.clone())
 }
 
 pub(super) fn resolve(request: AttachRequest) -> Result<ResolveOutcome, HostLinkError> {
@@ -666,7 +692,11 @@ fn resolve_at(
             if !end.restartable() || expected.is_none() {
                 return Ok(ended_with_final_text(&mut client, &request.session, end));
             }
-            match client.restart(&request.session, expected) {
+            let restarted = match &request.resume {
+                Some(resume) => client.restart_resuming(&request.session, expected, resume),
+                None => client.restart(&request.session, expected),
+            };
+            match restarted {
                 Ok(restarted) => restarted,
                 Err(error) if error.code() == Some(ERR_GENERATION_MISMATCH) => {
                     match inspect_optional(&mut client, &request.session)? {
@@ -724,6 +754,7 @@ fn resolve_at(
                 .current_cwd
                 .clone()
                 .unwrap_or(live.manifest.cwd),
+            resume_attempt: live.resume_attempt,
         }),
         snapshot,
     ))
@@ -821,6 +852,88 @@ pub(crate) fn stop_session(
 ) -> Result<SessionSummary, HostClientError> {
     HostClient::connect(endpoint, &ClientHello::control(CLIENT_NAME))?
         .stop(session, Some(generation))
+}
+
+fn window_endpoint() -> Result<PathBuf, String> {
+    host_endpoint()
+        .map(|target| target.endpoint)
+        .ok_or_else(|| HostLinkError::NoHome.user_message())
+}
+
+pub(crate) fn refusal_reason(error: &HostClientError) -> Option<String> {
+    match error {
+        HostClientError::Rpc {
+            data: Some(data), ..
+        } => data
+            .get("reason")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
+        _ => None,
+    }
+}
+
+fn refusal_or_message(error: &HostClientError) -> String {
+    refusal_reason(error).unwrap_or_else(|| error.to_string())
+}
+
+pub(crate) fn prepare_resume(
+    session: &SessionId,
+    record: paneflow_program_resume::RecordId,
+) -> Result<paneflow_host::host::PreparedResume, String> {
+    prepare_resume_at(&window_endpoint()?, session, record)
+}
+
+pub(crate) fn prepare_resume_at(
+    endpoint: &Path,
+    session: &SessionId,
+    record: paneflow_program_resume::RecordId,
+) -> Result<paneflow_host::host::PreparedResume, String> {
+    connect(endpoint)
+        .and_then(|mut client| {
+            client.prepare_resume(
+                session,
+                &paneflow_host::host::ResumeRequest {
+                    record: Some(record),
+                    confirmed: true,
+                    ..paneflow_host::host::ResumeRequest::default()
+                },
+            )
+        })
+        .map_err(|error| refusal_or_message(&error))
+}
+
+pub(crate) fn discard_resume(
+    session: &SessionId,
+    record: paneflow_program_resume::RecordId,
+) -> Result<(), String> {
+    discard_resume_at(&window_endpoint()?, session, record)
+}
+
+pub(crate) fn discard_resume_at(
+    endpoint: &Path,
+    session: &SessionId,
+    record: paneflow_program_resume::RecordId,
+) -> Result<(), String> {
+    connect(endpoint)
+        .and_then(|mut client| client.discard_resume(session, record))
+        .map(|_| ())
+        .map_err(|error| refusal_or_message(&error))
+}
+
+pub(crate) fn resume_attempt_of(
+    session: &SessionId,
+) -> Result<Option<paneflow_host::host::ResumeAttemptReport>, String> {
+    resume_attempt_at(&window_endpoint()?, session)
+}
+
+pub(crate) fn resume_attempt_at(
+    endpoint: &Path,
+    session: &SessionId,
+) -> Result<Option<paneflow_host::host::ResumeAttemptReport>, String> {
+    connect(endpoint)
+        .and_then(|mut client| inspect_optional(&mut client, session))
+        .map(|summary| summary.and_then(|summary| summary.resume_attempt))
+        .map_err(|error| error.to_string())
 }
 
 pub(crate) fn shutdown_host(endpoint: &Path) -> Result<(), HostClientError> {
@@ -1258,6 +1371,10 @@ pub(crate) fn assign_workspace(sessions: &[SessionId], workspace: &WorkspaceId) 
     }
 }
 
+#[cfg(all(test, unix))]
+#[path = "host_link_resume_tests.rs"]
+mod resume_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1533,6 +1650,7 @@ mod tests {
                 height: 19,
             }),
             route: None,
+            resume: None,
         };
         let created = create_request(&request);
         assert_eq!(created.session, Some(session));
@@ -1606,6 +1724,7 @@ mod tests {
                     appearance: crate::terminal::ghostty_session::current_host_appearance(),
                     cell: None,
                     route: None,
+                    resume: None,
                 },
                 target.clone(),
             )
@@ -1681,6 +1800,7 @@ mod tests {
                 surface_id: 42,
                 user_env: None,
             }),
+            resume: None,
         };
         let stub = |answer| {
             std::sync::Arc::new(StubLauncher {
@@ -1798,6 +1918,7 @@ mod tests {
                         appearance: crate::terminal::ghostty_session::current_host_appearance(),
                         cell: None,
                         route: None,
+                        resume: None,
                     },
                     HostEndpoint {
                         home: home.path().into(),
@@ -1886,6 +2007,7 @@ mod tests {
             appearance: crate::terminal::ghostty_session::current_host_appearance(),
             cell: None,
             route: None,
+            resume: None,
         }
     }
 
@@ -2178,6 +2300,7 @@ mod tests {
             kind: HostLinkEndKind::Lost,
             detail: String::new(),
             observed_generation: None,
+            resume_candidate: None,
         };
         assert_eq!(unobserved.restore_recovery(None), None);
         for (code, signal) in [

@@ -10,6 +10,8 @@ use std::io::Write;
 use std::path::Path;
 use std::process::ExitCode;
 
+const PROGRAM_RESUME_TOKEN_ENV: &str = "OSC7577_TOKEN";
+
 pub(crate) fn run_real(
     tool: &str,
     path: &Path,
@@ -28,6 +30,9 @@ pub(crate) fn run_real(
         Some(targets) => cmd.env(CHAIN_TARGETS_ENV, targets),
         None => cmd.env_remove(CHAIN_TARGETS_ENV),
     };
+    if !paneflow_agent_config::reports_program_resume_natively(tool) {
+        cmd.env_remove(PROGRAM_RESUME_TOKEN_ENV);
+    }
 
     #[cfg(unix)]
     unsafe {

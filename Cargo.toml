@@ -86,6 +86,7 @@ paneflow-git = { path = "crates/paneflow-git" }
 paneflow-home = { path = "crates/paneflow-home" }
 paneflow-host = { path = "crates/paneflow-host" }
 paneflow-peer = { path = "crates/paneflow-peer" }
+paneflow-program-resume = { path = "crates/paneflow-program-resume" }
 paneflow-resume-handoff = { path = "crates/paneflow-resume-handoff" }
 paneflow-ipc-client = { path = "crates/paneflow-ipc-client" }
 paneflow-lsp = { path = "crates/paneflow-lsp" }
