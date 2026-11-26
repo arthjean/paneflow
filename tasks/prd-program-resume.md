@@ -8,6 +8,7 @@
 | 1.0 | 2026-11-26 | Arthur Jean | Initial PRD, from the OSC 7577 specification (revision 0.5, 2026-11-25), its announcement, an ecosystem search, and five code maps of the pane spawn path, the OSC ingestion path, the restore flow, the embedded helpers and the shell integration. `paneflow-host` becomes the OSC 7577 terminal; a resume launcher in the shim crate replaces keystroke typing for every resume; real-hardware epics for Windows and macOS. 8 epics, 31 stories. |
 | 1.1 | 2026-11-26 | Arthur Jean | Every Windows proof of EP-002 to EP-006 moved into EP-007 and every macOS proof into EP-008, so EP-001 to EP-006 are proven on Linux alone. Moved: the WSL and gated-token checks of US-005 and the Windows working directory of US-007 to US-027 and US-028; the Windows exit code of US-010 and the cmd fallback of US-022 to US-029; the macOS working directory of US-007 and the macOS mode of the manifest temporary file of US-008 to US-030; the macOS exec and handoff-mode checks of US-010 to US-031. |
 | 1.2 | 2026-11-26 | Arthur Jean | Technical corrections from the EP-003 implementation. TD-08: fish receives the handoff path in a second `--init-command` that sets shell globals, because fish runs its config before any init command and an environment variable would reach `config.fish`; a restart now keeps the integration arguments Paneflow built (`--rcfile`, the fish `--init-command`, the pwsh `-NoLogo -NoExit -Command`), which a bash resume needs and which a restart used to drop. TD-09: the hook sends no `start_time`, the host reads it from the pid itself, which keeps the hook inside its size margin and does not trust a reported value. TD-11: the summary object is `resume_candidate`, beside a `resume_attempt` object (attempt, record, outcome `prepared`, `started`, `settled`, `failed` or `refused`, reason, program, pid), because the flattened manifest already uses the `program_resume` key for the record store. Refusal reasons gained `unsettled`, `unknown_record`, `unknown_attempt`, `launcher_missing`, `invalid_command` and `handoff_unwritable`; a refused restart or create still starts a plain shell and names its reason in `resume_attempt`. The handoff format lives in a new dependency-free crate, `paneflow-resume-handoff`, shared by the host and the launcher. |
+| 1.3 | 2026-11-26 | Arthur Jean | Technical corrections from the EP-004 implementation. TD-11: `terminal.program_resume` is read leniently by the loader (a bad `mode` or a non-bare trusted name is reported naming the key, the rest of the file applies) but is not yet in `schemas/paneflow.schema.json`, because a schema test requires every public key to be documented in `docs/user/`, a mirror this PRD does not modify (Q4); the schema entry lands with the site documentation. The host reads the mode from `paneflow.json` at each spawn, as it reads the checksum settings. The desktop follows a prepared attempt with `session.inspect` every 250 ms for at most 30 s, off the render thread, since the agent stream passes through the worker and carries no attempt. An unsettled record is offered before any agent rule applies. "Could not resume `<cmd>`" names argv[0]. Restarts that carry `resume` are spaced by `RESUME_SPACING` through one desktop-wide slot reservation, in reservation order. The desktop engine now logs an unknown OSC by its number and length only, never its body. |
 
 ## Problem Statement
 
@@ -498,12 +499,12 @@ After a host loss, each pane with a record either resumes, asks, or explains why
 **Dependencies:** Blocked by US-005
 
 **Acceptance Criteria:**
-- [ ] Given no setting, when the config is resolved, then the mode is `ask` and the trusted list is empty
-- [ ] Given `{"terminal": {"program_resume": {"mode": "auto"}}}`, when it is resolved, then the mode is `auto`
-- [ ] Given `"mode": "sometimes"`, when the config loads, then it reports a validation error naming the key and falls back to `ask`
-- [ ] Given `"trusted_programs": ["nvim", "/usr/bin/htop"]`, when it loads, then it reports that `/usr/bin/htop` is not a bare name and keeps `nvim`
-- [ ] Given mode `off`, when a new pane prints `$OSC7577_TOKEN`, then it is unset
-- [ ] Given the mode changed from `off` to `ask` at runtime, when the next pane is spawned, then the token is set
+- [x] Given no setting, when the config is resolved, then the mode is `ask` and the trusted list is empty
+- [x] Given `{"terminal": {"program_resume": {"mode": "auto"}}}`, when it is resolved, then the mode is `auto`
+- [x] Given `"mode": "sometimes"`, when the config loads, then it reports a validation error naming the key and falls back to `ask`
+- [x] Given `"trusted_programs": ["nvim", "/usr/bin/htop"]`, when it loads, then it reports that `/usr/bin/htop` is not a bare name and keeps `nvim`
+- [x] Given mode `off`, when a new pane prints `$OSC7577_TOKEN`, then it is unset
+- [x] Given the mode changed from `off` to `ask` at runtime, when the next pane is spawned, then the token is set
 
 #### US-017: Restore decision for lost sessions
 **Description:** As a user restarting Paneflow after a host loss, I want each pane's record handled by my policy so that the right programs come back.
@@ -512,14 +513,14 @@ After a host loss, each pane with a record either resumes, asks, or explains why
 **Dependencies:** Blocked by US-013, US-016
 
 **Acceptance Criteria:**
-- [ ] Given mode `auto` and a lost session with a resumable record, when the layout is restored, then the pane's restart carries `resume` and the program starts
-- [ ] Given mode `ask` and a record whose argv[0] is `nvim` in `trusted_programs`, when the layout is restored, then it resumes without a banner
-- [ ] Given mode `ask` and an untrusted record, when the layout is restored, then the pane starts a plain shell and its resume state is `Offered`
-- [ ] Given an unsettled record in mode `auto`, when the layout is restored, then the pane's resume state is `Offered` with reason `unsettled` and nothing is resumed
-- [ ] Given a session ended `exited` with code 0 by the user, when the layout is restored, then no resume is attempted
-- [ ] Given mode `off`, when the layout is restored, then no record is resumed or offered
-- [ ] Given a summary whose `blocked` is `cwd_missing`, `shell_unsupported` or `sandbox_changed`, when the layout is restored, then the pane's resume state is `Blocked` with that reason and no resume is requested
-- [ ] Given several panes to resume, when they restart, then they are submitted in order at least `RESUME_SPACING` apart
+- [x] Given mode `auto` and a lost session with a resumable record, when the layout is restored, then the pane's restart carries `resume` and the program starts
+- [x] Given mode `ask` and a record whose argv[0] is `nvim` in `trusted_programs`, when the layout is restored, then it resumes without a banner
+- [x] Given mode `ask` and an untrusted record, when the layout is restored, then the pane starts a plain shell and its resume state is `Offered`
+- [x] Given an unsettled record in mode `auto`, when the layout is restored, then the pane's resume state is `Offered` with reason `unsettled` and nothing is resumed
+- [x] Given a session ended `exited` with code 0 by the user, when the layout is restored, then no resume is attempted
+- [x] Given mode `off`, when the layout is restored, then no record is resumed or offered
+- [x] Given a summary whose `blocked` is `cwd_missing`, `shell_unsupported` or `sandbox_changed`, when the layout is restored, then the pane's resume state is `Blocked` with that reason and no resume is requested
+- [x] Given several panes to resume, when they restart, then they are submitted in order at least `RESUME_SPACING` apart
 
 #### US-018: Resume offer banner with an escaped command
 **Description:** As a user, I want to see exactly which command would run before I allow it so that a misleading record cannot trick me.
@@ -528,15 +529,15 @@ After a host loss, each pane with a record either resumes, asks, or explains why
 **Dependencies:** Blocked by US-014, US-017
 
 **Acceptance Criteria:**
-- [ ] Given a pane whose resume state is `Blocked`, when the banner renders, then it shows the Edge Cases message for its reason and no Resume button
-- [ ] Given an offered record, when the banner renders, then it shows the argv quoted element by element and the cwd
-- [ ] Given an element containing U+202E, when the banner renders, then it shows `\u{202E}` instead of the character
-- [ ] Given the banner, when the user clicks Resume while the shell has no input, then the desktop calls `session.prepare_resume` with `confirmed: true` and types only the returned launcher path and handoff path, quoted for the pane's shell, then `\r`
-- [ ] Given the banner, when the user has typed into the shell, then Resume resets the line before typing, as `OfferResume` does today
-- [ ] Given the banner, when the user clicks Dismiss, then the desktop calls `session.discard_resume` and the banner does not return on the next restore
-- [ ] Given the launcher reports `failed`, when the banner state updates, then it shows "Could not resume `<cmd>`: not found"
-- [ ] Given the banner and its buttons, when they render, then no element chains a second tooltip on an `accessible_control` (`AGENTS.md`)
-- [ ] Given the desktop at debug logging, when a 7577 report passes through the desktop's own engine, then its log line carries the OSC number and length but not the body, so a record's arguments are only ever shown escaped by the banner
+- [x] Given a pane whose resume state is `Blocked`, when the banner renders, then it shows the Edge Cases message for its reason and no Resume button
+- [x] Given an offered record, when the banner renders, then it shows the argv quoted element by element and the cwd
+- [x] Given an element containing U+202E, when the banner renders, then it shows `\u{202E}` instead of the character
+- [x] Given the banner, when the user clicks Resume while the shell has no input, then the desktop calls `session.prepare_resume` with `confirmed: true` and types only the returned launcher path and handoff path, quoted for the pane's shell, then `\r`
+- [x] Given the banner, when the user has typed into the shell, then Resume resets the line before typing, as `OfferResume` does today
+- [x] Given the banner, when the user clicks Dismiss, then the desktop calls `session.discard_resume` and the banner does not return on the next restore
+- [x] Given the launcher reports `failed`, when the banner state updates, then it shows "Could not resume `<cmd>`: not found"
+- [x] Given the banner and its buttons, when they render, then no element chains a second tooltip on an `accessible_control` (`AGENTS.md`)
+- [x] Given the desktop at debug logging, when a 7577 report passes through the desktop's own engine, then its log line carries the OSC number and length but not the body, so a record's arguments are only ever shown escaped by the banner
 
 #### US-019: Agent records follow agent rules
 **Description:** As an agent user, I want a native agent record resumed like a catalog conversation, and preferred over it, so that agents that report themselves need no catalog knowledge.
@@ -545,13 +546,13 @@ After a host loss, each pane with a record either resumes, asks, or explains why
 **Dependencies:** Blocked by US-017
 
 **Acceptance Criteria:**
-- [ ] Given a runtime with `[resume] native_argv`, when the catalog is compiled, then each template is validated like `session_argv`, with `{session_id}` exactly once and `{absolute_path}` at most once
-- [ ] Given a template with `{session_id}` in program position, when the catalog is compiled, then the build fails with a message naming the runtime
-- [ ] Given a Pi record `pi --session abc_1`, `agents.restore_conversations` true and mode `ask`, when the layout is restored, then it resumes without a banner
-- [ ] Given a Pi record `pi --extension x.js`, when the layout is restored, then the banner is shown
-- [ ] Given `agents.restore_conversations` false, when a Pi record is restored, then it is not resumed automatically and the banner is shown
-- [ ] Given a record `/tmp/pi --session abc` (absolute argv[0]), when the layout is restored, then the banner is shown
-- [ ] Given a pane with a 7577 record and a catalog `agent_session`, when the layout is restored, then only the 7577 record is resumed and the conversation banner is not shown
+- [x] Given a runtime with `[resume] native_argv`, when the catalog is compiled, then each template is validated like `session_argv`, with `{session_id}` exactly once and `{absolute_path}` at most once
+- [x] Given a template with `{session_id}` in program position, when the catalog is compiled, then the build fails with a message naming the runtime
+- [x] Given a Pi record `pi --session abc_1`, `agents.restore_conversations` true and mode `ask`, when the layout is restored, then it resumes without a banner
+- [x] Given a Pi record `pi --extension x.js`, when the layout is restored, then the banner is shown
+- [x] Given `agents.restore_conversations` false, when a Pi record is restored, then it is not resumed automatically and the banner is shown
+- [x] Given a record `/tmp/pi --session abc` (absolute argv[0]), when the layout is restored, then the banner is shown
+- [x] Given a pane with a 7577 record and a catalog `agent_session`, when the layout is restored, then only the 7577 record is resumed and the conversation banner is not shown
 
 #### US-020: The shim strips the token from agents without native reporting
 **Description:** As a user, I want tools that agents run unable to register resume commands so that a prompt injection cannot persist past a restart.
@@ -560,10 +561,10 @@ After a host loss, each pane with a record either resumes, asks, or explains why
 **Dependencies:** Blocked by US-005
 
 **Acceptance Criteria:**
-- [ ] Given `runtimes/pi/runtime.toml` with `program_resume = "native"`, when Pi is launched through the shim, then Pi's environment holds `OSC7577_TOKEN`
-- [ ] Given Claude Code, whose runtime file has no `program_resume` key, launched through the shim, when its environment is read, then `OSC7577_TOKEN` is absent
-- [ ] Given an agent launched through a nested shim chain, when the outermost shim strips the token, then the inner one does not add it back
-- [ ] Given an unknown `program_resume` value in a runtime file, when the catalog is compiled, then the build fails naming the runtime
+- [x] Given `runtimes/pi/runtime.toml` with `program_resume = "native"`, when Pi is launched through the shim, then Pi's environment holds `OSC7577_TOKEN`
+- [x] Given Claude Code, whose runtime file has no `program_resume` key, launched through the shim, when its environment is read, then `OSC7577_TOKEN` is absent
+- [x] Given an agent launched through a nested shim chain, when the outermost shim strips the token, then the inner one does not add it back
+- [x] Given an unknown `program_resume` value in a runtime file, when the catalog is compiled, then the build fails naming the runtime
 
 ---
 

@@ -33,10 +33,10 @@
     {
       "id": "EP-004",
       "title": "Restore policy and banners in the desktop",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 5,
-      "stories_done": 0
+      "stories_done": 5
     },
     {
       "id": "EP-005",
@@ -268,68 +268,68 @@
       "id": "US-016",
       "title": "`terminal.program_resume` configuration",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-005"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-26",
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26"
     },
     {
       "id": "US-017",
       "title": "Restore decision for lost sessions",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-013",
         "US-016"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-26",
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26"
     },
     {
       "id": "US-018",
       "title": "Resume offer banner with an escaped command",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-014",
         "US-017"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-26",
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26"
     },
     {
       "id": "US-019",
       "title": "Agent records follow agent rules",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-017"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-26",
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26"
     },
     {
       "id": "US-020",
       "title": "The shim strips the token from agents without native reporting",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-005"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-26",
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26"
     },
     {
       "id": "US-021",
