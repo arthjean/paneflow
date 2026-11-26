@@ -478,16 +478,16 @@ Every document, guide and listing describes the CLI and Lua path, the public sit
 **Dependencies:** Blocked by US-012, US-013, US-014, US-015, US-016
 
 **Acceptance Criteria:**
-- [ ] Given `README.md`, when its agent section is read, then it describes `paneflow integrations install`, the conductor skill, `paneflow read`, `search`, `write`, `ask` and `paneflow do`, and no MCP install
-- [ ] Given `ARCHITECTURE.md`, when it is read, then no crate list or paragraph describes `paneflow-mcp`, and the integrations crate is named `paneflow-agent-integrations`
-- [ ] Given `ARCHITECTURE.md`, when its write-approval paragraph is read, then it describes `pane.write` as reached by `paneflow write` and Lua
-- [ ] Given `AGENTS.md`, when its helper bullet is read, then it lists two embedded helpers with their caps, and its `toml_edit` remark names `paneflow-agent-integrations`
-- [ ] Given `CLAUDE.md`, when it is read, then it points to the CLI and the conductor skill instead of `paneflow mcp install`
-- [ ] Given `.github/SECURITY.md`, when its scope is read, then it names the server-side fencing, the read and write scoping and the pair approval, not an MCP bridge
-- [ ] Given `llms.txt`, `context7.json`, `runtimes/README.md`, `bench/README.md` and `docs/release/persistent-qualification.md`, when they are read, then none describes the bridge or a `helper.paneflow-mcp` key
-- [ ] Given the repository root, when it is listed, then `glama.json` does not exist
-- [ ] Given a user who still has a Paneflow MCP entry from an older version, when they read the agent section of `README.md`, then it tells them that upgrading removes it and that `paneflow mcp uninstall` removes it by hand
-- [ ] Given `runtimes/README.md`, when its integration section is read, then it states that an agent the catalog does not know is treated as the user by the worker, and that a descriptor fixes it (TD-04)
+- [x] Given `README.md`, when its agent section is read, then it describes `paneflow integrations install`, the conductor skill, `paneflow read`, `search`, `write`, `ask` and `paneflow do`, and no MCP install
+- [x] Given `ARCHITECTURE.md`, when it is read, then no crate list or paragraph describes `paneflow-mcp`, and the integrations crate is named `paneflow-agent-integrations`
+- [x] Given `ARCHITECTURE.md`, when its write-approval paragraph is read, then it describes `pane.write` as reached by `paneflow write` and Lua
+- [x] Given `AGENTS.md`, when its helper bullet is read, then it lists two embedded helpers with their caps, and its `toml_edit` remark names `paneflow-agent-integrations`
+- [x] Given `CLAUDE.md`, when it is read, then it points to the CLI and the conductor skill instead of `paneflow mcp install`
+- [x] Given `.github/SECURITY.md`, when its scope is read, then it names the server-side fencing, the read and write scoping and the pair approval, not an MCP bridge
+- [x] Given `llms.txt`, `context7.json`, `runtimes/README.md`, `bench/README.md` and `docs/release/persistent-qualification.md`, when they are read, then none describes the bridge or a `helper.paneflow-mcp` key
+- [x] Given the repository root, when it is listed, then `glama.json` does not exist
+- [x] Given a user who still has a Paneflow MCP entry from an older version, when they read the agent section of `README.md`, then it tells them that upgrading removes it and that `paneflow mcp uninstall` removes it by hand
+- [x] Given `runtimes/README.md`, when its integration section is read, then it states that an agent the catalog does not know is treated as the user by the worker, and that a descriptor fixes it (TD-04)
 
 #### US-018: Changelog and release metadata
 **Description:** As a user reading the release notes, I want the removal and its replacement stated so that I know what to run after upgrading.
@@ -496,13 +496,13 @@ Every document, guide and listing describes the CLI and Lua path, the public sit
 **Dependencies:** Blocked by US-012, US-013
 
 **Acceptance Criteria:**
-- [ ] Given `CHANGELOG.md` `[Unreleased]`, when it is read, then the `ask_human`, `list_actions` and `run_action` entries describe `paneflow ask`, `paneflow actions` and `paneflow do` instead
-- [ ] Given the same section, when it is read, then a `Removed` entry states that the MCP bridge and `paneflow mcp` were removed and that upgrading removes the entries Paneflow wrote
-- [ ] Given the same section, when its upgrade notes are read, then one note states that an agent reads terminals only in its own workspace unless orchestration is open and `--scope all` is passed
-- [ ] Given the same section, when its upgrade notes are read, then one note states that `paneflow ls` and `paneflow search` print a fence when their output is not a terminal, and that `--raw` removes it
-- [ ] Given `CHANGELOG.md` from `[0.20.0]` down, when it is compared with `main` before this PRD, then it is unchanged
-- [ ] Given a user whose agent still reports a failed `paneflow` MCP server after upgrading, when they read the `Removed` entry, then it tells them to run `paneflow mcp uninstall`
-- [ ] Given `assets/io.github.arthurdev44.paneflow.metainfo.xml`, when its feature list is read, then it no longer names a read-only MCP bridge, and its released notes are unchanged
+- [x] Given `CHANGELOG.md` `[Unreleased]`, when it is read, then the `ask_human`, `list_actions` and `run_action` entries describe `paneflow ask`, `paneflow actions` and `paneflow do` instead
+- [x] Given the same section, when it is read, then a `Removed` entry states that the MCP bridge and `paneflow mcp` were removed and that upgrading removes the entries Paneflow wrote
+- [x] Given the same section, when its upgrade notes are read, then one note states that an agent reads terminals only in its own workspace unless orchestration is open and `--scope all` is passed
+- [x] Given the same section, when its upgrade notes are read, then one note states that `paneflow ls` and `paneflow search` print a fence when their output is not a terminal, and that `--raw` removes it
+- [x] Given `CHANGELOG.md` from `[0.20.0]` down, when it is compared with `main` before this PRD, then it is unchanged
+- [x] Given a user whose agent still reports a failed `paneflow` MCP server after upgrading, when they read the `Removed` entry, then it tells them to run `paneflow mcp uninstall`
+- [x] Given `assets/io.github.arthurdev44.paneflow.metainfo.xml`, when its feature list is read, then it no longer names a read-only MCP bridge, and its released notes are unchanged
 
 #### US-019: Site documentation pages
 **Description:** As a reader of paneflow.dev's documentation in any of its six languages, I want the pages to describe the CLI and Lua path so that I am never told to install a bridge.
@@ -511,11 +511,11 @@ Every document, guide and listing describes the CLI and Lua path, the public sit
 **Dependencies:** Blocked by US-017
 
 **Acceptance Criteria:**
-- [ ] Given `content/docs/{features,index,settings,troubleshooting,scripting/index,scripting/reference}` in en, de, es, fr, ja and zh-Hans, when they are read, then none describes the MCP bridge, its tools or `PANEFLOW_MCP_SCOPE`
-- [ ] Given the same pages, when they are read, then each place that described an MCP tool describes its CLI equivalent
-- [ ] Given `content/docs/settings`, when its cleanup section is read, then it says upgrading removes Paneflow's entries and how to remove one by hand
-- [ ] Given a link to the former MCP section of `scripting/index`, when it is followed, then the page shows a short note at that anchor saying the bridge was removed and linking the CLI equivalents
-- [ ] Given dated blog posts, when they are compared with the site's `main`, then they are unchanged
+- [x] Given `content/docs/{features,index,settings,troubleshooting,scripting/index,scripting/reference}` in en, de, es, fr, ja and zh-Hans, when they are read, then none describes the MCP bridge, its tools or `PANEFLOW_MCP_SCOPE`
+- [x] Given the same pages, when they are read, then each place that described an MCP tool describes its CLI equivalent
+- [x] Given `content/docs/settings`, when its cleanup section is read, then it says upgrading removes Paneflow's entries and how to remove one by hand
+- [x] Given a link to the former MCP section of `scripting/index`, when it is followed, then the page shows a short note at that anchor saying the bridge was removed and linking the CLI equivalents
+- [x] Given dated blog posts, when they are compared with the site's `main`, then they are unchanged
 
 #### US-020: Site copy, the mirror and the guard
 **Description:** As a visitor of paneflow.dev, I want the marketing copy to match the product, and as a maintainer I want a test that keeps the bridge out of the documents.
@@ -524,12 +524,12 @@ Every document, guide and listing describes the CLI and Lua path, the public sit
 **Dependencies:** Blocked by US-018, US-019
 
 **Acceptance Criteria:**
-- [ ] Given `messages/*.json` in the six locales, when they are read, then the home eyebrow, the download card, the FAQ and the about paragraph no longer promise an MCP bridge
-- [ ] Given `src/lib/acquisition-policy.ts`, when it is read, then the `read_only_mcp` campaign is gone
-- [ ] Given `bun run sync:public-docs ../paneflow/docs/user` run from the site, when the paneflow repository diff is read, then only files under `docs/user` changed
-- [ ] Given `src-app/tests/mcp_bridge_is_gone.rs`, when it runs over the files `git ls-files` lists, then no file outside its allowlist matches `paneflow-mcp`, `paneflow mcp install`, `MCP bridge` or `mcp_config`, case-insensitively
-- [ ] Given the guard's allowlist, when it is read, then it holds exactly `CHANGELOG.md`, the metainfo file, `docs/release/qualification/**`, `docs/user/blog/**`, `tasks/**`, the legacy purge module and its tests, the `paneflow mcp` tombstone, the guard file itself, and the catalog test of US-009 that asserts `mcp_config` is rejected
-- [ ] Given a new tracked file outside the allowlist containing `paneflow mcp install`, when the guard runs, then it fails naming the file
+- [x] Given `messages/*.json` in the six locales, when they are read, then the home eyebrow, the download card, the FAQ and the about paragraph no longer promise an MCP bridge
+- [x] Given `src/lib/acquisition-policy.ts`, when it is read, then the `read_only_mcp` campaign is gone
+- [x] Given `bun run sync:public-docs ../paneflow/docs/user` run from the site, when the paneflow repository diff is read, then only files under `docs/user` changed
+- [x] Given `src-app/tests/mcp_bridge_is_gone.rs`, when it runs over the files `git ls-files` lists, then no file outside its allowlist matches `paneflow-mcp`, `paneflow mcp install`, `MCP bridge` or `mcp_config`, case-insensitively
+- [x] Given the guard's allowlist, when it is read, then it holds exactly `CHANGELOG.md`, the metainfo file, `docs/release/qualification/**`, `docs/user/blog/**`, `tasks/**`, the legacy purge module and its tests, the `paneflow mcp` tombstone, the guard file itself, and the catalog test of US-009 that asserts `mcp_config` is rejected
+- [x] Given a new tracked file outside the allowlist containing `paneflow mcp install`, when the guard runs, then it fails naming the file
 
 #### US-021: Public Lua scripting page
 **Description:** As a user or an agent, I want one public page that explains `paneflow do`, `init.lua`, actions, prompts and `paneflow api` so that the code path has documentation of its own.
@@ -538,11 +538,11 @@ Every document, guide and listing describes the CLI and Lua path, the public sit
 **Dependencies:** Blocked by US-006, US-019
 
 **Acceptance Criteria:**
-- [ ] Given the site, when `scripting/lua` is built in the six locales, then it documents `paneflow do` (file, `-e`, stdin), `init.lua` actions with `agents = true`, `paneflow.ui.input` and `paneflow.ui.pick`, `paneflow actions`, `paneflow do --wait` and `--resume`, and `paneflow api list` and `describe`
-- [ ] Given each example on the page, when it is run against a debug build, then it produces the output the page shows
-- [ ] Given the scripting index, when it is read, then it links the new page
-- [ ] Given an example that raises a Lua error, when the page shows it, then the page shows the error text a debug build prints for it
-- [ ] Given the page published on the site, when `bun run sync:public-docs ../paneflow/docs/user` runs again, then `docs/user` gains the page and only files under `docs/user` change
+- [x] Given the site, when `scripting/lua` is built in the six locales, then it documents `paneflow do` (file, `-e`, stdin), `init.lua` actions with `agents = true`, `paneflow.ui.input` and `paneflow.ui.pick`, `paneflow actions`, `paneflow do --wait` and `--resume`, and `paneflow api list` and `describe`
+- [x] Given each example on the page, when it is run against a debug build, then it produces the output the page shows
+- [x] Given the scripting index, when it is read, then it links the new page
+- [x] Given an example that raises a Lua error, when the page shows it, then the page shows the error text a debug build prints for it
+- [x] Given the page published on the site, when `bun run sync:public-docs ../paneflow/docs/user` runs again, then `docs/user` gains the page and only files under `docs/user` change
 
 ---
 

@@ -41,10 +41,10 @@
     {
       "id": "EP-005",
       "title": "Documentation, guidance and listings",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 5,
-      "stories_done": 0
+      "stories_done": 5
     },
     {
       "id": "EP-006",
@@ -280,7 +280,7 @@
       "id": "US-017",
       "title": "Repository documents and agent guidance",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-012",
@@ -289,64 +289,64 @@
         "US-015",
         "US-016"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-26",
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26"
     },
     {
       "id": "US-018",
       "title": "Changelog and release metadata",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-012",
         "US-013"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-26",
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26"
     },
     {
       "id": "US-019",
       "title": "Site documentation pages",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-017"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-26",
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26"
     },
     {
       "id": "US-020",
       "title": "Site copy, the mirror and the guard",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-018",
         "US-019"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-26",
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26"
     },
     {
       "id": "US-021",
       "title": "Public Lua scripting page",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-006",
         "US-019"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-11-26",
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26"
     },
     {
       "id": "US-022",
