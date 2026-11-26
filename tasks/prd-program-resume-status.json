@@ -41,7 +41,7 @@
     {
       "id": "EP-005",
       "title": "Catalog conversations ride the launcher",
-      "status": "TODO",
+      "status": "BLOCKED",
       "priority": "P1",
       "stories_total": 2,
       "stories_done": 0
@@ -335,27 +335,27 @@
       "id": "US-021",
       "title": "Automatic conversation resume through the handoff",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "BLOCKED",
       "priority": "P1",
       "blocked_by": [
         "US-014"
       ],
-      "started_at": null,
+      "started_at": "2026-11-26",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-11-26"
     },
     {
       "id": "US-022",
       "title": "Offer and fallback paths without argument typing",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "BLOCKED",
       "priority": "P1",
       "blocked_by": [
         "US-021"
       ],
-      "started_at": null,
+      "started_at": "2026-11-26",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-11-26"
     },
     {
       "id": "US-023",

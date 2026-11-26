@@ -9,6 +9,7 @@
 | 1.1 | 2026-11-26 | Arthur Jean | Every Windows proof of EP-002 to EP-006 moved into EP-007 and every macOS proof into EP-008, so EP-001 to EP-006 are proven on Linux alone. Moved: the WSL and gated-token checks of US-005 and the Windows working directory of US-007 to US-027 and US-028; the Windows exit code of US-010 and the cmd fallback of US-022 to US-029; the macOS working directory of US-007 and the macOS mode of the manifest temporary file of US-008 to US-030; the macOS exec and handoff-mode checks of US-010 to US-031. |
 | 1.2 | 2026-11-26 | Arthur Jean | Technical corrections from the EP-003 implementation. TD-08: fish receives the handoff path in a second `--init-command` that sets shell globals, because fish runs its config before any init command and an environment variable would reach `config.fish`; a restart now keeps the integration arguments Paneflow built (`--rcfile`, the fish `--init-command`, the pwsh `-NoLogo -NoExit -Command`), which a bash resume needs and which a restart used to drop. TD-09: the hook sends no `start_time`, the host reads it from the pid itself, which keeps the hook inside its size margin and does not trust a reported value. TD-11: the summary object is `resume_candidate`, beside a `resume_attempt` object (attempt, record, outcome `prepared`, `started`, `settled`, `failed` or `refused`, reason, program, pid), because the flattened manifest already uses the `program_resume` key for the record store. Refusal reasons gained `unsettled`, `unknown_record`, `unknown_attempt`, `launcher_missing`, `invalid_command` and `handoff_unwritable`; a refused restart or create still starts a plain shell and names its reason in `resume_attempt`. The handoff format lives in a new dependency-free crate, `paneflow-resume-handoff`, shared by the host and the launcher. |
 | 1.3 | 2026-11-26 | Arthur Jean | Technical corrections from the EP-004 implementation. TD-11: `terminal.program_resume` is read leniently by the loader (a bad `mode` or a non-bare trusted name is reported naming the key, the rest of the file applies) but is not yet in `schemas/paneflow.schema.json`, because a schema test requires every public key to be documented in `docs/user/`, a mirror this PRD does not modify (Q4); the schema entry lands with the site documentation. The host reads the mode from `paneflow.json` at each spawn, as it reads the checksum settings. The desktop follows a prepared attempt with `session.inspect` every 250 ms for at most 30 s, off the render thread, since the agent stream passes through the worker and carries no attempt. An unsettled record is offered before any agent rule applies. "Could not resume `<cmd>`" names argv[0]. Restarts that carry `resume` are spaced by `RESUME_SPACING` through one desktop-wide slot reservation, in reservation order. The desktop engine now logs an unknown OSC by its number and length only, never its body. |
+| 1.4 | 2026-11-26 | Arthur Jean | Technical corrections from the EP-005 implementation and review. TD-13: a lost conversation pane no longer opens its shell before its turn; it waits in the conversation queue without a shell and its `session.create` carries `resume: { argv, cwd }`, so creates are spaced by `RESUME_SPACING` and no shell output is awaited. A create that carries `resume` goes to the host directly, never through the worker route, whose launch parameters carry no resume. When the request has no recorded `cwd`, the desktop fills it with the spawn directory. A create refused with `shell_unsupported`, `launcher_missing` or `handoff_unwritable` falls back to today's quiet wait and typed command. Every typed path (the `OfferResume` and `SharedFolder` banners, a shell that settles after a refused create, a legacy layout without a host session) first asks `session.prepare_resume { argv, cwd }` and types the launcher and handoff paths, and types the catalog command only when the host refuses. A `failed` launcher report shows "could not start `<program>`: `<reason>`" in the "Resume failed" banner and forgets the conversation. |
 
 ## Problem Statement
 
@@ -574,6 +575,8 @@ Catalog conversation resumes stop typing their command into shells that have int
 
 **Definition of Done:** with bash and zsh, an automatic Claude conversation resume starts through the handoff with no keystroke written by the desktop; nushell keeps the typed path. The cmd path is proven in EP-007.
 
+**Review status (2026-11-26):** BLOCKED outside the epic. Every criterion of US-021 and US-022 passed review; fmt, clippy, nextest and the wall-clock check pass. The one failing gate is `scripts/check-helper-sizes.sh`: `paneflow-mcp` is 540,752 B against its 524,288 B cap. This epic does not touch that binary, and `main` was already red on it at `9e477892`. US-012 of `tasks/prd-mcp-removal.md` deletes the bridge. After that, a `/review-epic` that reruns the gates certifies EP-005 without a new audit.
+
 #### US-021: Automatic conversation resume through the handoff
 **Description:** As an agent user, I want my conversation resumed at the shell's first prompt without simulated typing so that startup files and slow prompts cannot break it.
 
@@ -581,11 +584,11 @@ Catalog conversation resumes stop typing their command into shells that have int
 **Dependencies:** Blocked by US-014
 
 **Acceptance Criteria:**
-- [ ] Given a restored Claude pane in bash, when the conversation resumes, then the desktop sends `session.create` with `resume: { argv, cwd }` and writes no bytes to the PTY
-- [ ] Given the handoff path, when the conversation resumes, then the 300 ms quiet wait is not used
-- [ ] Given a resumed Claude conversation that prints `No conversation found with session ID`, when the failure watch runs, then the "Resume failed" banner still appears
-- [ ] Given the conversation's folder is missing, when the resume is planned, then the existing `FolderMissing` banner appears and no handoff is written
-- [ ] Given two restored conversations, when they start, then their creates are at least `RESUME_SPACING` apart
+- [x] Given a restored Claude pane in bash, when the conversation resumes, then the desktop sends `session.create` with `resume: { argv, cwd }` and writes no bytes to the PTY
+- [x] Given the handoff path, when the conversation resumes, then the 300 ms quiet wait is not used
+- [x] Given a resumed Claude conversation that prints `No conversation found with session ID`, when the failure watch runs, then the "Resume failed" banner still appears
+- [x] Given the conversation's folder is missing, when the resume is planned, then the existing `FolderMissing` banner appears and no handoff is written
+- [x] Given two restored conversations, when they start, then their creates are at least `RESUME_SPACING` apart
 
 #### US-022: Offer and fallback paths without argument typing
 **Description:** As an agent user on any shell, I want the remaining typed resume paths to stay working so that the migration removes typing only where it is safe.
@@ -594,9 +597,9 @@ Catalog conversation resumes stop typing their command into shells that have int
 **Dependencies:** Blocked by US-021
 
 **Acceptance Criteria:**
-- [ ] Given the `OfferResume` banner in a bash pane, when the user clicks it, then the desktop types the launcher path and a handoff path, not the agent's arguments
-- [ ] Given a pane with `shell_integration: false`, when a conversation resumes, then today's typed command is used
-- [ ] Given the launcher reports `failed` for a conversation, when the banner updates, then the conversation is forgotten, as today's "Resume failed" path does
+- [x] Given the `OfferResume` banner in a bash pane, when the user clicks it, then the desktop types the launcher path and a handoff path, not the agent's arguments
+- [x] Given a pane with `shell_integration: false`, when a conversation resumes, then today's typed command is used
+- [x] Given the launcher reports `failed` for a conversation, when the banner updates, then the conversation is forgotten, as today's "Resume failed" path does
 
 ---
 
