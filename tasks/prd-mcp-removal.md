@@ -331,11 +331,11 @@ Hooks, the status line and the skill install, report and refresh with no bridge 
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given the workspace, when it builds, then `crates/paneflow-agent-integrations` exists, made by `git mv` from `crates/paneflow-mcp-install`, and no `Cargo.toml` names `paneflow-mcp-install`
-- [ ] Given `src-app/Cargo.toml` and the renamed crate's manifest, when they are read, then each enables `serde_json` `preserve_order`
-- [ ] Given a `paneflow.json` whose keys are not sorted, when a setting is saved through `config_writer`, then every other key keeps its position
-- [ ] Given a `paneflow.json` with a syntax error, when a setting is saved, then the file is left unchanged and the save reports failure, as today
-- [ ] Given the renamed crate, when it is listed, then it has no `build.rs` and no `.manifest` file (the Windows launch without elevation is proven by US-024)
+- [x] Given the workspace, when it builds, then `crates/paneflow-agent-integrations` exists, made by `git mv` from `crates/paneflow-mcp-install`, and no `Cargo.toml` names `paneflow-mcp-install`
+- [x] Given `src-app/Cargo.toml` and the renamed crate's manifest, when they are read, then each enables `serde_json` `preserve_order`
+- [x] Given a `paneflow.json` whose keys are not sorted, when a setting is saved through `config_writer`, then every other key keeps its position
+- [x] Given a `paneflow.json` with a syntax error, when a setting is saved, then the file is left unchanged and the save reports failure, as today
+- [x] Given the renamed crate, when it is listed, then it has no `build.rs` and no `.manifest` file (the Windows launch without elevation is proven by US-024)
 
 #### US-009: Hooks install, report and refresh with no bridge
 **Description:** As an agent user, I want my hooks to keep working once the bridge is gone so that agent status and prompts never stop silently.
@@ -344,14 +344,14 @@ Hooks, the status line and the skill install, report and refresh with no bridge 
 **Dependencies:** Blocked by US-008
 
 **Acceptance Criteria:**
-- [ ] Given no `bin/paneflow-mcp`, when `paneflow integrations install claude-code` runs, then it exits 0 and the hooks, the status line and the skill are written
-- [ ] Given that install, when `~/.claude.json` is read, then no `mcpServers` key was added
-- [ ] Given installed Claude hooks and no MCP entry, when `paneflow integrations list` runs, then Claude Code is reported installed
-- [ ] Given a release build and no `bin/paneflow-mcp`, when the worker starts, then it refreshes each installed integration and logs `refreshed the <runtime> integration`
-- [ ] Given a missing `bin/paneflow-ai-hook`, when the worker starts, then it skips the refresh and logs a warning naming the missing helper
-- [ ] Given `paneflow hooks setup`, when it runs, then it extracts only the hook helper and succeeds without a bridge
-- [ ] Given the runtime catalog, when it builds, then an installer adapter without `mcp_config` is accepted and no descriptor declares `mcp_config`
-- [ ] Given a descriptor that still declares `mcp_config`, when the catalog builds, then the build fails with the unknown-field error naming the file
+- [x] Given no `bin/paneflow-mcp`, when `paneflow integrations install claude-code` runs, then it exits 0 and the hooks, the status line and the skill are written
+- [x] Given that install, when `~/.claude.json` is read, then no `mcpServers` key was added
+- [x] Given installed Claude hooks and no MCP entry, when `paneflow integrations list` runs, then Claude Code is reported installed
+- [x] Given a release build and no `bin/paneflow-mcp`, when the worker starts, then it refreshes each installed integration and logs `refreshed the <runtime> integration`
+- [x] Given a missing `bin/paneflow-ai-hook`, when the worker starts, then it skips the refresh and logs a warning naming the missing helper
+- [x] Given `paneflow hooks setup`, when it runs, then it extracts only the hook helper and succeeds without a bridge
+- [x] Given the runtime catalog, when it builds, then an installer adapter without `mcp_config` is accepted and no descriptor declares `mcp_config`
+- [x] Given a descriptor that still declares `mcp_config`, when the catalog builds, then the build fails with the unknown-field error naming the file
 
 #### US-010: A purge engine for the MCP entries Paneflow wrote
 **Description:** As a user upgrading from a version with the bridge, I want a purge that removes exactly Paneflow's MCP entries from every agent config format so that nothing else in those files changes.
@@ -360,16 +360,16 @@ Hooks, the status line and the skill install, report and refresh with no bridge 
 **Dependencies:** Blocked by US-009
 
 **Acceptance Criteria:**
-- [ ] Given `~/.claude.json` with `mcpServers.paneflow`, `paneflow-dev` and `paneflow-mcp` pointing at `paneflow-mcp`, when the purge runs, then all three keys are removed and every other key keeps its value and order
-- [ ] Given `$CODEX_HOME/config.toml` with `[mcp_servers.paneflow]` and a comment above another table, when the purge runs, then the table is removed and the comment remains
-- [ ] Given `~/.gemini/settings.json` in JSONC with comments, when the purge runs, then `mcpServers.paneflow` is removed and the comments remain
-- [ ] Given an OpenCode config with `mcp.paneflow` whose `command[0]` is `paneflow-mcp`, when the purge runs, then the entry is removed
-- [ ] Given `~/.fx/mcp.json` with `mcp.paneflow` whose `command[0]` is `paneflow-mcp.exe`, when the purge runs, then the entry is removed
-- [ ] Given `mcpServers.paneflow` whose command is `/usr/bin/other-server`, when the purge runs, then it is kept
-- [ ] Given a malformed config file, when the purge runs, then that file is unchanged, a warning names it, and the other files are purged
-- [ ] Given a config file that is a symbolic link, when the purge runs, then the file is not rewritten and a warning names it
-- [ ] Given a config already purged, when the purge runs again, then no file is rewritten
-- [ ] Given the purge's report, when it is read, then it lists each removed entry with its file
+- [x] Given `~/.claude.json` with `mcpServers.paneflow`, `paneflow-dev` and `paneflow-mcp` pointing at `paneflow-mcp`, when the purge runs, then all three keys are removed and every other key keeps its value and order
+- [x] Given `$CODEX_HOME/config.toml` with `[mcp_servers.paneflow]` and a comment above another table, when the purge runs, then the table is removed and the comment remains
+- [x] Given `~/.gemini/settings.json` in JSONC with comments, when the purge runs, then `mcpServers.paneflow` is removed and the comments remain
+- [x] Given an OpenCode config with `mcp.paneflow` whose `command[0]` is `paneflow-mcp`, when the purge runs, then the entry is removed
+- [x] Given `~/.fx/mcp.json` with `mcp.paneflow` whose `command[0]` is `paneflow-mcp.exe`, when the purge runs, then the entry is removed
+- [x] Given `mcpServers.paneflow` whose command is `/usr/bin/other-server`, when the purge runs, then it is kept
+- [x] Given a malformed config file, when the purge runs, then that file is unchanged, a warning names it, and the other files are purged
+- [x] Given a config file that is a symbolic link, when the purge runs, then the file is not rewritten and a warning names it
+- [x] Given a config already purged, when the purge runs again, then no file is rewritten
+- [x] Given the purge's report, when it is read, then it lists each removed entry with its file
 
 #### US-011: The purge runs wherever Paneflow wrote entries
 **Description:** As a user upgrading, I want the purge to run on its own, for my default home, my accounts and my spaces, so that I never have to clean configs by hand.
@@ -378,12 +378,12 @@ Hooks, the status line and the skill install, report and refresh with no bridge 
 **Dependencies:** Blocked by US-010
 
 **Acceptance Criteria:**
-- [ ] Given a release build, when the worker starts, then it runs the purge once before the hook refresh
-- [ ] Given a debug build, when the worker starts, then it does not run the purge
-- [ ] Given a space account target with its own Claude and Codex config dirs holding Paneflow MCP entries, when accounts refresh at launch, then those entries are removed
-- [ ] Given `paneflow integrations install <runtime>` or `paneflow integrations remove <runtime>`, when it runs in any build, then the purge runs for the default home
-- [ ] Given `<home>/bin/paneflow-mcp`, when the app starts, then the file is deleted off the render thread
-- [ ] Given that deletion fails, when the app starts, then a warning is logged, startup continues, and the next start tries again
+- [x] Given a release build, when the worker starts, then it runs the purge once before the hook refresh
+- [x] Given a debug build, when the worker starts, then it does not run the purge
+- [x] Given a space account target with its own Claude and Codex config dirs holding Paneflow MCP entries, when accounts refresh at launch, then those entries are removed
+- [x] Given `paneflow integrations install <runtime>` or `paneflow integrations remove <runtime>`, when it runs in any build, then the purge runs for the default home
+- [x] Given `<home>/bin/paneflow-mcp`, when the app starts, then the file is deleted off the render thread
+- [x] Given that deletion fails, when the app starts, then a warning is logged, startup continues, and the next start tries again
 
 ---
 
