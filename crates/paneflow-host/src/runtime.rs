@@ -69,6 +69,7 @@ pub struct SpawnSpec {
     pub xt_checksum: XtChecksum,
     pub session: Option<paneflow_config::schema::SessionId>,
     pub sandbox: Option<crate::sandbox::SandboxPlan>,
+    pub program_resume: Option<crate::program_resume::PaneToken>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -99,6 +100,7 @@ pub enum RuntimeNotice {
     Exited(ExitOutcome),
     Unverified(String),
     Completed(CompletedRecord),
+    ProgramResume(crate::program_resume::ReportSequence),
 }
 
 pub type RuntimeObserver = Arc<dyn Fn(RuntimeNotice) + Send + Sync>;
@@ -864,6 +866,7 @@ struct Session {
     progress: Option<&'static str>,
     program_status: crate::program_status::ProgramStatusRecords,
     program_status_capable: bool,
+    resume_origin: Option<crate::program_resume::PaneOrigin>,
     pty_wired: bool,
     reader_eof: bool,
     exit: Option<ExitOutcome>,
@@ -1084,6 +1087,11 @@ fn new_terminal(spec: &SpawnSpec) -> Result<ghostty::DisplayTerminal, String> {
     if let Err(error) = terminal.enable_program_status() {
         log::warn!("paneflow-host: program status reports could not be enabled: {error}");
     }
+    if spec.program_resume.is_some()
+        && let Err(error) = terminal.capture_unknown_sequences(true)
+    {
+        log::warn!("paneflow-host: OSC 7577 reports could not be captured: {error}");
+    }
     if let Err(error) = terminal
         .set_xt_checksum_extension(spec.xt_checksum.extension)
         .and_then(|()| terminal.set_xt_checksum_report(spec.xt_checksum.report))
@@ -1141,6 +1149,9 @@ fn start(
     {
         command.env(key, value);
     }
+    if let Some(token) = &spec.program_resume {
+        command.env(crate::program_resume::TOKEN_ENV, token.expose());
+    }
     #[cfg(debug_assertions)]
     if let Some(delay) = spec
         .env
@@ -1156,6 +1167,7 @@ fn start(
     let child_pid = child.process_id().unwrap_or(0);
     shared.contain(child_pid, spec.session.as_ref());
     drop(pair.slave);
+    let resume_origin = resume_origin(&spec, child_pid, shared);
     let mut session = Session {
         terminal: Some(terminal),
         writer: None,
@@ -1169,6 +1181,7 @@ fn start(
         progress: None,
         program_status: crate::program_status::ProgramStatusRecords::default(),
         program_status_capable: false,
+        resume_origin,
         pty_wired: false,
         reader_eof: false,
         exit: None,
@@ -1227,6 +1240,29 @@ fn start(
         Err(reason) => session.mark_unverified(reason),
     }
     Ok(session)
+}
+
+fn resume_origin(
+    spec: &SpawnSpec,
+    child_pid: u32,
+    shared: &Shared,
+) -> Option<crate::program_resume::PaneOrigin> {
+    spec.program_resume.as_ref()?;
+    let started_at = paneflow_peer::process_start_time(child_pid)?;
+    Some(crate::program_resume::PaneOrigin {
+        leader: paneflow_program_resume::ProcessStamp {
+            pid: child_pid,
+            started_at,
+        },
+        process_session: shared.process_session(),
+        spawn_cwd: spec.cwd.display().to_string(),
+        sandbox: spec
+            .sandbox
+            .as_ref()
+            .map(crate::program_resume::sandbox_stamp),
+        #[cfg(windows)]
+        job: shared.pane_job(),
+    })
 }
 
 fn spawn_child_waiter(
@@ -1441,6 +1477,22 @@ impl Session {
                 }
                 ghostty::BackendEvent::ClipboardStore(_)
                 | ghostty::BackendEvent::DesktopNotification { .. } => {}
+                ghostty::BackendEvent::UnknownSequence {
+                    kind: ghostty::UnknownSequenceKind::Osc(_),
+                    raw,
+                    truncated,
+                    ..
+                } if crate::program_resume::is_report_content(&raw) => {
+                    if let Some(origin) = &self.resume_origin {
+                        (self.observer)(RuntimeNotice::ProgramResume(
+                            crate::program_resume::ReportSequence {
+                                content: raw,
+                                truncated,
+                                origin: origin.clone(),
+                            },
+                        ));
+                    }
+                }
                 ghostty::BackendEvent::UnknownSequence { .. }
                 | ghostty::BackendEvent::CallbackPanicked
                 | ghostty::BackendEvent::InputDropped { .. }
@@ -2268,6 +2320,7 @@ mod tests {
             xt_checksum: XtChecksum::default(),
             session: None,
             sandbox: None,
+            program_resume: None,
         }
     }
 
@@ -3342,5 +3395,77 @@ mod tests {
             std::thread::sleep(Duration::from_millis(50));
         }
         assert!(runtime.pane_job().is_none());
+    }
+
+    #[test]
+    fn the_pinned_engine_hands_a_signed_osc_7577_report_to_the_unknown_sequence_callback() {
+        let token = crate::program_resume::PaneToken::generate().expect("a token");
+        let mut spec = echo_shell_spec(80, 24);
+        spec.program_resume = Some(token.clone());
+        let mut terminal = new_terminal(&spec).expect("terminal");
+        let report = paneflow_program_resume::Report {
+            pid: 4242,
+            time: crate::manifest::now_ms() / 1000,
+            action: paneflow_program_resume::Action::Argv(vec!["nvim".into(), "-S".into()]),
+            cwd: Some("/work".into()),
+        };
+        let body = paneflow_program_resume::signed_body(&report, token.token());
+        terminal
+            .feed(paneflow_program_resume::osc_sequence(&body).as_bytes())
+            .expect("the report parses");
+        let (raw, truncated) = terminal
+            .drain_events()
+            .into_iter()
+            .find_map(|event| match event {
+                ghostty::BackendEvent::UnknownSequence {
+                    kind: ghostty::UnknownSequenceKind::Osc(ghostty::OscTerminator::St),
+                    raw,
+                    truncated,
+                    ..
+                } => Some((raw, truncated)),
+                _ => None,
+            })
+            .expect(
+                "the pinned libghostty no longer reports OSC 7577 as unknown; if it now implements the protocol, the host ingestion path is silent",
+            );
+        assert_eq!(raw, format!("7577;{body}").into_bytes());
+        assert!(!truncated);
+        let sequence = crate::program_resume::ReportSequence {
+            content: raw,
+            truncated,
+            origin: crate::program_resume::PaneOrigin {
+                leader: paneflow_program_resume::ProcessStamp {
+                    pid: 1,
+                    started_at: 1,
+                },
+                process_session: None,
+                spawn_cwd: "/".into(),
+                sandbox: None,
+                #[cfg(windows)]
+                job: None,
+            },
+        };
+        assert_eq!(
+            crate::program_resume::classify(
+                &sequence,
+                &token,
+                &paneflow_program_resume::RecordStore::new()
+            ),
+            paneflow_program_resume::Outcome::Accepted(report)
+        );
+    }
+
+    #[test]
+    fn a_pane_without_a_token_captures_no_unknown_sequence() {
+        let mut terminal = new_terminal(&echo_shell_spec(80, 24)).expect("terminal");
+        terminal
+            .feed(b"\x1b]7577;pid=1:time=1:clear=1:mac=00\x1b\\")
+            .expect("the report parses");
+        assert!(
+            !terminal
+                .drain_events()
+                .iter()
+                .any(|event| matches!(event, ghostty::BackendEvent::UnknownSequence { .. }))
+        );
     }
 }

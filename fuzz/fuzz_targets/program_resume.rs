@@ -39,6 +39,7 @@ fuzz_target!(|data: &[u8]| {
             path: "/".to_owned(),
             source: CwdSource::Spawn,
         },
+        sandbox: None,
     };
     let _ = store.apply(outcome, |_| Some(admission), NOW_SECS * 1000);
     assert!(store.records().len() <= 1);

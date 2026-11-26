@@ -11,6 +11,7 @@
 mod answer;
 mod background;
 mod event;
+mod resume_attempt;
 mod runtime;
 mod status_line;
 mod transport;

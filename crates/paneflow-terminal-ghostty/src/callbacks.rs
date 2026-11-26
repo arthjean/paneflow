@@ -312,6 +312,7 @@ impl CallbackState {
             BackendEvent::UnknownSequence {
                 kind,
                 content,
+                raw,
                 truncated,
             } => {
                 let pending = self.pending_unknown_sequence_events.get();
@@ -322,6 +323,7 @@ impl CallbackState {
                     events.push_back(BackendEvent::UnknownSequence {
                         kind,
                         content,
+                        raw,
                         truncated,
                     });
                 }

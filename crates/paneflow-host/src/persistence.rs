@@ -721,6 +721,7 @@ mod tests {
             program_status_capable: false,
             runtime: None,
             final_output: None,
+            program_resume: Default::default(),
             host_protocol_version: crate::protocol::HOST_PROTOCOL_VERSION,
             host_build_id: crate::protocol::host_build_id(),
             created_at_ms: 1,

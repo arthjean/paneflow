@@ -44,6 +44,19 @@ pub(crate) fn dispatch() {
         diagnose(format_args!("missing argv[1] hook event name"));
         return;
     };
+    if event_name == crate::resume_attempt::RESUME_ATTEMPT_ARG {
+        let fields: Vec<std::ffi::OsString> = args.collect();
+        let Some((endpoint, session)) =
+            resolve_target(env::var_os(HOST_ENDPOINT_ENV).as_deref(), Some(&session))
+        else {
+            diagnose(format_args!("resume-attempt: no local host endpoint"));
+            return;
+        };
+        if let Err(error) = crate::resume_attempt::relay(&endpoint, &session, &fields) {
+            diagnose(format_args!("resume-attempt: {error}"));
+        }
+        return;
+    }
     let event = event_name
         .to_str()
         .and_then(|name| name.parse::<HookEvent>().ok());

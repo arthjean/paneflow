@@ -134,5 +134,6 @@ pub fn create_request(
         cell,
         sandbox: false,
         sandbox_unix_scope: false,
+        resume: None,
     }
 }

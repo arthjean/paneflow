@@ -25,10 +25,12 @@ use crate::runtime::{
     RuntimeNotice, RuntimeObserver, STARTUP_DEADLINE, SessionRuntime, SpawnSpec, StopReport,
 };
 
+mod resume;
 mod spawn_env;
 mod staging;
 mod types;
 
+pub use resume::{ReportedAttempt, attempt_failure_reason, parse_attempt_failure};
 pub use spawn_env::*;
 pub use staging::*;
 pub use types::*;
@@ -119,6 +121,7 @@ struct SessionRecord {
     critical: Arc<CriticalFlush>,
     appearance: Option<SessionAppearance>,
     cell: Option<CellSize>,
+    resume_attempt: Option<ResumeAttemptReport>,
 }
 
 impl SessionRecord {
@@ -134,6 +137,7 @@ impl SessionRecord {
             critical: Arc::new(CriticalFlush::default()),
             appearance: None,
             cell: None,
+            resume_attempt: None,
         }
     }
 
@@ -256,6 +260,7 @@ pub struct SessionHost {
     xt_checksum: Mutex<crate::runtime::XtChecksum>,
     next_operation: AtomicU64,
     shutting_down: AtomicBool,
+    resume_watches: Mutex<std::collections::HashSet<resume::OwnerKey>>,
     #[cfg(test)]
     barrier: Mutex<Option<BarrierHook>>,
     #[cfg(test)]
@@ -390,6 +395,7 @@ impl SessionHost {
             xt_checksum: Mutex::new(crate::runtime::XtChecksum::default()),
             next_operation: AtomicU64::new(1),
             shutting_down: AtomicBool::new(false),
+            resume_watches: Mutex::new(std::collections::HashSet::new()),
             #[cfg(test)]
             barrier: Mutex::new(None),
             #[cfg(test)]
@@ -811,6 +817,8 @@ impl SessionHost {
                 .as_deref()
                 .map_or(0, SessionRuntime::descendants_unresolved),
             durability_error,
+            resume_candidate: None,
+            resume_attempt: record.resume_attempt.clone(),
         }
     }
 
@@ -873,14 +881,20 @@ impl SessionHost {
     }
 
     pub fn list(&self, workspace: Option<&WorkspaceId>) -> Vec<SessionSummary> {
-        let sessions = self.lock_sessions();
-        sessions
-            .values()
-            .map(|record| self.summary_of(record))
-            .filter(|summary| {
-                workspace.is_none_or(|wanted| summary.manifest.workspace.as_ref() == Some(wanted))
-            })
-            .map(without_launch_environment)
+        let summaries: Vec<SessionSummary> = {
+            let sessions = self.lock_sessions();
+            sessions
+                .values()
+                .map(|record| self.summary_of(record))
+                .filter(|summary| {
+                    workspace
+                        .is_none_or(|wanted| summary.manifest.workspace.as_ref() == Some(wanted))
+                })
+                .collect()
+        };
+        summaries
+            .into_iter()
+            .map(|summary| without_launch_environment(self.with_resume_candidate(summary)))
             .collect()
     }
 
@@ -897,10 +911,12 @@ impl SessionHost {
     }
 
     pub fn inspect(&self, session: &SessionId) -> Result<SessionSummary, HostError> {
-        let sessions = self.lock_sessions();
-        sessions
-            .get(session)
-            .map(|record| self.summary_of(record))
+        let summary = {
+            let sessions = self.lock_sessions();
+            sessions.get(session).map(|record| self.summary_of(record))
+        };
+        summary
+            .map(|summary| self.with_resume_candidate(summary))
             .ok_or_else(|| HostError::SessionNotFound(session.clone()))
     }
 
@@ -1465,6 +1481,7 @@ impl SessionHost {
             program_status_capable: false,
             runtime: None,
             final_output: None,
+            program_resume: Default::default(),
             host_protocol_version: HOST_PROTOCOL_VERSION,
             host_build_id: crate::protocol::host_build_id(),
             created_at_ms: created,
@@ -1528,9 +1545,56 @@ impl SessionHost {
             return Err(error);
         }
 
+        let mut args = request.args;
+        let mut env = env;
+        let mut cwd = cwd;
+        if let Some(resume) = request.resume.as_ref() {
+            let snapshot = manifest
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            let view = resume::ShellView {
+                shell: &shell,
+                args: &args,
+                env: &request.env,
+            };
+            let planned = self
+                .plan_resume(&view, &snapshot, resume, false)
+                .and_then(|plan| {
+                    self.write_resume_handoff(&session, &plan)
+                        .map(|handoff| (plan, handoff))
+                });
+            match planned {
+                Ok((plan, handoff)) => {
+                    crate::resume_launch::deliver(
+                        plan.delivery,
+                        &plan.launcher,
+                        &handoff,
+                        &mut args,
+                        &mut env,
+                    );
+                    if sandbox.is_none()
+                        && let Some(resumed) = plan.shell_cwd.clone()
+                    {
+                        manifest
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .cwd = resumed.display().to_string();
+                        cwd = resumed;
+                    }
+                    self.note_resume_attempt(&session, plan.report(AttemptOutcome::Prepared));
+                }
+                Err(refusal) => {
+                    self.note_resume_attempt(
+                        &session,
+                        resume::refused_report(refusal, resume.record),
+                    );
+                }
+            }
+        }
         let spec = SpawnSpec {
             shell,
-            args: request.args,
+            args,
             cwd,
             env,
             cols,
@@ -1541,6 +1605,7 @@ impl SessionHost {
             xt_checksum: self.current_xt_checksum(),
             session: Some(session.clone()),
             sandbox,
+            program_resume: None,
         };
         let created = self.launch(
             session,
@@ -1595,6 +1660,15 @@ impl SessionHost {
         session: &SessionId,
         generation: Option<SessionGeneration>,
     ) -> Result<SessionSummary, HostError> {
+        self.restart_with(session, generation, None)
+    }
+
+    pub fn restart_with(
+        &self,
+        session: &SessionId,
+        generation: Option<SessionGeneration>,
+        resume: Option<&ResumeRequest>,
+    ) -> Result<SessionSummary, HostError> {
         let requested = Instant::now();
         if self.is_shutting_down() {
             return Err(HostError::ShuttingDown);
@@ -1621,13 +1695,7 @@ impl SessionHost {
             self.refuse_replacement(session, record, &current)?;
             current
         };
-        let resumed_cwd = prior
-            .current_cwd
-            .as_deref()
-            .filter(|cwd| Path::new(cwd).is_dir())
-            .unwrap_or(prior.cwd.as_str())
-            .to_string();
-        let cwd = resolve_cwd(Some(&resumed_cwd));
+        let cwd = resume::restart_cwd(&prior);
         let next = prior.generation.next();
         let operation = self.next_operation();
         let seed = {
@@ -1652,8 +1720,23 @@ impl SessionHost {
                 session_dir.display()
             ))
         })?;
+        let kept_args =
+            crate::resume_launch::integration_args(&prior.launch.shell, &prior.launch.args);
+        let planned = resume.map(|request| {
+            let view = resume::ShellView {
+                shell: &prior.launch.shell,
+                args: &kept_args,
+                env: &prior.launch.env,
+            };
+            self.plan_resume(&view, &prior, request, false)
+                .and_then(|plan| {
+                    self.write_resume_handoff(session, &plan)
+                        .map(|handoff| (plan, handoff))
+                })
+                .map_err(|refusal| (refusal, request.record))
+        });
         let xt_checksum = self.current_xt_checksum();
-        let (manifest, spec, durability) = {
+        let (manifest, spec, durability, written_handoff) = {
             let mut sessions = self.admit_launch(
                 self.lock_sessions(),
                 requested + LAUNCH_ADMISSION_DEADLINE,
@@ -1696,7 +1779,47 @@ impl SessionHost {
             guard.runtime = None;
             guard.host_protocol_version = HOST_PROTOCOL_VERSION;
             guard.host_build_id = crate::protocol::host_build_id();
-            guard.launch.args.clear();
+            guard.launch.args.clone_from(&kept_args);
+            let resumed = match planned {
+                Some(Ok((plan, handoff))) => {
+                    let bound = match plan.record {
+                        Some((id, revision)) => {
+                            guard
+                                .program_resume
+                                .get(id)
+                                .is_some_and(|record| record.revision == revision)
+                                && guard
+                                    .program_resume
+                                    .begin_attempt(id, plan.attempt.clone())
+                                    .is_ok()
+                        }
+                        None => true,
+                    };
+                    if bound {
+                        record.resume_attempt = Some(plan.report(AttemptOutcome::Prepared));
+                        Some((plan, handoff))
+                    } else {
+                        let _ = std::fs::remove_file(&handoff);
+                        record.resume_attempt = Some(resume::refused_report(
+                            ResumeRefusal::UnknownRecord,
+                            plan.record.map(|(id, _)| id),
+                        ));
+                        None
+                    }
+                }
+                Some(Err((refusal, id))) => {
+                    record.resume_attempt = Some(resume::refused_report(refusal, id));
+                    None
+                }
+                None => {
+                    record.resume_attempt = None;
+                    None
+                }
+            };
+            let cwd = resumed
+                .as_ref()
+                .and_then(|(plan, _)| plan.shell_cwd.clone())
+                .unwrap_or(cwd);
             guard.cwd = cwd.display().to_string();
             guard.updated_at_ms = now_ms();
             let env = self.launch_env(
@@ -1710,9 +1833,21 @@ impl SessionHost {
                 self.sandbox_plan(&guard.session, &cwd, &guard.launch.env)
                     .with_pathname_unix_scope(guard.launch.sandbox_unix_scope)
             });
+            let mut env = env;
+            let mut args = kept_args.clone();
+            if let Some((plan, handoff)) = &resumed {
+                crate::resume_launch::deliver(
+                    plan.delivery,
+                    &plan.launcher,
+                    handoff,
+                    &mut args,
+                    &mut env,
+                );
+            }
+            let written_handoff = resumed.map(|(_, handoff)| handoff);
             let spec = SpawnSpec {
                 shell: guard.launch.shell.clone(),
-                args: Vec::new(),
+                args,
                 cwd,
                 env,
                 cols: guard.launch.cols,
@@ -1722,6 +1857,7 @@ impl SessionHost {
                 cell: record.cell,
                 xt_checksum,
                 session: Some(guard.session.clone()),
+                program_resume: None,
                 sandbox,
             };
             drop(guard);
@@ -1734,7 +1870,12 @@ impl SessionHost {
             });
             record.durability.clear_error();
             self.persistence.reserve_final(&record.durability);
-            (manifest, spec, Arc::clone(&record.durability))
+            (
+                manifest,
+                spec,
+                Arc::clone(&record.durability),
+                written_handoff,
+            )
         };
         #[cfg(test)]
         self.barrier(Barrier::RestartPersist);
@@ -1756,6 +1897,9 @@ impl SessionHost {
                 drop(sessions);
                 self.launch_slots.notify_all();
                 self.persist_final(&manifest, &durability);
+            }
+            if let Some(handoff) = &written_handoff {
+                let _ = std::fs::remove_file(handoff);
             }
             return Err(HostError::Storage(format!(
                 "cannot write the restart of {session}; the previous state is kept: {error}"
@@ -1821,7 +1965,7 @@ impl SessionHost {
         &self,
         session: SessionId,
         manifest: Arc<Mutex<SessionManifest>>,
-        spec: SpawnSpec,
+        mut spec: SpawnSpec,
         generation: SessionGeneration,
         operation: OperationId,
         respond_by: Instant,
@@ -1847,7 +1991,9 @@ impl SessionHost {
                 ));
             }
         }
-        let observer = self.observer_for(Arc::clone(&manifest), durability, generation);
+        let token = crate::program_resume::PaneToken::for_shell(&spec.shell);
+        spec.program_resume.clone_from(&token);
+        let observer = self.observer_for(Arc::clone(&manifest), durability, generation, token);
         let handle = match SessionRuntime::launch(spec, generation, observer) {
             Ok(handle) => handle,
             Err(error) => return Err(self.fail_launch(&session, operation, error.0)),
@@ -2137,7 +2283,10 @@ impl SessionHost {
         std::thread::Builder::new()
             .name("paneflow-host-stop".into())
             .spawn(move || {
-                let _ = sender.send(host.stop_until(&named, generation, deadline));
+                let stopped = host
+                    .stop_until(&named, generation, deadline)
+                    .and_then(|_| host.discard_program_resume(&named));
+                let _ = sender.send(stopped);
             })
             .map_err(|error| HostError::OwnershipUnresolved {
                 session: session.clone(),
@@ -2527,9 +2676,13 @@ impl SessionHost {
         bytes: Vec<u8>,
         origin: InputOrigin,
     ) -> Result<usize, HostError> {
-        self.with_live_runtime(session, generation, |runtime| {
+        let written = self.with_live_runtime(session, generation, |runtime| {
             runtime.input_from(bytes, origin)
-        })
+        })?;
+        if origin == InputOrigin::Typed {
+            self.settle_started_attempt(session);
+        }
+        Ok(written)
     }
 
     pub fn bind_runtime(
@@ -3096,12 +3249,19 @@ impl SessionHost {
         manifest: Arc<Mutex<SessionManifest>>,
         durability: Durability,
         generation: SessionGeneration,
+        token: Option<crate::program_resume::PaneToken>,
     ) -> RuntimeObserver {
         let host = self.weak_self();
         Arc::new(move |notice| {
             let Some(host) = host.upgrade() else {
                 return;
             };
+            if let RuntimeNotice::ProgramResume(sequence) = notice {
+                if let Some(token) = &token {
+                    host.ingest_program_resume(&manifest, &durability, generation, token, sequence);
+                }
+                return;
+            }
             let session = manifest
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -3135,7 +3295,7 @@ impl SessionHost {
                     RuntimeNotice::Unverified(reason) => {
                         guard.lifecycle = SessionLifecycle::Unverified { reason };
                     }
-                    RuntimeNotice::Completed(_) => {}
+                    RuntimeNotice::Completed(_) | RuntimeNotice::ProgramResume(_) => {}
                 },
             );
             if lifecycle_settled {
@@ -3420,5 +3580,9 @@ fn launch_operations(sessions: &BTreeMap<SessionId, SessionRecord>) -> Vec<Opera
         .collect()
 }
 
+#[cfg(test)]
+mod resume_launch_tests;
+#[cfg(test)]
+mod resume_tests;
 #[cfg(test)]
 mod tests;

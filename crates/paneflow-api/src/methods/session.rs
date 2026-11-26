@@ -125,6 +125,121 @@ pub struct CreateParams {
     pub title: Option<String>,
     pub appearance: Option<Fields>,
     pub cell: Option<Fields>,
+    #[schemars(
+        description = "Start the shell with a resume handoff for this argv and cwd; only the Paneflow window or worker may send it"
+    )]
+    pub resume: Option<ResumeParams>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ResumeParams {
+    #[schemars(description = "The OSC 7577 record to resume")]
+    pub record: Option<u64>,
+    #[schemars(description = "A catalog command to resume, element by element")]
+    pub argv: Option<Vec<String>>,
+    #[schemars(description = "The absolute directory of the catalog command")]
+    pub cwd: Option<String>,
+    #[schemars(
+        description = "Resume a record whose previous resume did not complete",
+        extend("default" = false)
+    )]
+    pub confirmed: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct RestartParams {
+    #[schemars(description = "The session id")]
+    pub session: String,
+    #[schemars(description = "Refuse the call unless the session runs this launch generation")]
+    pub generation: Option<u64>,
+    #[schemars(
+        description = "Start the shell with a resume handoff; only the Paneflow window or worker may send it"
+    )]
+    pub resume: Option<ResumeParams>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PrepareResumeParams {
+    #[schemars(description = "The session id")]
+    pub session: String,
+    #[schemars(description = "The OSC 7577 record to resume")]
+    pub record: Option<u64>,
+    #[schemars(description = "A catalog command to resume, element by element")]
+    pub argv: Option<Vec<String>>,
+    #[schemars(description = "The absolute directory of the catalog command")]
+    pub cwd: Option<String>,
+    #[schemars(
+        description = "Resume a record whose previous resume did not complete",
+        extend("default" = false)
+    )]
+    pub confirmed: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct DiscardResumeParams {
+    #[schemars(description = "The session id")]
+    pub session: String,
+    #[schemars(description = "The OSC 7577 record to forget")]
+    pub record: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ResumeAttemptParams {
+    #[schemars(description = "The calling pane's session id")]
+    pub session: Option<String>,
+    #[schemars(description = "The attempt id written in the handoff")]
+    pub attempt: String,
+    #[schemars(description = "started or failed")]
+    pub outcome: String,
+    #[schemars(description = "The process the launcher became or started")]
+    pub pid: Option<u32>,
+    #[schemars(description = "not_found, not_executable, cwd_missing or handoff_invalid")]
+    pub reason: Option<String>,
+}
+
+method! {
+    SessionPrepareResume {
+        name: "session.prepare_resume",
+        summary: "Write a resume handoff for a live session and return the launcher and handoff paths to type.",
+        owner: HOST,
+        fallback: NO_FALLBACK,
+        gate: Gate::Open,
+        audience: Audience::PaneflowOnly,
+        reply: Reply::Ready,
+        params: PrepareResumeParams,
+        result: Fields,
+        examples: [({"session": "123e4567-e89b-42d3-a456-426614174000", "record": 3, "confirmed": true} => {"attempt": "0123456789abcdef0123456789abcdef", "launcher": "/home/u/.paneflow/cache/bin/0.20.0/paneflow-resume", "handoff": "/home/u/.paneflow/sessions/123e4567-e89b-42d3-a456-426614174000/resume-0123456789abcdef0123456789abcdef.handoff", "record": 3})],
+    }
+}
+
+method! {
+    SessionDiscardResume {
+        name: "session.discard_resume",
+        summary: "Forget one OSC 7577 record of a session.",
+        owner: HOST,
+        fallback: NO_FALLBACK,
+        gate: Gate::Open,
+        audience: Audience::PaneflowOnly,
+        reply: Reply::Ready,
+        params: DiscardResumeParams,
+        result: Fields,
+        examples: [({"session": "123e4567-e89b-42d3-a456-426614174000", "record": 3} => {"manifest": {"session": "123e4567-e89b-42d3-a456-426614174000"}})],
+    }
+}
+
+method! {
+    SessionResumeAttempt {
+        name: "session.resume_attempt",
+        summary: "Report whether the resume launcher of a pane started its program.",
+        owner: HOST,
+        fallback: NO_FALLBACK,
+        gate: Gate::Open,
+        audience: Audience::PaneOnly,
+        reply: Reply::Ready,
+        params: ResumeAttemptParams,
+        result: Fields,
+        examples: [({"attempt": "0123456789abcdef0123456789abcdef", "outcome": "started", "pid": 4242} => {"outcome": "started", "pid": 4242})],
+    }
 }
 
 method! {
@@ -198,7 +313,7 @@ session_method!(
     SessionRestart,
     "session.restart",
     "Start an ended session again as its next generation.",
-    GenerationParams,
+    RestartParams,
     Audience::Anyone,
     ScopeRule::Workspace,
     {"manifest": {"session": "123e4567-e89b-42d3-a456-426614174000"}}

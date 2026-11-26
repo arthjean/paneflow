@@ -10,6 +10,9 @@ if [[ -n "${PANEFLOW_ORIG_ZDOTDIR+x}" ]]; then
 else
     unset ZDOTDIR
 fi
+__paneflow_resume_handoff="${PANEFLOW_RESUME_HANDOFF-}"
+__paneflow_resume_launcher="${PANEFLOW_BIN_DIR:+${PANEFLOW_BIN_DIR}/paneflow-resume}"
+unset PANEFLOW_RESUME_HANDOFF
 [[ -f "${ZDOTDIR:-$HOME}/.zshenv" ]] && source "${ZDOTDIR:-$HOME}/.zshenv"
 __paneflow_urlencode() (
     LC_ALL=C
@@ -34,6 +37,15 @@ __paneflow_path_prepend() {
 }
 autoload -Uz add-zsh-hook
 if [[ -o interactive ]]; then
+    __paneflow_resume() {
+        add-zsh-hook -d precmd __paneflow_resume
+        local handoff="${__paneflow_resume_handoff-}"
+        __paneflow_resume_handoff=
+        [[ -n "$handoff" && -n "${__paneflow_resume_launcher-}" ]] || return 0
+        __paneflow_path_prepend
+        "$__paneflow_resume_launcher" "$handoff"
+    }
+    add-zsh-hook precmd __paneflow_resume
     __paneflow_osc133_precmd() {
         if [[ ${precmd_functions[-1]} != __paneflow_osc133_precmd ]]; then
             precmd_functions=(${precmd_functions:#__paneflow_osc133_precmd} __paneflow_osc133_precmd)
@@ -53,6 +65,9 @@ __paneflow_path_prepend
 "#;
 
 pub const BASH_OSC7: &str = r#"# PaneFlow shell integration - OSC 7 CWD reporting
+__paneflow_resume_handoff="${PANEFLOW_RESUME_HANDOFF-}"
+__paneflow_resume_launcher="${PANEFLOW_BIN_DIR:+${PANEFLOW_BIN_DIR}/paneflow-resume}"
+unset PANEFLOW_RESUME_HANDOFF
 [[ -f ~/.bashrc ]] && source ~/.bashrc
 __paneflow_urlencode() (
     LC_ALL=C
@@ -79,8 +94,15 @@ __paneflow_path_prepend() {
 __paneflow_osc133_precmd() {
     printf '\e]133;A;redraw=last\a'
 }
+__paneflow_resume() {
+    local handoff="${__paneflow_resume_handoff-}"
+    __paneflow_resume_handoff=
+    [[ -n "$handoff" && -n "${__paneflow_resume_launcher-}" ]] || return 0
+    __paneflow_path_prepend
+    "$__paneflow_resume_launcher" "$handoff"
+}
 PS0=$'\e]133;C\a'"${PS0-}"
-PROMPT_COMMAND="__paneflow_osc133_precmd;__paneflow_osc7;__paneflow_path_prepend${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+PROMPT_COMMAND="__paneflow_resume;__paneflow_osc133_precmd;__paneflow_osc7;__paneflow_path_prepend${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
 __paneflow_path_prepend
 "#;
 
@@ -93,6 +115,16 @@ if set -q PANEFLOW_BIN_DIR; and test -n "$PANEFLOW_BIN_DIR"
     fish_add_path -gp $PANEFLOW_BIN_DIR
 end
 if status is-interactive
+    function __paneflow_resume --on-event fish_prompt
+        functions --erase __paneflow_resume
+        set -q __paneflow_resume_handoff; or return 0
+        set -l handoff $__paneflow_resume_handoff
+        set -l launcher $__paneflow_resume_launcher
+        set -e __paneflow_resume_handoff
+        set -e __paneflow_resume_launcher
+        test -n "$handoff"; and test -n "$launcher"; or return 0
+        $launcher $handoff
+    end
     function __paneflow_osc133_prompt --on-event fish_prompt
         printf '\e]133;A;redraw=1\a'
     end
@@ -1013,7 +1045,10 @@ mod tests {
     fn shell_integrations_emit_osc133_without_replacing_prompt_hooks() {
         assert!(super::ZSH_OSC7.contains("add-zsh-hook precmd __paneflow_osc133_precmd"));
         assert!(super::ZSH_OSC7.contains("add-zsh-hook preexec __paneflow_osc133_preexec"));
-        assert!(super::BASH_OSC7.contains("PROMPT_COMMAND=\"__paneflow_osc133_precmd;"));
+        assert!(
+            super::BASH_OSC7
+                .contains("PROMPT_COMMAND=\"__paneflow_resume;__paneflow_osc133_precmd;")
+        );
         assert!(super::BASH_OSC7.contains("PS0=$'\\e]133;C\\a'"));
         assert!(super::FISH_OSC7.contains("--on-event fish_prompt"));
         assert!(super::PWSH_OSC7.contains("function global:PSConsoleHostReadLine"));

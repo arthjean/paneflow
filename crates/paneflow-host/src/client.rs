@@ -295,6 +295,41 @@ impl HostClient {
         )
     }
 
+    pub fn restart_resuming(
+        &mut self,
+        session: &SessionId,
+        generation: Option<SessionGeneration>,
+        resume: &crate::host::ResumeRequest,
+    ) -> Result<SessionSummary, HostClientError> {
+        self.call_summary(
+            "session.restart",
+            json!({"session": session, "generation": generation, "resume": resume}),
+        )
+    }
+
+    pub fn prepare_resume(
+        &mut self,
+        session: &SessionId,
+        resume: &crate::host::ResumeRequest,
+    ) -> Result<crate::host::PreparedResume, HostClientError> {
+        let mut params = serde_json::to_value(resume).unwrap_or_else(|_| json!({}));
+        params["session"] = json!(session);
+        let value = self.call("session.prepare_resume", params)?;
+        serde_json::from_value(value)
+            .map_err(|error| HostClientError::Protocol(format!("invalid prepared resume: {error}")))
+    }
+
+    pub fn discard_resume(
+        &mut self,
+        session: &SessionId,
+        record: paneflow_program_resume::RecordId,
+    ) -> Result<SessionSummary, HostClientError> {
+        self.call_summary(
+            "session.discard_resume",
+            json!({"session": session, "record": record}),
+        )
+    }
+
     pub fn remove(&mut self, session: &SessionId) -> Result<(), HostClientError> {
         self.call("session.remove", json!({"session": session}))?;
         Ok(())

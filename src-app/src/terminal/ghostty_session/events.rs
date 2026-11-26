@@ -340,6 +340,7 @@ pub(super) fn handle_engine_events_to(
                 kind,
                 content,
                 truncated,
+                ..
             } => {
                 log::debug!(
                     target: "paneflow::terminal::ghostty",

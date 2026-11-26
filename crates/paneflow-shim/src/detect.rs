@@ -4,9 +4,12 @@ use std::path::{Path, PathBuf};
 use paneflow_agent_config::command_alias_literal;
 
 pub(crate) fn detect_tool() -> Option<&'static str> {
+    detect_tool_from_stem(&invoked_stem()?)
+}
+
+pub(crate) fn invoked_stem() -> Option<String> {
     let exe = env::current_exe().ok()?;
-    let stem = exe.file_stem()?.to_str()?;
-    detect_tool_from_stem(stem)
+    exe.file_stem()?.to_str().map(str::to_owned)
 }
 
 pub(crate) fn detect_tool_from_stem(stem: &str) -> Option<&'static str> {

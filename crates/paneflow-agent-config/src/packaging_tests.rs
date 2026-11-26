@@ -6,6 +6,7 @@ use crate::build_support;
 use crate::RUNTIMES;
 
 const AI_HOOK_EXE: &str = "paneflow-ai-hook.exe";
+const RESUME_LAUNCHER_EXE: &str = "paneflow-resume.exe";
 
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..")
@@ -17,7 +18,7 @@ fn wix_shims(wix: &str) -> BTreeSet<String> {
         .filter(|line| line.contains(r"paneflow-helpers\"))
         .filter_map(|line| name.captures(line))
         .map(|captures| format!("{}.exe", &captures[1]))
-        .filter(|file| file != AI_HOOK_EXE)
+        .filter(|file| file != AI_HOOK_EXE && file != RESUME_LAUNCHER_EXE)
         .collect()
 }
 

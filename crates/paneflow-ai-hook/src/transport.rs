@@ -25,11 +25,7 @@ pub(crate) fn send_event_params(
     params: serde_json::Value,
     deadline: Duration,
 ) -> io::Result<()> {
-    let mut control = HostControl::connect_with_deadline(endpoint, HOST_CLIENT_NAME, deadline)
-        .map_err(|error| io::Error::new(io::ErrorKind::ConnectionRefused, error))?;
-    let accepted = control
-        .request_with_deadline(METHOD_AGENT_EVENT, params, deadline)
-        .map_err(io::Error::other)?;
+    let accepted = send_request(endpoint, METHOD_AGENT_EVENT, params, deadline)?;
     if accepted.get("accepted").and_then(|value| value.as_bool()) == Some(false) {
         let reason = accepted
             .get("reason")
@@ -38,4 +34,17 @@ pub(crate) fn send_event_params(
         return Err(io::Error::new(io::ErrorKind::InvalidData, reason));
     }
     Ok(())
+}
+
+pub(crate) fn send_request(
+    endpoint: &Path,
+    method: &str,
+    params: serde_json::Value,
+    deadline: Duration,
+) -> io::Result<serde_json::Value> {
+    let mut control = HostControl::connect_with_deadline(endpoint, HOST_CLIENT_NAME, deadline)
+        .map_err(|error| io::Error::new(io::ErrorKind::ConnectionRefused, error))?;
+    control
+        .request_with_deadline(method, params, deadline)
+        .map_err(io::Error::other)
 }

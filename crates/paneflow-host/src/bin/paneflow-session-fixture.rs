@@ -2,7 +2,7 @@ use std::io::{Read, Write};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::Duration;
 
-const USAGE: &str = "paneflow-session-fixture <idle|declare|echo|flood <bytes>|stream <bytes-per-second> <seconds>|history <lines>|delayed-exit <ms> <code>|blocked-stdin|descendants <count> <parent-ms>|descendants-orphan <count> <parent-ms>|split-sequences|whoami <host|worker|window> <endpoint> [engine|desktop|control|worker]|call <host|worker|window> <endpoint> <engine|desktop|control|worker> <method> <params>|setsid-whoami <args>|orphan-whoami <args>|escape-whoami <args>|outlive-host <socket>>";
+const USAGE: &str = "paneflow-session-fixture <idle|declare|echo|flood <bytes>|stream <bytes-per-second> <seconds>|history <lines>|delayed-exit <ms> <code>|blocked-stdin|descendants <count> <parent-ms>|descendants-orphan <count> <parent-ms>|split-sequences|whoami <host|worker|window> <endpoint> [engine|desktop|control|worker]|call <host|worker|window> <endpoint> <engine|desktop|control|worker> <method> <params>|setsid-whoami <args>|orphan-whoami <args>|escape-whoami <args>|outlive-host <socket>|resume-report <step>...|argv-dump <arg>...>";
 
 const FLOOD_CHUNK: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\r\n";
 
@@ -43,6 +43,8 @@ fn main() -> ExitCode {
         "escape-whoami" => spawn_whoami(&args[1..], Detach::SessionAndOrphan),
         "orphan-relay" => orphan_relay(&args[1..]),
         "outlive-host" => outlive_host(&args[1..]),
+        "resume-report" => resume_report(&args[1..]),
+        "argv-dump" => argv_dump(),
         _ => {
             eprintln!("{USAGE}");
             Err(2)
@@ -51,6 +53,24 @@ fn main() -> ExitCode {
     match outcome {
         Ok(()) => ExitCode::SUCCESS,
         Err(code) => ExitCode::from(code),
+    }
+}
+
+fn argv_dump() -> Result<(), u8> {
+    let mut dump = Vec::new();
+    for argument in std::env::args_os() {
+        dump.extend_from_slice(argument.as_encoded_bytes());
+        dump.push(0);
+    }
+    let write = |name: &str, bytes: &[u8]| {
+        let staging = format!(".{name}.tmp");
+        std::fs::write(&staging, bytes).and_then(|()| std::fs::rename(&staging, name))
+    };
+    write("argv.dump", &dump)
+        .and_then(|()| write("argv.pid", std::process::id().to_string().as_bytes()))
+        .map_err(|_| 3)?;
+    loop {
+        std::thread::sleep(Duration::from_secs(3600));
     }
 }
 
@@ -512,5 +532,168 @@ fn spawn_whoami(_args: &[String], _detach: Detach) -> Result<(), u8> {
 
 #[cfg(not(unix))]
 fn orphan_relay(_args: &[String]) -> Result<(), u8> {
+    Err(2)
+}
+
+const RESUME_OVERSIZE_PAD: usize = 4200;
+const FORGED_RESUME_TOKEN: &str = "forged-token-forged-token-forged";
+
+#[derive(Default)]
+struct ResumeReporter {
+    cwd: Option<String>,
+    bel: bool,
+    pid: Option<u32>,
+}
+
+impl ResumeReporter {
+    fn report(&self, action: paneflow_program_resume::Action) -> paneflow_program_resume::Report {
+        paneflow_program_resume::Report {
+            pid: self.pid.unwrap_or_else(std::process::id),
+            time: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |elapsed| elapsed.as_secs()),
+            action,
+            cwd: self.cwd.clone(),
+        }
+    }
+
+    fn terminator(&self) -> &'static str {
+        if self.bel { "\x07" } else { "\x1b\\" }
+    }
+}
+
+fn resume_argv(list: &str) -> paneflow_program_resume::Action {
+    paneflow_program_resume::Action::Argv(list.split(',').map(str::to_owned).collect())
+}
+
+fn resume_token() -> Result<paneflow_program_resume::Token, u8> {
+    let raw = std::env::var(paneflow_host::program_resume::TOKEN_ENV).map_err(|_| {
+        let _ = announce("fixture has no OSC7577_TOKEN");
+        4_u8
+    })?;
+    paneflow_program_resume::Token::new(raw).map_err(|_| 4)
+}
+
+fn emit(bytes: &str) -> Result<(), u8> {
+    let mut stdout = std::io::stdout().lock();
+    stdout
+        .write_all(bytes.as_bytes())
+        .and_then(|()| stdout.flush())
+        .map_err(|_| 3)
+}
+
+fn resume_report(steps: &[String]) -> Result<(), u8> {
+    silence_terminal_echo();
+    let token = resume_token()?;
+    let mut reporter = ResumeReporter::default();
+    for (index, step) in steps.iter().enumerate() {
+        let (name, value) = step.split_once(':').unwrap_or((step.as_str(), ""));
+        match name {
+            "cwd" => reporter.cwd = Some(value.to_owned()),
+            "bel" => reporter.bel = true,
+            "pid" => reporter.pid = value.parse().ok(),
+            "report" => {
+                let body = paneflow_program_resume::signed_body(
+                    &reporter.report(resume_argv(value)),
+                    &token,
+                );
+                emit(&format!("\x1b]7577;{body}{}", reporter.terminator()))?;
+            }
+            "clear" => {
+                let body = paneflow_program_resume::signed_body(
+                    &reporter.report(paneflow_program_resume::Action::Clear),
+                    &token,
+                );
+                emit(&format!("\x1b]7577;{body}{}", reporter.terminator()))?;
+            }
+            "forged" => {
+                let forged =
+                    paneflow_program_resume::Token::new(FORGED_RESUME_TOKEN).map_err(|_| 4_u8)?;
+                let body = paneflow_program_resume::signed_body(
+                    &reporter.report(resume_argv(value)),
+                    &forged,
+                );
+                emit(&format!("\x1b]7577;{body}{}", reporter.terminator()))?;
+            }
+            "oversize" => {
+                let body = paneflow_program_resume::signed_body(
+                    &reporter.report(resume_argv(value)),
+                    &token,
+                );
+                let keys = body
+                    .rsplit_once(":mac=")
+                    .map_or(body.as_str(), |(keys, _)| keys);
+                let padded = format!("{keys}:pad={}", "a".repeat(RESUME_OVERSIZE_PAD));
+                let mac = paneflow_program_resume::sign(padded.as_bytes(), &token);
+                emit(&format!(
+                    "\x1b]7577;{padded}:mac={mac}{}",
+                    reporter.terminator()
+                ))?;
+            }
+            "can" => {
+                let body = paneflow_program_resume::signed_body(
+                    &reporter.report(resume_argv(value)),
+                    &token,
+                );
+                emit(&format!("\x1b]7577;{body}\x18"))?;
+            }
+            "osc7400" => emit("\x1b]7400;status=busy\x07")?,
+            "noise" => emit(
+                "\x1bc\x1b[!p\x1b[?1049h\x1b[2J\x1b[?1049l\x1b[2J\x1b]133;A\x07\x1b]133;B\x07\x1b]133;C\x07\x1b]133;D;0\x07",
+            )?,
+            "setsid" => spawn_setsid_reporter(value)?,
+            "wait" => std::thread::sleep(Duration::from_millis(value.parse().unwrap_or(0))),
+            "await" => {
+                let mut line = String::new();
+                std::io::stdin().read_line(&mut line).map_err(|_| 3)?;
+            }
+            "exit" => {
+                announce(&format!("fixture step {index} exit"))?;
+                return Ok(());
+            }
+            _ => {
+                eprintln!("{USAGE}");
+                return Err(2);
+            }
+        }
+        announce(&format!(
+            "fixture step {index} {name} pid={}",
+            std::process::id()
+        ))?;
+    }
+    loop {
+        std::thread::sleep(Duration::from_secs(3600));
+    }
+}
+
+#[cfg(unix)]
+fn spawn_setsid_reporter(argv: &str) -> Result<(), u8> {
+    use std::os::unix::process::CommandExt;
+    let executable = std::env::current_exe().map_err(|_| 3)?;
+    let mut command = Command::new(executable);
+    command
+        .args([
+            "resume-report",
+            &format!("report:{argv}"),
+            "wait:2000",
+            "exit",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let status = command.status().map_err(|_| 3)?;
+    if status.success() { Ok(()) } else { Err(3) }
+}
+
+#[cfg(not(unix))]
+fn spawn_setsid_reporter(_argv: &str) -> Result<(), u8> {
     Err(2)
 }

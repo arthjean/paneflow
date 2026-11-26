@@ -59,7 +59,14 @@ pub fn is_inherited_agent_session_env_key(key: &str) -> bool {
 }
 
 pub fn is_forbidden_child_env_key(key: &str) -> bool {
-    is_inherited_agent_session_env_key(key) || is_loader_influencing_env_key(key)
+    is_inherited_agent_session_env_key(key)
+        || is_loader_influencing_env_key(key)
+        || is_resume_env_key(key)
+}
+
+pub fn is_resume_env_key(key: &str) -> bool {
+    crate::program_resume::is_token_env_key(key)
+        || key.eq_ignore_ascii_case(paneflow_resume_handoff::HANDOFF_ENV)
 }
 
 pub fn is_inherited_host_terminal_env_key(key: &str) -> bool {
@@ -75,7 +82,9 @@ pub fn inherited_env_keys_to_strip() -> Vec<std::ffi::OsString> {
         .map(|(key, _)| key)
         .filter(|key| {
             key.to_str().is_some_and(|key| {
-                is_inherited_host_terminal_env_key(key) || is_inherited_agent_session_env_key(key)
+                is_inherited_host_terminal_env_key(key)
+                    || is_inherited_agent_session_env_key(key)
+                    || is_resume_env_key(key)
             })
         })
         .collect()
@@ -137,6 +146,8 @@ mod tests {
         }
         assert!(is_forbidden_child_env_key("LD_PRELOAD"));
         assert!(is_forbidden_child_env_key("DYLD_INSERT_LIBRARIES"));
+        assert!(is_forbidden_child_env_key("OSC7577_TOKEN"));
+        assert!(is_forbidden_child_env_key("PANEFLOW_RESUME_HANDOFF"));
         assert!(!is_forbidden_child_env_key("PANEFLOW_SESSION_ID"));
         assert!(!is_inherited_host_terminal_env_key("PANEFLOW_SESSION_ID"));
     }

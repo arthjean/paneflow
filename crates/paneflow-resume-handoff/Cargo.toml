@@ -1,0 +1,13 @@
+[package]
+name = "paneflow-resume-handoff"
+version.workspace = true
+edition = "2024"
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "The one-shot handoff file the terminal host writes and the paneflow-resume launcher executes, with no dependency so the embedded shim stays small"
+publish = false
+
+[lints]
+workspace = true

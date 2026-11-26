@@ -23,6 +23,7 @@ mod codex;
 mod detect;
 mod exec;
 mod refusal;
+mod resume;
 
 use chain::{Chain, Launch, CHAIN_ENV, CHAIN_TARGETS_ENV, MAX_DEPTH};
 use detect::{detect_tool, find_real_binary, launched_as_another_shims_target, HOOK_BINARY_NAME};
@@ -30,6 +31,10 @@ use exec::run_real;
 use refusal::Refusal;
 
 fn main() -> ExitCode {
+    if detect::invoked_stem().is_some_and(|stem| resume::is_launcher_stem(&stem)) {
+        let args: Vec<OsString> = env::args_os().skip(1).collect();
+        return resume::run(&args);
+    }
     let Some(tool) = detect_tool() else {
         eprintln!(
             "paneflow-shim: invoked under an unexpected name; copy or \

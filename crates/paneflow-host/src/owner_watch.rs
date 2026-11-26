@@ -2,6 +2,8 @@ use std::time::Duration;
 
 use crate::process::{ProcessIdentity, ProcessVerdict};
 
+pub use imp::ExitSignal;
+
 const IDENTITY_POLL: Duration = Duration::from_millis(250);
 
 pub struct OwnerWatch {

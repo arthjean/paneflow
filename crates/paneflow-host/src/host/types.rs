@@ -76,6 +76,120 @@ pub struct CreateSession {
     pub sandbox: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub sandbox_unix_scope: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume: Option<ResumeRequest>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResumeRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record: Option<paneflow_program_resume::RecordId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub argv: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub confirmed: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, thiserror::Error)]
+#[serde(rename_all = "snake_case")]
+pub enum ResumeRefusal {
+    #[error("the directory the program reported no longer exists")]
+    CwdMissing,
+    #[error("this shell cannot resume programs")]
+    ShellUnsupported,
+    #[error("the sandbox changed since the program reported")]
+    SandboxChanged,
+    #[error("the record belongs to the pane's first process")]
+    FirstProcess,
+    #[error("the previous resume of this record did not complete; confirm it first")]
+    Unsettled,
+    #[error("no resume record has this id")]
+    UnknownRecord,
+    #[error("no pending resume attempt has this id")]
+    UnknownAttempt,
+    #[error("the resume launcher is not installed beside the host's helpers")]
+    LauncherMissing,
+    #[error(
+        "the resume command is not a program with absolute or bare name and an absolute directory"
+    )]
+    InvalidCommand,
+    #[error("the handoff file could not be written")]
+    HandoffUnwritable,
+    #[error("the reported process is not a live process of this pane")]
+    NotInPane,
+}
+
+impl ResumeRefusal {
+    pub fn reason(self) -> &'static str {
+        match self {
+            Self::CwdMissing => "cwd_missing",
+            Self::ShellUnsupported => "shell_unsupported",
+            Self::SandboxChanged => "sandbox_changed",
+            Self::FirstProcess => "first_process",
+            Self::Unsettled => "unsettled",
+            Self::UnknownRecord => "unknown_record",
+            Self::UnknownAttempt => "unknown_attempt",
+            Self::LauncherMissing => "launcher_missing",
+            Self::InvalidCommand => "invalid_command",
+            Self::HandoffUnwritable => "handoff_unwritable",
+            Self::NotInPane => "not_in_pane",
+        }
+    }
+
+    pub fn blocks_the_record(self) -> bool {
+        matches!(
+            self,
+            Self::CwdMissing | Self::ShellUnsupported | Self::SandboxChanged | Self::FirstProcess
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResumeCandidate {
+    pub record: paneflow_program_resume::RecordId,
+    pub argv: Vec<String>,
+    pub cwd: String,
+    pub cwd_source: paneflow_program_resume::CwdSource,
+    pub owner_pid: u32,
+    pub accepted_at_ms: u64,
+    pub settled: bool,
+    pub blocked: Option<ResumeRefusal>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AttemptOutcome {
+    Prepared,
+    Started,
+    Settled,
+    Failed,
+    Refused,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResumeAttemptReport {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<paneflow_program_resume::AttemptId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record: Option<paneflow_program_resume::RecordId>,
+    pub outcome: AttemptOutcome,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PreparedResume {
+    pub attempt: paneflow_program_resume::AttemptId,
+    pub launcher: String,
+    pub handoff: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record: Option<paneflow_program_resume::RecordId>,
 }
 
 pub const APPEARANCE_PALETTE_LEN: usize = 256;
@@ -132,6 +246,10 @@ pub struct SessionSummary {
     pub descendants_unresolved: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub durability_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_candidate: Option<ResumeCandidate>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_attempt: Option<ResumeAttemptReport>,
 }
 
 fn is_zero_usize(value: &usize) -> bool {
@@ -267,6 +385,8 @@ pub enum HostError {
     Storage(String),
     #[error("persistence failed: {0}")]
     Durability(#[from] PersistError),
+    #[error("resume refused: {0}")]
+    ResumeRefused(ResumeRefusal),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -315,6 +315,7 @@ mod tests {
                     kind,
                     content,
                     truncated,
+                    ..
                 } => Some((kind, content, truncated)),
                 _ => None,
             })
@@ -335,6 +336,7 @@ mod tests {
                     kind,
                     content,
                     truncated,
+                    ..
                 } => Some((kind, content, truncated)),
                 _ => None,
             })
@@ -371,6 +373,28 @@ mod tests {
                 false
             )]
         );
+    }
+
+    #[test]
+    fn an_unknown_osc_carries_its_raw_bytes_beside_the_escaped_text() {
+        let mut terminal = terminal(20, 4);
+        terminal
+            .capture_unknown_sequences(true)
+            .expect("capture must enable");
+
+        terminal
+            .feed(b"\x1b]7400;a\x7fb\xffc\x07")
+            .expect("unknown OSC with a DEL and an invalid byte");
+        let raw = terminal
+            .drain_events()
+            .into_iter()
+            .find_map(|event| match event {
+                BackendEvent::UnknownSequence { raw, content, .. } => Some((raw, content)),
+                _ => None,
+            })
+            .expect("the unsupported sequence must be reported");
+        assert_eq!(raw.0, b"7400;a\x7fb\xffc");
+        assert!(!raw.1.contains('\x7f'), "got {:?}", raw.1);
     }
 
     #[test]

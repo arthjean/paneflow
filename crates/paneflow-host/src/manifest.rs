@@ -145,6 +145,11 @@ pub struct SessionManifest {
     pub runtime: Option<HostedSessionRuntime>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub final_output: Option<FinalOutput>,
+    #[serde(
+        default,
+        skip_serializing_if = "paneflow_program_resume::RecordStore::is_pristine"
+    )]
+    pub program_resume: paneflow_program_resume::RecordStore,
     #[serde(default)]
     pub host_protocol_version: u32,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -242,11 +247,6 @@ pub fn write_atomically_with(path: &Path, bytes: &[u8], durable: bool) -> io::Re
         let _ = std::fs::remove_file(&tmp);
         return Err(error);
     }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
-    }
     let mut attempt = 0;
     loop {
         match std::fs::rename(&tmp, path) {
@@ -269,12 +269,30 @@ pub fn write_atomically_with(path: &Path, bytes: &[u8], durable: bool) -> io::Re
 
 fn write_temporary(tmp: &Path, bytes: &[u8], durable: bool) -> io::Result<()> {
     use std::io::Write;
-    let mut file = std::fs::File::create(tmp)?;
+    let mut file = private_file(tmp)?;
     file.write_all(bytes)?;
     if durable {
         file.sync_all()?;
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn private_file(path: &Path) -> io::Result<std::fs::File> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    Ok(file)
+}
+
+#[cfg(not(unix))]
+fn private_file(path: &Path) -> io::Result<std::fs::File> {
+    std::fs::File::create(path)
 }
 
 #[cfg(unix)]
@@ -433,6 +451,7 @@ mod tests {
             program_status_capable: false,
             runtime: None,
             final_output: None,
+            program_resume: Default::default(),
             host_protocol_version: crate::protocol::HOST_PROTOCOL_VERSION,
             host_build_id: crate::protocol::host_build_id(),
             created_at_ms: 1,
@@ -597,5 +616,165 @@ mod tests {
             Err(ManifestError::Oversized)
         ));
         assert!(wrong.exists(), "a rejected manifest is never deleted");
+    }
+
+    fn with_a_record(mut manifest: SessionManifest) -> SessionManifest {
+        let report = paneflow_program_resume::Report {
+            pid: 4242,
+            time: 1_795_543_200,
+            action: paneflow_program_resume::Action::Argv(vec!["nvim".into(), "-S".into()]),
+            cwd: Some("/work".into()),
+        };
+        let admission = paneflow_program_resume::Admission {
+            started_at: 99,
+            ancestors: Vec::new(),
+            first_process: false,
+            fallback_cwd: paneflow_program_resume::RecordCwd {
+                path: "/work".into(),
+                source: paneflow_program_resume::CwdSource::Spawn,
+            },
+            sandbox: None,
+        };
+        assert!(manifest.program_resume.apply(
+            paneflow_program_resume::Outcome::Accepted(report),
+            |_| Some(admission),
+            1_795_543_200_000,
+        ));
+        manifest
+    }
+
+    #[derive(Deserialize)]
+    #[allow(
+        dead_code,
+        reason = "the fields an older host requires are what is being proven"
+    )]
+    struct ManifestOfAnOlderHost {
+        schema: u32,
+        session: SessionId,
+        generation: SessionGeneration,
+        host_instance: HostInstanceToken,
+        cwd: String,
+        launch: SessionLaunch,
+        lifecycle: SessionLifecycle,
+        created_at_ms: u64,
+        updated_at_ms: u64,
+    }
+
+    #[test]
+    fn a_manifest_with_records_still_decodes_in_a_host_that_does_not_know_the_field() {
+        let home = tempfile::tempdir().unwrap();
+        let manifest = with_a_record(sample(SessionId::new()));
+        let path = write_manifest(home.path(), &manifest).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let written: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            written["program_resume"]["records"][0]["argv"],
+            serde_json::json!(["nvim", "-S"])
+        );
+        let older: ManifestOfAnOlderHost = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(older.session, manifest.session);
+        assert_eq!(
+            read_manifest(&path).unwrap().program_resume.records(),
+            manifest.program_resume.records()
+        );
+    }
+
+    #[test]
+    fn a_manifest_without_the_field_has_no_records_and_writes_none_back() {
+        let manifest = sample(SessionId::new());
+        let mut json = serde_json::to_value(&manifest).unwrap();
+        assert!(json.get("program_resume").is_none());
+        json.as_object_mut().unwrap().remove("program_resume");
+        let decoded: SessionManifest = serde_json::from_value(json).unwrap();
+        assert!(decoded.program_resume.is_empty());
+        assert!(decoded.program_resume.is_pristine());
+    }
+
+    #[test]
+    fn a_full_declared_status_beside_a_deep_record_at_its_budget_still_writes() {
+        let home = tempfile::tempdir().unwrap();
+        let mut manifest = sample(SessionId::new());
+        let message = "\u{1}".repeat(crate::program_status::MAX_DECLARED_MESSAGE_BYTES);
+        let label = "\u{1}".repeat(crate::program_status::MAX_DECLARED_LABEL_BYTES);
+        manifest.declared_status = Some(crate::program_status::DeclaredStatus {
+            state: "blocked".to_string(),
+            kind: Some("permission".to_string()),
+            progress: Some(100),
+            app: label.clone(),
+            title: label,
+            message,
+            turns: u64::MAX,
+        });
+        let ancestors: Vec<paneflow_program_resume::ProcessStamp> = (0..1024u32)
+            .map(|index| paneflow_program_resume::ProcessStamp {
+                pid: 4_000_000 + index,
+                started_at: 1_795_543_201_000,
+            })
+            .collect();
+        let mut kept = ancestors.len();
+        while kept > 0 {
+            let mut store = paneflow_program_resume::RecordStore::new();
+            let report = paneflow_program_resume::Report {
+                pid: 4242,
+                time: 1_795_543_200,
+                action: paneflow_program_resume::Action::Argv(vec!["nvim".into()]),
+                cwd: None,
+            };
+            let admission = paneflow_program_resume::Admission {
+                started_at: 99,
+                ancestors: ancestors[..kept].to_vec(),
+                first_process: false,
+                fallback_cwd: paneflow_program_resume::RecordCwd {
+                    path: "/work".into(),
+                    source: paneflow_program_resume::CwdSource::Spawn,
+                },
+                sandbox: None,
+            };
+            let _ = store.apply(
+                paneflow_program_resume::Outcome::Accepted(report),
+                |_| Some(admission),
+                1_795_543_200_000,
+            );
+            crate::program_resume::fit_store_budget(&mut store);
+            if !store.is_empty() {
+                manifest.program_resume = store;
+                break;
+            }
+            kept -= 16;
+        }
+        assert!(!manifest.program_resume.is_empty());
+        assert!(manifest.program_resume.records()[0].ancestors.len() > 100);
+
+        let path = write_manifest(home.path(), &manifest).unwrap();
+
+        assert!(std::fs::metadata(&path).unwrap().len() < MAX_MANIFEST_BYTES);
+        let read = read_manifest(&path).unwrap();
+        assert_eq!(read.declared_status, manifest.declared_status);
+        assert_eq!(
+            read.program_resume.records(),
+            manifest.program_resume.records()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_temporary_manifest_file_is_private_from_its_creation() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = tempfile::tempdir().unwrap();
+        let fresh = home.path().join(".fresh.tmp");
+        let created = private_file(&fresh).unwrap();
+        assert_eq!(
+            created.metadata().unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let stale = home.path().join(".stale.tmp");
+        std::fs::write(&stale, b"left by a crash").unwrap();
+        std::fs::set_permissions(&stale, std::fs::Permissions::from_mode(0o644)).unwrap();
+        write_temporary(&stale, b"{}", false).unwrap();
+        assert_eq!(
+            std::fs::metadata(&stale).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(std::fs::read(&stale).unwrap(), b"{}");
     }
 }

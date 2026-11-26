@@ -521,6 +521,7 @@ pub enum BackendEvent {
     UnknownSequence {
         kind: UnknownSequenceKind,
         content: String,
+        raw: Vec<u8>,
         truncated: bool,
     },
     CallbackPanicked,

@@ -4501,6 +4501,7 @@ dependencies = [
  "paneflow-minisign",
  "paneflow-peer",
  "paneflow-process",
+ "paneflow-resume-handoff",
  "paneflow-script",
  "paneflow-serve",
  "paneflow-telemetry",
@@ -4645,6 +4646,7 @@ dependencies = [
  "base64 0.22.1",
  "clap",
  "env_logger",
+ "getrandom 0.4.3",
  "interprocess",
  "libc",
  "log",
@@ -4653,7 +4655,10 @@ dependencies = [
  "paneflow-config",
  "paneflow-home",
  "paneflow-ipc-client",
+ "paneflow-launch",
  "paneflow-peer",
+ "paneflow-program-resume",
+ "paneflow-resume-handoff",
  "paneflow-terminal-ghostty",
  "portable-pty",
  "serde",
@@ -4793,6 +4798,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "paneflow-resume-handoff"
+version = "0.20.0"
+
+[[package]]
 name = "paneflow-script"
 version = "0.1.0"
 dependencies = [
@@ -4844,6 +4853,7 @@ dependencies = [
  "ctrlc",
  "libc",
  "paneflow-agent-config",
+ "paneflow-resume-handoff",
  "same-file",
  "tempfile",
 ]

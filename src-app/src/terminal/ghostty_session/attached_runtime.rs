@@ -1178,6 +1178,7 @@ mod tests {
                 cell: None,
                 sandbox: false,
                 sandbox_unix_scope: false,
+                resume: None,
             })
             .expect("hosted session");
         let session = created.manifest.session.clone();
@@ -1576,6 +1577,7 @@ mod tests {
                 cell: None,
                 sandbox: false,
                 sandbox_unix_scope: false,
+                resume: None,
             })
             .expect("a session created by an app without theme reports");
         let session = created.manifest.session.clone();
@@ -1651,6 +1653,7 @@ mod tests {
                 cell: None,
                 sandbox: false,
                 sandbox_unix_scope: false,
+                resume: None,
             })
             .expect("session");
         let session = created.manifest.session.clone();
@@ -1738,6 +1741,7 @@ mod tests {
                 cell: None,
                 sandbox: false,
                 sandbox_unix_scope: false,
+                resume: None,
             })
             .expect("hosted session");
         let session = created.manifest.session.clone();
@@ -1864,6 +1868,7 @@ mod tests {
                 cell: None,
                 sandbox: false,
                 sandbox_unix_scope: false,
+                resume: None,
             })
             .expect("hosted session");
         let session = created.manifest.session.clone();
@@ -1999,6 +2004,7 @@ mod tests {
                 cell: None,
                 sandbox: false,
                 sandbox_unix_scope: false,
+                resume: None,
             })
             .expect("hosted session");
         let session = created.manifest.session.clone();
@@ -2218,6 +2224,7 @@ mod tests {
                 cell: None,
                 sandbox: false,
                 sandbox_unix_scope: false,
+                resume: None,
             })
             .expect("hosted session");
         let session = created.manifest.session.clone();
@@ -2309,6 +2316,7 @@ mod tests {
                 cell: None,
                 sandbox: false,
                 sandbox_unix_scope: false,
+                resume: None,
             })
             .expect("hosted session");
         let session = created.manifest.session.clone();

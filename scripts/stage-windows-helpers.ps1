@@ -38,6 +38,7 @@ foreach ($name in @(
 )) {
   Copy-Item -LiteralPath $shim -Destination (Join-Path $packagedHelperDir $name) -Force
 }
+Copy-Item -LiteralPath $shim -Destination (Join-Path $packagedHelperDir 'paneflow-resume.exe') -Force
 Copy-Item -LiteralPath (Join-Path $artifactDir 'paneflow-ai-hook.exe') `
   -Destination (Join-Path $packagedHelperDir 'paneflow-ai-hook.exe') `
   -Force

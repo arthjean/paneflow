@@ -17,6 +17,7 @@ fn extract_plan() -> Vec<(&'static str, &'static str)> {
         .filter(|agent| agent.runtime().has_launch_shim())
         .map(|agent| (agent.binary(), "paneflow-shim"))
         .collect();
+    plan.push((paneflow_resume_handoff::LAUNCHER_STEM, "paneflow-shim"));
     plan.push(("paneflow-ai-hook", "paneflow-ai-hook"));
     plan
 }
@@ -540,6 +541,7 @@ mod tests {
             .map(|a| format!("{}{suffix}", a.binary()))
             .collect();
         expected.push(format!("paneflow-ai-hook{suffix}"));
+        expected.push(format!("paneflow-resume{suffix}"));
         for name in expected {
             let p = dir.join(&name);
             assert!(

@@ -16,7 +16,9 @@ use serde_json::{Value, json};
 use crate::agent::AgentEvent;
 use crate::agent_write::{METHOD_APPROVAL_DECIDE, METHOD_APPROVAL_FOLLOW};
 use crate::control::{ConnectionAliases, ControlError};
-use crate::host::{CellSize, CreateSession, HostError, SessionAppearance, SessionHost};
+use crate::host::{
+    CellSize, CreateSession, HostError, ResumeRequest, SessionAppearance, SessionHost,
+};
 use crate::manifest::now_ms;
 use crate::owner_watch::OwnerWatch;
 use crate::peer::{ClassifiedBy, METHOD_PEER_CLASSIFY};
@@ -578,6 +580,12 @@ fn handle_connection(
                 continue;
             }
         };
+        if let Some(envelope) = refuse_resume_from_outside(&id, method, &principal, &params) {
+            if wire.write_json(&envelope).is_err() {
+                return;
+            }
+            continue;
+        }
         if method == "session.create" {
             host.confine_spawn(&principal, &mut params);
         }
@@ -637,6 +645,16 @@ fn handle_connection(
                 }
             }
             METHOD_AGENT_FOLLOW => stream_agent_follow(&mut wire, &host, &shutdown, &id),
+            METHOD_RESUME_ATTEMPT => {
+                let envelope = match resume_attempt(&host, &principal, &params) {
+                    Ok(result) => result_envelope(&id, result),
+                    Err(error) => error_to_envelope(&id, error),
+                };
+                match wire.write_json(&envelope) {
+                    Ok(()) => Flow::Continue,
+                    Err(_) => Flow::Close,
+                }
+            }
             METHOD_HOST_GRANTS_SET => {
                 let envelope = match serde_json::from_value::<paneflow_api::grants::GrantSet>(
                     params.clone(),
@@ -793,6 +811,93 @@ fn handle_connection(
 }
 
 const METHOD_HOST_GRANTS_SET: &str = "host.grants.set";
+const METHOD_RESUME_ATTEMPT: &str = "session.resume_attempt";
+
+fn refuse_resume_from_outside(
+    id: &Value,
+    method: &str,
+    principal: &Principal,
+    params: &Value,
+) -> Option<Value> {
+    let carries_resume = matches!(method, "session.create" | "session.restart")
+        && params.get("resume").is_some_and(|resume| !resume.is_null());
+    (carries_resume && !matches!(principal, Principal::Window | Principal::Worker)).then(|| {
+        error_envelope(
+            id,
+            paneflow_api::principal::ERR_PRINCIPAL_REFUSED,
+            format!(
+                "{method} with resume belongs to the Paneflow window; this caller is identified as {}",
+                principal.kind()
+            ),
+            Some(json!({"reason": "principal_refused", "principal": principal.kind()})),
+        )
+    })
+}
+
+fn resume_attempt(
+    host: &SessionHost,
+    principal: &Principal,
+    params: &Value,
+) -> Result<Value, DispatchError> {
+    let Principal::Pane { session, .. } = principal else {
+        return Err(DispatchError::Params(
+            "session.resume_attempt is reported by the resume launcher of a pane".to_string(),
+        ));
+    };
+    let session = SessionId::parse(session).map_err(|e| DispatchError::Params(e.to_string()))?;
+    if let Some(named) = params.get("session").and_then(Value::as_str)
+        && named != session.as_str()
+    {
+        return Err(DispatchError::Params(
+            "session.resume_attempt names another session than the calling pane's".to_string(),
+        ));
+    }
+    let attempt = params
+        .get("attempt")
+        .and_then(Value::as_str)
+        .and_then(|raw| paneflow_program_resume::AttemptId::parse(raw).ok())
+        .ok_or_else(|| DispatchError::Params("missing or invalid attempt".to_string()))?;
+    let outcome = match params.get("outcome").and_then(Value::as_str) {
+        Some("started") => {
+            let pid = params
+                .get("pid")
+                .and_then(Value::as_u64)
+                .and_then(|pid| u32::try_from(pid).ok())
+                .ok_or_else(|| {
+                    DispatchError::Params("a started attempt needs its pid".to_string())
+                })?;
+            crate::host::ReportedAttempt::Started { pid }
+        }
+        Some("failed") => {
+            let reason = params
+                .get("reason")
+                .and_then(Value::as_str)
+                .and_then(crate::host::parse_attempt_failure)
+                .ok_or_else(|| DispatchError::Params("unknown failure reason".to_string()))?;
+            crate::host::ReportedAttempt::Failed(reason)
+        }
+        _ => {
+            return Err(DispatchError::Params(
+                "outcome must be started or failed".to_string(),
+            ));
+        }
+    };
+    let report = host.resume_attempt(&session, &attempt, outcome)?;
+    Ok(to_value(&report))
+}
+
+fn param_resume(params: &Value, key: Option<&str>) -> Result<Option<ResumeRequest>, DispatchError> {
+    let value = match key {
+        Some(key) => match params.get(key) {
+            None | Some(Value::Null) => return Ok(None),
+            Some(value) => value.clone(),
+        },
+        None => params.clone(),
+    };
+    serde_json::from_value(value)
+        .map(Some)
+        .map_err(|e| DispatchError::Params(format!("invalid resume request: {e}")))
+}
 
 static CATALOG: std::sync::LazyLock<Option<paneflow_api::Catalog>> =
     std::sync::LazyLock::new(|| paneflow_api::host_catalog().ok());
@@ -1106,6 +1211,14 @@ fn error_to_envelope(id: &Value, error: DispatchError) -> Value {
                 HostError::Runtime(RuntimeError::Deadline(_)) => ERR_DEADLINE,
                 HostError::Durability(_) => protocol::ERR_DURABILITY,
                 HostError::Runtime(_) | HostError::Storage(_) => ERR_INTERNAL,
+                HostError::ResumeRefused(refusal) => {
+                    return error_envelope(
+                        id,
+                        ERR_INVALID_PARAMS,
+                        error.to_string(),
+                        Some(json!({"reason": refusal.reason()})),
+                    );
+                }
             };
             error_envelope(id, code, error.to_string(), None)
         }
@@ -1244,7 +1357,26 @@ fn dispatch(
         "session.restart" => {
             let session = param_session(params)?;
             let generation = param_generation(params)?;
-            Ok(to_value(&host.restart(&session, generation)?))
+            let resume = param_resume(params, Some("resume"))?;
+            Ok(to_value(&host.restart_with(
+                &session,
+                generation,
+                resume.as_ref(),
+            )?))
+        }
+        "session.prepare_resume" => {
+            let session = param_session(params)?;
+            let request = param_resume(params, None)?.unwrap_or_default();
+            Ok(to_value(&host.prepare_resume(&session, &request)?))
+        }
+        "session.discard_resume" => {
+            let session = param_session(params)?;
+            let record = params
+                .get("record")
+                .and_then(Value::as_u64)
+                .map(paneflow_program_resume::RecordId::from)
+                .ok_or_else(|| DispatchError::Params("missing record".to_string()))?;
+            Ok(to_value(&host.discard_resume(&session, record)?))
         }
         "session.remove" => {
             let session = param_session(params)?;

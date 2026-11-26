@@ -119,9 +119,15 @@ mod audience_tests {
             "session.runtime.bind",
             "host.shutdown",
             "session.workspace",
+            "session.prepare_resume",
+            "session.discard_resume",
         ] {
             assert_eq!(audience(name), super::Audience::PaneflowOnly, "{name}");
         }
+        assert_eq!(
+            audience("session.resume_attempt"),
+            super::Audience::PaneOnly
+        );
         for name in ["layout.attach", "peer.classify"] {
             assert_eq!(audience(name), super::Audience::NotPane, "{name}");
         }
@@ -163,6 +169,9 @@ mod audience_tests {
             "session.inspect",
             "session.stop",
             "session.restart",
+            "session.prepare_resume",
+            "session.discard_resume",
+            "session.resume_attempt",
             "session.remove",
             "session.input",
             "session.runtime.bind",

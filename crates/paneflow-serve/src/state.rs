@@ -1246,6 +1246,7 @@ mod tests {
             program_status_capable: false,
             runtime: None,
             final_output: None,
+            program_resume: Default::default(),
             host_protocol_version: paneflow_host::HOST_PROTOCOL_VERSION,
             host_build_id: "test-build".to_string(),
             created_at_ms: 1,

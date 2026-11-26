@@ -301,11 +301,65 @@ fn session(home: &Path, command: SessionCommand) -> i32 {
         }
     };
     match outcome {
-        Ok(value) => print_json(&value),
+        Ok(mut value) => {
+            escape_resume_records(&mut value);
+            print_json(&value)
+        }
         Err(error) => {
             eprintln!("paneflow-host: {error}");
             EXIT_RUNTIME
         }
+    }
+}
+
+fn escape_resume_records(value: &mut Value) {
+    escape_session(value);
+    if let Some(removed) = value.get_mut("removed") {
+        escape_session(removed);
+    }
+    if let Some(sessions) = value.get_mut("sessions").and_then(Value::as_array_mut) {
+        for session in sessions {
+            escape_session(session);
+        }
+    }
+}
+
+fn escape_session(session: &mut Value) {
+    escape_store(session.pointer_mut("/program_resume"));
+    if let Some(candidate) = session.get_mut("resume_candidate") {
+        escape_record(candidate);
+    }
+    if let Some(program) = session.pointer_mut("/resume_attempt/program") {
+        escape_text(program);
+    }
+}
+
+fn escape_record(record: &mut Value) {
+    if let Some(argv) = record.get_mut("argv").and_then(Value::as_array_mut) {
+        for element in argv {
+            escape_text(element);
+        }
+    }
+    if let Some(cwd) = record.get_mut("cwd") {
+        escape_text(cwd);
+    }
+}
+
+fn escape_store(store: Option<&mut Value>) {
+    let Some(records) = store
+        .and_then(|store| store.get_mut("records"))
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+    for record in records {
+        escape_record(record);
+    }
+}
+
+fn escape_text(value: &mut Value) {
+    if let Some(text) = value.as_str() {
+        *value = Value::String(paneflow_program_resume::escape_for_display(text));
     }
 }
 

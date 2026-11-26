@@ -339,6 +339,7 @@ fn finished_manifest(
         program_status_capable: false,
         runtime: None,
         final_output: None,
+        program_resume: Default::default(),
         host_protocol_version: HOST_PROTOCOL_VERSION,
         host_build_id: crate::protocol::host_build_id(),
         created_at_ms: updated_at_ms,
@@ -386,6 +387,7 @@ fn summary_at(workspace: Option<&WorkspaceId>, live: bool, updated_at_ms: u64) -
             program_status_capable: false,
             runtime: None,
             final_output: None,
+            program_resume: Default::default(),
             host_protocol_version: HOST_PROTOCOL_VERSION,
             host_build_id: crate::protocol::host_build_id(),
             created_at_ms: updated_at_ms,
@@ -397,6 +399,8 @@ fn summary_at(workspace: Option<&WorkspaceId>, live: bool, updated_at_ms: u64) -
         launch_operation: None,
         descendants_unresolved: 0,
         durability_error: None,
+        resume_candidate: None,
+        resume_attempt: None,
     }
 }
 
@@ -1410,6 +1414,7 @@ fn unverified_record(host: &SessionHost, reason: &str) -> SessionId {
         program_status_capable: false,
         runtime: None,
         final_output: None,
+        program_resume: Default::default(),
         host_protocol_version: HOST_PROTOCOL_VERSION,
         host_build_id: crate::protocol::host_build_id(),
         created_at_ms: now_ms(),
@@ -1670,6 +1675,7 @@ fn launch_owner_thread_failure_is_reconciled_by_the_existing_scan() {
         xt_checksum: crate::runtime::XtChecksum::default(),
         session: None,
         sandbox: None,
+        program_resume: None,
     };
     spec.env
         .insert("PANEFLOW_TEST_SPAWN_DELAY_MS".into(), "100".into());
@@ -1737,6 +1743,7 @@ fn unlaunched_record(host: &SessionHost, session: &SessionId) -> SessionRecord {
         program_status_capable: false,
         runtime: None,
         final_output: None,
+        program_resume: Default::default(),
         host_protocol_version: HOST_PROTOCOL_VERSION,
         host_build_id: crate::protocol::host_build_id(),
         created_at_ms: now_ms(),

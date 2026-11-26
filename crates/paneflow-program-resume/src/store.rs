@@ -46,12 +46,19 @@ pub struct RecordCwd {
     pub source: CwdSource,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SandboxStamp {
+    pub root: String,
+    pub unix_scope: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Admission {
     pub started_at: u64,
     pub ancestors: Vec<ProcessStamp>,
     pub first_process: bool,
     pub fallback_cwd: RecordCwd,
+    pub sandbox: Option<SandboxStamp>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -170,6 +177,8 @@ pub struct Record {
     pub exited_at_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attempt: Option<Attempt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox: Option<SandboxStamp>,
 }
 
 impl Record {
@@ -282,6 +291,10 @@ impl RecordStore {
 
     pub fn is_empty(&self) -> bool {
         self.records.is_empty()
+    }
+
+    pub fn is_pristine(&self) -> bool {
+        self.records.is_empty() && self.next_id == 0 && self.next_revision == 0
     }
 
     pub fn get(&self, id: RecordId) -> Option<&Record> {
@@ -441,7 +454,14 @@ impl RecordStore {
         failure: AttemptFailure,
     ) -> Result<RecordId, AttemptError> {
         let index = self
-            .prepared_attempt(attempt)
+            .records
+            .iter()
+            .position(|record| {
+                record
+                    .attempt
+                    .as_ref()
+                    .is_some_and(|pending| pending.id == *attempt)
+            })
             .ok_or(AttemptError::UnknownAttempt)?;
         let id = self.records[index].id;
         match failure {
@@ -526,6 +546,7 @@ impl RecordStore {
             revision,
             exited_at_ms: None,
             attempt: None,
+            sandbox: admission.sandbox,
         });
         true
     }
@@ -570,6 +591,7 @@ mod tests {
                 path: "/home/user".to_owned(),
                 source: CwdSource::Owner,
             },
+            sandbox: None,
         }
     }
 
@@ -991,6 +1013,44 @@ mod tests {
     }
 
     #[test]
+    fn a_program_that_fails_to_start_after_its_started_report_drops_the_record() {
+        let mut store = RecordStore::new();
+        assert!(accept(&mut store, argv_report(4242, &["nvim"]), vec![]));
+        let id = store.records()[0].id;
+        store
+            .begin_attempt(id, attempt_id(1))
+            .expect("the record exists");
+        store
+            .attempt_started(&attempt_id(1), stamp(5000), vec![])
+            .expect("the attempt is prepared");
+        assert_eq!(
+            store.attempt_failed(&attempt_id(1), AttemptFailure::NotExecutable),
+            Ok(id)
+        );
+        assert!(store.is_empty());
+    }
+
+    #[test]
+    fn a_sandbox_stamp_from_the_admission_is_kept_on_the_record_and_survives_a_round_trip() {
+        let mut store = RecordStore::new();
+        let stamp = SandboxStamp {
+            root: "/work".to_owned(),
+            unix_scope: true,
+        };
+        let mut admitted = admission(1, vec![]);
+        admitted.sandbox = Some(stamp.clone());
+        assert!(store.apply(
+            Outcome::Accepted(argv_report(4242, &["nvim"])),
+            |_| Some(admitted),
+            NOW_MS
+        ));
+        assert_eq!(store.records()[0].sandbox.as_ref(), Some(&stamp));
+        let json = serde_json::to_string(&store).expect("the store serializes");
+        let read: RecordStore = serde_json::from_str(&json).expect("the store reads back");
+        assert_eq!(read.records()[0].sandbox.as_ref(), Some(&stamp));
+    }
+
+    #[test]
     fn unknown_records_and_attempts_are_refused() {
         let mut store = RecordStore::new();
         assert!(accept(&mut store, argv_report(4242, &["nvim"]), vec![]));
@@ -1173,5 +1233,16 @@ mod tests {
         assert_eq!(saved["records"][0]["cwd_source"], "owner");
         assert_eq!(saved["records"][0]["attempt"]["phase"], "prepared");
         assert!(saved.get("replay").is_none());
+    }
+
+    #[test]
+    fn a_store_stays_pristine_until_its_first_record_and_not_after_it_is_cleared() {
+        let mut store = RecordStore::new();
+        assert!(store.is_pristine());
+        assert!(accept(&mut store, argv_report(4242, &["nvim"]), vec![]));
+        assert!(!store.is_pristine());
+        assert!(store.discard_all());
+        assert!(store.is_empty());
+        assert!(!store.is_pristine());
     }
 }

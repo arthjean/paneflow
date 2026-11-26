@@ -248,6 +248,7 @@ pub(crate) unsafe extern "C" fn unknown_sequence(
             state.push(BackendEvent::UnknownSequence {
                 kind,
                 content: escape_content(raw),
+                raw: raw.to_vec(),
                 truncated,
             });
         });
