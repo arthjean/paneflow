@@ -794,6 +794,7 @@ pub(crate) fn icon_button(
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Tone {
     Primary,
+    Accent,
     Secondary,
     Ghost,
     Danger,
@@ -804,6 +805,9 @@ pub(crate) enum Size {
     Small,
     Medium,
 }
+
+const ACCENT_HOVER_DARKEN: f32 = 0.05;
+const ACCENT_PRESSED_DARKEN: f32 = 0.10;
 
 pub(crate) fn button(
     id: impl Into<ElementId>,
@@ -833,6 +837,20 @@ pub(crate) fn button_with(
             ink.fill_ink,
             ink.fill_ink,
         ),
+        Tone::Accent => {
+            let blue = switch_blue();
+            let darker = |by: f32| Hsla {
+                l: (blue.l - by).max(0.0),
+                ..blue
+            };
+            (
+                blue,
+                darker(ACCENT_HOVER_DARKEN),
+                darker(ACCENT_PRESSED_DARKEN),
+                gpui::white(),
+                gpui::white(),
+            )
+        }
         Tone::Secondary => (
             ink.well,
             ink.well_hover,
@@ -934,6 +952,16 @@ pub(crate) fn backdrop(
     )
     .with_priority(DIALOG_PRIORITY)
     .into_any_element()
+}
+
+pub(crate) fn floating_card(card: Stateful<Div>, radius: gpui::Pixels, ink: Ink) -> Stateful<Div> {
+    card.rounded(radius)
+        .bg(ink.dialog)
+        .border_1()
+        .border_color(ink.dialog_edge)
+        .shadow(vec![
+            gpui::BoxShadow::new(px(0.), px(6.), ink.dialog_shadow).blur_radius(px(20.)),
+        ])
 }
 
 pub(crate) const DIALOG_PRIORITY: usize = 10;

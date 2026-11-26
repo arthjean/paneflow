@@ -11,6 +11,11 @@ pub(crate) const RESUME_DISMISS_BUTTON: &str = "program-resume-dismiss";
 pub(crate) const RESUME_BUTTON_LABEL: &str = "Resume";
 pub(crate) const RESUME_DISMISS_LABEL: &str = "Dismiss";
 
+fn user_home() -> Option<&'static std::path::Path> {
+    static HOME: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+    HOME.get_or_init(dirs::home_dir).as_deref()
+}
+
 impl TerminalView {
     #[cfg(test)]
     pub(crate) fn program_resume(&self) -> &ResumeState {
@@ -189,28 +194,31 @@ impl TerminalView {
     ) -> Option<gpui::AnyElement> {
         let message = self.program_resume.banner_message()?;
         let mut buttons = Vec::with_capacity(2);
+        buttons.push(conversation::banner_button(
+            RESUME_DISMISS_BUTTON,
+            RESUME_DISMISS_LABEL,
+            crate::settings::kit::Tone::Secondary,
+            ui,
+            cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                this.dismiss_program_resume(cx);
+            }),
+        ));
         if self.program_resume.offers_resume() {
             buttons.push(conversation::banner_button(
                 RESUME_BUTTON,
                 RESUME_BUTTON_LABEL,
+                crate::settings::kit::Tone::Accent,
                 ui,
                 cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
                     this.accept_program_resume(cx);
                 }),
             ));
         }
-        buttons.push(conversation::banner_button(
-            RESUME_DISMISS_BUTTON,
-            RESUME_DISMISS_LABEL,
-            ui,
-            cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
-                this.dismiss_program_resume(cx);
-            }),
-        ));
-        Some(conversation::banner_frame(
-            conversation::banner_bar(message, ui, buttons),
-            ui,
-        ))
+        let bar = match self.program_resume.banner_detail(user_home()) {
+            Some(detail) => conversation::banner_bar_with_detail(message, detail, ui, buttons),
+            None => conversation::banner_bar(message, ui, buttons),
+        };
+        Some(conversation::banner_frame(bar, ui))
     }
 }
 
@@ -222,7 +230,7 @@ mod tests {
 
     use super::*;
     use crate::terminal::program_resume::{OfferReason, ResumeCommand};
-    use crate::terminal::view::conversation::BANNER_TEXT;
+    use crate::terminal::view::conversation::{BANNER_DETAIL, BANNER_TEXT};
 
     const CLAUDE: &str = "com.anthropic.claude-code";
     const CLAUDE_ID: &str = "3922faec-860a-47b1-8f2d-e6b9488c467c";
@@ -322,10 +330,27 @@ mod tests {
         cx.run_until_parked();
         cx.update(|window, cx| window.draw(cx).clear(cx));
         assert!(cx.debug_bounds(BANNER_TEXT).is_some());
-        assert!(cx.debug_bounds(RESUME_BUTTON).is_some());
+        let detail = cx
+            .debug_bounds(BANNER_DETAIL)
+            .expect("the offer names its directory");
+        let headline = cx.debug_bounds(BANNER_TEXT).expect("the offer asks");
+        assert!(detail.top() >= headline.bottom(), "{detail:?} {headline:?}");
+        let resume = cx
+            .debug_bounds(RESUME_BUTTON)
+            .expect("the offer paints Resume");
+        assert!(resume.top() >= detail.bottom(), "{resume:?} {detail:?}");
+        assert_eq!(resume.size.height, gpui::px(28.));
         let dismiss = cx
             .debug_bounds(RESUME_DISMISS_BUTTON)
             .expect("Dismiss is painted");
+        assert!(
+            resume.left() >= dismiss.right(),
+            "the primary action ends the row: {resume:?} {dismiss:?}"
+        );
+        assert!(
+            headline.top() > px(200.) && resume.right() > px(400.),
+            "the offer sits at the pane's bottom right: {headline:?} {resume:?}"
+        );
         cx.simulate_click(dismiss.center(), Modifiers::default());
         cx.run_until_parked();
         view.update(cx, |view, _cx| {
@@ -350,6 +375,7 @@ mod tests {
         cx.run_until_parked();
         cx.update(|window, cx| window.draw(cx).clear(cx));
         assert!(cx.debug_bounds(BANNER_TEXT).is_some());
+        assert!(cx.debug_bounds(BANNER_DETAIL).is_none());
         assert!(cx.debug_bounds(RESUME_BUTTON).is_none());
         assert!(cx.debug_bounds(RESUME_DISMISS_BUTTON).is_some());
     }

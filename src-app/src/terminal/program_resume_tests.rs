@@ -101,7 +101,7 @@ fn an_unsettled_record_is_offered_and_never_resumed_even_in_auto() {
     assert_eq!(state.restart_request(), None);
     assert_eq!(
         state.banner_message().unwrap(),
-        "Resume did not complete last time: htop in /home/user/project"
+        "Resume did not complete last time. Try `htop` again?"
     );
 }
 
@@ -203,7 +203,33 @@ fn an_offer_quotes_the_argv_element_by_element_and_names_the_cwd() {
     );
     assert_eq!(
         state.banner_message().unwrap(),
-        "Resume this program?: nvim -S 'two words' '' 'it'\\''s' in /home/user/project"
+        "Resume `nvim -S 'two words' '' 'it'\\''s'`?"
+    );
+    assert_eq!(
+        state.banner_detail(None).as_deref(),
+        Some("/home/user/project")
+    );
+}
+
+#[test]
+fn the_offered_directory_starts_at_the_home_tilde_only_on_a_whole_component() {
+    let home = std::path::Path::new("/home/user");
+    let state = restore_state(&ask(), &lost_with(candidate(&["htop"])));
+    assert_eq!(
+        state.banner_detail(Some(home)).as_deref(),
+        Some(format!("~{}project", std::path::MAIN_SEPARATOR).as_str())
+    );
+    assert_eq!(
+        crate::terminal::program_resume::display_cwd("/home/user", Some(home)),
+        "~"
+    );
+    assert_eq!(
+        crate::terminal::program_resume::display_cwd("/home/username/x", Some(home)),
+        "/home/username/x"
+    );
+    assert_eq!(
+        crate::terminal::program_resume::display_cwd("/srv/x", None),
+        "/srv/x"
     );
 }
 
@@ -211,12 +237,13 @@ fn an_offer_quotes_the_argv_element_by_element_and_names_the_cwd() {
 fn a_bidi_override_is_shown_escaped_never_as_the_character() {
     let mut record = candidate(&["nvim", "evil\u{202E}txt"]);
     record.cwd = "/tmp/\u{202E}x".to_string();
-    let message = restore_state(&ask(), &lost_with(record))
-        .banner_message()
-        .unwrap();
+    let state = restore_state(&ask(), &lost_with(record));
+    let message = state.banner_message().unwrap();
     assert!(!message.contains('\u{202E}'), "{message}");
     assert!(message.contains("evil\\u{202E}txt"), "{message}");
-    assert!(message.contains("/tmp/\\u{202E}x"), "{message}");
+    let detail = state.banner_detail(None).unwrap();
+    assert!(!detail.contains('\u{202E}'), "{detail}");
+    assert!(detail.contains("/tmp/\\u{202E}x"), "{detail}");
 }
 
 #[test]

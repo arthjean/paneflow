@@ -249,21 +249,19 @@ impl ResumeState {
         match self {
             Self::None | Self::Resuming { .. } => None,
             Self::Offered { command, reason } => {
-                let lead = match reason {
-                    OfferReason::Untrusted => "Resume this program?",
-                    OfferReason::Unsettled => "Resume did not complete last time",
-                    OfferReason::AgentShape => {
-                        "This agent asked to resume with arguments Paneflow does not recognize"
+                let shown = display_argv(&command.argv);
+                Some(match reason {
+                    OfferReason::Untrusted => format!("Resume `{shown}`?"),
+                    OfferReason::Unsettled => {
+                        format!("Resume did not complete last time. Try `{shown}` again?")
                     }
-                    OfferReason::AgentsDisabled => {
-                        "Conversation restore is off, so this agent did not resume on its own"
-                    }
-                };
-                Some(format!(
-                    "{lead}: {} in {}",
-                    display_argv(&command.argv),
-                    escape_for_display(&command.cwd)
-                ))
+                    OfferReason::AgentShape => format!(
+                        "Resume `{shown}`? Paneflow does not recognize these agent arguments"
+                    ),
+                    OfferReason::AgentsDisabled => format!(
+                        "Resume `{shown}`? Conversation restore is off, so it did not resume on its own"
+                    ),
+                })
             }
             Self::Blocked { command, reason } => Some(match reason {
                 ResumeRefusal::CwdMissing => format!(
@@ -284,6 +282,13 @@ impl ResumeState {
                     .unwrap_or_default(),
                 failure_wording(reason)
             )),
+        }
+    }
+
+    pub(crate) fn banner_detail(&self, home: Option<&std::path::Path>) -> Option<String> {
+        match self {
+            Self::Offered { command, .. } => Some(display_cwd(&command.cwd, home)),
+            Self::None | Self::Resuming { .. } | Self::Blocked { .. } | Self::Failed { .. } => None,
         }
     }
 
@@ -321,6 +326,19 @@ pub(crate) fn failure_wording(reason: &str) -> String {
             None => escape_for_display(&other.replace('_', " ")),
         },
     }
+}
+
+pub(crate) fn display_cwd(cwd: &str, home: Option<&std::path::Path>) -> String {
+    let path = std::path::Path::new(cwd);
+    let relative = home
+        .filter(|home| !home.as_os_str().is_empty())
+        .and_then(|home| path.strip_prefix(home).ok());
+    let shown = match relative {
+        Some(rest) if rest.as_os_str().is_empty() => "~".to_string(),
+        Some(rest) => format!("~{}{}", std::path::MAIN_SEPARATOR, rest.to_string_lossy()),
+        None => cwd.to_string(),
+    };
+    escape_for_display(&shown)
 }
 
 pub(crate) fn display_element(element: &str) -> String {

@@ -1037,34 +1037,44 @@ impl TerminalView {
         }
         let banner = self.conversation.banner.as_ref()?;
         let mut buttons = Vec::with_capacity(2);
+        buttons.push(banner_button(
+            "conversation-banner-dismiss",
+            "Dismiss",
+            crate::settings::kit::Tone::Secondary,
+            ui,
+            cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
+                this.dismiss_conversation_banner(cx);
+            }),
+        ));
         if let Some(label) = banner.primary_label() {
             buttons.push(banner_button(
                 "conversation-banner-action",
                 label,
+                crate::settings::kit::Tone::Accent,
                 ui,
                 cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
                     this.accept_conversation_banner(cx);
                 }),
             ));
         }
-        buttons.push(banner_button(
-            "conversation-banner-dismiss",
-            "Dismiss",
-            ui,
-            cx.listener(|this, _: &gpui::ClickEvent, _, cx| {
-                this.dismiss_conversation_banner(cx);
-            }),
-        ));
         Some(banner_frame(banner_bar(banner.message(), ui, buttons), ui))
     }
 }
 
 pub(crate) const BANNER_TEXT: &str = "conversation-banner-text";
 pub(crate) const BANNER_BUTTONS: &str = "conversation-banner-buttons";
+pub(crate) const BANNER_DETAIL: &str = "conversation-banner-detail";
 pub(crate) const WRITE_ALLOW_BUTTON: &str = "write-request-allow";
 pub(crate) const WRITE_DENY_BUTTON: &str = "write-request-deny";
-const BANNER_TEXT_BASIS: f32 = 160.0;
 const BANNER_TEXT_LINES: usize = 3;
+const BANNER_HEADLINE_LINES: usize = 2;
+const BANNER_BUTTON_HEIGHT: f32 = 28.0;
+const BANNER_BUTTON_RADIUS: f32 = BANNER_BUTTON_HEIGHT / 2.0;
+const BANNER_BUTTON_LABEL_INSET: f32 = 12.0;
+const BANNER_PADDING: f32 = 16.0;
+const BANNER_TEXT_TO_ACTIONS: f32 = 14.0;
+const BANNER_WIDTH: f32 = 340.0;
+const BANNER_PANE_INSET: f32 = 16.0;
 
 pub(crate) fn write_request_banner(
     message: String,
@@ -1073,8 +1083,20 @@ pub(crate) fn write_request_banner(
     on_deny: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
 ) -> gpui::AnyElement {
     let buttons = vec![
-        banner_button(WRITE_ALLOW_BUTTON, ALLOW_WRITE_LABEL, ui, on_allow),
-        banner_button(WRITE_DENY_BUTTON, DENY_WRITE_LABEL, ui, on_deny),
+        banner_button(
+            WRITE_DENY_BUTTON,
+            DENY_WRITE_LABEL,
+            crate::settings::kit::Tone::Secondary,
+            ui,
+            on_deny,
+        ),
+        banner_button(
+            WRITE_ALLOW_BUTTON,
+            ALLOW_WRITE_LABEL,
+            crate::settings::kit::Tone::Secondary,
+            ui,
+            on_allow,
+        ),
     ];
     banner_frame(banner_bar(message, ui, buttons), ui)
 }
@@ -1082,13 +1104,29 @@ pub(crate) fn write_request_banner(
 pub(super) fn banner_button(
     id: &'static str,
     label: &'static str,
+    tone: crate::settings::kit::Tone,
     ui: crate::theme::UiColors,
     on_click: impl Fn(&gpui::ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
 ) -> gpui::Stateful<gpui::Div> {
-    crate::settings::components::secondary_button(id, label, ui, on_click)
-        .debug_selector(move || id.into())
-        .min_w_0()
-        .max_w_full()
+    use crate::settings::components::KeyboardStopExt;
+    use crate::ui_primitives::AccessibleControlExt;
+    crate::settings::kit::button_with(
+        id,
+        label,
+        tone,
+        crate::settings::kit::Size::Small,
+        false,
+        true,
+        crate::settings::kit::Ink::of(ui),
+    )
+    .debug_selector(move || id.into())
+    .h(gpui::px(BANNER_BUTTON_HEIGHT))
+    .px(gpui::px(BANNER_BUTTON_LABEL_INSET))
+    .rounded_full()
+    .keyboard_stop(gpui::px(BANNER_BUTTON_RADIUS))
+    .on_activate(on_click)
+    .min_w_0()
+    .max_w_full()
 }
 
 pub(super) fn banner_bar(
@@ -1096,34 +1134,72 @@ pub(super) fn banner_bar(
     ui: crate::theme::UiColors,
     buttons: Vec<gpui::Stateful<gpui::Div>>,
 ) -> gpui::Div {
+    banner_row(
+        div()
+            .min_w_0()
+            .text_size(crate::ui_primitives::BODY)
+            .text_color(crate::settings::kit::Ink::of(ui).secondary)
+            .line_clamp(BANNER_TEXT_LINES)
+            .text_ellipsis()
+            .debug_selector(|| BANNER_TEXT.into())
+            .child(message),
+        buttons,
+    )
+}
+
+pub(super) fn banner_bar_with_detail(
+    headline: String,
+    detail: String,
+    ui: crate::theme::UiColors,
+    buttons: Vec<gpui::Stateful<gpui::Div>>,
+) -> gpui::Div {
+    banner_row(
+        div()
+            .flex()
+            .flex_col()
+            .gap(gpui::px(4.0))
+            .min_w_0()
+            .child(
+                div()
+                    .min_w_0()
+                    .text_size(crate::ui_primitives::BODY_EMPHASIS)
+                    .font_weight(gpui::FontWeight::MEDIUM)
+                    .text_color(crate::settings::kit::Ink::of(ui).primary)
+                    .line_clamp(BANNER_HEADLINE_LINES)
+                    .text_ellipsis()
+                    .debug_selector(|| BANNER_TEXT.into())
+                    .child(headline),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .text_size(crate::ui_primitives::BODY)
+                    .text_color(crate::settings::kit::Ink::of(ui).secondary)
+                    .whitespace_nowrap()
+                    .overflow_hidden()
+                    .text_ellipsis_start()
+                    .debug_selector(|| BANNER_DETAIL.into())
+                    .child(detail),
+            ),
+        buttons,
+    )
+}
+
+fn banner_row(text: gpui::Div, buttons: Vec<gpui::Stateful<gpui::Div>>) -> gpui::Div {
     div()
         .flex()
-        .flex_row()
-        .flex_wrap()
-        .items_center()
-        .gap_x(gpui::px(10.0))
-        .gap_y(gpui::px(6.0))
-        .px(gpui::px(12.0))
-        .py(gpui::px(7.0))
+        .flex_col()
+        .gap(gpui::px(BANNER_TEXT_TO_ACTIONS))
+        .p(gpui::px(BANNER_PADDING))
         .min_w_0()
-        .child(
-            div()
-                .flex_1()
-                .flex_basis(gpui::px(BANNER_TEXT_BASIS))
-                .min_w_0()
-                .text_xs()
-                .text_color(ui.muted)
-                .line_clamp(BANNER_TEXT_LINES)
-                .text_ellipsis()
-                .debug_selector(|| BANNER_TEXT.into())
-                .child(message),
-        )
+        .child(text)
         .child(
             div()
                 .flex()
                 .flex_wrap()
                 .items_center()
-                .gap(gpui::px(6.0))
+                .justify_end()
+                .gap(gpui::px(8.0))
                 .min_w_0()
                 .max_w_full()
                 .debug_selector(|| BANNER_BUTTONS.into())
@@ -1134,23 +1210,20 @@ pub(super) fn banner_bar(
 pub(super) fn banner_frame(bar: gpui::Div, ui: crate::theme::UiColors) -> gpui::AnyElement {
     div()
         .absolute()
-        .top_0()
-        .left_0()
-        .w_full()
+        .left(gpui::px(BANNER_PANE_INSET))
+        .right(gpui::px(BANNER_PANE_INSET))
+        .bottom(gpui::px(BANNER_PANE_INSET))
         .flex()
-        .items_center()
-        .justify_center()
-        .pt(gpui::px(10.0))
+        .justify_end()
         .child(
-            crate::ui_primitives::squircle_skin(
+            crate::settings::kit::floating_card(
                 div()
                     .id("conversation-banner")
                     .min_w_0()
-                    .max_w(gpui::px(480.0)),
-                "conversation-banner",
-                crate::ui_primitives::ROW_RADIUS,
-                Some(ui.overlay),
-                None,
+                    .w(gpui::px(BANNER_WIDTH))
+                    .max_w_full(),
+                gpui::px(crate::settings::kit::CARD_RADIUS),
+                crate::settings::kit::Ink::of(ui),
             )
             .child(bar),
         )
