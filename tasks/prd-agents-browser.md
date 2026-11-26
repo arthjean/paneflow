@@ -8,6 +8,8 @@
 | 1.0 | 2026-09-05 | Arthur Jean | Initial PRD (French): CEF and GPU qualification, native browser in the dock, distribution on four targets, agent interactions as the last delivery. 32 stories, none started. |
 | 2.0 | 2026-11-24 | Arthur Jean | Full rewrite from the research of 2026-11-24 (`tasks/research/agent-browser-architecture-2026-11-24.md`, local evidence) and a reading of Zeron and t3code. Same engine choice (CEF in its own host process, off-screen rendering), four changes: agent control is proven before the GPU path, an explicit CPU presentation path exists, the engine ships as a separately signed runtime, and Windows is recognised as the most expensive GPUI integration. The GPUI pin cited by v1.0 (`fecc3273`) is replaced by the current one (`c016f436`; the research read `703b5ac3`, and R1 to R3 were re-read at `c016f436` after `main` moved the same day). Every macOS test and validation story sits in a final epic, EP-008; every Windows test and validation story sits in a final epic after it, EP-009. 9 epics, 57 stories. Version 1.0 is in git history. |
 | 2.1 | 2026-11-25 | Arthur Jean | EP-001 run: "Kill test report" added. GO for the control plane; GO to build for the CPU and Linux GPU paths, which regress terminal latency on a native Wayland window (A3 failed there, holds on X11). A3 requires a revision; the external-Chrome fallback it names is rejected on the diagnostic evidence, pending Arthur's ratification (Open Questions), and US-025 and US-035 gain a latency gate on a native Wayland window with nine no-browser runs. Assumptions A1 to A5, A7, A8 and A15 marked. No story cancelled. |
+| 2.2 | 2026-11-25 | Arthur Jean | Before EP-004: Arthur ratified the rejection of A3's external-Chrome fallback (an external Chrome carries both measured causes, the redraw at the video's frame rate and Chromium's own load, and displays worse) and closed that open question. The US-025 latency gate was corrected before its run: the diagnostic campaign's "Chromium only, no redraw" medians (2.973 to 2.980 ms) already exceed the largest no-browser median (2.940 ms), so a gate against a no-browser arm fails for any display path and turning the display off does not remove that load. The control arm is now the host playing the video with its tab not displayed, and the gate judges the 99th percentile as well as the median. US-035 keeps its wording until EP-005. |
+| 2.3 | 2026-11-26 | Arthur Jean | Additions at Arthur's request after the EP-004 manual pass, each recorded in "EP-004 review": Helium's location bar, loading line, omnibox and Site information; the Browser settings page after Zeron; the guard now follows the tab's owner (a tab a person drives holds no site); `browser.display` removed; Zeron's element picker behind the Pointer button, sending picks straight to the chosen agent's prompt; Chromium's developer tools docked on F12. The Non-Goal "DevTools for the human" is withdrawn. |
 
 ## Problem Statement
 
@@ -31,7 +33,7 @@ The host renders off screen. Frames reach the window in one of two ways:
 
 Agent control never leaves the host as raw CDP. The host calls CDP internally through CEF (`ExecuteDevToolsMethod`, `AddDevToolsMessageObserver`), which needs no debugging port. Agents get a family of `browser.*` methods declared in the existing registry, gated by a new per-pane `browser` right, exposed through `paneflow-mcp` and the `paneflow` CLI. Page content returns to the agent fenced as untrusted text, exactly as terminal output is.
 
-Each workspace has its own clean browser profile. Loopback origins are reachable without a prompt; every other origin needs a per-site decision from the user.
+Each workspace has its own clean browser profile. Loopback origins are reachable without a prompt; in a tab an agent drives, every other origin needs a per-site decision from the user (a tab a person drives opens any site, changed at Arthur's request on 2026-11-25).
 
 The engine ships as a separate runtime archive, signed with the release minisign key, downloaded the first time the user opens a browser tab, and updated independently of the application.
 
@@ -125,7 +127,7 @@ Each limit is one named constant in `paneflow-browser-proto`. The values are ini
 
 | Limit | Initial value | Source |
 |-------|---------------|--------|
-| URL length accepted from an agent | 2048 characters | t3code, `packages/contracts/src/previewAutomation.ts:15-18` |
+| URL length, from an agent, a person or a page | 2097152 characters (2 MiB), shown up to 32768 in the address field | Chromium's `url::kMaxURLChars` and `kMaxURLDisplayChars`, which Helium keeps; changed from t3code's 2048 at Arthur's request on 2026-11-26, since he often gives agents longer URLs |
 | Snapshot text | 32 KiB | A7 |
 | Host idle period before exit | 300 seconds | assumption |
 | DevTools method timeout | 30 seconds | assumption |
@@ -167,7 +169,7 @@ Tracked fixtures live in `crates/paneflow-browser-host/tests/fixtures/` and are 
 - **Screen-reader exposure of page content.** The browser chrome is accessible like any Paneflow control; bridging Chromium's accessibility tree to the platform's assistive API is not in this version.
 - **Element picker to an in-app chat.** Paneflow has no chat surface; agents are terminal programs.
 - **Downloads.** A page-started download is cancelled (US-013); saving files from the browser is not in this version.
-- **DevTools for the human.** No inspector window or "inspect element"; the agent tools are the debugging surface.
+- **DevTools for the agent.** The developer tools docked on F12 (v2.3) are for the human; agents keep the semantic tools (TD-5) and never reach the inspector's session.
 - **Offline or manual runtime install.** The runtime comes from the signed download of US-037 only.
 - **Hardware validation on `aarch64-unknown-linux-gnu`.** The runtime is built for it and shares the Linux code (A14).
 - **Video recording of sessions, viewport emulation presets, tracing.** Not needed to find a defect; t3code and Codex offer them and they can follow.
@@ -497,11 +499,11 @@ A host process that owns Chromium, started on demand, supervised, speaking a ver
 **Dependencies:** Blocked by US-007
 
 **Acceptance Criteria:**
-- [ ] Given the workspace, when `crates/paneflow-browser-proto` is built, then it depends on no CEF crate and no GPUI crate.
-- [ ] Given a window and a host built from different protocol versions, when they handshake, then the connection is refused with an error naming both versions.
-- [ ] Given every command and event type, when it is serialised and deserialised in a unit test, then the value is unchanged.
-- [ ] Given a frame larger than the maximum message size the crate declares, when it is decoded, then decoding fails without allocating the declared length.
-- [ ] Given `src-app` and every workspace crate, when a guard test scans their manifests, then none names the `cef` crate.
+- [x] Given the workspace, when `crates/paneflow-browser-proto` is built, then it depends on no CEF crate and no GPUI crate.
+- [x] Given a window and a host built from different protocol versions, when they handshake, then the connection is refused with an error naming both versions.
+- [x] Given every command and event type, when it is serialised and deserialised in a unit test, then the value is unchanged.
+- [x] Given a frame larger than the maximum message size the crate declares, when it is decoded, then decoding fails without allocating the declared length.
+- [x] Given `src-app` and every workspace crate, when a guard test scans their manifests, then none names the `cef` crate.
 
 #### US-009: Build the host crate outside the workspace
 **Description:** As a maintainer, I want the host to build from its own manifest with its own CI job so that the workspace gates do not download Chromium.
@@ -510,12 +512,12 @@ A host process that owns Chromium, started on demand, supervised, speaking a ver
 **Dependencies:** Blocked by US-008
 
 **Acceptance Criteria:**
-- [ ] Given the root `Cargo.toml`, when `cargo metadata` runs, then `crates/paneflow-browser-host` is not a workspace member.
-- [ ] Given a checkout with the CEF archive fetched, when the host manifest is built with `--locked`, then it produces the `paneflow-browser-host` binary.
-- [ ] Given `.github/workflows/run_tests.yml`, when a change touches the host crate or the protocol crate, then a job named for the browser host builds, lints and tests it on Linux x86_64.
-- [ ] Given a checkout with no CEF archive, when the host build starts, then it fails with a message naming `scripts/fetch-cef.sh`.
-- [ ] Given the host crate, when its `tests/fixtures/` directory is listed, then it holds the four tracked fixtures of the "Fixtures" section and a test serves each on loopback.
-- [ ] Given `deny.toml`, when `cargo deny check` runs against the host manifest, then it passes with no new registry or git source allowed.
+- [x] Given the root `Cargo.toml`, when `cargo metadata` runs, then `crates/paneflow-browser-host` is not a workspace member.
+- [x] Given a checkout with the CEF archive fetched, when the host manifest is built with `--locked`, then it produces the `paneflow-browser-host` binary.
+- [x] Given `.github/workflows/run_tests.yml`, when a change touches the host crate or the protocol crate, then a job named for the browser host builds, lints and tests it on Linux x86_64.
+- [x] Given a checkout with no CEF archive, when the host build starts, then it fails with a message naming `scripts/fetch-cef.sh`.
+- [x] Given the host crate, when its `tests/fixtures/` directory is listed, then it holds the four tracked fixtures of the "Fixtures" section and a test serves each on loopback.
+- [x] Given `deny.toml`, when `cargo deny check` runs against the host manifest, then it passes with no new registry or git source allowed.
 
 #### US-010: Supervise the host
 **Description:** As a user, I want the browser engine to start only when I open a tab and to fail without taking my terminals with it.
@@ -524,14 +526,14 @@ A host process that owns Chromium, started on demand, supervised, speaking a ver
 **Dependencies:** Blocked by US-009
 
 **Acceptance Criteria:**
-- [ ] Given an application launch in which no browser tab is opened, when the process tree is listed, then no host process exists.
-- [ ] Given the first tab being opened, when the host starts, then the window connects over an endpoint inside the Paneflow home's runtime directory and the host accepts only its parent process, checked with `paneflow-peer`.
-- [ ] Given a running host, when it is killed, then every tab reports a crashed state through the protocol and every terminal session keeps running.
-- [ ] Given a crashed host, when the user reloads a tab, then a new host starts and the tab loads.
-- [ ] Given the last tab closed, when the host has been idle for the period the protocol crate declares, then the host exits.
-- [ ] Given the window started from inside a Paneflow pane, when it starts the host, then the host's environment carries none of `paneflow_host::env::PANE_CONTEXT_ENV`.
-- [ ] Given the host fails to start, when the window observes it, then the GPUI main thread has not waited on it and the tab shows the failure reason.
-- [ ] Given a debug build, when the host binary is resolved, then it comes from the path in `PANEFLOW_BROWSER_HOST` or, when unset, from the host crate's local build output, and never from an installed application's home.
+- [x] Given an application launch in which no browser tab is opened, when the process tree is listed, then no host process exists.
+- [x] Given the first tab being opened, when the host starts, then the window connects over an endpoint inside the Paneflow home's runtime directory and the host accepts only its parent process, checked with `paneflow-peer`.
+- [x] Given a running host, when it is killed, then every tab reports a crashed state through the protocol and every terminal session keeps running.
+- [x] Given a crashed host, when the user reloads a tab, then a new host starts and the tab loads.
+- [x] Given the last tab closed, when the host has been idle for the period the protocol crate declares, then the host exits.
+- [x] Given the window started from inside a Paneflow pane, when it starts the host, then the host's environment carries none of `paneflow_host::env::PANE_CONTEXT_ENV`.
+- [x] Given the host fails to start, when the window observes it, then the GPUI main thread has not waited on it and the tab shows the failure reason.
+- [x] Given a debug build, when the host binary is resolved, then it comes from the path in `PANEFLOW_BROWSER_HOST` or, when unset, from the host crate's local build output, and never from an installed application's home.
 
 #### US-011: Bridge CDP inside the host
 **Description:** As a maintainer, I want the window to call DevTools methods and receive DevTools events through the protocol so that agent tools need no debugging port.
@@ -540,11 +542,11 @@ A host process that owns Chromium, started on demand, supervised, speaking a ver
 **Dependencies:** Blocked by US-010
 
 **Acceptance Criteria:**
-- [ ] Given a tab on a fixture page, when the window sends a DevTools method through the protocol, then the result returns matched by request id.
-- [ ] Given a fixture page that logs to the console, when the page loads, then the window receives the console event through the protocol.
-- [ ] Given a DevTools method that never answers, when the timeout the protocol crate declares elapses, then the caller receives a timeout error and the host stays responsive.
-- [ ] Given a running host, when its command line and its listening sockets are inspected in a test, then no remote-debugging flag and no DevTools TCP endpoint is present.
-- [ ] Given a method sent for a tab that has closed, when the host handles it, then the caller receives an error naming the tab as closed.
+- [x] Given a tab on a fixture page, when the window sends a DevTools method through the protocol, then the result returns matched by request id.
+- [x] Given a fixture page that logs to the console, when the page loads, then the window receives the console event through the protocol.
+- [x] Given a DevTools method that never answers, when the timeout the protocol crate declares elapses, then the caller receives a timeout error and the host stays responsive.
+- [x] Given a running host, when its command line and its listening sockets are inspected in a test, then no remote-debugging flag and no DevTools TCP endpoint is present.
+- [x] Given a method sent for a tab that has closed, when the host handles it, then the caller receives an error naming the tab as closed.
 
 #### US-012: Keep one profile per workspace
 **Description:** As a user, I want each workspace to have its own cookies and storage so that test accounts of one project never appear in another.
@@ -553,11 +555,11 @@ A host process that owns Chromium, started on demand, supervised, speaking a ver
 **Dependencies:** Blocked by US-010
 
 **Acceptance Criteria:**
-- [ ] Given two workspaces, when each sets a cookie on the same loopback origin, then neither reads the other's cookie.
-- [ ] Given a workspace profile, when its location is read, then it is under the Paneflow home resolved by `crates/paneflow-home`, never under `dirs::config_dir` or `dirs::cache_dir`.
-- [ ] Given a workspace closed and reopened, when a tab loads the same origin, then the cookie set before is present.
-- [ ] Given a profile directory already locked by another host, when a second host opens it, then the open fails with an error naming the lock.
-- [ ] Given a fresh profile, when its cookie store is read, then it is empty and no file of an installed browser was read to create it.
+- [x] Given two workspaces, when each sets a cookie on the same loopback origin, then neither reads the other's cookie.
+- [x] Given a workspace profile, when its location is read, then it is under the Paneflow home resolved by `crates/paneflow-home`, never under `dirs::config_dir` or `dirs::cache_dir`.
+- [x] Given a workspace closed and reopened, when a tab loads the same origin, then the cookie set before is present.
+- [x] Given a profile directory already locked by another host, when a second host opens it, then the open fails with an error naming the lock.
+- [x] Given a fresh profile, when its cookie store is read, then it is empty and no file of an installed browser was read to create it.
 
 #### US-013: Enforce origins, schemes and permissions in the host
 **Description:** As a user, I want the browser to reach my local servers freely and nothing else without my decision so that a page cannot wander.
@@ -566,12 +568,12 @@ A host process that owns Chromium, started on demand, supervised, speaking a ver
 **Dependencies:** Blocked by US-011
 
 **Acceptance Criteria:**
-- [ ] Given a navigation to an `http` or `https` URL on a loopback address, when no decision exists, then the navigation proceeds.
-- [ ] Given a top-level navigation to an origin that is not loopback and has no decision, when the host sees it, then the navigation is held and a decision request is emitted through the protocol.
-- [ ] Given a navigation to `file:`, `chrome:`, `devtools:`, `view-source:`, `javascript:` or a top-level `data:` URL, when the host sees it, then it is refused with an error naming the scheme.
-- [ ] Given a page that requests camera, microphone, geolocation or notifications, when the host sees the request, then it is denied.
-- [ ] Given a download started by a page, when the host sees it, then the download is cancelled and an event reports it.
-- [ ] Given a URL that embeds credentials, when it is submitted for navigation, then it is refused.
+- [x] Given a navigation to an `http` or `https` URL on a loopback address, when no decision exists, then the navigation proceeds.
+- [x] Given a top-level navigation to an origin that is not loopback and has no decision, in a tab opened guarded (every tab an agent drives), when the host sees it, then the navigation is held and a decision request is emitted through the protocol. A tab a person drives is opened unguarded and loads any origin, in frames too; every other tab, an unclaimed one included, stays guarded. Only a person taking a tab over lifts its guard, and a site it was holding is then dropped and reported, never loaded (changed at Arthur's request on 2026-11-25, `a_tab_a_person_drives_opens_a_public_origin_and_frames_it_without_a_decision`).
+- [x] Given a navigation to `file:`, `chrome:`, `devtools:`, `view-source:`, `javascript:` or a top-level `data:` URL, when the host sees it, then it is refused with an error naming the scheme.
+- [x] Given a page that requests camera, microphone, geolocation or notifications, when the host sees the request, then it is denied.
+- [x] Given a download started by a page, when the host sees it, then the download is cancelled and an event reports it.
+- [x] Given a URL that embeds credentials, when it is submitted for navigation, then it is refused.
 
 ---
 
@@ -588,11 +590,11 @@ The `browser.*` methods, their right, their approvals, and their MCP and CLI ent
 **Dependencies:** Blocked by US-011
 
 **Acceptance Criteria:**
-- [ ] Given `crates/paneflow-api`, when the method list is read, then each method of "The browser API" is one `Descriptor` owned by the window, and no other `browser.*` method exists.
-- [ ] Given the rights of a pane grant, when they are listed, then `browser` appears beside `write`, `spawn` and `layout`.
-- [ ] Given a caller with no `browser` right, when it calls any `browser.*` method, then `authorize` refuses it and the decision is a row of `decision_table.txt`.
-- [ ] Given the regenerated `protocol/api-v1.json`, when it is compared with the registry, then every `browser.*` method and its schema is present.
-- [ ] Given a caller whose identity cannot be established, when it calls a `browser.*` method, then the call is refused before reaching the host.
+- [x] Given `crates/paneflow-api`, when the method list is read, then each method of "The browser API" is one `Descriptor` owned by the window, and no other `browser.*` method exists.
+- [x] Given the rights of a pane grant, when they are listed, then `browser` appears beside `write`, `spawn` and `layout`.
+- [x] Given a caller with no `browser` right, when it calls any `browser.*` method, then `authorize` refuses it and the decision is a row of `decision_table.txt`.
+- [x] Given the regenerated `protocol/api-v1.json`, when it is compared with the registry, then every `browser.*` method and its schema is present.
+- [x] Given a caller whose identity cannot be established, when it calls a `browser.*` method, then the call is refused before reaching the host.
 
 #### US-015: Open, list, navigate and close tabs with an owner
 **Description:** As an agent, I want to open a tab on my workspace's server and know which tabs are mine so that I never act on a page the human is using.
@@ -601,13 +603,13 @@ The `browser.*` methods, their right, their approvals, and their MCP and CLI ent
 **Dependencies:** Blocked by US-014
 
 **Acceptance Criteria:**
-- [ ] Given an agent with the right, when it calls `browser.open` with a loopback URL, then a tab opens in its workspace's profile, owned by that agent's session, and its id is returned.
-- [ ] Given tabs owned by the agent, by the human and by another agent, when the agent calls `browser.list`, then each tab is listed with its owner and only the agent's own tabs are marked drivable.
-- [ ] Given a tab owned by the human, when an agent calls `browser.navigate` on it, then the call is refused with an error naming the owner.
-- [ ] Given an agent-owned tab, when the agent calls `browser.navigate`, `browser.reload`, `browser.back` or `browser.close`, then the tab does so and the result reports the final URL.
-- [ ] Given a URL longer than the limit the API declares or with a scheme other than `http` or `https`, when it is submitted, then the call is refused without reaching the host.
-- [ ] Given an agent session that ends, when its tabs are listed afterwards, then they are reported as unclaimed.
-- [ ] Given an unclaimed tab, when an agent with the right calls `browser.claim`, then the tab is owned by that agent's session; given a tab owned by someone else, then the call is refused naming the owner.
+- [x] Given an agent with the right, when it calls `browser.open` with a loopback URL, then a tab opens in its workspace's profile, owned by that agent's session, and its id is returned.
+- [x] Given tabs owned by the agent, by the human and by another agent, when the agent calls `browser.list`, then each tab is listed with its owner and only the agent's own tabs are marked drivable.
+- [x] Given a tab owned by the human, when an agent calls `browser.navigate` on it, then the call is refused with an error naming the owner.
+- [x] Given an agent-owned tab, when the agent calls `browser.navigate`, `browser.reload`, `browser.back` or `browser.close`, then the tab does so and the result reports the final URL.
+- [x] Given a URL longer than the limit the API declares or with a scheme other than `http` or `https`, when it is submitted, then the call is refused without reaching the host.
+- [x] Given an agent session that ends, when its tabs are listed afterwards, then they are reported as unclaimed.
+- [x] Given an unclaimed tab, when an agent with the right calls `browser.claim`, then the tab is owned by that agent's session; given a tab owned by someone else, then the call is refused naming the owner.
 
 #### US-016: Return one grouped snapshot
 **Description:** As an agent, I want one call that tells me what the page shows and what went wrong so that I do not spend turns assembling it.
@@ -616,12 +618,12 @@ The `browser.*` methods, their right, their approvals, and their MCP and CLI ent
 **Dependencies:** Blocked by US-015
 
 **Acceptance Criteria:**
-- [ ] Given a loaded tab, when the agent calls `browser.snapshot`, then the result carries the URL and title, the accessibility tree in the text form of "The browser API", and the console and network entries recorded since the previous snapshot.
-- [ ] Given a page whose snapshot exceeds the bound of A7, when the snapshot is returned, then it is truncated at the bound and states how much was dropped.
-- [ ] Given a snapshot, when it reaches the agent through MCP, then all page-derived text is inside one `wrap_untrusted` block whose header carries `source="browser"`.
-- [ ] Given a password field with a value, when the snapshot is taken, then the value is absent from the result.
-- [ ] Given a tab that is still loading, when `browser.snapshot` is called, then the result says so and returns what exists.
-- [ ] Given a tab that is not displayed in any pane or dock, when `browser.snapshot` is called, then the result is the same as for a displayed tab.
+- [x] Given a loaded tab, when the agent calls `browser.snapshot`, then the result carries the URL and title, the accessibility tree in the text form of "The browser API", and the console and network entries recorded since the previous snapshot.
+- [x] Given a page whose snapshot exceeds the bound of A7, when the snapshot is returned, then it is truncated at the bound and states how much was dropped.
+- [x] Given a snapshot, when it reaches the agent through MCP, then all page-derived text is inside one `wrap_untrusted` block whose header carries `source="browser"`.
+- [x] Given a password field with a value, when the snapshot is taken, then the value is absent from the result.
+- [x] Given a tab that is still loading, when `browser.snapshot` is called, then the result says so and returns what exists.
+- [x] Given a tab that is not displayed in any pane or dock, when `browser.snapshot` is called, then the result is the same as for a displayed tab.
 
 #### US-017: Act on elements by reference and wait for conditions
 **Description:** As an agent, I want to click, type and wait using the references of the snapshot so that my actions hit what I saw.
@@ -630,11 +632,11 @@ The `browser.*` methods, their right, their approvals, and their MCP and CLI ent
 **Dependencies:** Blocked by US-016
 
 **Acceptance Criteria:**
-- [ ] Given a reference from the latest snapshot, when the agent calls `browser.act` with click, type, press, hover, select or scroll, then the action is applied to that element and the result reports whether a navigation followed.
-- [ ] Given a reference from a snapshot taken before a navigation, when it is used, then the call fails with an error saying the reference is stale and a new snapshot is needed.
-- [ ] Given a reference to an element that is hidden or disabled, when a click is requested, then the call fails naming the reason.
-- [ ] Given `browser.wait_for` with a text, a reference or a network-idle condition, when the condition holds before the timeout, then the call returns; when it does not, the call returns a timeout error stating what was awaited.
-- [ ] Given a JavaScript dialog opened by the action, when the result returns, then it reports the dialog and its message as fenced text, and the dialog is dismissed.
+- [x] Given a reference from the latest snapshot, when the agent calls `browser.act` with click, type, press, hover, select or scroll, then the action is applied to that element and the result reports whether a navigation followed.
+- [x] Given a reference from a snapshot taken before a navigation, when it is used, then the call fails with an error saying the reference is stale and a new snapshot is needed.
+- [x] Given a reference to an element that is hidden or disabled, when a click is requested, then the call fails naming the reason.
+- [x] Given `browser.wait_for` with a text, a reference or a network-idle condition, when the condition holds before the timeout, then the call returns; when it does not, the call returns a timeout error stating what was awaited.
+- [x] Given a JavaScript dialog opened by the action, when the result returns, then it reports the dialog and its message as fenced text, and the dialog is dismissed.
 
 #### US-018: Read console, network and a screenshot on demand
 **Description:** As an agent, I want to page through console and network history and get an image when text is not enough.
@@ -643,11 +645,11 @@ The `browser.*` methods, their right, their approvals, and their MCP and CLI ent
 **Dependencies:** Blocked by US-016
 
 **Acceptance Criteria:**
-- [ ] Given a tab with console history, when the agent calls `browser.console` with a cursor, then entries after the cursor are returned with level, text and source location, and a new cursor.
-- [ ] Given a tab with network history, when the agent calls `browser.network`, then each entry carries method, URL, status, resource type and failure reason, and no request or response body.
-- [ ] Given more entries than the per-tab buffer holds, when history is read, then the result states that older entries were dropped.
-- [ ] Given `browser.screenshot`, when it is called on an agent-owned tab, then a PNG of the viewport is returned at the tab's device scale factor.
-- [ ] Given a request header named `Authorization` or `Cookie`, when network entries are returned, then its value is absent.
+- [x] Given a tab with console history, when the agent calls `browser.console` with a cursor, then entries after the cursor are returned with level, text and source location, and a new cursor.
+- [x] Given a tab with network history, when the agent calls `browser.network`, then each entry carries method, URL, status, resource type and failure reason, and no request or response body.
+- [x] Given more entries than the per-tab buffer holds, when history is read, then the result states that older entries were dropped.
+- [x] Given `browser.screenshot`, when it is called on an agent-owned tab, then a PNG of the viewport is returned at the tab's device scale factor.
+- [x] Given a request header named `Authorization` or `Cookie`, when network entries are returned, then its value is absent.
 
 #### US-019: Evaluate JavaScript behind an approval
 **Description:** As an agent, I want to run a script in the page when the semantic tools are not enough, and as a user, I want to approve that the first time.
@@ -656,11 +658,11 @@ The `browser.*` methods, their right, their approvals, and their MCP and CLI ent
 **Dependencies:** Blocked by US-017, US-020
 
 **Acceptance Criteria:**
-- [ ] Given an agent that has never been approved for evaluation in this workspace, when it calls `browser.evaluate`, then the call waits on an approval that shows the agent, the origin and the script.
-- [ ] Given the approval granted, when the script runs, then its JSON-serialisable result is returned as fenced text bounded by the snapshot bound.
-- [ ] Given the approval denied, when the call returns, then it carries a refusal and the script did not run.
-- [ ] Given a script that throws, when the call returns, then it carries the exception message as fenced text.
-- [ ] Given a script still running at the timeout the API declares, when the timeout elapses, then the call returns a timeout error.
+- [x] Given an agent that has never been approved for evaluation in this workspace, when it calls `browser.evaluate`, then the call waits on an approval that shows the agent, the origin and the script.
+- [x] Given the approval granted, when the script runs, then its JSON-serialisable result is returned as fenced text bounded by the snapshot bound.
+- [x] Given the approval denied, when the call returns, then it carries a refusal and the script did not run.
+- [x] Given a script that throws, when the call returns, then it carries the exception message as fenced text.
+- [x] Given a script still running at the timeout the API declares, when the timeout elapses, then the call returns a timeout error.
 
 #### US-020: Ask the user before an agent acts on a new site
 **Description:** As a user, I want to decide per site whether an agent may browse it so that a page cannot send my agent elsewhere.
@@ -669,11 +671,11 @@ The `browser.*` methods, their right, their approvals, and their MCP and CLI ent
 **Dependencies:** Blocked by US-015, US-013
 
 **Acceptance Criteria:**
-- [ ] Given an agent-owned tab navigating to an origin that is not loopback and has no decision, when the host holds the navigation, then the approval broker raises a request showing the agent and the origin, with allow once, always allow for this workspace, and deny.
-- [ ] Given "always allow" chosen, when the same agent session or another one in the workspace navigates to that origin, then no request is raised.
-- [ ] Given "deny" chosen, when the call returns, then it carries a refusal naming the origin and the tab stays on its previous page.
-- [ ] Given a pending site approval, when a `browser.*` call or pane input from the requesting agent arrives, then it cannot answer the approval.
-- [ ] Given a redirect from an allowed origin to an undecided one, when the host sees the redirect, then it is held and a request is raised for the new origin.
+- [x] Given an agent-owned tab navigating to an origin that is not loopback and has no decision, when the host holds the navigation, then the approval broker raises a request showing the agent and the origin, with allow once, always allow for this workspace, and deny.
+- [x] Given "always allow" chosen, when the same agent session or another one in the workspace navigates to that origin, then no request is raised.
+- [x] Given "deny" chosen, when the call returns, then it carries a refusal naming the origin and the tab stays on its previous page.
+- [x] Given a pending site approval, when a `browser.*` call or pane input from the requesting agent arrives, then it cannot answer the approval.
+- [x] Given a redirect from an allowed origin to an undecided one, when the host sees the redirect, then it is held and a request is raised for the new origin.
 
 #### US-021: Expose the tools through MCP and the CLI
 **Description:** As an agent, I want the browser methods as MCP tools and CLI verbs so that any coding agent in a pane can use them.
@@ -682,12 +684,12 @@ The `browser.*` methods, their right, their approvals, and their MCP and CLI ent
 **Dependencies:** Blocked by US-016, US-017, US-018
 
 **Acceptance Criteria:**
-- [ ] Given `paneflow-mcp`, when its tool list is read, then it contains one tool per `browser.*` method the agent may call, each described in one sentence that states page content is untrusted.
-- [ ] Given the `paneflow` CLI, when `paneflow browser --help` runs, then it lists a verb per method with an example, and each verb has `--json` output.
-- [ ] Given a browser tool called when no host binary can be resolved, when the call returns, then the error says the browser engine is not installed.
-- [ ] Given `paneflow browser status --json`, when it runs, then it reports through `browser.status` whether a host runs, its runtime version, the sandbox state, and for each tab its owner and presentation path.
-- [ ] Given the release-min build, when `scripts/check-helper-sizes.sh` runs, then `paneflow-mcp` is under its cap.
-- [ ] Given an MCP client scoped to one workspace, when it lists tabs, then tabs of other workspaces are absent.
+- [x] Given `paneflow-mcp`, when its tool list is read, then it contains one tool per `browser.*` method the agent may call, each described in one sentence that states page content is untrusted.
+- [x] Given the `paneflow` CLI, when `paneflow browser --help` runs, then it lists a verb per method with an example, and each verb has `--json` output.
+- [x] Given a browser tool called when no host binary can be resolved, when the call returns, then the error says the browser engine is not installed.
+- [x] Given `paneflow browser status --json`, when it runs, then it reports through `browser.status` whether a host runs, its runtime version, the sandbox state, and for each tab its owner and presentation path.
+- [x] Given the release-min build, when `scripts/check-helper-sizes.sh` runs, then `paneflow-mcp` is under its cap.
+- [x] Given an MCP client scoped to one workspace, when it lists tabs, then tabs of other workspaces are absent.
 
 #### US-022: Prove the loop with a real agent
 **Description:** As Arthur, I want a real agent to find planted defects through the shipped tools so that the control plane is proven end to end.
@@ -696,10 +698,10 @@ The `browser.*` methods, their right, their approvals, and their MCP and CLI ent
 **Dependencies:** Blocked by US-019, US-020, US-021
 
 **Acceptance Criteria:**
-- [ ] Given a debug build on a tagged home and the tracked fixture application, when an agent in a pane is asked to check the page, then it reports the console error and the failing request using only `browser.*` tools.
-- [ ] Given the same session, when the agent fixes the fixture and checks again, then its second snapshot shows neither defect.
-- [ ] Given the tracked fixture page whose visible text instructs the reader to open an external site, when the agent snapshots it, then no navigation to that site happens without a site approval being raised.
-- [ ] Given the session transcript, when it is reviewed, then every page-derived string reached the agent inside a fence.
+- [x] Given a debug build on a tagged home and the tracked fixture application, when an agent in a pane is asked to check the page, then it reports the console error and the failing request using only `browser.*` tools.
+- [x] Given the same session, when the agent fixes the fixture and checks again, then its second snapshot shows neither defect.
+- [x] Given the tracked fixture page whose visible text instructs the reader to open an external site, when the agent snapshots it, then no navigation to that site happens without a site approval being raised.
+- [x] Given the session transcript, when it is reviewed, then every page-derived string reached the agent inside a fence.
 
 ---
 
@@ -716,9 +718,9 @@ A browser tab in the right dock and as a pane, drawn through the CPU path on Lin
 **Dependencies:** Blocked by US-010
 
 **Acceptance Criteria:**
-- [ ] Given the dock's new-tab menu and the pane surface picker, when they are opened, then each offers a browser entry, backed by a `Browser` variant of `DiffDockTab` and of `PaneSurface` whose page area is empty until US-025.
+- [x] Given the dock's new-tab menu and the pane surface picker, when they are opened, then each offers a browser entry, backed by a `Browser` variant of `DiffDockTab` and of `PaneSurface` whose page area is empty until US-025.
 - [ ] Given a workspace whose folder is not a Git repository, when the user opens a browser tab in the dock, then the dock opens and no `git` process is started.
-- [ ] Given a repository workspace with the dock on a browser tab, when the tab is active, then no Git status refresh is triggered by browser activity.
+- [x] Given a repository workspace with the dock on a browser tab, when the tab is active, then no Git status refresh is triggered by browser activity.
 - [ ] Given the dock closed with only browser tabs, when it is reopened, then it shows the browser tab that was active.
 - [ ] Given a workspace with no repository, when the user selects the Changes tab, then the existing empty state is shown and the browser tab stays open on its page.
 
@@ -729,12 +731,12 @@ A browser tab in the right dock and as a pane, drawn through the CPU path on Lin
 **Dependencies:** Blocked by US-025
 
 **Acceptance Criteria:**
-- [ ] Given a browser tab, when it is displayed, then it shows back, forward, reload or stop, an address field and a page area, built from the controls of `src-app/src/settings/kit.rs` and `ui_primitives.rs` with one tooltip per control.
-- [ ] Given a page that is loading, crashed, held for a site decision or refused by policy, when the tab is displayed, then each state has its own visible message stating what happened and the available action.
-- [ ] Given text typed in the address field, when Enter is pressed, then input with a scheme is used as is; input without one that is `localhost`, an IP literal, a `host:port` pair or contains a dot gets `http://` when the host is loopback and `https://` otherwise; any other input is refused with an inline message.
-- [ ] Given no host binary can be resolved, when a browser tab is opened, then the page area states that the browser engine is not installed and no host is started (US-037 later turns this message into the install prompt).
-- [ ] Given `DESIGN.md`, when it is read, then the browser chrome's dimensions and states are documented there.
-- [ ] Given an address that the policy of US-013 refuses, when it is submitted from the address field, then the page area shows the refusal naming the scheme and the previous page stays loaded.
+- [x] Given a browser tab, when it is displayed, then it shows back, forward, reload or stop, an address field and a page area, built from the controls of `src-app/src/settings/kit.rs` and `ui_primitives.rs` with one tooltip per control.
+- [x] Given a page that is loading, crashed, held for a site decision or refused by policy, when the tab is displayed, then each state has its own visible message stating what happened and the available action. Since 2026-11-25 only a tab no person drives can be held: the page stays shown and the strip names the site awaiting approval through the broker, the in-window Allow once / Always allow here / Deny panel being removed at Arthur's request.
+- [x] Given text typed in the address field, when Enter is pressed, then input with a scheme is used as is; input without one that is `localhost`, an IP literal, a `host:port` pair or contains a dot gets `http://` when the host is loopback and `https://` otherwise; any other input opens a search with `browser.search_engine` (changed from a refusal at Arthur's request on 2026-11-25, after Helium), and blank input is refused with an inline message.
+- [x] Given no host binary can be resolved, when a browser tab is opened, then the page area states that the browser engine is not installed and no host is started (US-037 later turns this message into the install prompt).
+- [x] Given `DESIGN.md`, when it is read, then the browser chrome's dimensions and states are documented there.
+- [x] Given an address that the policy of US-013 refuses, when it is submitted from the address field, then the page area shows the refusal naming the scheme and the previous page stays loaded.
 
 #### US-025: Present frames through the CPU path
 **Description:** As a user, I want to see the page so that I can watch what I and the agent do.
@@ -744,12 +746,12 @@ A browser tab in the right dock and as a pane, drawn through the CPU path on Lin
 
 **Acceptance Criteria:**
 - [ ] Given a tab displayed in a pane or the dock, when the host paints, then pixels reach the window through shared memory and are drawn with `paint_image`, clipped to the page area and stacked under Paneflow's popups.
-- [ ] Given the page area resized, when the next frame arrives, then it has the new size and no frame of the old size is stretched to fit.
-- [ ] Given a window scale factor other than 1, when a page is displayed, then the host renders at that device scale factor.
-- [ ] Given a tab that is not displayed, when the host is observed, then it produces no frames for that tab.
-- [ ] Given a frame arriving while the main thread is busy, when it is handled, then only the most recent frame is uploaded and none is queued without bound.
-- [ ] Given the shared-memory segment cannot be created, when the tab is displayed, then the page area shows the failure and the tab stays drivable by agents.
-- [ ] Given the video fixture playing in the dock of a native Wayland window, when the A/B method of TD-17 is run with nine no-browser runs (A15), then the medians are recorded in this PRD, and if the CPU path regresses, the display of browser tabs is off by default while agents keep full control.
+- [x] Given the page area resized, when the next frame arrives, then it has the new size and no frame of the old size is stretched to fit.
+- [x] Given a window scale factor other than 1, when a page is displayed, then the host renders at that device scale factor.
+- [x] Given a tab that is not displayed, when the host is observed, then it produces no frames for that tab.
+- [x] Given a frame arriving while the main thread is busy, when it is handled, then only the most recent frame is uploaded and none is queued without bound.
+- [x] Given the shared-memory segment cannot be created, when the tab is displayed, then the page area shows the failure and the tab stays drivable by agents.
+- [x] Given the video fixture playing in the dock of a native Wayland window, when the A/B method of TD-17 is run with nine runs of the control arm, in which the host plays the same video with its tab not displayed (the Chromium load that agent control keeps whether or not a page is shown), and three runs of the CPU path, then the medians and 99th percentiles are recorded in this PRD; the CPU path regresses when any of its medians exceeds the largest control median or any of its 99th percentiles exceeds the largest control 99th percentile, a rule fixed before the run; and if the CPU path regresses, the display of browser tabs is off by default while agents keep full control. Changed at Arthur's request on 2026-11-25: pages always show, because a person who opens a browser tab wants to see the page; the measured regression stands and is owned by the follow-up that lowers the window's per-redraw cost.
 
 #### US-026: Route input, focus and shortcuts
 **Description:** As a user, I want to click, scroll and type in the page, including with an input method, without losing Paneflow's own shortcuts.
@@ -772,11 +774,11 @@ A browser tab in the right dock and as a pane, drawn through the CPU path on Lin
 **Dependencies:** Blocked by US-026
 
 **Acceptance Criteria:**
-- [ ] Given a `<select>` opened in the page, when its list is shown, then it is drawn adjacent to the control and clipped to the window.
+- [x] Given a `<select>` opened in the page, when its list is shown, then it is drawn adjacent to the control and clipped to the window.
 - [ ] Given a page calling `alert`, `confirm` or `prompt`, when the dialog opens, then it is rendered by Paneflow, names the origin, and the page receives the user's answer.
-- [ ] Given a link that opens a new window, when it is followed, then a new browser tab opens with the same owner and profile, subject to the origin policy.
+- [x] Given a link that opens a new window, when it is followed, then a new browser tab opens with the same owner and profile, subject to the origin policy.
 - [ ] Given a file input clicked by the human, when the picker opens, then it is the platform's file dialog and the page receives only the chosen file.
-- [ ] Given a file input activated by an agent's `browser.act`, when the picker would open, then no dialog opens and the call returns an error saying file selection needs the human.
+- [x] Given a file input activated by an agent's `browser.act`, when the picker would open, then no dialog opens and the call returns an error saying file selection needs the human.
 
 #### US-028: Share a tab between the human and the agent
 **Description:** As a user, I want to see when an agent drives a tab and to take over at any moment.
@@ -798,9 +800,9 @@ A browser tab in the right dock and as a pane, drawn through the CPU path on Lin
 
 **Acceptance Criteria:**
 - [ ] Given a URL in terminal output, when its context menu is opened, then it offers "Open in Paneflow browser" beside the existing external open.
-- [ ] Given the setting `browser.open_local_links` at its default, when a loopback URL is activated, then it opens in the system browser as today.
+- [x] Given the setting `browser.open_local_links` at its default, when a loopback URL is activated, then it opens in the system browser as today.
 - [ ] Given the setting turned on, when a loopback URL is activated from a terminal or from a detected port in the sidebar, then it opens in a browser tab of that workspace's dock.
-- [ ] Given the setting turned on, when a URL that is not loopback is activated, then it opens in the system browser.
+- [x] Given the setting turned on, when a URL that is not loopback is activated, then it opens in the system browser.
 - [ ] Given the runtime is not installed and the setting is on, when a loopback URL is activated, then it opens in the system browser.
 
 #### US-030: Restore tabs without touching the network
@@ -812,8 +814,89 @@ A browser tab in the right dock and as a pane, drawn through the CPU path on Lin
 **Acceptance Criteria:**
 - [ ] Given browser tabs open at quit, when Paneflow restarts, then each tab is restored with its URL, title and owner set to unclaimed.
 - [ ] Given restored tabs, when none has been activated, then no host is running and no request has been sent.
-- [ ] Given a restored tab activated, when it loads, then the origin policy applies as for a new navigation.
-- [ ] Given a `session.json` whose browser entry holds a URL with a refused scheme, when the session is restored, then that tab is dropped and the others are restored.
+- [x] Given a restored tab activated, when it loads, then the origin policy applies as for a new navigation.
+- [x] Given a `session.json` whose browser entry holds a URL with a refused scheme, when the session is restored, then that tab is dropped and the others are restored.
+
+#### EP-004 implementation notes
+
+Recorded 2026-11-25 by the implementation run, for the review.
+
+- **The host runs on Ozone's headless backend.** Under Wayland, Chromium 156 (`RenderWidgetHostViewBase::UpdateScreenInfo`) replaces the device scale factor that CEF reports with the backend's own when the backend supports per-window scaling, so a windowless tab stayed at scale 1 on a scale 2 window. The headless and X11 backends keep the reported factor, and only headless needs no display, so `--ozone-platform=headless` is always passed (approved by Arthur). The GPU path of EP-005 must therefore import from a host that has no Wayland or X11 connection, or bring this question back.
+- **Site permissions are denied by profile setting, not by a callback.** Under headless, Chromium denies geolocation and notifications before CEF asks, so `PermissionDenied` is no longer emitted for them. Each profile sets geolocation, notifications, camera and microphone to BLOCK once its request context is initialized, and creates no tab before that; a profile that cannot set them refuses its tabs (approved by Arthur).
+- **The terminal had no context menu.** US-029's "beside the existing external open" assumed one. A right click on a URL, when the program has not enabled mouse reporting, now opens a menu with Open link, Open in Paneflow browser and Copy link; no other terminal right-click behavior changed.
+- **US-025 latency A/B, native Wayland window, 2026-11-25.** Measured with `scripts/latency-ab.sh` (method and rule in `bench/README.md`, "Browser latency A/B"; the results are local evidence under `target/latency-ab/`). Development desktop, GNOME on Wayland, debug build at `e9b8db8e` plus this epic's uncommitted changes; each run 315 keystrokes; the rule was written into `rule.json` before each campaign's first run.
+  - Campaign 1 (`20261125T130122Z`): **invalid**. The fixture server stopped answering after the eighth run, so the video did not play in runs 9 to 12, and the terminal host of run 1 outlived its run. The script now starts one server per run and checks that it answers, and stops every process of a run's home with SIGTERM then SIGKILL.
+  - Campaign 2 (`20261125T131221Z`): formally **no regression**, but only because control run 7 had a median of 22.352 ms against 3.659 to 3.762 ms for the other eight, which lifted the reference to 22.352 ms and 39.621 ms. The CPU runs had medians of 3.503 to 3.532 ms and 99th percentiles of 9.529 to 10.286 ms, against at most 5.900 ms for the other control runs. The run is kept as recorded. A profile then showed the worker's first-start import of the agents' history (thread `paneflow-usage-import`, about three times the CPU of the window's main thread) running in every run, because every run had a fresh home; runs now copy one usage ledger imported before the first run. The rule gained a validity criterion before campaign 3: a run whose median exceeds 1.5 times the median of its arm's run medians invalidates the campaign.
+  - Between campaigns 2 and 3 the dock's browser view became a cached view, as in panes. It did not change the window's redraws (66 to 70 root renders per second while the page plays, 44 to 47 in the control arm), because GPUI renders the root view on every redraw. A frame-pointer profile of a CPU run attributes 49.6 % of the main thread's samples in the typing window to `Window::draw`, spread over GPUI's prepaint and paint, with the root view's own render at 4.5 % and frame uploads at 4.2 %: no single avoidable cost.
+  - Campaign 3 (`20261125T135816Z`, seed 2026112503): **valid, the CPU path regresses.** Control medians 3.526 to 3.595 ms, 99th percentiles 4.662 to 5.840 ms. CPU medians 3.044 to 3.086 ms, below every control median, and 99th percentiles 8.640, 8.697 and 9.540 ms, all above 5.840 ms. Video frames decoded per run: 738 or 739 in every run; frames copied to the window: 741 to 747 on the CPU path, 0 in the control arm. Pooled median difference, for information: -0.497 ms (95 % bootstrap interval -0.515 to -0.469).
+  - Consequence, as the criterion requires: **page display is off by default** (`browser.display`, default `false`). A browser tab then shows "Page display is off" with Show pages; the palette's Show browser pages toggles it; agents drive every tab whatever the setting. The cost is the redraw of the whole window at the page's frame rate, which any animation in Paneflow's window pays today; a follow-up should lower the per-redraw cost of the window, after which the default can be measured again with the same script.
+- **`browser.open_local_links`** is documented in the site's schema reference (six languages) and in the `docs/user` mirror with the same text.
+
+#### EP-004 review
+
+Reviewed 2026-11-25 (tier deep) against the working tree on `e9b8db8e`. A ticked criterion is proven by a test through its entry point or by the recorded measurement; an unticked one waits for the manual pass of the Definition of Done, because its proof is a window observation (GPUI input, focus, the platform dialogs, a restart) that no test reaches.
+
+Defects found and fixed in the review:
+
+- **A refused address typed in a tab that already showed a page was dropped without a word** (US-024). The window sent it to the host, which answered with an error nobody read, so no refusal appeared. The address is now classified by the host's own policy before anything is sent, and the refusal names the scheme above the page, which stays as it was (`browser/address.rs`, `refusal`).
+- **Clicks, keys, wheel and IME text reached a page that was not shown** (US-026, US-028). The state panels (Page display is off, the site decision, the crash, the presentation failure) covered the page without stopping input, so a click on one of them, the "Show pages" button included, took the tab from its agent and clicked at the same spot in the hidden page. Only a displayed page takes input now (`PageState::takes_input`).
+- **Closing a browser pane left its page running in the host.** Only the dock closed its tab. A released view now closes a tab the human or no one owns; an agent's tab keeps running for the agent and stays in Browser tabs (US-028).
+- **Every DevTools event of every tab re-rendered the whole window**, displayed or not. A view now ignores a change that leaves its tab unchanged, and the change signals of one tab are coalesced until the window has taken them, like frames. The latency campaigns above ran before this change and it was not measured; the verdict and the default stand until the same script is run again.
+
+Arthur's first manual pass (2026-11-25, native Wayland, `~/.paneflow-dev`) found three defects. Their causes, checked against the code and against t3code and Zeron, and the fixes:
+
+- **The tab stayed on `about:blank` and Show pages gave a white page.** The host creates every tab on `about:blank`, then starts the requested navigation; an address outside loopback is held for a decision. The placeholder's own load events arrived after the hold and cleared it in the window, so the decision prompt never showed, the title read `about:blank`, and the page shown was the blank placeholder. The host now reports none of the placeholder's page events when the tab was opened on another address (`Host::page_event`), and the window never shows `about:blank` as a title or an address, as t3code and Zeron do not. Test: `policy::a_tab_opened_on_a_public_origin_reports_only_the_held_site_until_it_is_decided` (red before the fix). Typing paneflow.dev now asks "Allow this page to open https://paneflow.dev?"; Allow once loads it.
+- **Pages with no declared background were painted transparent.** CEF's windowless browser enables transparent painting when `background_color` is left at 0 (`cef_types.h`); t3code sets an opaque white base for the same reason. The host now sets opaque white. Test: `surface::a_page_without_a_background_is_painted_on_opaque_white` (corner `[0, 0, 0, 0]` before the fix).
+- **The address text was near black on the dark well.** The view set no text color, so the field inherited GPUI's default; the view now uses the primary ink.
+- **Show pages sat to the right of the message.** The action row was a sibling of the centered column in a row layout; every state's actions are now stacked under the message, 8px below it.
+
+Found while checking these paths:
+
+- Turning page display off did not redraw a cached browser view, which kept its last frame instead of "Page display is off".
+- The page area was white before the first frame and around a resized frame; it now takes the frame's top-left pixel, as Zeron does, and the surface color before any frame.
+- The held-site prompt said the page wanted to leave the local servers when the human had typed the address; it now says the address is outside them.
+
+Added after the manual pass, at Arthur's request: the address field reproduces Helium's location bar and its loading line (`src-app/src/browser/loader.rs`, DESIGN.md "Browser tab"). The host forwards CEF's load progress as a new `load_progress` event (protocol version 3), the control layer keeps it per tab in thousandths, and the field shows the site icon, the host and the rest of the address at rest, and the whole address selected on a click. The "Loading <host>" strip line is gone, since the loading line and Stop carry it. Checked in a nested headless sway against a page whose images take 8 to 30 s: the line at the field's bottom edge measured (49,116,179) on the (44,44,44) fill, the accent at 64% as in Helium, present from the first load and gone once the page loaded. Helium's Screen blend for the glow has no GPUI equivalent and is blended normally.
+
+Back led to a blank page after the human allowed a held site, or after an agent's `browser.open`: the host creates every browser on `about:blank`, and that page became the first history entry whenever it finished loading before the real navigation (the held decision, or the agent's navigate after waiting for the blank load). Chromium treats a new tab's first document as an initial entry that the first navigation replaces; the host now does the same: the first real load of a tab whose only committed page is the blank one runs as `location.replace`, and an open on `about:blank` no longer loads it a second time (`a_tab_opened_on_a_public_origin_reports_only_the_held_site_until_it_is_decided` asserts one history entry, `the_first_page_after_a_blank_start_replaces_it_in_the_history` and `going_back_reloads_the_previous_page_and_never_reaches_the_blank_placeholder` cover the agent path and Back).
+
+A failed load kept its strip line after the next page loaded: the view showed the control layer's `last_failure`, which is never cleared because agents read it. The view now shows a failure or a refused navigation only until the next navigation starts (`a_load_failure_is_shown_until_the_next_navigation_starts`); the error page CEF commits after a failure sends no `LoadStarted`, so the line stays on it.
+
+Added at Arthur's request, after Helium's omnibox: typing in the address field suggests pages (`src-app/src/browser/omnibox/`, DESIGN.md "Browser tab"). Text that is not an address now offers a search with `browser.search_engine` (DuckDuckGo by default, as in Helium) instead of being refused; nothing reaches the engine before Enter, and its site is held for a decision like any other. Sources: a shared browsing history of human-opened pages, ranked like Chromium's history providers (word-start matches, typed and visit counts, recency), with inline completion of a known site; and the dev servers the window detected, which complete inline from `localhost`. Remote engine suggestions and agent pages were left out on purpose. Checked in a nested labwc session: "verc" completed to `vercel.com/strive-x` over the seeded history with the list measured against Helium's (panel 63 against 61, selected row 79 against 79, rows 28px), and "local" completed to the `python3 -m http.server 5173` started in the terminal.
+
+Removed at Arthur's request on 2026-11-25: the in-window "Allow this page to open <site>?" panel. A tab a person drives no longer holds any site; the guard now follows the tab's owner (protocol version 4: `OpenTab.guarded` and a `Guard` command the control layer fires when a person takes a tab over or hands it to an agent). The guard fails closed: a tab an agent leaves becomes unclaimed and stays guarded, and lifting the guard drops a held site instead of loading it, so an agent cannot get an unapproved address opened by navigating and then exiting (raised by an automated security review of the first version, which released it). Every held site now goes to the approval broker and shows as a strip line over the page. Control test `only_a_tab_a_person_drives_opens_a_site_outside_the_local_servers_without_a_decision`, host test `a_tab_a_person_drives_opens_a_public_origin_and_frames_it_without_a_decision`.
+
+Added at Arthur's request on 2026-11-25, after Zeron's Browsing settings: a Browser page in Settings (DESIGN.md 5.5) with Open local links in Paneflow, the search engine (now with a custom search address, `browser.custom_search`), the default page zoom (`browser.default_zoom`) and the sites zoomed on their own, Keep history (`browser.keep_history`) and Clear history by time range. Page zoom is new in the browser: protocol version 5 adds a `Zoom` command the host applies with CEF's `SetZoomLevel` (Chromium's logarithmic level, base 1.2), and the text size keys zoom a browser tab, the site keeping its zoom in `~/.paneflow/browser/zoom.json`. The history and zoom files share one store (`src-app/src/browser/kept.rs`) that replays edits made before the file loaded, so a clear made early is not undone by the file. Left out: Zeron's Developer section (inspecting pages needs a DevTools window the windowless engine does not give) and its History page listing visits. Tests: `the_zoom_keys_give_the_site_its_own_zoom_and_reset_brings_the_default_back`, `edits_made_before_the_file_loaded_are_replayed_on_it_in_order`, `page_zoom_steps_through_the_browser_levels_and_ignores_an_unknown_default`, `a_zoom_percent_becomes_chromiums_logarithmic_zoom_level`, `the_zoom_is_sent_again_for_each_page_that_starts_or_arrives` (a zoom sent while a restored tab still sat on its blank start page was lost at the real page's commit; found in the nested labwc check, where a site seeded at 150 % then showed at 150 %, its percentage reset it to 100 %, and the settings page saved a custom search address, flagged one without `%s`, and cleared the history).
+
+Removed at Arthur's request on 2026-11-25: `browser.display`, its "Page display is off" panel, the palette's Show browser pages and the settings row. A person who opens a browser tab wants to see the page, so pages always show; a config that still sets `display` loads and ignores it. This reverses the default US-025's latency criterion set: while a page animates, the terminal's 99th percentile keystroke latency on a native Wayland window rises from at most 5.840 ms to 8.640 to 9.540 ms (campaign 3 above), and that cost is now paid whenever a page plays. Owner: the follow-up that lowers the window's per-redraw cost (half of the main thread's time while typing goes to `Window::draw`), to be measured again with `scripts/latency-ab.sh`. Also changed: `browser.open_local_links` now defaults to on, so a localhost link from a terminal or the sidebar opens in Paneflow's browser.
+
+Added at Arthur's request on 2026-11-25, after Helium: Site information behind the address field's site icon (DESIGN.md, Browser surfaces). Helium's source holds only patches over Chromium, so its Page Info bubble was rebuilt natively rather than copied. Protocol version 6 adds a `Security` command: the host reads the visible navigation entry's `SSLStatus` (secure connection, certificate status, insecure content, TLS version) and its X.509 certificate (subject, issuer, validity) and answers `SiteSecurity`. Cookies and storage come from the tab's DevTools (`Network.getCookies`, `Storage.getUsageAndQuota`, `Storage.clearDataForOrigin`, `Network.deleteCookies`), and the control layer now keeps the permissions it refused per origin (`TabView::blocked`, 16 per tab). Tests: `a_page_served_over_plain_http_reports_no_secure_connection_and_no_certificate` (host, real CEF), `a_certificate_error_outranks_mixed_content_and_clean_content_is_secure`, `a_chromium_time_converts_to_unix_seconds`, `each_permission_a_site_was_refused_is_kept_once_and_the_oldest_leave_first`, `the_standing_follows_the_engine_and_falls_back_to_the_scheme_until_it_answers`, `cookies_and_storage_read_from_devtools_and_summarize_in_words`. Checked in the nested labwc session: wikipedia.org showed Connection is secure with its Let's Encrypt certificate and TLS 1.3, its 5 cookies were deleted, `localhost` showed Local server, and Browser settings opened the Browser page. Permissions stay blocked: letting a site use the camera or the location would be a policy change, not part of this panel.
+
+Added at Arthur's request on 2026-11-25, after Zeron: the address field's Pointer button opens a menu with Annotate elements and Hand to agent (DESIGN.md, Browser tab). Annotate elements runs Zeron's element picker, ported to `src-app/src/browser/annotate/annotator.js` (MIT, THIRD_PARTY_NOTICES.md), in an isolated world created over DevTools (`Runtime.enable`, `Runtime.addBinding` with an `executionContextName`, `Page.createIsolatedWorld`), so the page can neither see nor call the binding. The control layer turns `Runtime.bindingCalled` for `__paneflowAnnotate` into `SurfaceEvent::Annotation` and keeps it out of the console; the window accepts a message only from the world it created and with the nonce of the current run. Picks stack as numbered chips in a tray under the strip (24 at most, a hover card with the element's HTML), and Send pastes a `<browser_annotations>` block, page text escaped out of its envelope, into the chosen agent's prompt without submitting it. Tests: `a_binding_bound_to_an_isolated_world_answers_from_it_and_the_page_cannot_see_it`, `a_shift_click_reaches_the_page_as_a_click_with_shift_held`, `escape_as_the_window_sends_it_reaches_the_page_as_the_escape_key` (host, real CEF), `only_the_annotation_binding_reaches_the_window_and_it_never_lands_in_the_console`, `a_pick_from_the_page_is_read_only_with_its_nonce_and_bounded`, `the_prompt_numbers_each_element_and_keeps_page_text_inside_its_envelope`. Checked in the nested labwc session on a local pricing page: a Shift+click and a click picked two elements, numbered on the page and in the tray, the hover card showed `button.btn` and its HTML, Send to Claude Code pasted both annotations into a stand-in agent's prompt and emptied the tray, and Escape ended the mode.
+
+Changed at Arthur's request the same day: the tray and its confirmation are gone. The agent is chosen in the Pointer menu before annotating (Annotate for <agent>, a submenu with several), a click sends the pick straight to its prompt, and Escape sends what Shift+click gathered. The picker also keeps the arrow cursor: Zeron's `cursor: crosshair` asked the cursor theme for a crosshair, and MacTahoe's at 24px is a faint grey cross at 35% to 70% opacity that vanished over the page, in Zeron too. Test: `the_annotator_keeps_the_arrow_over_text_fields_instead_of_a_theme_crosshair` (host, real CEF; it read `Crosshair` before the fix). Checked in the nested labwc session: Shift+click then click, and Shift+click then Escape, each pasted the picks into a stand-in agent with no tray shown.
+
+Added at Arthur's request on 2026-11-26, after Helium: F12 docks Chromium's developer tools on the right of the page (DESIGN.md, Browser tab; `toggle_developer_tools`, `inspect_element`, `show_developer_console` in the Browser key context). CEF's `ShowDevTools` opens a native window even for a windowless browser under the Alloy style, so the tools are a second off-screen browser instead: protocol command `Inspect` (version 7) creates it in the page's profile, the host attaches a flattened DevTools session to the page (`Target.attachToTarget`), loads the bundled frontend after `Page.addScriptToEvaluateOnNewDocument` installs a WebSocket stand-in, and relays each message through a `Runtime.addBinding` binding one way and `on_dev_tools_message` the other (`crates/paneflow-browser-host/src/inspector.rs`); the bridge accepts only its own session and the child sessions it saw attached. The frontend's language is pinned to English through `Emulation.setUserAgentOverride` (its locale bar otherwise offers French), and it draws its menus in its own frame (`setUseSoftMenu`), since an off-screen browser has no native menus. Test: `surface::an_inspector_opens_off_screen_beside_its_page_and_closes_with_it` (frontend loads, English, the overflow menu opens, a second inspector is refused, closing the page closes it; the menu check is red without the soft-menu switch). On Linux and Windows `Ctrl+Shift+J` stays with `jump_next_waiting`, a global default that would shadow it, so `show_developer_console` has a default only on macOS.
+
+Second review, 2026-11-26 (tier deep, working tree on `e9b8db8e` with every addition above). Defects found and fixed:
+
+- **A paint at the size before a resize reached the window** (US-025, and the host CI job). `a_frame_too_large_to_share_is_reported_and_the_tab_stays_drivable` failed once in fifteen runs before the fix: CEF delivered a paint at the default 1280x800 view after the 6000x6000 present, and the host sent it because the tab was displayed. A present that changes the pixel size by more than one pixel now drops paints at the previous view's pixel size until a paint of another size arrives (`present.rs`, `superseded`). Test: `a_paint_at_the_size_before_a_resize_is_dropped_until_the_new_size_arrives`; the host test then passed 20 runs out of 20.
+- **A page opened new tabs without a click** (US-027). `NewWindowRequested` carried CEF's `user_gesture` flag, but the control layer opened every request; under the Alloy style no Chromium popup blocker runs, so a page in a human tab could open any number of unguarded tabs on any http(s) site from a timer. A request without a gesture is now dropped with a console warning. Test: `a_new_window_opens_as_a_tab_with_its_openers_owner_workspace_and_place_only_after_a_click`.
+- **Every URL past 2048 characters was refused** (found in Arthur's manual pass, 2026-11-26). `Host::before_browse` ran the same `classify` as agent commands, so a frame or page Google loaded with a 2241-character address was cancelled and the strip read "Paneflow did not open this address: the URL has 2241 characters". At Arthur's request the limit is now Chromium's own, 2 MiB, for agents, the person and pages alike (Helium patches neither), and the address field shows at most 32 KiB of an address, as Chromium does. Tests: `addresses_past_2048_characters_load_in_frames_pages_and_commands` (host, real CEF; it timed out on the frame before the fix), `a_web_address_is_shown_without_its_scheme_with_the_host_apart`.
+- Hardening: the window computes a frame row with a checked multiplication, so a host announcing a width past `u32::MAX / 4` gets its frame released instead of a debug panic or an oversized allocation (`frames.rs`, `accept`).
+
+Left open (not blocking):
+
+- **A decision for Arthur:** a caller outside every pane (`Principal::External`) is the human for the browser (`browser_methods.rs`, `browser_context`), so since the guard follows the owner its tabs open any site without a decision, and its `browser.evaluate` needs no approval (the latter since EP-003). An agent that leaves its pane's process tree (a double fork reparented to the session's subreaper) reaches both. The same user can read the profile directory anyway; a separate guarded identity for `External` would close the browser side.
+- The DevTools bridge relays any method the frontend sends, `Target.attachToTarget` and `Browser.*` included, on the inspected tab's session (`inspector.rs`, `Bridge::outgoing`). Only the person using the tools drives the frontend, so no page or agent reaches it; filtering the Target and Browser domains is hardening that needs a check against every DevTools panel.
+- The window maps the host's segments without checking their memfd seals, so a compromised host could shrink one and end the window with SIGBUS on the next copy.
+- `docs/user/configuration/schema.md` and `docs/user/keybindings.md` document `search_engine`, `custom_search`, `default_zoom`, `keep_history` and the developer tools keys, but the site repository, which the mirror is synced from, still documents only `open_local_links` and the removed `display` key, with `open_local_links` defaulting to `false`. The next sync reverts the mirror unless the site gets the same text.
+- The owner badge and the Hand to agent menu name the agent (Claude Code), not the session, so two sessions of one agent in a workspace look the same.
+- A dialog from a human-owned tab that no view holds (a tab a human opened from the CLI) waits until a view shows it.
+- An address the human types outside loopback is held for a decision like a page's navigation. t3code loads any site without asking; keeping the prompt follows US-013 and is a decision for Arthur.
+- t3code reloads a crashed page automatically with a backoff; Paneflow shows the crash with Reload (US-024).
+
+Manual pass still to record, on a tagged debug home under native Wayland and under an X11 window: the dock in a folder that is not a repository (no `git` process, the Changes empty state, the active browser tab after reopening the dock); the chrome against `DESIGN.md`; a click on the fixture form's submit button and IME composition with the candidate window at the caret, at scales 1 and 2; Paneflow's shortcuts and focus moving to a terminal with the page focused; the page cursor; the host killed while the page is focused; `alert`, `confirm` and `prompt` rendered by Paneflow with their origin; the platform file dialog; the owner badge, a takeover by click and by typing, Hand to agent, and an undisplayed agent tab shown from Browser tabs; a clicked state panel no longer taking the tab; the link menu and a loopback link opened in the dock from a terminal and from a detected port, and in the system browser when the runtime is missing; a restart with browser tabs restored unclaimed and no host before activation; the popups stacked above the page.
 
 ---
 
@@ -1238,7 +1321,6 @@ Everything that needs Windows, run in one pass on Windows 11 x64 after EP-008. N
 - **Runtime host location.** TD-10 assumes runtime archives are published as assets of GitHub releases in this repository, under their own tags. Whether Arthur wants a separate repository or a CDN for them changes only US-036 and the update check of US-038.
 - **Upstreaming the external-texture seam to Zed.** TD-9 does not depend on it. Whether to propose it, and when, is Arthur's call once US-031 and US-045 exist.
 - **The NO-GO fallback.** If US-007 records NO-GO for the control plane, the alternative is an external Chrome over a pipe (TD-1). That would be a new PRD version, not a story swap.
-- **A3's external-Chrome fallback.** A3 failed for both display paths on a native Wayland window, and its rule sends the display to the external Chrome of TD-1. The EP-001 run rejected that fallback because the diagnostic campaign attributes the regression to the window redrawing at the video's frame rate and to Chromium's own load, both of which a screencast display from an external Chrome would also carry, and moved the decision into latency gates on US-025 and US-035 instead. Arthur ratifies this revision or restores the fallback before EP-004 starts.
 - **Link routing default.** US-029 keeps the system browser as the default for loopback links. Changing the default once the browser has been used for a release is a product decision.
 
 ## Files NOT to Modify
