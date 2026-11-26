@@ -41,7 +41,7 @@
     {
       "id": "EP-005",
       "title": "GPU presentation on Linux",
-      "status": "IN_PROGRESS",
+      "status": "BLOCKED",
       "priority": "P1",
       "stories_total": 13,
       "stories_done": 0
@@ -604,13 +604,13 @@
       "id": "US-063",
       "title": "Compose CPU frames in the subsurface through shared memory",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "blocked_by": [
         "US-058",
         "US-061"
       ],
-      "started_at": null,
+      "started_at": "2026-11-26T16:04:57+01:00",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -618,7 +618,7 @@
       "id": "US-064",
       "title": "Place the page below the window and punch its area",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "blocked_by": [
         "US-058",
@@ -626,7 +626,7 @@
         "US-060",
         "US-063"
       ],
-      "started_at": null,
+      "started_at": "2026-11-26T16:29:55+01:00",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -634,14 +634,14 @@
       "id": "US-065",
       "title": "Measure every path and container against the window's root renders",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P1",
       "blocked_by": [
         "US-062",
         "US-063",
         "US-064"
       ],
-      "started_at": null,
+      "started_at": "2026-11-26T17:08:00+01:00",
       "completed_at": null,
       "reviewed_at": null
     },
@@ -649,7 +649,7 @@
       "id": "US-035",
       "title": "Measure both paths against the terminal",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "BLOCKED",
       "priority": "P1",
       "blocked_by": [
         "US-033",
