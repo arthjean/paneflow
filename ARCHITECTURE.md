@@ -1417,19 +1417,19 @@ host runs a forced `host.shutdown` and stops serving. This covers exit paths
 that run no destructor, such as nextest killing a test at its timeout. The
 desktop and `paneflow host start` keep `HostLifetime::OutlivesCaller`.
 
-| Event | Host | Sessions | Records |
-|---|---|---|---|
-| Quit keeping sessions (the default of the quit dialog), crash or `taskkill /F` | keeps running | keep running | unchanged |
-| Quit with no live session, or "Stop everything and quit" | `host.shutdown` once the stops are done | stopped one by one | removed once every stop is confirmed and saved; the window unbinds each terminal's `session` and `agent` in the worker's layout, which the worker writes to `session.json`, so the layout reopens with a new shell per pane |
-| Controller pipe or CLI connection closes | keeps running | keep running | unchanged |
-| Explicit `session.stop` | keeps running | that session's owned process tree is terminated within a 5 s budget, exit recorded | `lifecycle: exited` |
-| `paneflow host stop` with live sessions | refused, lists them | untouched | unchanged |
-| `paneflow host stop` when idle | exits, removes `instance.json` | none live | manifests kept |
-| Exit of the caller of a `serve --exit-with` host | forced `host.shutdown`, then exits | stopped | those of a forced `host.shutdown` |
-| Host process death or reboot | gone | processes gone | next host marks running records `lost`, never signals them, while a shell that died first under a shutdown is recorded `exited` with a non-zero code; on the next layout restore each non-agent pane in either state comes back with a fresh shell in its cwd, and an agent pane offers its conversation resume |
-| `session.restart` on an exited or lost record | same host | new generation, recorded shell with no arguments, no input or command replay | `generation + 1`, current owner |
-| Incompatible host on the endpoint | left running | untouched | unchanged; the controller reports the mismatch, the pane offers Retry and an explicit "Stop host and restart" |
-| Stop or shutdown that cannot be confirmed (wait failed, descendants unresolved, runtime panic) | keeps running and keeps owning the process | `lifecycle: unverified`, never `exited` | the desktop keeps its window open with Retry / Keep running and quit / Cancel |
+| Event | Host | Sessions | Records | Resume records (OSC 7577) |
+|---|---|---|---|---|
+| Quit keeping sessions (the default of the quit dialog), crash or `taskkill /F` | keeps running | keep running | unchanged | records unchanged; owners keep running and their exit watches stay armed |
+| Quit with no live session, or "Stop everything and quit" | `host.shutdown` once the stops are done | stopped one by one | removed once every stop is confirmed and saved; the window unbinds each terminal's `session` and `agent` in the worker's layout, which the worker writes to `session.json`, so the layout reopens with a new shell per pane | each stopped session's records are discarded with its stop, a `Final` write (TD-06 departure, below); a session that was not live is not stopped, keeps its records until its manifest ages out, and its unbound pane never offers them |
+| Controller pipe or CLI connection closes | keeps running | keep running | unchanged | records unchanged |
+| Explicit `session.stop` | keeps running | that session's owned process tree is terminated within a 5 s budget, exit recorded | `lifecycle: exited` | discarded once the stop is confirmed (`discard_program_resume`, a `Final` write); `session.remove` deletes them with the manifest |
+| `paneflow host stop` with live sessions | refused, lists them | untouched | unchanged | records unchanged |
+| `paneflow host stop` when idle | exits, removes `instance.json` | none live | manifests kept | records unchanged, kept in the manifests |
+| Exit of the caller of a `serve --exit-with` host | forced `host.shutdown`, then exits | stopped | those of a forced `host.shutdown` | kept: a shutdown never discards records, and an owner that dies while the host shuts down keeps its record |
+| Host process death or reboot | gone | processes gone | next host marks running records `lost`, never signals them, while a shell that died first under a shutdown is recorded `exited` with a non-zero code; on the next layout restore each non-agent pane in either state comes back with a fresh shell in its cwd, and an agent pane offers its conversation resume | kept, with any owner that exited less than 2 s before the death; the next restore applies `terminal.program_resume` (ask: banner unless argv[0] is a trusted bare name, auto: restart with `resume`, off: nothing) and the agent rules, and an unsettled attempt is only offered |
+| `session.restart` on an exited or lost record | same host | new generation, recorded shell with no arguments, no input or command replay | `generation + 1`, current owner | a plain restart keeps them for the banner; a restart with `resume { record }` writes a handoff, the attempt becomes `prepared`, and the record moves to the resumed process on `started` |
+| Incompatible host on the endpoint | left running | untouched | unchanged; the controller reports the mismatch, the pane offers Retry and an explicit "Stop host and restart" | records unchanged; "Stop host and restart" is a forced `host.shutdown`, which keeps them |
+| Stop or shutdown that cannot be confirmed (wait failed, descendants unresolved, runtime panic) | keeps running and keeps owning the process | `lifecycle: unverified`, never `exited` | the desktop keeps its window open with Retry / Keep running and quit / Cancel | records unchanged: only a confirmed stop discards them |
 
 Reconnection classification lives in `SessionSummary::reconnection`: `live`,
 `starting`, `exited`, `failed`, `host_replaced` (the record's owner is not the
@@ -1545,6 +1545,138 @@ the branch row of the New pane palette. The model carries only the cwd, so the
 projection probes git off the render thread (`spawn_initial_git_stats`) for each
 workspace it mints from another client's op and for each one whose cwd the
 model moves, as the window's own create paths and session restore do.
+
+### Program resume (OSC 7577)
+
+The host is the terminal side of the
+[Program Resume Protocol](https://www.superlogical.com/rex/docs/build/program-resume)
+(OSC 7577): a program in a pane reports the command that brings it back, and
+after the host dies the next restore can run that command again. The PRD is
+`tasks/prd-program-resume.md`. Every resume, an OSC 7577 record or a catalog
+conversation, goes through one launcher, so no shell ever parses a resumed
+argument.
+
+**Token.** Each spawned generation (create and restart) gets a new token: 32
+bytes from `getrandom`, encoded as 43 characters of unpadded base64url
+(`PaneToken`, `crates/paneflow-host/src/program_resume.rs`). It lives only in
+the runtime's memory and is injected into the spawn command as
+`OSC7577_TOKEN`, never into `spec.env`, so the manifest, whose `launch.env`
+persists, never holds it. An inherited `OSC7577_TOKEN` is on the strip list
+of every pane child (`env.rs`). No token is set when
+`terminal.program_resume.mode` is `off` (read from `paneflow.json` at each
+spawn), for a WSL shell, or on Windows until ConPTY is proven to carry the
+sequence intact (`advertised_on_this_platform`, US-027). The shim removes the
+token from every agent whose runtime does not declare
+`[integration] program_resume = "native"`, which only Pi does
+(`crates/paneflow-shim/src/exec.rs`), so a tool an agent runs cannot schedule
+a command.
+
+**Reception and verification.** The host enables libghostty's
+unknown-sequence callback, capped at 4096 bytes, and hands every OSC 7577
+content to `crates/paneflow-program-resume`, a pure crate: `parse.rs` (strict
+grammar), `verify.rs` (constant-time SHA-256 MAC, a 60 s time window,
+`Ignored` versus `Rejected` in the specification's order), `token.rs`,
+`store.rs` and `display.rs` (the escaped form every displayed command uses).
+A truncated or CAN-cut report is ignored. The guard test
+`runtime.rs::the_pinned_engine_hands_a_signed_osc_7577_report_to_the_unknown_sequence_callback`
+fails the day a libghostty bump implements 7577 and stops reporting it as
+unknown. An accepted report's pid must be alive, run as the host's user and
+sit in the pane's session (Unix) or job object (Windows); the host records its
+start time and its ancestor chain up to the pane's first process
+(`program_resume::admit`). The cwd comes from the report's `cwd`, else the
+owner's directory read from the OS (`/proc/<pid>/cwd`, `PROC_PIDVNODEPATHINFO`),
+else the spawn directory, and the record keeps that source; OSC 7 is never
+read.
+
+**Record store.** `RecordStore` (`store.rs`) keeps at most 16 records per
+session (`MAX_RECORDS`, least recently updated evicted) inside a 24 KiB budget
+of the manifest (`MAX_STORE_BYTES`). It lives in the manifest's optional
+`program_resume` field, so older and newer hosts read each other's manifests,
+and the manifest temporary file is created 0600. Each accepted owner is
+watched through a kernel exit notification (pidfd, `EVFILT_PROC`, a
+`SYNCHRONIZE` handle; `OwnerExit` polls the owner's identity only where none
+opens): its record is marked on exit and removed 2 s later (`EXIT_GRACE_MS`),
+so a host that dies inside that window keeps it. Neither mark nor removal runs
+while the host shuts down. A record the launcher's `started` report moved to
+its pid is marked `handed_off`: an accepted report from a descendant of that
+pid replaces it, because the launcher may `exec` a wrapper such as the agent
+shim, which starts the real program as its child. Without that, the program's
+own record would sit under the wrapper's, ancestor preference would keep the
+wrapper's, and a later `clear` (Pi's `/new`) would leave the old command to
+resume. `crates/paneflow-host/src/host/resume.rs` holds the
+host side: ingestion, owner watches, discard, resume planning, the IPC
+methods and settlement.
+
+**Persistence classes.** Every change goes through the persistence service
+(below), never from the PTY or runtime thread. An accepted report, an owner's
+exit mark, its removal and a settlement are `Metadata` writes. The stop
+discard is `Final`. `session.prepare_resume`, `session.discard_resume` and a
+launcher's `started` or `failed` report are `Critical`, so the caller learns
+when a record change is not durable.
+
+**Launcher and handoff.** A restart or create that carries `resume` (a
+`{ record }` or a catalog `{ argv, cwd }`) makes the host write a one-shot
+handoff, `resume-<attempt>.handoff` in the session directory, mode 0600
+(`crates/paneflow-host/src/resume_launch.rs`; format in
+`crates/paneflow-resume-handoff`: `paneflow-resume 1`, the attempt, the cwd
+and its source, one base64 `arg` line per element). bash and zsh receive its
+path in `PANEFLOW_RESUME_HANDOFF`, which their integration copies and unsets
+before the user's startup files; fish in a second `--init-command`;
+PowerShell inside its `-Command` string (`crates/paneflow-launch/src/shell.rs`).
+At the first prompt the integration runs the launcher, the shim named
+`paneflow-resume` (`crates/paneflow-shim/src/resume.rs`): it refuses a handoff
+that is not a regular 0600 file of the user (exit 126), reads and deletes it,
+enters the cwd, resolves argv[0] on the shell's `PATH` (exit 127 when
+missing), and on Unix `exec`s the program with every argument unchanged; on
+Windows it spawns and waits. A shell without integration (cmd, nushell,
+`shell_integration: false`) cannot run it, so its record is blocked
+`shell_unsupported` and its catalog conversation keeps the typed command.
+
+**Attempt states.** The launcher reports through `paneflow-ai-hook
+resume-attempt` (`crates/paneflow-ai-hook/src/resume_attempt.rs`), which calls
+`session.resume_attempt` as a `Pane` principal of the same session. The
+attempt is `prepared` when the host writes the handoff, `started` when the
+launcher reports the program's pid (the host reads its start time itself and
+hands the record to it), `settled` when that owner or one of its descendants
+sends a new accepted report, or the first `session.input` arrives, `failed` with `not_found`,
+`not_executable`, `cwd_missing` or `handoff_invalid` (the record is dropped,
+except `cwd_missing`, which keeps it blocked), or `refused` with a reason
+(`unsettled`, `unknown_record`, `launcher_missing`, `shell_unsupported`, ...)
+while the pane still gets a plain shell. A record whose attempt never settled
+is never resumed automatically again, so a program that crashes the host
+cannot loop. `SessionSummary` carries `resume_candidate` (record, argv, cwd,
+`settled`, `blocked`) and `resume_attempt`; `paneflow-host session inspect`
+prints both.
+
+**Desktop.** `src-app/src/terminal/program_resume.rs` turns the candidate of a
+lost session into one `ResumeState` per pane under `terminal.program_resume`
+(`crates/paneflow-config/src/schema/program_resume.rs`: `ask`, `auto`, `off`,
+`trusted_programs`) and, for argv[0] matching an agent alias, under
+`agents.restore_conversations` and the runtime's `[resume] native_argv`
+templates. It follows a prepared attempt with `session.inspect` every 250 ms
+for at most 30 s, off the render thread. `view/program_resume_banner.rs`
+renders the offered, blocked and failed states with the escaped command; its
+Resume button types only the launcher and handoff paths that
+`session.prepare_resume` returns, and Dismiss calls `session.discard_resume`.
+
+**Accepted risks.**
+- **Same-user processes.** Any process of the user can read the manifest, a
+  handoff before the launcher takes it, and a pane child's environment
+  (`/proc/<pid>/environ`), so it can learn a live token, then write a signed
+  report naming a pane process to the pane's terminal device, or edit the
+  manifest of a lost session. The token, the MAC and the pane-session check
+  stop replays, other panes, nested multiplexers and processes outside the
+  pane, not the user's own processes; the protocol's threat model accepts the
+  same, and the 0600 files only keep other users out.
+- **Pi's tools (A4).** Pi keeps the token because it reports natively. The
+  US-024 run observed it absent from a command Pi's bash tool ran (Pi from
+  source at `earendil-works/pi` 390eae46), so Pi removes it today; Paneflow
+  does not enforce that, and a forged Pi record whose argv matches no
+  `native_argv` template only reaches the banner.
+- **"Stop everything and quit" discards records (TD-06).** The specification
+  keeps records when the user quits the application. Paneflow's default quit
+  keeps every program alive, so the explicit stop is read as an intent to end
+  them, and each `session.stop` discards its records (Q2 of the PRD).
 
 ### Persistence service and resource budgets
 
