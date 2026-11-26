@@ -33,10 +33,10 @@
     {
       "id": "EP-004",
       "title": "The browser surface",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 8,
-      "stories_done": 0
+      "stories_done": 8
     },
     {
       "id": "EP-005",
@@ -378,73 +378,73 @@
       "id": "US-023",
       "title": "Open the dock without a Git snapshot",
       "epic": "EP-004",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-010"
       ],
       "started_at": "2026-11-25T12:22:01+01:00",
-      "completed_at": null,
-      "reviewed_at": "2026-11-26T09:10:00+01:00"
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26T11:05:00+01:00"
     },
     {
       "id": "US-024",
       "title": "Add the browser chrome",
       "epic": "EP-004",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-025"
       ],
       "started_at": "2026-11-25T12:22:01+01:00",
-      "completed_at": null,
-      "reviewed_at": "2026-11-26T09:10:00+01:00"
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26T11:05:00+01:00"
     },
     {
       "id": "US-025",
       "title": "Present frames through the CPU path",
       "epic": "EP-004",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-011",
         "US-023"
       ],
       "started_at": "2026-11-25T12:22:01+01:00",
-      "completed_at": null,
-      "reviewed_at": "2026-11-26T09:10:00+01:00"
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26T11:05:00+01:00"
     },
     {
       "id": "US-026",
       "title": "Route input, focus and shortcuts",
       "epic": "EP-004",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-025"
       ],
       "started_at": "2026-11-25T12:22:01+01:00",
-      "completed_at": null,
-      "reviewed_at": "2026-11-26T09:10:00+01:00"
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26T11:05:00+01:00"
     },
     {
       "id": "US-027",
       "title": "Handle web popups, dialogs, new windows and files",
       "epic": "EP-004",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-026"
       ],
       "started_at": "2026-11-25T12:22:01+01:00",
-      "completed_at": null,
-      "reviewed_at": "2026-11-26T09:10:00+01:00"
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26T11:05:00+01:00"
     },
     {
       "id": "US-028",
       "title": "Share a tab between the human and the agent",
       "epic": "EP-004",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "blocked_by": [
         "US-024",
@@ -452,34 +452,34 @@
         "US-015"
       ],
       "started_at": "2026-11-25T12:22:01+01:00",
-      "completed_at": null,
-      "reviewed_at": "2026-11-26T09:10:00+01:00"
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26T11:05:00+01:00"
     },
     {
       "id": "US-029",
       "title": "Open local links in the Paneflow browser",
       "epic": "EP-004",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-024"
       ],
       "started_at": "2026-11-25T12:22:01+01:00",
-      "completed_at": null,
-      "reviewed_at": "2026-11-26T09:10:00+01:00"
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26T11:05:00+01:00"
     },
     {
       "id": "US-030",
       "title": "Restore tabs without touching the network",
       "epic": "EP-004",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "blocked_by": [
         "US-024"
       ],
       "started_at": "2026-11-25T12:22:01+01:00",
-      "completed_at": null,
-      "reviewed_at": "2026-11-26T09:10:00+01:00"
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26T11:05:00+01:00"
     },
     {
       "id": "US-031",

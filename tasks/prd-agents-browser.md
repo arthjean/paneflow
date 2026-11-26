@@ -719,10 +719,10 @@ A browser tab in the right dock and as a pane, drawn through the CPU path on Lin
 
 **Acceptance Criteria:**
 - [x] Given the dock's new-tab menu and the pane surface picker, when they are opened, then each offers a browser entry, backed by a `Browser` variant of `DiffDockTab` and of `PaneSurface` whose page area is empty until US-025.
-- [ ] Given a workspace whose folder is not a Git repository, when the user opens a browser tab in the dock, then the dock opens and no `git` process is started.
+- [x] Given a workspace whose folder is not a Git repository, when the user opens a browser tab in the dock, then the dock opens and no `git` process is started.
 - [x] Given a repository workspace with the dock on a browser tab, when the tab is active, then no Git status refresh is triggered by browser activity.
-- [ ] Given the dock closed with only browser tabs, when it is reopened, then it shows the browser tab that was active.
-- [ ] Given a workspace with no repository, when the user selects the Changes tab, then the existing empty state is shown and the browser tab stays open on its page.
+- [x] Given the dock closed with only browser tabs, when it is reopened, then it shows the browser tab that was active.
+- [x] Given a workspace with no repository, when the user selects the Changes tab, then the existing empty state is shown and the browser tab stays open on its page.
 
 #### US-024: Add the browser chrome
 **Description:** As a user, I want a browser tab with an address bar and navigation buttons that look like the rest of Paneflow.
@@ -745,7 +745,7 @@ A browser tab in the right dock and as a pane, drawn through the CPU path on Lin
 **Dependencies:** Blocked by US-011, US-023
 
 **Acceptance Criteria:**
-- [ ] Given a tab displayed in a pane or the dock, when the host paints, then pixels reach the window through shared memory and are drawn with `paint_image`, clipped to the page area and stacked under Paneflow's popups.
+- [x] Given a tab displayed in a pane or the dock, when the host paints, then pixels reach the window through shared memory and are drawn with `paint_image`, clipped to the page area and stacked under Paneflow's popups.
 - [x] Given the page area resized, when the next frame arrives, then it has the new size and no frame of the old size is stretched to fit.
 - [x] Given a window scale factor other than 1, when a page is displayed, then the host renders at that device scale factor.
 - [x] Given a tab that is not displayed, when the host is observed, then it produces no frames for that tab.
@@ -760,12 +760,12 @@ A browser tab in the right dock and as a pane, drawn through the CPU path on Lin
 **Dependencies:** Blocked by US-025
 
 **Acceptance Criteria:**
-- [ ] Given the page area focused, when the user clicks, drags, scrolls and types, then a click on the fixture form's submit button, at its position in the snapshot, submits the form at scale factors 1 and 2.
-- [ ] Given an input method composing text, when the composition is committed, then the page's field contains the committed text and the candidate window is positioned at the caret.
-- [ ] Given the page area focused, when a Paneflow shortcut for pane focus, tab switching or the command palette is pressed, then Paneflow handles it and the page does not receive it.
-- [ ] Given the page changing the cursor shape, when the pointer is over the page area, then the window shows that cursor and restores its own when the pointer leaves.
-- [ ] Given focus moving from the page to a terminal, when the user types, then no keystroke reaches the page.
-- [ ] Given the host crashes while the page area is focused, when the user types, then the keystrokes are dropped, the tab shows the crashed state and Paneflow's shortcuts still work.
+- [x] Given the page area focused, when the user clicks, drags, scrolls and types, then a click on the fixture form's submit button, at its position in the snapshot, submits the form at scale factors 1 and 2.
+- [x] Given an input method composing text, when the composition is committed, then the page's field contains the committed text and the candidate window is positioned at the caret.
+- [x] Given the page area focused, when a Paneflow shortcut for pane focus, tab switching or the command palette is pressed, then Paneflow handles it and the page does not receive it.
+- [x] Given the page changing the cursor shape, when the pointer is over the page area, then the window shows that cursor and restores its own when the pointer leaves.
+- [x] Given focus moving from the page to a terminal, when the user types, then no keystroke reaches the page.
+- [x] Given the host crashes while the page area is focused, when the user types, then the keystrokes are dropped, the tab shows the crashed state and Paneflow's shortcuts still work.
 
 #### US-027: Handle web popups, dialogs, new windows and files
 **Description:** As a user, I want select menus, alerts, links that open a new window and file pickers to work so that the pages I build are usable.
@@ -775,9 +775,9 @@ A browser tab in the right dock and as a pane, drawn through the CPU path on Lin
 
 **Acceptance Criteria:**
 - [x] Given a `<select>` opened in the page, when its list is shown, then it is drawn adjacent to the control and clipped to the window.
-- [ ] Given a page calling `alert`, `confirm` or `prompt`, when the dialog opens, then it is rendered by Paneflow, names the origin, and the page receives the user's answer.
+- [x] Given a page calling `alert`, `confirm` or `prompt`, when the dialog opens, then it is rendered by Paneflow, names the origin, and the page receives the user's answer.
 - [x] Given a link that opens a new window, when it is followed, then a new browser tab opens with the same owner and profile, subject to the origin policy.
-- [ ] Given a file input clicked by the human, when the picker opens, then it is the platform's file dialog and the page receives only the chosen file.
+- [x] Given a file input clicked by the human, when the picker opens, then it is the platform's file dialog and the page receives only the chosen file.
 - [x] Given a file input activated by an agent's `browser.act`, when the picker would open, then no dialog opens and the call returns an error saying file selection needs the human.
 
 #### US-028: Share a tab between the human and the agent
@@ -787,10 +787,10 @@ A browser tab in the right dock and as a pane, drawn through the CPU path on Lin
 **Dependencies:** Blocked by US-024, US-026, US-015
 
 **Acceptance Criteria:**
-- [ ] Given an agent-owned tab displayed, when the agent acts, then the tab shows which agent session owns it.
-- [ ] Given an agent-owned tab, when the human clicks or types in the page area, then ownership moves to the human and the agent's next `browser.act` is refused with an error naming the takeover.
-- [ ] Given a human-owned tab, when the human chooses "hand to agent" for a session, then that session's calls on the tab succeed.
-- [ ] Given an agent-owned tab that is not displayed anywhere, when the human opens the tab list, then the tab is listed with its owner and can be shown.
+- [x] Given an agent-owned tab displayed, when the agent acts, then the tab shows which agent session owns it.
+- [x] Given an agent-owned tab, when the human clicks or types in the page area, then ownership moves to the human and the agent's next `browser.act` is refused with an error naming the takeover.
+- [x] Given a human-owned tab, when the human chooses "hand to agent" for a session, then that session's calls on the tab succeed.
+- [x] Given an agent-owned tab that is not displayed anywhere, when the human opens the tab list, then the tab is listed with its owner and can be shown.
 
 #### US-029: Open local links in the Paneflow browser
 **Description:** As a user, I want a detected local URL to open beside my terminal when I choose so.
@@ -799,11 +799,11 @@ A browser tab in the right dock and as a pane, drawn through the CPU path on Lin
 **Dependencies:** Blocked by US-024
 
 **Acceptance Criteria:**
-- [ ] Given a URL in terminal output, when its context menu is opened, then it offers "Open in Paneflow browser" beside the existing external open.
-- [x] Given the setting `browser.open_local_links` at its default, when a loopback URL is activated, then it opens in the system browser as today.
-- [ ] Given the setting turned on, when a loopback URL is activated from a terminal or from a detected port in the sidebar, then it opens in a browser tab of that workspace's dock.
+- [x] Given a URL in terminal output, when its context menu is opened, then it offers "Open in Paneflow browser" beside the existing external open.
+- [x] Given the setting `browser.open_local_links` turned off, when a loopback URL is activated, then it opens in the system browser as before the browser existed. The default was off when this story was written; Arthur turned it on on 2026-11-25 (see "Removed at Arthur's request on 2026-11-25" in the EP-004 review).
+- [x] Given the setting turned on, when a loopback URL is activated from a terminal or from a detected port in the sidebar, then it opens in a browser tab of that workspace's dock.
 - [x] Given the setting turned on, when a URL that is not loopback is activated, then it opens in the system browser.
-- [ ] Given the runtime is not installed and the setting is on, when a loopback URL is activated, then it opens in the system browser.
+- [x] Given the runtime is not installed and the setting is on, when a loopback URL is activated, then it opens in the system browser.
 
 #### US-030: Restore tabs without touching the network
 **Description:** As a user, I want my browser tabs back after a restart without every page reloading at once.
@@ -812,8 +812,8 @@ A browser tab in the right dock and as a pane, drawn through the CPU path on Lin
 **Dependencies:** Blocked by US-024
 
 **Acceptance Criteria:**
-- [ ] Given browser tabs open at quit, when Paneflow restarts, then each tab is restored with its URL, title and owner set to unclaimed.
-- [ ] Given restored tabs, when none has been activated, then no host is running and no request has been sent.
+- [x] Given browser tabs open at quit, when Paneflow restarts, then each tab is restored with its URL, title and owner set to unclaimed.
+- [x] Given restored tabs, when none has been activated, then no host is running and no request has been sent.
 - [x] Given a restored tab activated, when it loads, then the origin policy applies as for a new navigation.
 - [x] Given a `session.json` whose browser entry holds a URL with a refused scheme, when the session is restored, then that tab is dropped and the others are restored.
 
@@ -895,8 +895,29 @@ Left open (not blocking):
 - A dialog from a human-owned tab that no view holds (a tab a human opened from the CLI) waits until a view shows it.
 - An address the human types outside loopback is held for a decision like a page's navigation. t3code loads any site without asking; keeping the prompt follows US-013 and is a decision for Arthur.
 - t3code reloads a crashed page automatically with a backoff; Paneflow shows the crash with Reload (US-024).
+- Outside the epic: a URL that the terminal soft-wraps across rows is detected only up to the wrap, so `http://localhost:18751/app.html` split after `app.htm` opened `app.htm`. `terminal/element/hyperlink.rs` is unchanged by the epic and Open link cuts it the same way.
 
-Manual pass still to record, on a tagged debug home under native Wayland and under an X11 window: the dock in a folder that is not a repository (no `git` process, the Changes empty state, the active browser tab after reopening the dock); the chrome against `DESIGN.md`; a click on the fixture form's submit button and IME composition with the candidate window at the caret, at scales 1 and 2; Paneflow's shortcuts and focus moving to a terminal with the page focused; the page cursor; the host killed while the page is focused; `alert`, `confirm` and `prompt` rendered by Paneflow with their origin; the platform file dialog; the owner badge, a takeover by click and by typing, Hand to agent, and an undisplayed agent tab shown from Browser tabs; a clicked state panel no longer taking the tab; the link menu and a loopback link opened in the dock from a terminal and from a detected port, and in the system browser when the runtime is missing; a restart with browser tabs restored unclaimed and no host before activation; the popups stacked above the page.
+Manual pass, 2026-11-26, run by the review on two tagged debug homes against the fixture server (`tests/fixtures`), with a `git` wrapper on the PATH counting every call. X11: Xvfb 1600x1000 with openbox, lavapipe, at scale 1 and at scale 2 (`Xft.dpi: 192`, which is also the 800 by 500 minimum window). Wayland: headless sway 1.12, one output at scale 2, with a virtual pointer and keyboard (wlr-virtual-pointer, virtual-keyboard) driven by a small client written for the pass, `wtype` and `grim`. An agent was a script started as `claude` in a pane, so the window detected Claude Code and its `paneflow browser` calls carried the pane's session. The captures are local evidence, kept outside the repository.
+
+- US-023: opening the dock, the Browser entry and loading the fixture started no `git` process under either display server, while opening Changes started one; Changes showed "Not a Git repository" and the browser tab stayed on its page; the reopened dock showed the browser tab that was active.
+- US-025: the page stayed inside the page area in every capture, and the palette, the dock's new-tab menu, the Browser tabs and Pointer menus, the approval prompt and the tooltips were drawn over it.
+- US-026: a click at the submit button's position in the page (its bounding box centre plus the page origin) submitted the form at scale 1 (X11) and at scale 2 (X11 and Wayland, `devicePixelRatio` 2); a drag selected the heading text and three wheel notches scrolled the page by 360 px. With the page focused, the palette, Escape, pane focus (a toast for no pane in that direction), a new tab and the previous tab were handled by Paneflow and a key logger in the page saw none of them; after a click into a terminal, typed text reached the terminal and not the page; the X cursor was the I-beam over a text field, the arrow over a button and over Paneflow's sidebar, and the I-beam again on return; with the host killed (SIGKILL) while the page was focused, the tab showed the crash with Reload, typed keys reached nothing and the palette still opened. Input methods: under X11, IBus over XIM with Anthy and Intelligent Pinyin composed in the page field (にほんご, then 日本語 after conversion) and Enter committed it (the field read `abc二本`); IBus's GTK panel drew no candidate window in Xvfb, for a GTK 3 entry as well, so a logging IBus panel took its place and recorded the lookup table (11 candidates) at the cursor location the window reported, the end of the composition on the field's bottom line. Under Wayland, an input-method-v2 client written for the pass sent preedit and commit through sway's text-input-v3 relay: the composition showed in the page field, the commit gave `abc日本語`, and its popup surface, which sway places at the text input's cursor rectangle, opened right under the caret and followed the end of the composition.
+- US-027: `alert`, `confirm` and `prompt` were drawn by Paneflow naming `http://127.0.0.1:18751`, and the page received false for Cancel and the typed answer for the prompt; the file input opened the desktop portal's file chooser and the page received only the chosen file.
+- US-028: under both display servers an agent's undisplayed tab was listed in Browser tabs with its owner and shown from there; the tab showed "Claude Code drives this tab"; a click in the page, and on X11 a key typed with the page focused, moved it to the human, and the agent's next `browser act` failed with "the human took over tab 2 in the Paneflow window"; Hand to agent from the Pointer menu gave it back and the agent's click then succeeded. The state panels take no input (`PageState::takes_input`, unit test): keys typed over the crash panel reached nothing.
+- US-029: a right click on a URL in a terminal offered Open link, Open in Paneflow browser and Copy link; with the default setting a Ctrl+click on a loopback URL (X11 and Wayland) and the sidebar's Open Vite entry for a detected port opened a dock tab, and `https://example.com/` went to the system opener; with `PANEFLOW_BROWSER_HOST` pointing at a missing file the dock showed that the engine is not installed, and the loopback link and the detected port both went to the system opener. `xdg-open` and `gio` were stand-ins that only logged, so nothing reached a real browser.
+- US-030: after a restart (X11, then Wayland through Ctrl+Q and Keep sessions running) with the dock closed and a pane browser tab in the background, no browser host ran and the fixture server logged no request; activating a tab loaded it with its URL and title, owner unclaimed; `session.json` held the pane tab's address and title.
+- DESIGN.md delivery gate: Paneflow Dark and Light and Vercel Dark and Light (X11); the material on Wayland with `background_style: "blended"` and the Linux chrome and terminal materials, which sway, offering no blur protocol, renders as the thick veil, the browser chrome unchanged and legible; no compositor under openbox; macOS and Windows by inspection only (the chrome sets no fill of its own and takes the dock's surface; its popups are opaque); `reduce_motion`: the address field's loading line changed 95 pixels between two captures 300 ms apart and none once it was on; the 800 by 500 window with the sidebar hidden and the dock open; a long page title, a long address and the Browser tabs rows truncated without wrapping; disabled back and forward, hover tooltips, loading with Stop loading, the refused scheme, a load error, the denied site, the approval prompt, the crash, the empty tab, the engine not installed, the takeover strip and the owner badge.
+
+Defects found by the manual pass and fixed:
+
+- **The pane's new-tab menu could not add a browser** (US-023). Choosing Browser showed "Maximum tab count reached (8)": the layout model never builds a surface that is not a terminal, so the staged browser was never added. `apply_layout_with` now builds the staged surfaces the model spawns no session for. Pin: `pin_a_browser_chosen_from_a_panes_new_tab_menu_joins_the_pane_as_its_active_tab`.
+- **A pane's browser tab was saved without its title** once the layout was attached to the worker (US-030): `adopt_surface` copied the address but not the name. Pin: `pin_a_browser_tab_in_a_pane_is_saved_with_its_address_and_title`.
+- **An agent's tab chosen from Browser tabs showed nothing when the dock was closed** (US-028): it was added to the closed dock. Showing a tab in the dock now opens it. Pin: `pin_a_browser_tab_shown_from_the_tab_list_opens_the_closed_dock_on_it`.
+- **Opening or closing the dock was recorded only by a later save** (US-030), so a crash or a SIGTERM after closing it restored the dock open and loaded its page at startup (six requests seen under Wayland). Toggling the dock now saves the session. Pin: `pin_closing_a_dock_of_browser_tabs_is_recorded_so_a_crash_does_not_reopen_it`.
+- **The dock cut a page title from the left** (`…ensible in the chrome`) with the address as its tooltip, the rule for file names, while a pane tab keeps the start and shows the full title. A browser tab in the dock now does the same. Test: `a_long_page_title_keeps_its_start_like_a_pane_tab`.
+- **At the minimum window the owner badge left two characters of the address** (DESIGN.md gate, US-028). The badge now shrinks and truncates, with its full text as tooltip, and the address field keeps 120 px.
+
+Verdict, 2026-11-26: EP-004 is DONE. Every criterion of US-023 to US-030 is proven by a test through its entry point or by the manual pass above, and no blocking finding remains. Certifying run after the last change: `cargo fmt --check`; `cargo clippy --workspace --all-targets --locked -- -D warnings`; `cargo nextest run --workspace --locked --profile ci` (6282 passed, 120 skipped); `scripts/check-test-wallclock.sh`; `scripts/check-helper-sizes.sh`; and for `crates/paneflow-browser-host`, fmt, clippy `--all-targets` and nextest (77 passed).
 
 ---
 
@@ -1321,7 +1342,7 @@ Everything that needs Windows, run in one pass on Windows 11 x64 after EP-008. N
 - **Runtime host location.** TD-10 assumes runtime archives are published as assets of GitHub releases in this repository, under their own tags. Whether Arthur wants a separate repository or a CDN for them changes only US-036 and the update check of US-038.
 - **Upstreaming the external-texture seam to Zed.** TD-9 does not depend on it. Whether to propose it, and when, is Arthur's call once US-031 and US-045 exist.
 - **The NO-GO fallback.** If US-007 records NO-GO for the control plane, the alternative is an external Chrome over a pipe (TD-1). That would be a new PRD version, not a story swap.
-- **Link routing default.** US-029 keeps the system browser as the default for loopback links. Changing the default once the browser has been used for a release is a product decision.
+- **Link routing default.** US-029 kept the system browser as the default for loopback links; Arthur turned `browser.open_local_links` on by default on 2026-11-25, before any release, so a loopback link from a terminal or the sidebar opens in the dock unless the setting is turned off.
 
 ## Files NOT to Modify
 
