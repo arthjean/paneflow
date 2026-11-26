@@ -65,8 +65,6 @@ impl PaneFlowApp {
         let terminal = cx.new(|cx| {
             TerminalView::with_cwd_env_and_profile(ws_id, cwd, None, launch.env, profile, cx)
         });
-        cx.subscribe(&terminal, Self::handle_terminal_event)
-            .detach();
         let pane = self.create_pane(terminal.clone(), ws_id, cx);
         let root = LayoutTree::Leaf(pane);
         let opened = self

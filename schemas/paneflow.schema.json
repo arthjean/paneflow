@@ -213,6 +213,40 @@
         }
       }
     },
+    "browser": {
+      "type": ["object", "null"],
+      "description": "The Paneflow browser, the browser tab of the dock and of panes.",
+      "additionalProperties": false,
+      "properties": {
+        "open_local_links": {
+          "type": ["boolean", "null"],
+          "description": "Open a loopback URL activated in a terminal, or a detected port in the sidebar, in a browser tab of the workspace's dock rather than in the system browser. Other URLs, and every URL while the browser engine is not installed, still open in the system browser. Default true.",
+          "default": true
+        },
+        "search_engine": {
+          "type": ["string", "null"],
+          "description": "The search engine the address field offers for text that is not an address. Nothing is sent to it while you type: the query leaves only when you choose the search row. custom searches with custom_search. Default duckduckgo.",
+          "enum": ["duckduckgo", "google", "bing", "brave", "ecosia", "kagi", "startpage", "qwant", "custom", null],
+          "default": "duckduckgo"
+        },
+        "custom_search": {
+          "type": ["string", "null"],
+          "description": "The search address used when search_engine is custom: an http or https address with %s where the words go, after the site (https://example.com/search?q=%s). Until it is usable, DuckDuckGo searches.",
+          "default": null
+        },
+        "default_zoom": {
+          "type": ["integer", "null"],
+          "description": "The zoom, in percent, of a site you have not zoomed yourself. A site zoomed with the zoom keys in a browser tab keeps its own zoom. One of 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300; any other value means 100.",
+          "enum": [50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300, null],
+          "default": 100
+        },
+        "keep_history": {
+          "type": ["boolean", "null"],
+          "description": "Keeps the pages you open in browser tabs, for the address field's suggestions. Off, nothing new is kept; pages already kept stay until cleared. Pages agents open are never kept.",
+          "default": true
+        }
+      }
+    },
     "language_servers": {
       "type": "object",
       "description": "Language servers for semantic highlighting, by server id. rust-analyzer (rs, languageId rust) and zls (zig and zon, languageId zig) are built in; an entry with a built-in id replaces the fields it sets, and any other id adds a server, which needs command, extensions and language_id. Servers come only from PATH or an absolute path written here: Paneflow never downloads one, and a project's own files never configure one. A malformed entry is skipped with a log line.",

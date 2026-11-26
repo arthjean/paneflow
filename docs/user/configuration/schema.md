@@ -79,6 +79,7 @@ JetBrains IDEs, Helix, and other JSON Schema-aware editors:
 | `option_as_meta` | boolean/null | `true` on Linux and Windows, `false` on macOS | Hot reload | Sends Alt/Option as ESC-prefix Meta. On macOS, `true` makes Option plus a letter send Meta instead of composing a character; keep `false` when Option should type Unicode characters. A config reload applies it to open terminals. |
 | `shell_integration` | boolean/null | `true` | New terminal | Enables Paneflow shell snippets for OSC 7 CWD and OSC 133 command marks. |
 | `editor` | object/null | minimap off, scrollbar on, semantic tokens off | Hot reload | What the code editor draws beside the text: `minimap` adds a minimap along the right edge, `scrollbar` keeps the vertical scrollbar. Toggled from the editor's controls menu; the choice applies to every open file. `semantic_tokens` colors code with the semantic tokens of a language server from [`language_servers`](#language_servers), over the syntax colors; toggled from Settings > Editor > Semantic highlighting. |
+| `browser` | object/null | defaults below | Hot reload | The Paneflow browser, the browser tab of the dock and of panes: `open_local_links`, `search_engine`, `custom_search`, `default_zoom` and `keep_history`. See [`browser`](#browser). |
 | `language_servers` | object | rust-analyzer and zls built in | Next file opened | Language servers for semantic highlighting, by server id. See [`language_servers`](#language_servers). |
 | `automation` | object/null | all off | Hot reload | Background work run after an agent turn: `tab_auto_naming` summarizes the session's recent exchange into a 2-5 word tab name through the agent's own CLI (`claude -p`, `codex exec`, `opencode run`, `pi --print`) with tools disabled, at most once per three minutes per session and only when the conversation grew. A name you typed is never replaced; "Reset name" reopens the tab to it. |
 | `submit_paste_delay_ms` | integer/null | `70` | IPC send | Floor delay between bracketed paste and Enter for `paneflow send --submit`. Range `10` to `5000`. |
@@ -143,6 +144,16 @@ and macOS keep every agent below.
 | `terminal.env` | object/null | none | New terminal | Environment variables injected into every new terminal. Per-surface `env` wins. Values are passed through verbatim: no `~` and no `$NAME` expansion, unlike `agent_profiles.*.env`. Keys Paneflow sets for every terminal, such as `TERM`, `ZDOTDIR`, and the `PANEFLOW_*` variables, are ignored and logged once. `LANG` defaults to `en_US.UTF-8` only when `LANG`, `LC_ALL`, and `LC_CTYPE` are all unset. |
 | `terminal.scroll_multiplier` | number/null | `1.0` | New terminal view | Range `0.1` to `10.0`. Ignored in mouse-reporting and alternate-screen scroll paths. |
 | `terminal.minimum_contrast` | number/null | Auto (`60`) | Hot reload | Minimum APCA lightness contrast (Lc) enforced between text and its cell background, on the colors a program chose (truecolor and palette indices 16 to 255). The theme's sixteen ANSI colors, foreground, and background are never corrected. Unset means Auto, which is `60` on every theme; `0` turns the correction off; a negative or non-numeric value means Auto. Range `0` to `90`. |
+
+## `browser`
+
+| Key | Type | Default | Applied | Notes |
+| --- | --- | --- | --- | --- |
+| `browser.open_local_links` | boolean/null | `true` | Hot reload | Opens a loopback URL activated in a terminal, or a detected port opened from the sidebar, in a browser tab of the workspace's dock instead of the system browser. Other URLs, and every URL while the browser engine is not installed, still open in the system browser. Right-clicking a URL in a terminal offers **Open in Paneflow browser** whatever this setting says. |
+| `browser.search_engine` | string/null | `duckduckgo` | Hot reload | The search engine the address field offers for text that is not an address: `duckduckgo`, `google`, `bing`, `brave`, `ecosia`, `kagi`, `startpage`, `qwant` or `custom`. Nothing is sent while you type: the query leaves only when you choose the search row. |
+| `browser.custom_search` | string/null | `null` | Hot reload | The search address used when `search_engine` is `custom`: an `http` or `https` address with `%s` where the words go, after the site, such as `https://example.com/search?q=%s`. Until it is usable, DuckDuckGo searches. |
+| `browser.default_zoom` | integer/null | `100` | Hot reload | The zoom, in percent, of a site you have not zoomed yourself: 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250 or 300. The zoom keys in a browser tab give a site its own zoom, listed in Settings, Browser. |
+| `browser.keep_history` | boolean/null | `true` | Hot reload | Keeps the pages you open in browser tabs for the address field's suggestions. Off, nothing new is kept; pages already kept stay until cleared. Pages agents open are never kept. |
 
 ## `agent_panel`
 

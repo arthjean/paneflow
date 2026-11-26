@@ -94,6 +94,9 @@ actions!(
         InsertPath,
         ForkConversation,
         AcceptConversationNotice,
-        DismissConversationNotice
+        DismissConversationNotice,
+        ToggleDevTools,
+        ShowDevToolsConsole,
+        InspectElement
     ]
 );

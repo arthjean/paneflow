@@ -269,9 +269,19 @@ impl PaneFlowApp {
         spawner: super::Spawner,
         cx: &mut Context<Self>,
     ) -> Option<PaneSurface> {
+        self.add_surface_through_model_as(pane, terminal_definition(), spawner, cx)
+    }
+
+    pub(crate) fn add_surface_through_model_as(
+        &mut self,
+        pane: &Entity<Pane>,
+        definition: paneflow_config::schema::SurfaceDefinition,
+        spawner: super::Spawner,
+        cx: &mut Context<Self>,
+    ) -> Option<PaneSurface> {
         self.adopt_layout(cx);
         let pane = self.layout.pane_id(pane)?;
-        let surface = self.layout.reserve_surface(terminal_definition(), spawner);
+        let surface = self.layout.reserve_surface(definition, spawner);
         let id = surface.id;
         self.apply_layout_op(
             Op::AddSurface {

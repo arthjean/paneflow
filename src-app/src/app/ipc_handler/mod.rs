@@ -39,6 +39,7 @@ mod transcript;
 mod workspace_methods;
 mod worktree_requests;
 
+pub(crate) use browser_methods::workspace_agent_sessions;
 use gates::*;
 pub(crate) use jsonrpc::*;
 use params::*;

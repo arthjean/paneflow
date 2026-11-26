@@ -6,6 +6,7 @@ pub mod attention;
 pub mod auto_naming;
 pub mod bootstrap;
 pub mod branch_prompt;
+pub(crate) mod browser_surface;
 pub mod cli_diff_dock;
 pub mod clone_bubble;
 pub mod clone_repo;

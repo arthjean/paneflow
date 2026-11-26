@@ -10,7 +10,7 @@ use crate::{
     ClosePane, FocusLeft, FocusRight, SplitHorizontally, SplitVertically, ToggleZoom, UndoClosePane,
 };
 
-pub(super) const PINS: usize = 22;
+pub(super) const PINS: usize = 26;
 
 fn split_v(rig: &mut Rig<'_>) {
     rig.act(|app, window, cx| app.handle_split_v(&SplitVertically, window, cx));
@@ -89,6 +89,163 @@ fn pin_a_new_surface_joins_its_pane_and_becomes_active(cx: &mut TestAppContext) 
     rig.emit("a", PaneEvent::NewTab);
     assert_eq!(rig.shape(0, 0), "a+b*");
     assert_eq!(rig.requests(), ["create b"]);
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_a_browser_chosen_from_a_panes_new_tab_menu_joins_the_pane_as_its_active_tab(
+    cx: &mut TestAppContext,
+) {
+    let mut rig = Rig::mount(cx);
+    rig.workspace("alpha");
+    rig.requests();
+    let pane = rig.pane("a");
+    rig.act(|app, _, cx| app.add_browser_surface_to_pane(&pane, cx));
+    assert_eq!(rig.toasts(), Vec::<String>::new());
+    let kinds = rig.cx.update(|_, cx| {
+        let pane = pane.read(cx);
+        let kinds: Vec<&str> = pane
+            .surfaces()
+            .iter()
+            .map(|surface| match surface {
+                crate::pane::PaneSurface::Terminal(_) => "terminal",
+                crate::pane::PaneSurface::Markdown(_) => "markdown",
+                crate::pane::PaneSurface::Browser(_) => "browser",
+            })
+            .collect();
+        (kinds, pane.active_surface_idx())
+    });
+    assert_eq!(kinds, (vec!["terminal", "browser"], 1));
+    assert_eq!(rig.requests(), Vec::<String>::new());
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_a_browser_tab_in_a_pane_is_saved_with_its_address_and_title(cx: &mut TestAppContext) {
+    let mut rig = Rig::mount(cx);
+    rig.workspace("alpha");
+    let pane = rig.pane("a");
+    rig.act(|app, _, cx| {
+        app.add_surface_through_model_as(
+            &pane,
+            crate::browser::empty_surface_definition(),
+            Box::new(|app, ws, cx| {
+                crate::pane::PaneSurface::Browser(app.new_browser_view(
+                    |cx| {
+                        crate::browser::BrowserView::restored(
+                            ws,
+                            "http://localhost:18751/app.html".to_string(),
+                            Some("Fixture shop".to_string()),
+                            cx,
+                        )
+                    },
+                    cx,
+                ))
+            }),
+            cx,
+        );
+        app.adopt_layout(cx);
+    });
+    let saved: Vec<(Option<String>, Option<String>)> = rig.cx.update(|_, cx| {
+        rig.app
+            .read(cx)
+            .layout_state()
+            .workspaces
+            .iter()
+            .flat_map(|ws| ws.tabs.iter())
+            .filter_map(|tab| tab.root.as_ref())
+            .flat_map(paneflow_layout::Node::panes)
+            .flat_map(|pane| pane.surfaces.iter())
+            .filter(|surface| {
+                surface.definition.surface_type.as_deref() == Some(crate::browser::SURFACE_TYPE)
+            })
+            .map(|surface| {
+                (
+                    surface.definition.path.clone(),
+                    surface.definition.name.clone(),
+                )
+            })
+            .collect()
+    });
+    assert_eq!(
+        saved,
+        [(
+            Some("http://localhost:18751/app.html".to_string()),
+            Some("Fixture shop".to_string())
+        )]
+    );
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_a_browser_tab_shown_from_the_tab_list_opens_the_closed_dock_on_it(cx: &mut TestAppContext) {
+    let mut rig = Rig::mount(cx);
+    rig.workspace("alpha");
+    let shown = rig.act(|app, _, cx| {
+        let view = app.new_browser_view(|cx| crate::browser::BrowserView::new(1, cx), cx);
+        view.update(cx, |_, cx| {
+            cx.emit(crate::browser::BrowserViewEvent::Show(
+                paneflow_browser_proto::TabId(7),
+            ));
+        });
+        view
+    });
+    rig.cx.run_until_parked();
+    let (open, active_is_new_browser) = rig.cx.update(|_, cx| {
+        let app = rig.app.read(cx);
+        let active = app.diff_dock.diff_tabs.get(app.diff_dock.diff_active_tab);
+        (
+            app.diff_dock.open,
+            matches!(
+                active,
+                Some(crate::app::diff_dock::DiffDockTab::Browser(view)) if *view != shown
+            ),
+        )
+    });
+    assert!(open, "the dock opens to show the tab");
+    assert!(active_is_new_browser, "the dock shows the listed tab");
+}
+
+#[gpui::test]
+#[ignore = "run by every_layout_pin_holds_in_an_isolated_home"]
+fn pin_closing_a_dock_of_browser_tabs_is_recorded_so_a_crash_does_not_reopen_it(
+    cx: &mut TestAppContext,
+) {
+    let mut rig = Rig::mount(cx);
+    rig.workspace("alpha");
+    rig.act(|app, _, cx| {
+        let ws = app.active_workspace().expect("a workspace").id;
+        let view = app.new_browser_view(
+            |cx| {
+                crate::browser::BrowserView::restored(
+                    ws,
+                    "http://localhost:18751/app.html".to_string(),
+                    Some("Fixture shop".to_string()),
+                    cx,
+                )
+            },
+            cx,
+        );
+        app.diff_dock
+            .diff_tabs
+            .push(crate::app::diff_dock::DiffDockTab::Browser(view));
+        app.diff_dock.diff_active_tab = 0;
+        app.diff_dock.picked = true;
+        app.toggle_diff_dock(cx);
+    });
+    rig.cx.run_until_parked();
+    let open_recorded = || {
+        crate::window_state::recorded_layout()
+            .and_then(|layout| layout.docks.first().map(|dock| dock.dock.open))
+    };
+    assert_eq!(open_recorded(), Some(true), "opening the dock is recorded");
+    rig.act(|app, _, cx| app.toggle_diff_dock(cx));
+    rig.cx.run_until_parked();
+    assert_eq!(
+        open_recorded(),
+        Some(false),
+        "closing the dock is recorded before any later save"
+    );
 }
 
 #[gpui::test]

@@ -55,6 +55,8 @@ pub struct PaneFlowConfig {
     pub workspace_icon: Option<WorkspaceIcon>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub editor: EditorDisplayConfig,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub browser: BrowserConfig,
     #[serde(default, skip_serializing_if = "LanguageServersConfig::is_empty")]
     pub language_servers: LanguageServersConfig,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
@@ -163,6 +165,176 @@ pub struct EditorDisplayConfig {
     pub csv_table: Option<bool>,
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub semantic_tokens: Option<bool>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BrowserConfig {
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub open_local_links: Option<bool>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub search_engine: Option<SearchEngine>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub custom_search: Option<String>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub default_zoom: Option<u16>,
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub keep_history: Option<bool>,
+}
+
+pub const ZOOM_LEVELS: [u16; 13] = [50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300];
+
+pub fn step_zoom(percent: u16, step: i8) -> u16 {
+    match step.signum() {
+        1 => ZOOM_LEVELS
+            .iter()
+            .copied()
+            .find(|level| *level > percent)
+            .unwrap_or(ZOOM_LEVELS[ZOOM_LEVELS.len() - 1]),
+        -1 => ZOOM_LEVELS
+            .iter()
+            .rev()
+            .copied()
+            .find(|level| *level < percent)
+            .unwrap_or(ZOOM_LEVELS[0]),
+        _ => percent,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebSearch {
+    pub name: String,
+    pub template: String,
+}
+
+impl WebSearch {
+    pub fn url(&self, query: &str) -> String {
+        let mut words = String::new();
+        for byte in query.trim().bytes() {
+            match byte {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'*' => {
+                    words.push(char::from(byte));
+                }
+                b' ' => words.push('+'),
+                other => words.push_str(&format!("%{other:02X}")),
+            }
+        }
+        self.template.replacen("%s", &words, 1)
+    }
+}
+
+pub fn search_template_host(template: &str) -> Option<&str> {
+    let rest = template
+        .strip_prefix("https://")
+        .or_else(|| template.strip_prefix("http://"))?;
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let host = &rest[..end];
+    let usable = !host.is_empty()
+        && !host.contains(['%', '@'])
+        && !host.contains(char::is_whitespace)
+        && rest[end..].contains("%s");
+    usable.then_some(host)
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SearchEngine {
+    #[default]
+    DuckDuckGo,
+    Google,
+    Bing,
+    Brave,
+    Ecosia,
+    Kagi,
+    Startpage,
+    Qwant,
+    Custom,
+}
+
+impl SearchEngine {
+    pub const ALL: [Self; 9] = [
+        Self::DuckDuckGo,
+        Self::Google,
+        Self::Bing,
+        Self::Brave,
+        Self::Ecosia,
+        Self::Kagi,
+        Self::Startpage,
+        Self::Qwant,
+        Self::Custom,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::DuckDuckGo => "DuckDuckGo",
+            Self::Google => "Google",
+            Self::Bing => "Bing",
+            Self::Brave => "Brave Search",
+            Self::Ecosia => "Ecosia",
+            Self::Kagi => "Kagi",
+            Self::Startpage => "Startpage",
+            Self::Qwant => "Qwant",
+            Self::Custom => "Custom",
+        }
+    }
+
+    pub fn template(self) -> Option<&'static str> {
+        match self {
+            Self::DuckDuckGo => Some("https://duckduckgo.com/?q=%s"),
+            Self::Google => Some("https://www.google.com/search?q=%s"),
+            Self::Bing => Some("https://www.bing.com/search?q=%s"),
+            Self::Brave => Some("https://search.brave.com/search?q=%s"),
+            Self::Ecosia => Some("https://www.ecosia.org/search?q=%s"),
+            Self::Kagi => Some("https://kagi.com/search?q=%s"),
+            Self::Startpage => Some("https://www.startpage.com/do/search?q=%s"),
+            Self::Qwant => Some("https://www.qwant.com/?q=%s"),
+            Self::Custom => None,
+        }
+    }
+}
+
+impl BrowserConfig {
+    pub fn search_engine(&self) -> SearchEngine {
+        self.search_engine.unwrap_or_default()
+    }
+
+    pub fn web_search(&self) -> WebSearch {
+        let custom = self
+            .custom_search
+            .as_deref()
+            .map(str::trim)
+            .filter(|_| self.search_engine() == SearchEngine::Custom)
+            .and_then(|template| {
+                search_template_host(template).map(|host| WebSearch {
+                    name: host.trim_start_matches("www.").to_string(),
+                    template: template.to_string(),
+                })
+            });
+        custom.unwrap_or_else(|| {
+            let engine = match self.search_engine() {
+                SearchEngine::Custom => SearchEngine::default(),
+                engine => engine,
+            };
+            WebSearch {
+                name: engine.name().to_string(),
+                template: engine.template().unwrap_or_default().to_string(),
+            }
+        })
+    }
+
+    pub fn default_zoom(&self) -> u16 {
+        self.default_zoom
+            .filter(|percent| ZOOM_LEVELS.contains(percent))
+            .unwrap_or(100)
+    }
+
+    pub fn keeps_history(&self) -> bool {
+        self.keep_history.unwrap_or(true)
+    }
+
+    pub fn opens_local_links(&self) -> bool {
+        self.open_local_links.unwrap_or(true)
+    }
 }
 
 impl EditorDisplayConfig {
@@ -1380,5 +1552,58 @@ mod tests {
             blended.macos_chrome_material_enabled(),
             cfg!(target_os = "macos")
         );
+    }
+
+    #[test]
+    fn a_search_query_is_form_encoded_into_the_engines_results_url() {
+        let search = |json: &str| {
+            serde_json::from_str::<BrowserConfig>(json)
+                .unwrap()
+                .web_search()
+        };
+        assert_eq!(
+            search("{}").url(" vercel jobs "),
+            "https://duckduckgo.com/?q=vercel+jobs"
+        );
+        assert_eq!(
+            search(r#"{"search_engine": "google"}"#).url("c++ & rust/é"),
+            "https://www.google.com/search?q=c%2B%2B+%26+rust%2F%C3%A9"
+        );
+        let custom = search(
+            r#"{"search_engine": "custom", "custom_search": "https://www.example.com/find?q=%s&lang=en"}"#,
+        );
+        assert_eq!(custom.name, "example.com");
+        assert_eq!(
+            custom.url("a b"),
+            "https://www.example.com/find?q=a+b&lang=en"
+        );
+        for unusable in [
+            "https://%s.example.com/",
+            "ftp://example.com/?q=%s",
+            "https://example.com/",
+            "https://user@example.com/?q=%s",
+        ] {
+            let json = format!(r#"{{"search_engine": "custom", "custom_search": "{unusable}"}}"#);
+            assert_eq!(search(&json).name, "DuckDuckGo", "{unusable} falls back");
+        }
+        let browser: BrowserConfig = serde_json::from_str(r#"{"search_engine": "kagi"}"#).unwrap();
+        assert_eq!(browser.search_engine(), SearchEngine::Kagi);
+        let unknown: BrowserConfig =
+            serde_json::from_str(r#"{"search_engine": "altavista"}"#).unwrap();
+        assert_eq!(unknown.search_engine(), SearchEngine::DuckDuckGo);
+    }
+
+    #[test]
+    fn page_zoom_steps_through_the_browser_levels_and_ignores_an_unknown_default() {
+        assert_eq!(step_zoom(100, 1), 110);
+        assert_eq!(step_zoom(100, -1), 90);
+        assert_eq!(step_zoom(300, 1), 300);
+        assert_eq!(step_zoom(50, -1), 50);
+        assert_eq!(step_zoom(105, 1), 110);
+        let zoomed: BrowserConfig = serde_json::from_str(r#"{"default_zoom": 125}"#).unwrap();
+        assert_eq!(zoomed.default_zoom(), 125);
+        let odd: BrowserConfig = serde_json::from_str(r#"{"default_zoom": 123}"#).unwrap();
+        assert_eq!(odd.default_zoom(), 100);
+        assert!(BrowserConfig::default().keeps_history());
     }
 }

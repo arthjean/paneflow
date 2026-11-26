@@ -29,6 +29,7 @@ pub enum ShortcutGroup {
     Search,
     Diff,
     Markdown,
+    Browser,
     Agents,
     Application,
 }
@@ -42,6 +43,7 @@ impl ShortcutGroup {
         ShortcutGroup::Search,
         ShortcutGroup::Diff,
         ShortcutGroup::Markdown,
+        ShortcutGroup::Browser,
         ShortcutGroup::Agents,
         ShortcutGroup::Application,
     ];
@@ -55,6 +57,7 @@ impl ShortcutGroup {
             ShortcutGroup::Search => "Search",
             ShortcutGroup::Diff => "Git diff",
             ShortcutGroup::Markdown => "Markdown",
+            ShortcutGroup::Browser => "Browser",
             ShortcutGroup::Agents => "Agents & cockpit",
             ShortcutGroup::Application => "Application",
         }
@@ -65,6 +68,7 @@ impl ShortcutGroup {
             ShortcutGroup::Terminal => Some("while a pane has focus"),
             ShortcutGroup::Search => Some("while the search bar is open"),
             ShortcutGroup::Markdown => Some("while a Markdown view has focus"),
+            ShortcutGroup::Browser => Some("while a browser tab has focus"),
             _ => None,
         }
     }
@@ -589,6 +593,27 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         context: "MarkdownSearch",
         description: "Markdown: close find bar",
         group: ShortcutGroup::Markdown,
+    },
+    ActionMeta {
+        name: "toggle_developer_tools",
+        factory: || Box::new(crate::ToggleDevTools),
+        context: "Browser",
+        description: "Browser: open or close developer tools",
+        group: ShortcutGroup::Browser,
+    },
+    ActionMeta {
+        name: "show_developer_console",
+        factory: || Box::new(crate::ShowDevToolsConsole),
+        context: "Browser",
+        description: "Browser: show the developer console",
+        group: ShortcutGroup::Browser,
+    },
+    ActionMeta {
+        name: "inspect_element",
+        factory: || Box::new(crate::InspectElement),
+        context: "Browser",
+        description: "Browser: pick an element to inspect",
+        group: ShortcutGroup::Browser,
     },
     ActionMeta {
         name: "focus_workspaces_sidebar",

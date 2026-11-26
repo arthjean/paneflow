@@ -203,6 +203,12 @@ the two you did.
   `delayed_tooltip` or `tooltip` on one of them: the page panics with
   "calling tooltip more than once on the same element" the first time it
   draws. Pass the wording you want as the label instead.
+- **A view that swaps a child out must not ask that child whether to.**
+  State a child entity records in its own `render`, such as
+  `TextInput::focused_since`, stays stale while the child is not drawn. A
+  parent that hides the child on that state never draws it again, and GPUI
+  drops the focus of an undrawn handle. Read `focus_handle.is_focused(window)`
+  instead; the browser address field broke this way on 2026-11-25.
 - **A rounded card does not clip its rows to its corners.** GPUI's
   `overflow_hidden` clips to a rectangle, so the hover fill of a row that
   touches a card's edge bleeds past the rounded corners. Build hoverable

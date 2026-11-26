@@ -558,7 +558,7 @@ paneflow.browser.list = function(params) end
 
 ---@class paneflow.browser.navigate.params
 ---@field tab integer
----@field url string An http or https URL of at most 2048 characters
+---@field url string An http or https URL of at most 2097152 characters, Chromium's own limit
 
 ---@class paneflow.browser.navigate.result
 ---@field http_status? integer
@@ -594,7 +594,7 @@ paneflow.browser.navigate = function(params) end
 paneflow.browser.network = function(params) end
 
 ---@class paneflow.browser.open.params
----@field url string An http or https URL of at most 2048 characters
+---@field url string An http or https URL of at most 2097152 characters, Chromium's own limit
 ---@field workspace? string The durable id of the workspace whose profile the tab uses, for a caller outside every pane; a pane always opens in its own workspace
 
 ---@class paneflow.browser.open.result

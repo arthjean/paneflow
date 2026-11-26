@@ -107,6 +107,26 @@ fn respond_slowly(stream: &mut TcpStream) {
     let _ = stream.write_all(b"<p>Arrived last</p></body></html>");
 }
 
+pub const SURFACE_PAGE: &str = r#"<!doctype html><html><head><meta charset="utf-8"><title>Surface</title>
+<style>body{margin:0;background:rgb(32,80,160);font:16px sans-serif}
+#pointer{position:absolute;left:0;top:0;width:200px;height:100px;cursor:pointer;background:rgb(250,250,250)}
+#field{position:absolute;left:10px;top:150px;width:200px;height:24px}
+#pick{position:absolute;left:10px;top:200px;width:160px}
+#confirm{position:absolute;left:10px;top:260px}
+#prompt{position:absolute;left:110px;top:260px}
+#popup{position:absolute;left:10px;top:310px}
+#files{position:absolute;left:10px;top:360px}</style></head><body>
+<div id="pointer">hover</div>
+<input id="field" aria-label="Field">
+<select id="pick" aria-label="Pick"><option value="fr">France</option><option value="us">United States</option><option value="jp">Japan</option></select>
+<button id="confirm" type="button" onclick="window.answer = confirm('Proceed?')">Confirm</button>
+<button id="prompt" type="button" onclick="window.answer = prompt('Name?', 'Ada')">Prompt</button>
+<a id="popup" href="/test/popup-target" target="_blank">Open a window</a>
+<input id="files" type="file" aria-label="Files">
+</body></html>"#;
+
+const POPUP_TARGET: &str = r#"<!doctype html><html><head><meta charset="utf-8"><title>Popup target</title></head><body>opened</body></html>"#;
+
 const COOKIE_PAGE: &str = r#"<!doctype html><html><head><meta charset="utf-8"><title>Cookies</title></head><body>cookies</body></html>"#;
 
 fn serve(mut stream: TcpStream) {
@@ -180,6 +200,20 @@ fn serve(mut stream: TcpStream) {
             big_page().as_bytes(),
         ),
         "/test/slow" => respond_slowly(&mut stream),
+        "/test/surface" => respond(
+            &mut stream,
+            "200 OK",
+            "text/html",
+            "",
+            SURFACE_PAGE.as_bytes(),
+        ),
+        "/test/popup-target" => respond(
+            &mut stream,
+            "200 OK",
+            "text/html",
+            "",
+            POPUP_TARGET.as_bytes(),
+        ),
         "/test/redirect" => {
             let location = format!("Location: {query}\r\n");
             respond(&mut stream, "302 Found", "text/plain", &location, b"moved")

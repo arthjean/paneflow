@@ -25,6 +25,7 @@ pub(crate) enum DiffDockTab {
     Terminal(gpui::Entity<crate::terminal::TerminalView>),
     File(gpui::Entity<super::code::view::CodeView>),
     PendingFile,
+    Browser(gpui::Entity<crate::browser::BrowserView>),
 }
 
 pub(super) struct DiffChrome<'a> {

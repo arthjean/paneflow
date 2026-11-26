@@ -48,6 +48,7 @@ struct BranchOption {
 #[derive(Debug, Clone)]
 pub(crate) enum PresetSource {
     Shell,
+    Browser,
     Agent(AgentLaunch),
     Custom(ButtonCommand),
 }
@@ -62,6 +63,7 @@ impl Preset {
     pub(crate) fn icon_path(&self) -> SharedString {
         match &self.source {
             PresetSource::Shell => "icons/terminal.svg".into(),
+            PresetSource::Browser => "icons/world.svg".into(),
             PresetSource::Agent(launch) => launch.agent().icon_path().into(),
             PresetSource::Custom(button) => {
                 if button.icon.is_empty() {
@@ -93,7 +95,7 @@ impl Preset {
 
     pub(crate) fn command(&self, config: &PaneFlowConfig) -> Option<String> {
         match &self.source {
-            PresetSource::Shell => None,
+            PresetSource::Shell | PresetSource::Browser => None,
             PresetSource::Agent(launch) => Some(launch.launch_command(config)),
             PresetSource::Custom(button) => Some(button.command.clone()),
         }
@@ -107,6 +109,10 @@ impl Preset {
             PresetSource::Agent(launch) => launch.launch_env(config),
             _ => Ok(None),
         }
+    }
+
+    pub(crate) fn is_browser(&self) -> bool {
+        matches!(self.source, PresetSource::Browser)
     }
 
     pub(crate) fn opens_a_team(&self) -> bool {
@@ -168,6 +174,10 @@ impl PaneFlowApp {
                 source: PresetSource::Custom(button.clone()),
             }));
         }
+        presets.push(Preset {
+            label: "Browser".to_string(),
+            source: PresetSource::Browser,
+        });
         presets
     }
 
@@ -408,6 +418,24 @@ impl PaneFlowApp {
             return;
         }
         if self.pane_palette_create_branch_then_launch(idx, cx) {
+            return;
+        }
+        if preset.is_browser() {
+            let split = match self.pane_palette.as_ref().map(|palette| &palette.placement) {
+                Some(PalettePlacement::Split { target, direction }) => match target.upgrade() {
+                    Some(target) => Some((target, *direction)),
+                    None => {
+                        self.pane_palette_set_error("That pane no longer exists", cx);
+                        return;
+                    }
+                },
+                Some(PalettePlacement::Tab { .. }) => None,
+                None => return,
+            };
+            self.discard_pane_palette(cx);
+            if let Err(message) = self.open_tab_with_browser(ws_idx, split, window, cx) {
+                self.show_toast(message, cx);
+            }
             return;
         }
         let mut env = match preset.env(&self.cached_config) {

@@ -21,14 +21,17 @@ pub const BROWSER_SWITCHES: &[&str] = &[
     "use-mock-keychain",
 ];
 
+pub const BLOCKED_PERMISSIONS: [ContentSettingTypes; 4] = [
+    ContentSettingTypes::GEOLOCATION,
+    ContentSettingTypes::NOTIFICATIONS,
+    ContentSettingTypes::MEDIASTREAM_CAMERA,
+    ContentSettingTypes::MEDIASTREAM_MIC,
+];
+
 pub fn engine_version() -> String {
     let raw = sys::CEF_VERSION;
     let text = std::str::from_utf8(raw).unwrap_or_default();
     format!("CEF {}", text.trim_end_matches('\0'))
-}
-
-pub fn headless_display() -> bool {
-    std::env::var_os("WAYLAND_DISPLAY").is_none() && std::env::var_os("DISPLAY").is_none()
 }
 
 wrap_browser_process_handler! {
@@ -70,12 +73,10 @@ wrap_app! {
                 Some(&"password-store".into()),
                 Some(&"basic".into()),
             );
-            if headless_display() {
-                command_line.append_switch_with_value(
-                    Some(&"ozone-platform".into()),
-                    Some(&"headless".into()),
-                );
-            }
+            command_line.append_switch_with_value(
+                Some(&"ozone-platform".into()),
+                Some(&"headless".into()),
+            );
         }
 
         fn browser_process_handler(&self) -> Option<BrowserProcessHandler> {

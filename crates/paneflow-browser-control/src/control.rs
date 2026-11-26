@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::{Duration, Instant};
 
@@ -24,6 +24,9 @@ use crate::error::ControlError;
 use crate::keys::key_event;
 use crate::snapshot;
 use crate::state::{Decide, Marks, TabEntry};
+use crate::surface::{
+    ANNOTATION_BINDING, FileChooser, HeldSite, PageDialog, SurfaceEvent, TabView,
+};
 
 pub const SNAPSHOT_ENTRIES: usize = 200;
 pub const MAX_HISTORY_ENTRIES: usize = 1000;
@@ -115,6 +118,7 @@ impl CallContext {
 struct State {
     tabs: BTreeMap<TabId, TabEntry>,
     orphans: HashMap<TabId, Vec<Event>>,
+    inspectors: HashSet<TabId>,
     allowed: HashMap<ProfileName, HashSet<String>>,
     evaluators: HashSet<(ProfileName, String, Option<String>)>,
 }
@@ -125,6 +129,7 @@ struct Inner {
     limits: Limits,
     state: Mutex<State>,
     changed: Condvar,
+    subscribers: Mutex<Vec<Sender<SurfaceEvent>>>,
 }
 
 #[derive(Clone)]
@@ -145,6 +150,7 @@ impl Control {
             limits,
             state: Mutex::new(State::default()),
             changed: Condvar::new(),
+            subscribers: Mutex::new(Vec::new()),
         });
         let weak = Arc::downgrade(&inner);
         let pump = std::thread::Builder::new()
@@ -197,6 +203,97 @@ impl Control {
                 "{other} is not a browser method"
             ))),
         }
+    }
+
+    pub fn subscribe(&self) -> Receiver<SurfaceEvent> {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        self.inner
+            .subscribers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(sender);
+        receiver
+    }
+
+    pub fn view(&self, tab: TabId) -> Option<TabView> {
+        let state = self.inner.lock();
+        state.tabs.get(&tab).map(|entry| Inner::view_of(tab, entry))
+    }
+
+    pub fn views(&self, workspace: &ProfileName) -> Vec<TabView> {
+        let state = self.inner.lock();
+        state
+            .tabs
+            .iter()
+            .filter(|(_, entry)| entry.workspace == *workspace)
+            .map(|(tab, entry)| Inner::view_of(*tab, entry))
+            .collect()
+    }
+
+    pub fn open_surface(
+        &self,
+        workspace: ProfileName,
+        owner: TabOwner,
+        url: &str,
+    ) -> Result<TabId, ControlError> {
+        validate_url(url)?;
+        self.inner.require_installed()?;
+        self.inner.open_owned(workspace, owner, url, true)
+    }
+
+    pub fn set_presented(&self, tab: TabId, presented: bool) {
+        if let Some(entry) = self.inner.lock().tabs.get_mut(&tab) {
+            entry.presented = presented;
+            entry.in_window |= presented;
+        }
+    }
+
+    pub fn adopt_inspector(&self, inspector: TabId) {
+        let mut state = self.inner.lock();
+        state.orphans.remove(&inspector);
+        state.inspectors.insert(inspector);
+    }
+
+    pub fn take_over(&self, tab: TabId) -> bool {
+        let changed = {
+            let mut state = self.inner.lock();
+            let Some(entry) = state.tabs.get_mut(&tab) else {
+                return false;
+            };
+            match &entry.owner {
+                TabOwner::Human => false,
+                TabOwner::Agent { session, .. } => {
+                    entry.taken_over_from = Some(session.clone());
+                    self.inner.set_owner(tab, entry, TabOwner::Human);
+                    true
+                }
+                TabOwner::Unclaimed => {
+                    self.inner.set_owner(tab, entry, TabOwner::Human);
+                    true
+                }
+            }
+        };
+        if changed {
+            self.inner.broadcast(SurfaceEvent::Changed(tab));
+        }
+        changed
+    }
+
+    pub fn hand_to(&self, tab: TabId, session: String, agent: Option<String>) -> bool {
+        let handed = {
+            let mut state = self.inner.lock();
+            let Some(entry) = state.tabs.get_mut(&tab) else {
+                return false;
+            };
+            self.inner
+                .set_owner(tab, entry, TabOwner::Agent { session, agent });
+            entry.taken_over_from = None;
+            true
+        };
+        if handed {
+            self.inner.broadcast(SurfaceEvent::Changed(tab));
+        }
+        handed
     }
 }
 
@@ -257,6 +354,7 @@ fn devtools_value(reply: Result<Reply, CommandError>) -> Result<Value, ControlEr
     match reply {
         Ok(Reply::DevTools(value)) => Ok(value),
         Ok(Reply::Done) => Ok(Value::Null),
+        Ok(Reply::Security(security)) => Ok(serde_json::to_value(security).unwrap_or(Value::Null)),
         Err(error) => Err(ControlError::from_command(error)),
     }
 }
@@ -312,7 +410,27 @@ fn bounded(text: String, bound: usize) -> (String, u64) {
     (text[..cut].to_string(), dropped)
 }
 
+fn guarded(owner: &TabOwner) -> bool {
+    !matches!(owner, TabOwner::Human)
+}
+
 impl Inner {
+    fn set_owner(&self, tab: TabId, entry: &mut TabEntry, owner: TabOwner) {
+        let guard = guarded(&owner);
+        let changed = guard != guarded(&entry.owner);
+        entry.owner = owner;
+        if !changed {
+            return;
+        }
+        if !guard {
+            entry.pending = None;
+            if entry.state == TabState::AwaitingDecision {
+                entry.state = TabState::Loading;
+            }
+        }
+        self.engine.fire(tab, TabCommand::Guard(guard));
+    }
+
     fn lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -340,20 +458,249 @@ impl Inner {
         }
     }
 
+    fn broadcast(&self, event: SurfaceEvent) {
+        self.subscribers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|subscriber| subscriber.send(event.clone()).is_ok());
+    }
+
+    fn view_of(tab: TabId, entry: &TabEntry) -> TabView {
+        TabView {
+            tab,
+            workspace: entry.workspace.clone(),
+            url: entry.url.clone(),
+            title: entry.title.clone(),
+            state: entry.state,
+            owner: entry.owner.clone(),
+            loading: entry.engine_loading || entry.loading(),
+            load_progress: entry.load_progress,
+            can_go_back: entry.can_go_back,
+            can_go_forward: entry.can_go_forward,
+            held: entry.pending.as_ref().map(|pending| HeldSite {
+                origin: pending.origin.clone(),
+                url: pending.url.clone(),
+            }),
+            refusal: entry.last_refusal.clone().filter(|_| entry.notice_current),
+            failure: entry.last_failure.clone().filter(|_| entry.notice_current),
+            crash: entry.crash.clone(),
+            presentation_failure: entry.presentation_failure.clone(),
+            taken_over_from: entry.taken_over_from.clone(),
+            blocked: entry.blocked.clone(),
+        }
+    }
+
+    fn open_owned(
+        &self,
+        workspace: ProfileName,
+        owner: TabOwner,
+        url: &str,
+        in_window: bool,
+    ) -> Result<TabId, ControlError> {
+        let (tab, opened) =
+            self.engine
+                .open_tab(workspace.clone(), url, guarded(&owner), self.limits.command);
+        {
+            let mut state = self.lock();
+            let mut entry = TabEntry::new(workspace, owner, url.to_string());
+            entry.in_window = in_window;
+            for event in state.orphans.remove(&tab).unwrap_or_default() {
+                entry.apply(&event);
+            }
+            state.tabs.insert(tab, entry);
+        }
+        if let Err(error) = opened {
+            self.lock().tabs.remove(&tab);
+            return Err(ControlError::from_command(error));
+        }
+        self.broadcast(SurfaceEvent::Changed(tab));
+        Ok(tab)
+    }
+
+    fn surface_event(self: &Arc<Self>, tab: TabId, event: &Event) -> bool {
+        let owner = self.lock().tabs.get(&tab).map(|entry| entry.owner.clone());
+        let agent_owned = matches!(owner, Some(TabOwner::Agent { .. }));
+        match event {
+            Event::Cursor { cursor, .. } => {
+                self.broadcast(SurfaceEvent::Cursor {
+                    tab,
+                    cursor: *cursor,
+                });
+                true
+            }
+            Event::ImeCaret { caret, .. } => {
+                self.broadcast(SurfaceEvent::ImeCaret { tab, caret: *caret });
+                true
+            }
+            Event::DevTools { method, params, .. }
+                if method == "Runtime.bindingCalled"
+                    && params.get("name").and_then(Value::as_str) == Some(ANNOTATION_BINDING) =>
+            {
+                if let (Some(context), Some(payload)) = (
+                    params.get("executionContextId").and_then(Value::as_i64),
+                    params.get("payload").and_then(Value::as_str),
+                ) {
+                    self.broadcast(SurfaceEvent::Annotation {
+                        tab,
+                        context,
+                        payload: payload.to_string(),
+                    });
+                }
+                true
+            }
+            Event::DialogOpened {
+                dialog,
+                kind,
+                origin,
+                message,
+                default_text,
+                ..
+            } => {
+                if agent_owned || owner.is_none() {
+                    self.engine.fire(
+                        tab,
+                        TabCommand::AnswerDialog {
+                            dialog: *dialog,
+                            accept: false,
+                            text: None,
+                        },
+                    );
+                } else {
+                    self.broadcast(SurfaceEvent::Dialog {
+                        tab,
+                        dialog: PageDialog {
+                            dialog: *dialog,
+                            kind: *kind,
+                            origin: origin.clone(),
+                            message: message.clone(),
+                            default_text: default_text.clone(),
+                        },
+                    });
+                }
+                true
+            }
+            Event::FileChooserOpened {
+                request,
+                mode,
+                title,
+                accept,
+                ..
+            } => {
+                if agent_owned || owner.is_none() {
+                    self.engine.fire(
+                        tab,
+                        TabCommand::AnswerFiles {
+                            request: *request,
+                            paths: None,
+                        },
+                    );
+                    if let Some(entry) = self.lock().tabs.get_mut(&tab) {
+                        entry.marks.file_choosers_refused += 1;
+                        entry.note(
+                            "warning",
+                            "Paneflow closed a file chooser: choosing files needs the human"
+                                .to_string(),
+                        );
+                    }
+                    self.changed.notify_all();
+                } else {
+                    self.broadcast(SurfaceEvent::FileChooser {
+                        tab,
+                        chooser: FileChooser {
+                            request: *request,
+                            mode: *mode,
+                            title: title.clone(),
+                            accept: accept.clone(),
+                        },
+                    });
+                }
+                true
+            }
+            Event::NewWindowRequested {
+                url,
+                user_gesture: true,
+                ..
+            } => {
+                self.open_window(tab, url.clone());
+                true
+            }
+            Event::NewWindowRequested { url, .. } => {
+                if let Some(entry) = self.lock().tabs.get_mut(&tab) {
+                    entry.note(
+                        "warning",
+                        format!(
+                            "Paneflow blocked a new window for {url}: the page opened it without a click"
+                        ),
+                    );
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn open_window(self: &Arc<Self>, opener: TabId, url: String) {
+        let Some((workspace, owner, in_window)) = self.lock().tabs.get(&opener).map(|entry| {
+            (
+                entry.workspace.clone(),
+                entry.owner.clone(),
+                entry.in_window,
+            )
+        }) else {
+            return;
+        };
+        if let Err(error) = validate_url(&url) {
+            if let Some(entry) = self.lock().tabs.get_mut(&opener) {
+                entry.note(
+                    "warning",
+                    format!("Paneflow did not open a new window for {url}: {error}"),
+                );
+            }
+            return;
+        }
+        let inner = Arc::clone(self);
+        let spawned = std::thread::Builder::new()
+            .name("browser-new-window".into())
+            .spawn(
+                move || match inner.open_owned(workspace, owner, &url, in_window) {
+                    Ok(tab) => inner.broadcast(SurfaceEvent::Opened { tab, opener }),
+                    Err(error) => {
+                        if let Some(entry) = inner.lock().tabs.get_mut(&opener) {
+                            entry.note(
+                                "warning",
+                                format!("Paneflow could not open a new window for {url}: {error}"),
+                            );
+                        }
+                    }
+                },
+            );
+        if let Err(error) = spawned {
+            log::warn!("browser control: cannot open a new window: {error}");
+        }
+    }
+
     fn on_event(self: &Arc<Self>, event: ClientEvent) {
         let ClientEvent::Browser(event) = event else {
             self.changed.notify_all();
+            self.broadcast(SurfaceEvent::Host);
             return;
         };
         let Some(tab) = event.tab() else {
             self.changed.notify_all();
             return;
         };
+        if self.surface_event(tab, &event) {
+            return;
+        }
+        let closed = matches!(event, Event::Closed { .. });
         let decide = {
             let mut state = self.lock();
             if let Event::Closed { .. } = event {
                 state.tabs.remove(&tab);
                 state.orphans.remove(&tab);
+                state.inspectors.remove(&tab);
+                None
+            } else if state.inspectors.contains(&tab) {
                 None
             } else if let Some(entry) = state.tabs.get_mut(&tab) {
                 entry.apply(&event).filter(|_| !entry.asking).map(|decide| {
@@ -371,6 +718,11 @@ impl Inner {
             }
         };
         self.changed.notify_all();
+        self.broadcast(if closed {
+            SurfaceEvent::Closed(tab)
+        } else {
+            SurfaceEvent::Changed(tab)
+        });
         if let Some((decide, workspace, owner)) = decide {
             self.decide(tab, decide, workspace, owner);
         }
@@ -504,15 +856,15 @@ impl Inner {
         decision
     }
 
-    fn sweep(state: &mut State, context: &CallContext) {
+    fn sweep(&self, state: &mut State, context: &CallContext) {
         let Some(live) = &context.live_sessions else {
             return;
         };
-        for entry in state.tabs.values_mut() {
+        for (tab, entry) in &mut state.tabs {
             if let TabOwner::Agent { session, .. } = &entry.owner
                 && !live.contains(session)
             {
-                entry.owner = TabOwner::Unclaimed;
+                self.set_owner(*tab, entry, TabOwner::Unclaimed);
             }
         }
     }
@@ -526,13 +878,17 @@ impl Inner {
             state: entry.state,
             owner: entry.owner.clone(),
             drivable: context.identity.owns(&entry.owner),
-            presentation: Presentation::None,
+            presentation: if entry.presented {
+                Presentation::Cpu
+            } else {
+                Presentation::None
+            },
         }
     }
 
     fn visible_tabs(&self, context: &CallContext) -> Vec<BrowserTab> {
         let mut state = self.lock();
-        Self::sweep(&mut state, context);
+        self.sweep(&mut state, context);
         state
             .tabs
             .iter()
@@ -592,17 +948,25 @@ impl Inner {
 
     fn owned(&self, tab: TabId, context: &CallContext) -> Result<(), ControlError> {
         let mut state = self.lock();
-        Self::sweep(&mut state, context);
+        self.sweep(&mut state, context);
         let entry = state
             .tabs
             .get(&tab)
             .filter(|entry| context.sees(entry))
             .ok_or_else(|| ControlError::unknown_tab(tab))?;
         if context.identity.owns(&entry.owner) {
-            Ok(())
-        } else {
-            Err(ControlError::not_owner(owner_text(tab, &entry.owner)))
+            return Ok(());
         }
+        if let (Identity::Agent { session, .. }, Some(displaced)) =
+            (&context.identity, &entry.taken_over_from)
+            && session == displaced
+        {
+            return Err(ControlError::not_owner(format!(
+                "the human took over tab {} in the Paneflow window, so it no longer follows this session; ask the user to hand it back, or open a new tab with browser.open",
+                tab.0
+            )));
+        }
+        Err(ControlError::not_owner(owner_text(tab, &entry.owner)))
     }
 
     fn marks(&self, tab: TabId) -> Result<Marks, ControlError> {
@@ -721,12 +1085,16 @@ impl Inner {
                 "no workspace to open the tab in: pass the durable id of a workspace as 'workspace'",
             )
         })?;
-        let (tab, opened) =
-            self.engine
-                .open_tab(workspace.clone(), "about:blank", self.limits.command);
+        let owner = context.identity.owner();
+        let (tab, opened) = self.engine.open_tab(
+            workspace.clone(),
+            "about:blank",
+            guarded(&owner),
+            self.limits.command,
+        );
         {
             let mut state = self.lock();
-            let mut entry = TabEntry::new(workspace, context.identity.owner(), String::new());
+            let mut entry = TabEntry::new(workspace, owner, String::new());
             for event in state.orphans.remove(&tab).unwrap_or_default() {
                 entry.apply(&event);
             }
@@ -850,14 +1218,14 @@ impl Inner {
     fn claim(&self, params: TabParams, context: &CallContext) -> Result<BrowserTab, ControlError> {
         let tab = TabId(params.tab);
         let mut state = self.lock();
-        Self::sweep(&mut state, context);
+        self.sweep(&mut state, context);
         let entry = state
             .tabs
             .get_mut(&tab)
             .filter(|entry| context.sees(entry))
             .ok_or_else(|| ControlError::unknown_tab(tab))?;
         match &entry.owner {
-            TabOwner::Unclaimed => entry.owner = context.identity.owner(),
+            TabOwner::Unclaimed => self.set_owner(tab, entry, context.identity.owner()),
             owner if context.identity.owns(owner) => {}
             owner => {
                 return Err(ControlError::not_owner(format!(
@@ -1167,6 +1535,7 @@ impl Inner {
                     (marks.navigations_requested > mark.navigations_requested
                         || marks.loads_started > mark.loads_started
                         || marks.refusals > mark.refusals
+                        || marks.file_choosers_refused > mark.file_choosers_refused
                         || entry.pending.is_some())
                     .then_some(())
                 },
@@ -1180,6 +1549,15 @@ impl Inner {
             .tabs
             .get(&tab)
             .ok_or_else(|| ControlError::unknown_tab(tab))?;
+        if entry.marks.file_choosers_refused > mark.file_choosers_refused {
+            return Err(ControlError::new(
+                paneflow_api::methods::browser::ERR_BROWSER_FAILED,
+                "needs_human",
+                format!(
+                    "the action on {reference} opened a file chooser; file selection needs the human, so ask the user to choose the file in the Paneflow window"
+                ),
+            ));
+        }
         let navigated = entry.marks.loads_started > mark.loads_started
             || entry.marks.same_document > mark.same_document;
         Ok(Acted {
@@ -1531,6 +1909,9 @@ mod tests {
     #[derive(Default)]
     struct RecordingEngine {
         decided: Mutex<Vec<String>>,
+        fired: Mutex<Vec<(TabId, TabCommand)>>,
+        opened: Mutex<Vec<(ProfileName, String)>>,
+        guarded: Mutex<Vec<bool>>,
     }
 
     impl Engine for RecordingEngine {
@@ -1546,9 +1927,13 @@ mod tests {
             &self,
             _profile: ProfileName,
             _url: &str,
+            guarded: bool,
             _deadline: Duration,
         ) -> (TabId, Result<Reply, CommandError>) {
-            (TabId(1), Ok(Reply::Done))
+            self.guarded.lock().unwrap().push(guarded);
+            let mut opened = self.opened.lock().unwrap();
+            opened.push((_profile, _url.to_string()));
+            (TabId(opened.len() as u64), Ok(Reply::Done))
         }
 
         fn send(
@@ -1562,6 +1947,467 @@ mod tests {
             }
             Ok(Reply::Done)
         }
+
+        fn fire(&self, tab: TabId, command: TabCommand) {
+            self.fired.lock().unwrap().push((tab, command));
+        }
+    }
+
+    #[derive(Default)]
+    struct CountedApprovals {
+        sites: Mutex<Vec<String>>,
+    }
+
+    impl Approvals for CountedApprovals {
+        fn site(&self, request: &SiteRequest) -> Result<SiteChoice, String> {
+            self.sites.lock().unwrap().push(request.origin.clone());
+            Ok(SiteChoice::Deny)
+        }
+
+        fn evaluate(&self, _request: &EvaluateRequest) -> Result<bool, String> {
+            Ok(false)
+        }
+    }
+
+    const SESSION: &str = "a9e52660-0000-4000-8000-000000000001";
+
+    fn agent() -> TabOwner {
+        TabOwner::Agent {
+            session: SESSION.to_string(),
+            agent: Some("claude".to_string()),
+        }
+    }
+
+    fn workspace() -> ProfileName {
+        ProfileName::new("w-1").unwrap()
+    }
+
+    fn surface_control() -> (
+        Control,
+        Arc<RecordingEngine>,
+        Arc<CountedApprovals>,
+        std::sync::mpsc::Sender<ClientEvent>,
+    ) {
+        let engine = Arc::new(RecordingEngine::default());
+        let approvals = Arc::new(CountedApprovals::default());
+        let (events, received) = std::sync::mpsc::channel();
+        let control = Control::new(
+            Arc::clone(&engine) as Arc<dyn Engine>,
+            received,
+            Arc::clone(&approvals) as Arc<dyn Approvals>,
+            Limits::default(),
+        );
+        (control, engine, approvals, events)
+    }
+
+    fn next_event(
+        surface: &Receiver<SurfaceEvent>,
+        what: &str,
+        wanted: impl Fn(&SurfaceEvent) -> bool,
+    ) -> SurfaceEvent {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match surface.recv_timeout(left) {
+                Ok(event) if wanted(&event) => return event,
+                Ok(_) => {}
+                Err(_) => panic!("{what} never arrived"),
+            }
+        }
+    }
+
+    fn dialog(tab: TabId) -> ClientEvent {
+        ClientEvent::Browser(Event::DialogOpened {
+            tab,
+            dialog: 7,
+            kind: paneflow_browser_proto::surface::DialogKind::Confirm,
+            origin: "http://127.0.0.1:8000".to_string(),
+            message: "Delete?".to_string(),
+            default_text: String::new(),
+        })
+    }
+
+    fn chooser(tab: TabId) -> ClientEvent {
+        ClientEvent::Browser(Event::FileChooserOpened {
+            tab,
+            request: 3,
+            mode: paneflow_browser_proto::surface::FileMode::Open,
+            title: String::new(),
+            accept: Vec::new(),
+        })
+    }
+
+    fn agent_call() -> CallContext {
+        CallContext {
+            identity: Identity::Agent {
+                session: SESSION.to_string(),
+                agent: Some("claude".to_string()),
+            },
+            workspace: Some(workspace()),
+            visible: Some(workspace()),
+            live_sessions: None,
+        }
+    }
+
+    #[test]
+    fn a_dialog_or_file_chooser_on_an_agent_tab_is_dismissed_and_never_reaches_the_window() {
+        let (control, engine, _, events) = surface_control();
+        let surface = control.subscribe();
+        let tab = control
+            .open_surface(workspace(), agent(), "http://127.0.0.1:8000/")
+            .unwrap();
+        events.send(dialog(tab)).unwrap();
+        events.send(chooser(tab)).unwrap();
+        settle(&control, "the file chooser refusal", |state| {
+            state.tabs[&tab].marks.file_choosers_refused == 1
+        });
+        assert_eq!(
+            *engine.fired.lock().unwrap(),
+            [
+                (
+                    tab,
+                    TabCommand::AnswerDialog {
+                        dialog: 7,
+                        accept: false,
+                        text: None,
+                    }
+                ),
+                (
+                    tab,
+                    TabCommand::AnswerFiles {
+                        request: 3,
+                        paths: None,
+                    }
+                ),
+            ]
+        );
+        assert!(surface.try_iter().all(|event| !matches!(
+            event,
+            SurfaceEvent::Dialog { .. } | SurfaceEvent::FileChooser { .. }
+        )));
+        let notes: Vec<String> = control.inner.lock().tabs[&tab]
+            .console
+            .after(0, usize::MAX, |entry| entry.seq)
+            .entries
+            .into_iter()
+            .map(|entry| entry.text)
+            .collect();
+        assert!(
+            notes.iter().any(|text| text.contains("needs the human")),
+            "{notes:?}"
+        );
+    }
+
+    #[test]
+    fn a_dialog_or_file_chooser_on_a_human_tab_goes_to_the_window_and_is_not_answered() {
+        let (control, engine, _, events) = surface_control();
+        let surface = control.subscribe();
+        let tab = control
+            .open_surface(workspace(), TabOwner::Human, "http://127.0.0.1:8000/")
+            .unwrap();
+        events.send(dialog(tab)).unwrap();
+        let SurfaceEvent::Dialog { dialog, .. } = next_event(&surface, "the dialog", |event| {
+            matches!(event, SurfaceEvent::Dialog { .. })
+        }) else {
+            unreachable!()
+        };
+        assert_eq!(
+            (
+                dialog.dialog,
+                dialog.origin.as_str(),
+                dialog.message.as_str()
+            ),
+            (7, "http://127.0.0.1:8000", "Delete?")
+        );
+        events.send(chooser(tab)).unwrap();
+        next_event(&surface, "the file chooser", |event| {
+            matches!(event, SurfaceEvent::FileChooser { .. })
+        });
+        assert!(engine.fired.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn only_the_annotation_binding_reaches_the_window_and_it_never_lands_in_the_console() {
+        let (control, _, _, events) = surface_control();
+        let surface = control.subscribe();
+        let tab = control
+            .open_surface(workspace(), TabOwner::Human, "http://127.0.0.1:8000/")
+            .unwrap();
+        let called = |name: &str, payload: &str| {
+            ClientEvent::Browser(Event::DevTools {
+                tab,
+                method: "Runtime.bindingCalled".to_string(),
+                params: serde_json::json!({
+                    "name": name,
+                    "payload": payload,
+                    "executionContextId": 9,
+                }),
+            })
+        };
+        events.send(called("somethingElse", "{}")).unwrap();
+        events
+            .send(called(ANNOTATION_BINDING, "{\"event\":\"pick\"}"))
+            .unwrap();
+        let SurfaceEvent::Annotation {
+            tab: from,
+            context,
+            payload,
+        } = next_event(&surface, "the annotation", |event| {
+            matches!(event, SurfaceEvent::Annotation { .. })
+        })
+        else {
+            unreachable!()
+        };
+        assert_eq!(
+            (from, context, payload.as_str()),
+            (tab, 9, "{\"event\":\"pick\"}")
+        );
+        let notes = control.inner.lock().tabs[&tab]
+            .console
+            .after(0, usize::MAX, |entry| entry.seq)
+            .entries;
+        assert!(notes.iter().all(|entry| !entry.text.contains("pick")));
+    }
+
+    #[test]
+    fn an_inspector_tab_keeps_its_surface_events_and_never_takes_an_orphan_slot() {
+        let (control, _, _, events) = surface_control();
+        let surface = control.subscribe();
+        let inspector = TabId(77);
+        events
+            .send(ClientEvent::Browser(Event::TitleChanged {
+                tab: inspector,
+                title: "DevTools".to_string(),
+            }))
+            .unwrap();
+        next_event(
+            &surface,
+            "the early change",
+            |event| matches!(event, SurfaceEvent::Changed(tab) if *tab == inspector),
+        );
+        control.adopt_inspector(inspector);
+        assert!(!control.inner.lock().orphans.contains_key(&inspector));
+        events
+            .send(ClientEvent::Browser(Event::TitleChanged {
+                tab: inspector,
+                title: "DevTools again".to_string(),
+            }))
+            .unwrap();
+        events
+            .send(ClientEvent::Browser(Event::Cursor {
+                tab: inspector,
+                cursor: paneflow_browser_proto::Cursor::Text,
+            }))
+            .unwrap();
+        next_event(
+            &surface,
+            "the inspector's cursor",
+            |event| matches!(event, SurfaceEvent::Cursor { tab, .. } if *tab == inspector),
+        );
+        assert!(!control.inner.lock().orphans.contains_key(&inspector));
+        assert!(control.view(inspector).is_none());
+        events
+            .send(ClientEvent::Browser(Event::Closed { tab: inspector }))
+            .unwrap();
+        next_event(
+            &surface,
+            "the inspector closing",
+            |event| matches!(event, SurfaceEvent::Closed(tab) if *tab == inspector),
+        );
+        assert!(!control.inner.lock().inspectors.contains(&inspector));
+    }
+
+    #[test]
+    fn a_human_takeover_refuses_the_displaced_agent_by_name_until_the_tab_is_handed_back() {
+        let (control, _, _, _) = surface_control();
+        let tab = control
+            .open_surface(workspace(), agent(), "http://127.0.0.1:8000/")
+            .unwrap();
+        assert!(control.inner.owned(tab, &agent_call()).is_ok());
+        assert!(control.take_over(tab));
+        assert!(!control.take_over(tab));
+        let view = control.view(tab).unwrap();
+        assert_eq!(view.owner, TabOwner::Human);
+        assert_eq!(view.taken_over_from.as_deref(), Some(SESSION));
+        let refused = control.inner.owned(tab, &agent_call()).unwrap_err();
+        assert!(refused.to_string().contains("took over"), "{refused}");
+        assert!(control.hand_to(tab, SESSION.to_string(), Some("claude".to_string())));
+        let view = control.view(tab).unwrap();
+        assert_eq!(view.agent_session(), Some(SESSION));
+        assert_eq!(view.taken_over_from, None);
+        assert!(control.inner.owned(tab, &agent_call()).is_ok());
+    }
+
+    #[test]
+    fn a_new_window_opens_as_a_tab_with_its_openers_owner_workspace_and_place_only_after_a_click() {
+        let (control, engine, _, events) = surface_control();
+        let surface = control.subscribe();
+        let opener = control
+            .open_surface(workspace(), agent(), "http://127.0.0.1:8000/")
+            .unwrap();
+        events
+            .send(ClientEvent::Browser(Event::NewWindowRequested {
+                tab: opener,
+                url: "http://127.0.0.1:8000/popup".to_string(),
+                user_gesture: true,
+            }))
+            .unwrap();
+        let SurfaceEvent::Opened { tab, opener: from } =
+            next_event(&surface, "the new tab", |event| {
+                matches!(event, SurfaceEvent::Opened { .. })
+            })
+        else {
+            unreachable!()
+        };
+        assert_eq!(from, opener);
+        let view = control.view(tab).unwrap();
+        assert_eq!(
+            (view.owner, view.workspace, view.url.as_str()),
+            (agent(), workspace(), "http://127.0.0.1:8000/popup")
+        );
+        assert!(control.inner.lock().tabs[&tab].in_window);
+        events
+            .send(ClientEvent::Browser(Event::NewWindowRequested {
+                tab: opener,
+                url: "file:///etc/passwd".to_string(),
+                user_gesture: true,
+            }))
+            .unwrap();
+        settle(&control, "the refused window note", |state| {
+            state.tabs[&opener]
+                .console
+                .after(0, usize::MAX, |entry| entry.seq)
+                .entries
+                .iter()
+                .any(|entry| entry.text.contains("did not open a new window"))
+        });
+        events
+            .send(ClientEvent::Browser(Event::NewWindowRequested {
+                tab: opener,
+                url: "http://127.0.0.1:8000/unasked".to_string(),
+                user_gesture: false,
+            }))
+            .unwrap();
+        settle(&control, "the blocked window note", |state| {
+            state.tabs[&opener]
+                .console
+                .after(0, usize::MAX, |entry| entry.seq)
+                .entries
+                .iter()
+                .any(|entry| entry.text.contains("without a click"))
+        });
+        assert_eq!(
+            engine.opened.lock().unwrap().len(),
+            2,
+            "a window the page opened without a click never becomes a tab"
+        );
+    }
+
+    #[test]
+    fn a_load_failure_is_shown_until_the_next_navigation_starts() {
+        let (control, _, _, events) = surface_control();
+        let tab = control
+            .open_surface(workspace(), TabOwner::Human, "http://127.0.0.1:8000/")
+            .unwrap();
+        let send = |event: Event| events.send(ClientEvent::Browser(event)).unwrap();
+        let failed = "https://vercel.s/";
+        send(Event::LoadFailed {
+            tab,
+            url: failed.to_string(),
+            error_code: -105,
+            error_text: "ERR_NAME_NOT_RESOLVED".to_string(),
+        });
+        send(Event::Loaded {
+            tab,
+            url: failed.to_string(),
+            http_status: 0,
+        });
+        settle(&control, "the error page", |state| {
+            state.tabs[&tab].marks.load_failures == 1 && state.tabs[&tab].state == TabState::Loaded
+        });
+        let shown = control.view(tab).unwrap().failure;
+        assert!(
+            shown
+                .as_deref()
+                .is_some_and(|text| text.contains("ERR_NAME_NOT_RESOLVED")),
+            "the error page keeps the failure shown: {shown:?}"
+        );
+        send(Event::LoadStarted {
+            tab,
+            url: "https://vercel.com/".to_string(),
+        });
+        settle(&control, "the next navigation", |state| {
+            state.tabs[&tab].marks.loads_started > 0
+        });
+        assert_eq!(control.view(tab).unwrap().failure, None);
+        assert!(
+            control.inner.lock().tabs[&tab].last_failure.is_some(),
+            "agents still read the last failure"
+        );
+    }
+
+    #[test]
+    fn only_a_tab_a_person_drives_opens_a_site_outside_the_local_servers_without_a_decision() {
+        let (control, engine, _, _events) = surface_control();
+        let human = control
+            .open_surface(workspace(), TabOwner::Human, "http://127.0.0.1:8000/")
+            .unwrap();
+        let unclaimed = control
+            .open_surface(workspace(), TabOwner::Unclaimed, "http://127.0.0.1:8000/")
+            .unwrap();
+        let agent = control
+            .open_surface(
+                workspace(),
+                TabOwner::Agent {
+                    session: "s2".to_string(),
+                    agent: None,
+                },
+                "http://127.0.0.1:8000/",
+            )
+            .unwrap();
+        assert_eq!(*engine.guarded.lock().unwrap(), [false, true, true]);
+        assert!(control.hand_to(human, "s1".to_string(), None));
+        let decide = control.inner.lock().tabs.get_mut(&human).unwrap().apply(
+            &Event::OriginDecisionRequested {
+                tab: human,
+                origin: "https://example.com".to_string(),
+                url: "https://example.com/".to_string(),
+            },
+        );
+        assert!(decide.is_some());
+        let lapsed = CallContext {
+            identity: Identity::Human,
+            workspace: None,
+            visible: None,
+            live_sessions: Some(HashSet::new()),
+        };
+        control.inner.sweep(&mut control.inner.lock(), &lapsed);
+        assert_eq!(control.view(human).unwrap().owner, TabOwner::Unclaimed);
+        assert!(
+            control.view(human).unwrap().held.is_some(),
+            "an agent that goes away leaves its held site held"
+        );
+        assert!(control.take_over(human));
+        assert!(control.view(human).unwrap().held.is_none());
+        let guards = |wanted: TabId| -> Vec<bool> {
+            engine
+                .fired
+                .lock()
+                .unwrap()
+                .iter()
+                .filter_map(|(tab, command)| match command {
+                    TabCommand::Guard(guarded) if *tab == wanted => Some(*guarded),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(
+            guards(human),
+            [true, false],
+            "only a person lifts the guard"
+        );
+        assert!(guards(unclaimed).is_empty());
+        assert!(guards(agent).is_empty());
     }
 
     #[derive(Default)]
@@ -1698,6 +2544,6 @@ mod tests {
             assert_eq!(error.code, crate::error::INVALID_PARAMS, "{refused}");
         }
         let long = format!("http://127.0.0.1/{}", "a".repeat(MAX_URL_CHARS));
-        assert!(validate_url(&long).unwrap_err().message.contains("2048"));
+        assert!(validate_url(&long).unwrap_err().message.contains("2097152"));
     }
 }

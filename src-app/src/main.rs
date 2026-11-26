@@ -21,6 +21,7 @@ mod assets;
 mod auto_naming;
 #[cfg(test)]
 mod bench_harness;
+mod browser;
 mod browser_control;
 mod claude_sessions;
 mod cli;
@@ -52,6 +53,8 @@ mod ipc_grants;
 mod ipc_panes;
 mod keybindings;
 mod keys;
+#[cfg(debug_assertions)]
+mod latency_harness;
 mod launch;
 mod launch_cwd;
 mod layout;
@@ -169,6 +172,7 @@ struct DiffDockState {
     pub(crate) picked: bool,
     pub(crate) picker_focus: FocusHandle,
     pub(crate) picker_focus_pending: bool,
+    pub(crate) deferred_snapshot: Option<String>,
     pub(crate) picker_focus_return: Option<FocusReturn>,
     pub(crate) picker_highlight: Option<usize>,
     pub(crate) changes_tree_open: bool,
@@ -252,6 +256,9 @@ struct PaneFlowApp {
     settings_search_motion: std::rc::Rc<std::cell::RefCell<crate::settings::search::SearchMotion>>,
     terminal_dropdown: Option<TerminalDropdown>,
     general_dropdown: Option<GeneralDropdown>,
+    browser_dropdown: Option<BrowserDropdown>,
+    browser_clear_span: usize,
+    browser_custom_search_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     workspace_template_dropdown: Option<WorkspaceTemplateDropdown>,
     workspace_template_selected: Option<usize>,
     workspace_template_detail_open: bool,
@@ -346,6 +353,7 @@ struct PaneFlowApp {
     files_sidebar_root: Option<std::path::PathBuf>,
     files_sidebar_workspace: Option<u64>,
     files_menu_open: Option<FilesContextMenu>,
+    terminal_link_menu: Option<crate::app::browser_surface::LinkMenu>,
     comment_agents: std::collections::HashMap<u64, u64>,
     comment_offer: Option<app::agent_send::CommentOffer>,
     toast: Option<Toast>,

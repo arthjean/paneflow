@@ -12,6 +12,11 @@ mod app;
 mod connection;
 mod handlers;
 mod host;
+mod input;
+mod inspector;
+mod present;
+mod security;
+mod shm;
 mod ui;
 
 use std::path::{Path, PathBuf};

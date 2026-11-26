@@ -29,6 +29,7 @@ use crate::terminal::{TerminalEvent, TerminalView};
 pub enum PaneSurface {
     Terminal(Entity<TerminalView>),
     Markdown(Entity<MarkdownView>),
+    Browser(Entity<crate::browser::BrowserView>),
 }
 
 impl PaneSurface {
@@ -36,12 +37,13 @@ impl PaneSurface {
         match self {
             Self::Terminal(view) => view.entity_id().as_u64(),
             Self::Markdown(view) => view.entity_id().as_u64(),
+            Self::Browser(view) => view.entity_id().as_u64(),
         }
     }
     pub fn as_terminal(&self) -> Option<&Entity<TerminalView>> {
         match self {
             PaneSurface::Terminal(t) => Some(t),
-            PaneSurface::Markdown(_) => None,
+            PaneSurface::Markdown(_) | PaneSurface::Browser(_) => None,
         }
     }
 
@@ -49,6 +51,7 @@ impl PaneSurface {
         match self {
             PaneSurface::Terminal(_) => "icons/terminal.svg",
             PaneSurface::Markdown(_) => "icons/file-text.svg",
+            PaneSurface::Browser(_) => "icons/world.svg",
         }
     }
 }
@@ -1053,6 +1056,8 @@ impl Pane {
             | TerminalEvent::Notice(_)
             | TerminalEvent::OpenMarkdownPath(_)
             | TerminalEvent::OpenCodePath { .. }
+            | TerminalEvent::OpenInBrowser { .. }
+            | TerminalEvent::LinkMenu { .. }
             | TerminalEvent::PickCodePath { .. }
             | TerminalEvent::TreeFileDropped { .. }
             | TerminalEvent::FontZoomChanged
@@ -1069,6 +1074,7 @@ impl Pane {
     fn surface_full_title(surface: &PaneSurface, cx: &App) -> String {
         match surface {
             PaneSurface::Markdown(md) => md.read(cx).title().to_string(),
+            PaneSurface::Browser(view) => view.read(cx).title(),
             PaneSurface::Terminal(t) => Self::terminal_surface_full_title(t, cx),
         }
     }
@@ -1076,6 +1082,7 @@ impl Pane {
     fn surface_title(surface: &PaneSurface, cx: &App) -> String {
         let raw = match surface {
             PaneSurface::Markdown(md) => md.read(cx).title().to_string(),
+            PaneSurface::Browser(view) => view.read(cx).title(),
             PaneSurface::Terminal(t) => Self::terminal_surface_title(t, cx),
         };
         truncate_surface_title(&raw)
@@ -2158,6 +2165,7 @@ impl Focusable for Pane {
         match self.surface() {
             PaneSurface::Terminal(t) => t.read(cx).focus_handle(cx),
             PaneSurface::Markdown(m) => m.read(cx).focus_handle(cx),
+            PaneSurface::Browser(view) => view.read(cx).focus_handle(cx),
         }
     }
 }
@@ -2173,6 +2181,10 @@ impl Render for Pane {
         let body = match self.surface() {
             PaneSurface::Terminal(t) => t.clone().cached(cached_surface_style()).into_any_element(),
             PaneSurface::Markdown(m) => m.clone().into_any_element(),
+            PaneSurface::Browser(view) => view
+                .clone()
+                .cached(cached_surface_style())
+                .into_any_element(),
         };
         let theme = crate::theme::active_theme();
         let card_background = pane_card_background(&theme, self.backdrop, terminal_selected);

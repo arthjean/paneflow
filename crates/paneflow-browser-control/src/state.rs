@@ -8,6 +8,10 @@ use paneflow_browser_proto::limits::MAX_LOG_ENTRIES_PER_TAB;
 use paneflow_browser_proto::{Event, NavigationRefusal, Permission, ProfileName};
 use serde_json::Value;
 
+use crate::surface::BlockedPermission;
+
+pub const MAX_BLOCKED_PERMISSIONS_PER_TAB: usize = 16;
+
 pub const REDACTED_HEADERS: [&str; 4] = [
     "authorization",
     "cookie",
@@ -91,6 +95,7 @@ pub struct Marks {
     pub same_document: u64,
     pub crashes: u64,
     pub dialogs: u64,
+    pub file_choosers_refused: u64,
 }
 
 pub struct TabEntry {
@@ -118,9 +123,19 @@ pub struct TabEntry {
     pub asking: bool,
     pub last_refusal: Option<NavigationRefusal>,
     pub last_failure: Option<String>,
+    pub notice_current: bool,
     pub crash: Option<String>,
     pub domains_enabled: bool,
     pub main_frame: Option<String>,
+    pub can_go_back: bool,
+    pub can_go_forward: bool,
+    pub engine_loading: bool,
+    pub load_progress: u16,
+    pub presented: bool,
+    pub in_window: bool,
+    pub presentation_failure: Option<String>,
+    pub taken_over_from: Option<String>,
+    pub blocked: Vec<BlockedPermission>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -158,9 +173,19 @@ impl TabEntry {
             asking: false,
             last_refusal: None,
             last_failure: None,
+            notice_current: false,
             crash: None,
             domains_enabled: false,
             main_frame: None,
+            can_go_back: false,
+            can_go_forward: false,
+            engine_loading: false,
+            load_progress: 0,
+            presented: false,
+            in_window: false,
+            presentation_failure: None,
+            taken_over_from: None,
+            blocked: Vec::new(),
         }
     }
 
@@ -192,6 +217,8 @@ impl TabEntry {
         match event {
             Event::LoadStarted { url, .. } => {
                 self.state = TabState::Loading;
+                self.load_progress = 0;
+                self.notice_current = false;
                 self.pending = None;
                 self.marks.loads_started += 1;
                 self.generation += 1;
@@ -219,6 +246,7 @@ impl TabEntry {
                 self.state = TabState::Failed;
                 self.last_failure =
                     Some(format!("{url} failed to load: {error_text} ({error_code})"));
+                self.notice_current = true;
             }
             Event::LoadFailed { .. } => {
                 self.marks.loads_finished = self.marks.loads_started;
@@ -245,6 +273,7 @@ impl TabEntry {
                 self.marks.refusals += 1;
                 self.pending = None;
                 self.last_refusal = Some(refusal.clone());
+                self.notice_current = true;
                 self.state = if self.marks.loads_finished > 0 {
                     TabState::Loaded
                 } else {
@@ -260,6 +289,9 @@ impl TabEntry {
                 permissions,
                 ..
             } => {
+                for permission in permissions {
+                    self.block(origin, *permission);
+                }
                 let names: Vec<&str> = permissions.iter().map(permission_name).collect();
                 self.note(
                     "warning",
@@ -276,9 +308,39 @@ impl TabEntry {
                 self.inflight.clear();
                 self.pending = None;
                 self.domains_enabled = false;
+                self.engine_loading = false;
             }
             Event::DevTools { method, params, .. } => self.apply_devtools(method, params),
-            Event::Console { .. } | Event::Closed { .. } | Event::Exiting { .. } => {}
+            Event::TitleChanged { title, .. } => {
+                self.title = (!title.is_empty()).then(|| title.clone());
+            }
+            Event::AddressChanged { url, .. } => self.set_url(url),
+            Event::LoadingState {
+                loading,
+                can_go_back,
+                can_go_forward,
+                ..
+            } => {
+                self.engine_loading = *loading;
+                self.can_go_back = *can_go_back;
+                self.can_go_forward = *can_go_forward;
+            }
+            Event::LoadProgress { progress, .. } => {
+                self.load_progress = permille(*progress);
+            }
+            Event::PresentationFailed { reason, .. } => {
+                self.presentation_failure = Some(reason.clone());
+            }
+            Event::Surface { .. } => self.presentation_failure = None,
+            Event::Console { .. }
+            | Event::Closed { .. }
+            | Event::Exiting { .. }
+            | Event::Frame(_)
+            | Event::Cursor { .. }
+            | Event::DialogOpened { .. }
+            | Event::FileChooserOpened { .. }
+            | Event::NewWindowRequested { .. }
+            | Event::ImeCaret { .. } => {}
         }
         None
     }
@@ -524,6 +586,22 @@ pub struct Decide {
     pub seq: u64,
 }
 
+impl TabEntry {
+    fn block(&mut self, origin: &str, permission: Permission) {
+        let blocked = BlockedPermission {
+            origin: origin.to_string(),
+            permission,
+        };
+        if self.blocked.contains(&blocked) {
+            return;
+        }
+        if self.blocked.len() == MAX_BLOCKED_PERMISSIONS_PER_TAB {
+            self.blocked.remove(0);
+        }
+        self.blocked.push(blocked);
+    }
+}
+
 fn permission_name(permission: &Permission) -> &'static str {
     match permission {
         Permission::Camera => "the camera",
@@ -574,6 +652,14 @@ pub fn redacted_headers(headers: &Value) -> BTreeMap<String, String> {
         .unwrap_or_default()
 }
 
+pub fn permille(progress: f64) -> u16 {
+    if progress.is_finite() {
+        (progress.clamp(0.0, 1.0) * 1000.0).round() as u16
+    } else {
+        0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -594,6 +680,46 @@ mod tests {
             method: method.to_string(),
             params,
         }
+    }
+
+    #[test]
+    fn each_permission_a_site_was_refused_is_kept_once_and_the_oldest_leave_first() {
+        let mut tab = entry();
+        let refused = |origin: &str, permissions: Vec<Permission>| Event::PermissionDenied {
+            tab: TabId(1),
+            origin: origin.to_string(),
+            permissions,
+        };
+        tab.apply(&refused(
+            "https://meet.example",
+            vec![Permission::Camera, Permission::Microphone],
+        ));
+        tab.apply(&refused("https://meet.example", vec![Permission::Camera]));
+        assert_eq!(
+            tab.blocked,
+            vec![
+                BlockedPermission {
+                    origin: "https://meet.example".to_string(),
+                    permission: Permission::Camera
+                },
+                BlockedPermission {
+                    origin: "https://meet.example".to_string(),
+                    permission: Permission::Microphone
+                },
+            ]
+        );
+        for index in 0..MAX_BLOCKED_PERMISSIONS_PER_TAB {
+            tab.apply(&refused(
+                &format!("https://site-{index}.example"),
+                vec![Permission::Geolocation],
+            ));
+        }
+        assert_eq!(tab.blocked.len(), MAX_BLOCKED_PERMISSIONS_PER_TAB);
+        assert!(
+            tab.blocked
+                .iter()
+                .all(|blocked| blocked.origin != "https://meet.example")
+        );
     }
 
     #[test]

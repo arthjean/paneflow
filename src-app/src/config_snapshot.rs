@@ -3,7 +3,7 @@ use std::sync::Arc;
 use gpui::{App, Global};
 use paneflow_config::schema::PaneFlowConfig;
 
-struct ConfigSnapshot(Arc<PaneFlowConfig>);
+pub(crate) struct ConfigSnapshot(Arc<PaneFlowConfig>);
 
 impl Global for ConfigSnapshot {}
 

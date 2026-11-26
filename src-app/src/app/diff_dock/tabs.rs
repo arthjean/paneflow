@@ -132,7 +132,9 @@ impl PaneFlowApp {
                 TerminalEvent::ChildExited => cx.notify(),
                 TerminalEvent::OpenCodePath { .. }
                 | TerminalEvent::PickCodePath { .. }
-                | TerminalEvent::TreeFileDropped { .. } => {
+                | TerminalEvent::TreeFileDropped { .. }
+                | TerminalEvent::OpenInBrowser { .. }
+                | TerminalEvent::LinkMenu { .. } => {
                     this.handle_terminal_event(terminal, event, cx);
                 }
                 _ => {}
@@ -308,7 +310,9 @@ impl PaneFlowApp {
                     }
                 }
                 DiffDockTab::PendingFile => DiffTabFact::Files,
-                DiffDockTab::Changes | DiffDockTab::Terminal(_) => DiffTabFact::Fixed,
+                DiffDockTab::Changes | DiffDockTab::Terminal(_) | DiffDockTab::Browser(_) => {
+                    DiffTabFact::Fixed
+                }
             })
             .collect()
     }
@@ -322,6 +326,7 @@ impl PaneFlowApp {
         let focus = match self.diff_dock.diff_tabs.get(index) {
             Some(DiffDockTab::File(view)) => Some(view.read(cx).focus_handle(cx)),
             Some(DiffDockTab::Terminal(terminal)) => Some(terminal.read(cx).focus_handle(cx)),
+            Some(DiffDockTab::Browser(view)) => Some(view.read(cx).focus_handle(cx)),
             Some(DiffDockTab::PendingFile) if self.files_sidebar_open => {
                 Some(self.files_sidebar.read(cx).focus_handle(cx))
             }
@@ -373,6 +378,13 @@ impl PaneFlowApp {
 
     pub(crate) fn select_diff_tab(&mut self, index: usize, cx: &mut Context<Self>) {
         if index < self.diff_dock.diff_tabs.len() {
+            if !matches!(
+                self.diff_dock.diff_tabs.get(index),
+                Some(DiffDockTab::Browser(_))
+            ) && let Some(cwd) = self.diff_dock.deferred_snapshot.take()
+            {
+                self.refresh_diff_dock(cwd, cx);
+            }
             self.diff_dock.picker = false;
             self.diff_dock.picked = true;
             self.diff_dock.diff_active_tab = index;
@@ -504,6 +516,9 @@ impl PaneFlowApp {
             return;
         }
         let closed = self.diff_dock.diff_tabs.remove(index);
+        if let DiffDockTab::Browser(view) = &closed {
+            view.update(cx, |view, cx| view.close_tab(cx));
+        }
         if let DiffDockTab::File(view) = &closed {
             let view = view.read(cx);
             self.diff_dock.closed_files.record(ClosedFileTab {

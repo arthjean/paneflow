@@ -10,6 +10,8 @@
 
 mod binary;
 mod environment;
+mod frames;
+mod shared_memory;
 mod supervisor;
 mod transport;
 
@@ -26,6 +28,7 @@ pub use binary::{
     resolve_host_binary, resolve_host_binary_with,
 };
 pub use environment::host_environment;
+pub use frames::{BrowserFrame, FrameStats, FrameWaker};
 pub use supervisor::BrowserClient;
 
 pub const HOST_START_DEADLINE: Duration = Duration::from_secs(60);

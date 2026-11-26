@@ -19,10 +19,15 @@ const ALLOW_ALWAYS: &str = "allow_always";
 const ALLOW: &str = "allow";
 const DENY: &str = "deny";
 
-static CONTROL: OnceLock<Result<Control, String>> = OnceLock::new();
+pub(crate) struct Runtime {
+    pub(crate) control: Control,
+    pub(crate) client: Arc<BrowserClient>,
+}
 
-pub(crate) fn control() -> Result<&'static Control, String> {
-    CONTROL
+static RUNTIME: OnceLock<Result<Runtime, String>> = OnceLock::new();
+
+pub(crate) fn runtime() -> Result<&'static Runtime, String> {
+    RUNTIME
         .get_or_init(|| {
             let home = paneflow_home::paneflow_home()
                 .ok_or("cannot resolve the Paneflow home; set PANEFLOW_HOME")?;
@@ -32,18 +37,28 @@ pub(crate) fn control() -> Result<&'static Control, String> {
         .map_err(Clone::clone)
 }
 
-fn start(home: PathBuf) -> Control {
+pub(crate) fn control() -> Result<&'static Control, String> {
+    runtime().map(|runtime| &runtime.control)
+}
+
+pub(crate) fn installed() -> bool {
+    runtime().is_ok_and(|runtime| runtime.client.binary().is_file())
+}
+
+fn start(home: PathBuf) -> Runtime {
     let approvals = WorkerApprovals {
         endpoint: paneflow_home::serve_endpoint_path(&home),
         limits: Limits::default(),
     };
     let (client, events) = BrowserClient::new(HostConfig::for_home(home));
-    Control::new(
-        Arc::new(client),
+    let client = Arc::new(client);
+    let control = Control::new(
+        Arc::clone(&client) as Arc<dyn paneflow_browser_control::Engine>,
         events,
         Arc::new(approvals),
         Limits::default(),
-    )
+    );
+    Runtime { control, client }
 }
 
 pub(crate) fn answer(

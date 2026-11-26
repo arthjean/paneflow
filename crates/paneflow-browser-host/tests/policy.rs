@@ -5,7 +5,7 @@ mod common;
 use common::{DEADLINE, FixtureServer, Harness, lan_address};
 use paneflow_browser_client::{ClientEvent, TabStatus};
 use paneflow_browser_proto::{
-    CommandError, Event, NavigationRefusal, OriginDecision, Permission, Reply, TabId,
+    CommandError, Event, NavigationRefusal, OriginDecision, Reply, TabId,
 };
 use serde_json::json;
 
@@ -117,6 +117,123 @@ fn decision_requested(harness: &mut Harness, tab: TabId, origin: &str) {
                 if *t == tab && o == origin
         )
     });
+}
+
+fn placeholder_event(event: &ClientEvent, tab: TabId) -> bool {
+    match event {
+        ClientEvent::Browser(
+            Event::LoadStarted { tab: t, url }
+            | Event::Loaded { tab: t, url, .. }
+            | Event::AddressChanged { tab: t, url },
+        ) => *t == tab && url.starts_with("about:"),
+        ClientEvent::Browser(Event::TitleChanged { tab: t, title }) => {
+            *t == tab && title.starts_with("about:")
+        }
+        ClientEvent::Browser(Event::LoadingState { tab: t, .. }) => *t == tab,
+        _ => false,
+    }
+}
+
+#[test]
+fn a_tab_opened_on_a_public_origin_reports_only_the_held_site_until_it_is_decided() {
+    let Some(lan) = lan_address() else {
+        panic!("this test needs a non-loopback interface address");
+    };
+    let server = FixtureServer::start_on_all_interfaces();
+    let mut harness = Harness::new();
+    let external = server.url_on(lan, "/app.html");
+    let origin = format!("http://{lan}:{}", server.port);
+    let tab = harness.open("held-at-open", &external);
+    decision_requested(&mut harness, tab, &origin);
+    assert!(matches!(
+        harness.client.tab_status(tab),
+        Some(TabStatus::AwaitingDecision { origin: o, .. }) if o == origin
+    ));
+    harness.evaluate(tab, "document.readyState");
+    harness.seen.extend(harness.events.try_iter());
+    let before_decision: Vec<&ClientEvent> = harness
+        .seen
+        .iter()
+        .filter(|event| placeholder_event(event, tab))
+        .collect();
+    assert!(
+        before_decision.is_empty(),
+        "the blank page the tab starts on was reported: {before_decision:#?}"
+    );
+    assert_eq!(
+        harness
+            .client
+            .decide_origin(tab, &origin, OriginDecision::AllowOnce)
+            .wait(DEADLINE),
+        Ok(Reply::Done)
+    );
+    assert_eq!(harness.wait_loaded(tab, &origin), 200);
+    assert_eq!(
+        harness.evaluate(tab, "history.length"),
+        json!(1),
+        "Back must not lead to the blank page the tab started on"
+    );
+    harness.shutdown();
+}
+
+#[test]
+fn a_tab_a_person_drives_opens_a_public_origin_and_frames_it_without_a_decision() {
+    let Some(lan) = lan_address() else {
+        panic!("this test needs a non-loopback interface address");
+    };
+    let server = FixtureServer::start_on_all_interfaces();
+    let mut harness = Harness::new();
+    let external = server.url_on(lan, "/app.html");
+    let origin = format!("http://{lan}:{}", server.port);
+    let (tab, opened) =
+        harness
+            .client
+            .open_tab_guarded(Harness::profile("unguarded"), &external, false);
+    assert_eq!(opened.wait(DEADLINE), Ok(Reply::Done));
+    assert_eq!(harness.wait_loaded(tab, &origin), 200);
+    let framed = harness.evaluate(
+        tab,
+        &format!(
+            "new Promise(done => {{ const frame = document.createElement('iframe'); \
+             frame.onload = () => done(frame.contentWindow.location.href); \
+             frame.src = '{}'; document.body.appendChild(frame); }})",
+            server.url_on(lan, "/form.html")
+        ),
+    );
+    assert_eq!(framed, json!(server.url_on(lan, "/form.html")));
+
+    assert_eq!(
+        harness.client.guard(tab, true).wait(DEADLINE),
+        Ok(Reply::Done)
+    );
+    let local = server.url("/form.html");
+    assert_eq!(
+        harness.client.navigate(tab, &local).wait(DEADLINE),
+        Ok(Reply::Done)
+    );
+    harness.wait_loaded(tab, "/form.html");
+    let held = server.url_on(lan, "/app.html?held");
+    assert_eq!(
+        harness.client.navigate(tab, &held).wait(DEADLINE),
+        Ok(Reply::Done)
+    );
+    decision_requested(&mut harness, tab, &origin);
+    assert_eq!(
+        harness.client.guard(tab, false).wait(DEADLINE),
+        Ok(Reply::Done)
+    );
+    harness.wait_for("the held site dropped, never loaded", |event| {
+        matches!(
+            event,
+            ClientEvent::Browser(Event::NavigationRefused {
+                tab: t,
+                refusal: NavigationRefusal::OriginUndecided { origin: o },
+                ..
+            }) if *t == tab && *o == origin
+        )
+    });
+    assert_eq!(harness.evaluate(tab, "location.href"), json!(local));
+    harness.shutdown();
 }
 
 #[test]
@@ -281,28 +398,16 @@ fn camera_microphone_geolocation_and_notifications_are_denied() {
         "{results}"
     );
 
-    let mut denied = Vec::new();
-    for event in harness.seen.iter() {
-        if let ClientEvent::Browser(Event::PermissionDenied {
-            tab: t,
-            permissions,
-            ..
-        }) = event
-            && *t == tab
-        {
-            denied.extend(permissions.iter().copied());
-        }
-    }
-    while !(denied.contains(&Permission::Geolocation)
-        && denied.contains(&Permission::Notifications))
-    {
-        let event = harness.wait_for("permission denials", |event| {
-            matches!(event, ClientEvent::Browser(Event::PermissionDenied { .. }))
-        });
-        if let ClientEvent::Browser(Event::PermissionDenied { permissions, .. }) = event {
-            denied.extend(permissions);
-        }
-    }
+    let policy = harness.evaluate_until(
+        tab,
+        "Promise.all(['geolocation', 'notifications', 'camera', 'microphone'].map(name => navigator.permissions.query({name}).then(status => status.state)))",
+        |value| value.is_array(),
+    );
+    assert_eq!(
+        policy,
+        serde_json::json!(["denied", "denied", "denied", "denied"]),
+        "the profile does not block every site permission by policy"
+    );
     harness.shutdown();
 }
 
@@ -346,4 +451,42 @@ fn walk(root: &std::path::Path) -> Vec<std::path::PathBuf> {
         }
     }
     found
+}
+
+#[test]
+fn addresses_past_2048_characters_load_in_frames_pages_and_commands() {
+    let server = FixtureServer::start();
+    let mut harness = Harness::new();
+    let tab = harness.open("long-urls", &server.url("/app.html"));
+    assert_eq!(harness.wait_loaded(tab, "/app.html"), 200);
+    let long = server.url(&format!("/test/popup-target?q={}", "a".repeat(2300)));
+    harness.evaluate(
+        tab,
+        &format!(
+            "(() => {{ const f = document.createElement('iframe'); f.id = 'long'; f.src = {}; document.body.appendChild(f); return true; }})()",
+            json!(long)
+        ),
+    );
+    harness.evaluate_until(
+        tab,
+        "(() => { try { return document.getElementById('long').contentDocument.title; } catch (e) { return String(e); } })()",
+        |title| title == "Popup target",
+    );
+    harness.evaluate(tab, &format!("location.href = {}", json!(long)));
+    assert_eq!(harness.wait_loaded(tab, "popup-target"), 200);
+    let commanded = server.url(&format!("/test/popup-target?r={}", "b".repeat(5000)));
+    assert_eq!(
+        harness.client.navigate(tab, &commanded).wait(DEADLINE),
+        Ok(Reply::Done)
+    );
+    assert_eq!(harness.wait_loaded(tab, "r=bbbb"), 200);
+    assert!(
+        !harness
+            .seen
+            .iter()
+            .any(|event| matches!(event, ClientEvent::Browser(Event::NavigationRefused { .. }))),
+        "{:#?}",
+        harness.seen
+    );
+    harness.shutdown();
 }

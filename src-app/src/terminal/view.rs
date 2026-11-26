@@ -1264,6 +1264,13 @@ pub enum TerminalEvent {
     AgentSessionChanged,
     AgentDeclared,
     ConversationReady,
+    OpenInBrowser {
+        url: String,
+    },
+    LinkMenu {
+        url: String,
+        position: gpui::Point<gpui::Pixels>,
+    },
 }
 
 impl EventEmitter<TerminalEvent> for TerminalView {}
@@ -1726,7 +1733,10 @@ impl Render for TerminalView {
             self.focus_subscriptions = Some((window_id, focus_in, focus_out));
         }
 
-        let focused = self.focus_handle.is_focused(window) && window.is_window_active();
+        let window_active = window.is_window_active();
+        #[cfg(debug_assertions)]
+        let window_active = window_active || crate::latency_harness::active();
+        let focused = self.focus_handle.is_focused(window) && window_active;
         self.apply_terminal_focus(focused);
         let backend = self.terminal.session_backend();
         let theme_generation = crate::theme::theme_generation();

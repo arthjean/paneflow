@@ -14,6 +14,23 @@ fn profile_of(workspace: &Workspace) -> Option<ProfileName> {
     ProfileName::new(workspace.durable_id.to_string()).ok()
 }
 
+pub(crate) fn workspace_agent_sessions(
+    workspaces: &[Workspace],
+    workspace_idx: usize,
+    cx: &App,
+) -> Vec<(String, String)> {
+    session_directory(workspaces, cx)
+        .into_iter()
+        .filter(|entry| entry.workspace_idx == workspace_idx)
+        .filter_map(|entry| {
+            let binary = entry.agent?;
+            let label = crate::agent_launcher::TerminalAgent::from_binary(&binary)
+                .map_or(binary, |agent| agent.display_name().to_string());
+            Some((entry.session, label))
+        })
+        .collect()
+}
+
 pub(super) fn browser_context(
     workspaces: &[Workspace],
     active: Option<&Workspace>,

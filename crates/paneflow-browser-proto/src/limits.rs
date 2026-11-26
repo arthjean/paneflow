@@ -1,6 +1,8 @@
 use std::time::Duration;
 
-pub const MAX_URL_CHARS: usize = 2048;
+pub const MAX_URL_CHARS: usize = 2 * 1024 * 1024;
+
+pub const MAX_URL_DISPLAY_CHARS: usize = 32 * 1024;
 
 pub const SNAPSHOT_TEXT_BYTES: usize = 32 * 1024;
 
@@ -17,3 +19,5 @@ pub const MAX_LOG_ENTRIES_PER_TAB: usize = 1000;
 pub const NETWORK_IDLE_QUIET: Duration = Duration::from_millis(500);
 
 pub const MAX_PROFILE_NAME_CHARS: usize = 64;
+
+pub const MAX_FRAME_BYTES: usize = 128 * 1024 * 1024;

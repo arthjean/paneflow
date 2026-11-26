@@ -329,7 +329,7 @@ impl PaneFlowApp {
         self.prefill_agent(surface_id, &text, Some(origin), window, cx);
     }
 
-    fn prefill_agent(
+    pub(crate) fn prefill_agent(
         &mut self,
         surface_id: u64,
         text: &str,

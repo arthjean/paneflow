@@ -1491,6 +1491,147 @@ open left border; clicking centers the editor and dragging follows document
 progress. Only the miniature rows in view are shaped, with syntax filling
 inside the editor's existing frame budget.
 
+#### Browser tab
+
+A browser tab is a dock tab and a pane surface with one chrome row over the
+page. The row is 40px high with 6px side padding and 2px gaps between the
+controls: Back, Forward, Reload (Stop while a page loads), the address field,
+the owner badge, Pointer, and Browser tabs. Every control is a
+`kit::icon_button` whose accessible label is its only tooltip. Back and
+Forward drop to 40% opacity and stop answering clicks when there is no
+history in that direction. The address field reproduces Helium's location
+bar: a 28px field with 8px corners filled with the primary ink at 10% (8% on
+light themes, 14% and 12% on hover), its text 13px, never narrower than
+120px. At rest it shows an http
+or https page as a 16px site icon in a 24px chip inset 2px, then the host in
+the primary ink and the port, path
+and query at 83%, without the scheme and without a lone trailing slash. A
+click puts the whole address in the input, selected. It never shows the
+engine's `about:blank`; Enter opens what it holds, Escape restores the
+address, and a refused entry draws a `danger` hairline and names the problem
+in the strip below.
+
+While a web page loads, a loading line runs along the bottom edge of the
+field, clipped to its corners (`src-app/src/browser/loader.rs`, values from
+Helium's `LocationBarProgressView`): a 1.25px line in the accent at 64%
+opacity from the left edge to the reported progress, eased over 180ms and
+never moving back, shown from 5% at once; a 280px glow behind its head (a
+4px band blurred with a 4px sigma, ramped 0, 18%, 68%, 100% at 0, 0.45, 0.82
+and 1 of its width, at 50% to 88% opacity as a 700ms pulse throbs) and a
+shine that mixes 36% white into the accent. When the load ends the line runs
+to the end, then from 90% a 140px feather sweeps it away from the left while
+the glow leaves past the right edge and everything fades over 320ms. It hides
+while the field holds focus and on pages that are not http or https; reduced
+motion draws the line at the reported progress, without pulse or fade. Helium
+draws the glow with the Screen blend mode, which GPUI lacks, so the glow is
+blended normally from ten segments of blurred shadow. The
+badge, `kit::badge`, reads "<agent> drives this tab" while an agent owns the
+tab; in a narrow tab it gives way to the address field, truncates, and shows
+the whole sentence as its tooltip. A browser tab in the dock's tab strip
+keeps the start of the page title, cut at 22 characters, with the full title
+as its tooltip, like a browser tab in a pane.
+
+Pointer (`mouse-pointer-2`) opens a menu with Annotate for <agent> (a
+submenu of the workspace's agents when there are several, disabled with
+none; Stop annotating while the mode runs, the button then filled with the
+accent at 22%) and Hand to agent, a submenu of the agents, left out while an
+agent owns the tab. Annotating is Zeron's element picker
+(`src-app/src/browser/annotate/`): a script in an isolated world draws the
+outline, the `tag.class W × H` flag and the hint over the page, in the
+window's palette, and answers only through a DevTools binding the page cannot
+see. The pointer stays the arrow: a theme's crosshair can be a faint 16px
+cross that disappears over a page. A click picks the element and sends it,
+Shift+click numbers it on the page and keeps the mode going, a drag picks a
+region, Escape sends what was picked. Sending pastes a
+`<browser_annotations>` block into the agent's prompt without submitting it
+and clears the marks; nothing waits for a confirmation. Stop annotating,
+leaving the page or hiding the tab drops the picks. 24 picks at most.
+
+The text size keys (`font_size_increase`, `_decrease`, `_reset`, `secondary-=`,
+`-`, `0` by default) zoom a browser tab instead of the terminal font: they step
+through 50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250 and 300 %, and
+the site (host and port) keeps its zoom in `~/.paneflow/browser/zoom.json`
+for every workspace. A site off the default zoom shows its percentage as a
+small Ghost button at the trailing end of the address field; a click brings
+it back to the default.
+
+F12 (`toggle_developer_tools`, also `Ctrl+Shift+I`, `Cmd+Alt+I` on macOS)
+docks Chromium's own developer tools on the right of the page, as Helium does.
+`inspect_element` (`Ctrl+Shift+C`, `Cmd+Alt+C`) opens them in element-picking
+mode and `show_developer_console` (`Cmd+Alt+J` on macOS) on the Console panel.
+The tools take 42% of the tab, at least 280px, and leave the page at least
+240px; a 6px handle with a 1px `edge` line between them resizes them with a
+left-right cursor, and the width holds while the tools stay open. Pressing F12
+again, with the focus in the page or in the tools, closes them and gives the
+focus back to the page. They are a second off-screen browser
+(`crates/paneflow-browser-host/src/inspector.rs`) that loads the bundled
+DevTools frontend and talks to the page through a DevTools session the host
+attaches for it, so they draw like any page, pinned to English, and draw their
+menus inside their own frame. Closing or leaving the page closes them.
+
+The site icon reads the connection the engine reports for the page shown
+(`src-app/src/browser/site_info.rs`): a lock when it is secure, an info
+circle for a local server, a plain http site or https with insecure content,
+and a `danger` warning triangle for a certificate the engine does not trust.
+Until the engine answers it follows the scheme. A click opens Site
+information, Chromium's Page Info as Helium shows it: a panel 320px wide
+under the field, in the suggestion list's surface, 6px padding. The main page
+holds the host as its title, then 36px rows on 8px corners with a 16px icon
+and a chevron: the connection (Connection is secure, Local server,
+Connection is not secure, Parts of this page are not secure, Certificate is
+not valid), Cookies and site data with its count and size, the permissions
+Paneflow blocked for this origin, and Browser settings, which opens the
+Browser settings page. Security shows the explanation and the certificate
+(issued to, issued by, validity dates, protocol); Cookies and site data says
+what the site keeps and offers Delete site data, which clears the origin's
+storage and cookies and reloads the page. A back chevron returns to the main
+page; Escape, a press outside or a second click on the icon close it.
+
+Typing in the field opens Helium's suggestion list under it
+(`src-app/src/browser/omnibox/`): a panel as wide as the field, 4px below
+it, with 12px corners, 4px padding, an opaque fill (the surface lifted 16%
+toward the text on dark themes, measured 63 against Helium's 61) and a
+12px shadow. Rows are 28px with 8px corners; the selected row is filled
+with the primary ink at 10% (8% on light themes). A row shows a 16px icon
+aligned with the field's site icon, then its text aligned with the field's
+text, 13px: a page's title in the primary ink, a secondary " - ", and its
+address in the accent mixed with 45% white (the accent itself on light
+themes), with every typed word that starts a word of either in bold. The
+first row is what Enter opens: the page that completes the typed text
+inline (the completed part selected, never after a deletion), else the
+address as typed, else a search. A search row reads "<query> - Search
+<engine>" with `browser.search_engine` (DuckDuckGo by default); nothing is
+sent to the engine before Enter. Running dev servers the window detected
+follow, then pages from the browsing history, eight rows at most. Up and
+Down move the selection and put the row's text in the field, Escape closes
+the list and restores what was typed, Shift+Delete or the 12px close mark
+of the selected page row removes it from the history. The history is the
+pages humans opened in any workspace, ranked by typed and visit counts with
+a 30-day half-life, and kept in `~/.paneflow/browser/history.json`; pages
+agents open never enter it.
+
+A 28px strip under the row carries one line at a time, in this order: the
+address error, the refused navigation naming its scheme while the previous
+page stays shown, the takeover note after the human took a tab from an agent,
+and a load failure with Reload. Loading has no line there: the loading line
+and Stop carry it, so the page never shifts. The page area
+fills the rest, clips the frame to its bounds and draws it at its own size,
+never stretched, over the color of the frame's top-left pixel (the surface
+color before the first frame), so a resize never flashes white on a dark page.
+The engine paints a page that declares no background on opaque white. Its
+states replace the page with a centered 360px block stacked in one column: a
+13px semibold title, a 12px secondary line, then at most one row of buttons
+8px below the line: Open a page (empty tab), Opening the page, The browser engine is not
+installed, Paneflow did not open this address, The page could not open, The
+page crashed with Reload, Paneflow cannot show this page (agents can still
+drive it). Pages always show. A tab a person drives opens any site without asking; a
+tab held for a site (an agent's, or one an agent left) keeps the page shown
+and the strip reads "Waiting for your approval to open <origin>.", the
+decision itself being the approval prompt.
+A page dialog is a 360px card on the `scrim`, 24px from the top, titled
+"<origin> says", with OK and, except for an alert, Cancel; a prompt adds a
+28px field. Menus of the chrome are deferred `ActionMenu`s under the row.
+
 ### 5.5 Settings
 
 Navigation uses the same Geist font and row scale as the workspace sidebar:
@@ -1552,6 +1693,21 @@ Medium when selected, `muted` otherwise), with 14 px between rows. The selected
 icon sits in a 2 px `text` ring at 0.85 with radius 14, and the others show
 that ring at 0.32 on hover. Picking an icon keeps the gallery open, and leaving
 the page folds it.
+
+The Browser page (Terminal group, after Editor, `src-app/src/settings/tabs/browser.rs`,
+after Zeron's Browsing page) holds three sections. Links and search: the Open
+local links in Paneflow switch (on by default), then the Search engine select
+(eight engines and Custom); with Custom, a Search address row stacks a 28 px field
+under its copy, saved as you type, with the danger line and ring while the
+address has no usable `%s` after the site. Zoom: the Page zoom select (50 to
+300 %, `browser.default_zoom`), then, once a site has a zoom of its own, a
+row counting them with a Ghost Reset all, and one row per site with its
+percentage in the secondary ink and a close icon that resets it. History:
+the Keep history switch, then Clear history with a Time range select (last
+hour, 24 hours, 7 days, 4 weeks, all time) and a Secondary Clear button; its
+line counts the pages kept and those in the range. Zeron's Developer section
+(inspecting pages) and its History page with the list of visits are left
+out.
 
 The Keyboard Shortcuts page follows the Settings grammar of every other page:
 sections of cards of rows, each row a name with its control at its end. Under

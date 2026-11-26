@@ -1,5 +1,6 @@
 pub mod agents;
 pub mod appearance;
+pub mod browser;
 pub mod editor;
 pub mod general;
 pub mod mcp;

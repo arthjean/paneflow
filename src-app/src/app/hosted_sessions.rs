@@ -62,7 +62,7 @@ pub(crate) fn tab_terminals(tab: &Tab, cx: &App) -> Vec<Entity<TerminalView>> {
 pub(crate) fn surface_terminal(surface: &PaneSurface) -> Option<Entity<TerminalView>> {
     match surface {
         PaneSurface::Terminal(terminal) => Some(terminal.clone()),
-        PaneSurface::Markdown(_) => None,
+        PaneSurface::Markdown(_) | PaneSurface::Browser(_) => None,
     }
 }
 

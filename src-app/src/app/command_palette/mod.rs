@@ -183,7 +183,7 @@ impl PaneFlowApp {
                 markdown_search: view.read(cx).search_active(),
                 ..PaletteContext::default()
             },
-            None => PaletteContext::default(),
+            Some(PaneSurface::Browser(_)) | None => PaletteContext::default(),
         }
     }
 

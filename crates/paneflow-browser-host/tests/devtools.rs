@@ -5,7 +5,7 @@ mod common;
 use common::{DEADLINE, FixtureServer, Harness};
 use paneflow_browser_client::ClientEvent;
 use paneflow_browser_proto::limits::DEVTOOLS_METHOD_TIMEOUT;
-use paneflow_browser_proto::{CommandError, ConsoleLevel, Event, Reply};
+use paneflow_browser_proto::{CommandError, Connection, ConsoleLevel, Event, Reply};
 use serde_json::json;
 
 #[test]
@@ -50,6 +50,21 @@ fn results_return_matched_to_their_request() {
 }
 
 #[test]
+fn a_page_served_over_plain_http_reports_no_secure_connection_and_no_certificate() {
+    let server = FixtureServer::start();
+    let mut harness = Harness::new();
+    let tab = harness.open("security", &server.url("/form.html"));
+    harness.wait_loaded(tab, "/form.html");
+    let Ok(Reply::Security(security)) = harness.client.security(tab).wait(DEADLINE) else {
+        panic!("no security report");
+    };
+    assert_eq!(security.connection, Connection::Plain);
+    assert!(security.certificate.is_none());
+    assert!(security.url.ends_with("/form.html"), "{}", security.url);
+    harness.shutdown();
+}
+
+#[test]
 fn console_and_devtools_events_reach_the_window() {
     let server = FixtureServer::start();
     let mut harness = Harness::new();
@@ -77,6 +92,56 @@ fn console_and_devtools_events_reach_the_window() {
             ClientEvent::Browser(Event::DevTools { tab: t, method, params })
                 if *t == tab && method == "Runtime.exceptionThrown"
                     && params.to_string().contains("TypeError")
+        )
+    });
+    harness.shutdown();
+}
+
+#[test]
+fn a_binding_bound_to_an_isolated_world_answers_from_it_and_the_page_cannot_see_it() {
+    let server = FixtureServer::start();
+    let mut harness = Harness::new();
+    let tab = harness.open("binding", &server.url("/form.html"));
+    harness.wait_loaded(tab, "/form.html");
+    let call = |method: &str, params: serde_json::Value| {
+        let Ok(Reply::DevTools(result)) =
+            harness.client.devtools(tab, method, params).wait(DEADLINE)
+        else {
+            panic!("{method} failed");
+        };
+        result
+    };
+    call("Runtime.enable", json!({}));
+    let tree = call("Page.getFrameTree", json!({}));
+    let frame = tree["frameTree"]["frame"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    call(
+        "Runtime.addBinding",
+        json!({"name": "__probeBinding", "executionContextName": "probe-world"}),
+    );
+    let world = call(
+        "Page.createIsolatedWorld",
+        json!({"frameId": frame, "worldName": "probe-world"}),
+    );
+    let context = world["executionContextId"].as_i64().unwrap();
+    let seen_by_page = call(
+        "Runtime.evaluate",
+        json!({"expression": "typeof window.__probeBinding", "returnByValue": true}),
+    );
+    assert_eq!(seen_by_page["result"]["value"], "undefined");
+    call(
+        "Runtime.evaluate",
+        json!({"expression": "window.__probeBinding('hello')", "contextId": context}),
+    );
+    harness.wait_for("the binding call", |event| {
+        matches!(
+            event,
+            ClientEvent::Browser(Event::DevTools { tab: t, method, params })
+                if *t == tab && method == "Runtime.bindingCalled"
+                    && params["payload"] == "hello"
+                    && params["executionContextId"].as_i64() == Some(context)
         )
     });
     harness.shutdown();

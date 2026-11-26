@@ -14,6 +14,8 @@ pub mod limits;
 pub mod message;
 pub mod navigation;
 pub mod profile;
+pub mod site;
+pub mod surface;
 
 pub use frame::{FrameError, decode, encode, read_message, write_message};
 pub use handshake::{Hello, PROTOCOL_VERSION, Refusal, Welcome, check_version};
@@ -23,6 +25,10 @@ pub use message::{
 };
 pub use navigation::NavigationRefusal;
 pub use profile::{InvalidProfileName, ProfileName};
+pub use site::{Certificate, CertificateName, Connection, SiteSecurity};
+pub use surface::{
+    Cursor, DialogKind, FileMode, HistoryStep, Input, KeyKind, Modifiers, MouseButton, Rect, View,
+};
 
 pub const HOST_BINARY_NAME: &str = "paneflow-browser-host";
 

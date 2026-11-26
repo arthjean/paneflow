@@ -143,7 +143,9 @@ pub struct InstallResult {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct OpenParams {
-    #[schemars(description = "An http or https URL of at most 2048 characters")]
+    #[schemars(
+        description = "An http or https URL of at most 2097152 characters, Chromium's own limit"
+    )]
     pub url: String,
     #[schemars(
         description = "The durable id of the workspace whose profile the tab uses, for a caller outside every pane; a pane always opens in its own workspace"
@@ -159,7 +161,9 @@ pub struct TabParams {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct NavigateParams {
     pub tab: u64,
-    #[schemars(description = "An http or https URL of at most 2048 characters")]
+    #[schemars(
+        description = "An http or https URL of at most 2097152 characters, Chromium's own limit"
+    )]
     pub url: String,
 }
 

@@ -4,12 +4,15 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use paneflow_browser_proto::surface::{HistoryStep, Input, View};
 use paneflow_browser_proto::{
     Command as HostCommand, CommandError, ENDPOINT_ARG, Event, ExitReason, Hello, HostMessage,
     OriginDecision, PROFILES_ARG, PROTOCOL_VERSION, ProfileName, READY_LINE, Reply, RequestId,
     TabId, Welcome, WindowMessage, check_version, read_message, write_message,
 };
 
+use crate::frames::{BrowserFrame, FrameStats, FrameStore, FrameWaker};
+use crate::shared_memory::{FdReader, StreamReader};
 use crate::transport::{self, Stream};
 use crate::{
     ClientEvent, HOST_STOPPED_MESSAGE, HostConfig, HostInfo, TabStatus, Ticket, host_environment,
@@ -29,6 +32,7 @@ struct TabRecord {
     url: String,
     status: TabStatus,
     unknown_to_host: bool,
+    guarded: bool,
 }
 
 enum HostState {
@@ -59,6 +63,7 @@ struct Shared {
     config: HostConfig,
     state: Mutex<State>,
     events: Sender<ClientEvent>,
+    frames: FrameStore,
 }
 
 impl Shared {
@@ -92,8 +97,89 @@ impl BrowserClient {
                 next_generation: 1,
             }),
             events,
+            frames: FrameStore::default(),
         });
         (Self { shared }, receiver)
+    }
+
+    pub fn set_frame_waker(&self, waker: Option<FrameWaker>) {
+        self.shared.frames.set_waker(waker);
+    }
+
+    pub fn take_frame(&self, tab: TabId) -> Option<BrowserFrame> {
+        self.shared.frames.take(tab)
+    }
+
+    pub fn frame_stats(&self, tab: TabId) -> FrameStats {
+        self.shared.frames.stats(tab)
+    }
+
+    pub fn present(&self, tab: TabId, view: Option<View>) -> Ticket {
+        if view.is_none() {
+            self.shared.frames.drop_surface(tab);
+        }
+        let mut state = self.shared.lock();
+        self.submit_for_tab(&mut state, tab, HostCommand::Present { tab, view })
+    }
+
+    pub fn input(&self, tab: TabId, input: Input) {
+        let mut state = self.shared.lock();
+        send_quietly(&mut state, HostCommand::Input { tab, input });
+    }
+
+    pub fn history(&self, tab: TabId, step: HistoryStep) -> Ticket {
+        let mut state = self.shared.lock();
+        self.submit_for_tab(&mut state, tab, HostCommand::History { tab, step })
+    }
+
+    pub fn zoom(&self, tab: TabId, percent: u16) -> Ticket {
+        let mut state = self.shared.lock();
+        self.submit_for_tab(&mut state, tab, HostCommand::Zoom { tab, percent })
+    }
+
+    pub fn security(&self, tab: TabId) -> Ticket {
+        let mut state = self.shared.lock();
+        self.submit_for_tab(&mut state, tab, HostCommand::Security { tab })
+    }
+
+    pub fn inspect(&self, tab: TabId) -> (TabId, Ticket) {
+        let mut state = self.shared.lock();
+        let inspector = TabId(state.next_tab);
+        state.next_tab += 1;
+        let ticket = self.submit_for_tab(&mut state, tab, HostCommand::Inspect { tab, inspector });
+        (inspector, ticket)
+    }
+
+    pub fn stop(&self, tab: TabId) -> Ticket {
+        let mut state = self.shared.lock();
+        self.submit_for_tab(&mut state, tab, HostCommand::Stop { tab })
+    }
+
+    pub fn answer_dialog(
+        &self,
+        tab: TabId,
+        dialog: u64,
+        accept: bool,
+        text: Option<String>,
+    ) -> Ticket {
+        let mut state = self.shared.lock();
+        let command = HostCommand::AnswerDialog {
+            tab,
+            dialog,
+            accept,
+            text,
+        };
+        self.submit_for_tab(&mut state, tab, command)
+    }
+
+    pub fn answer_files(&self, tab: TabId, request: u64, paths: Option<Vec<String>>) -> Ticket {
+        let mut state = self.shared.lock();
+        let command = HostCommand::AnswerFiles {
+            tab,
+            request,
+            paths,
+        };
+        self.submit_for_tab(&mut state, tab, command)
     }
 
     pub fn host_pid(&self) -> Option<u32> {
@@ -136,6 +222,15 @@ impl BrowserClient {
     }
 
     pub fn open_tab(&self, profile: ProfileName, url: impl Into<String>) -> (TabId, Ticket) {
+        self.open_tab_guarded(profile, url, true)
+    }
+
+    pub fn open_tab_guarded(
+        &self,
+        profile: ProfileName,
+        url: impl Into<String>,
+        guarded: bool,
+    ) -> (TabId, Ticket) {
         let url = url.into();
         let mut state = self.shared.lock();
         let tab = TabId(state.next_tab);
@@ -147,10 +242,25 @@ impl BrowserClient {
                 url: url.clone(),
                 status: TabStatus::Starting,
                 unknown_to_host: false,
+                guarded,
             },
         );
-        let ticket = self.submit(&mut state, HostCommand::OpenTab { tab, profile, url });
+        let command = HostCommand::OpenTab {
+            tab,
+            profile,
+            url,
+            guarded,
+        };
+        let ticket = self.submit(&mut state, command);
         (tab, ticket)
+    }
+
+    pub fn guard(&self, tab: TabId, guarded: bool) -> Ticket {
+        let mut state = self.shared.lock();
+        if let Some(record) = state.tabs.get_mut(&tab) {
+            record.guarded = guarded;
+        }
+        self.submit_for_tab(&mut state, tab, HostCommand::Guard { tab, guarded })
     }
 
     pub fn navigate(&self, tab: TabId, url: impl Into<String>) -> Ticket {
@@ -175,6 +285,7 @@ impl BrowserClient {
                 tab,
                 profile: record.profile.clone(),
                 url: record.url.clone(),
+                guarded: record.guarded,
             };
             return self.submit(&mut state, command);
         }
@@ -292,6 +403,16 @@ impl BrowserClient {
         }
         Ticket::new(receiver)
     }
+}
+
+fn send_quietly(state: &mut State, command: HostCommand) {
+    let HostState::Running { writer, .. } = &state.host else {
+        return;
+    };
+    let writer = writer.clone();
+    let id = RequestId(state.next_request);
+    state.next_request += 1;
+    let _ = writer.send(WindowMessage::Request { id, command });
 }
 
 fn answered(result: Result<Reply, CommandError>) -> Ticket {
@@ -585,20 +706,73 @@ fn adopt(shared: &Arc<Shared>, generation: u64, started: Started) {
     let spawned_reader = std::thread::Builder::new()
         .name("browser-host-reader".into())
         .spawn(move || {
-            let mut stream = stream;
+            let mut reader = FdReader::new(stream);
             let mut exiting = None;
-            while let Ok(message) = read_message::<HostMessage, _>(&mut stream) {
+            while let Ok(message) = read_message::<HostMessage, _>(&mut reader) {
                 if let HostMessage::Event(Event::Exiting { reason }) = &message {
                     exiting = Some(*reason);
                 }
-                deliver(&reader_shared, message);
+                if let Some(message) = present(&reader_shared, &mut reader, message) {
+                    deliver(&reader_shared, message);
+                }
             }
-            transport::close(&stream);
+            transport::close(reader.stream());
             let status = child.wait().ok();
             host_gone(&reader_shared, generation, exiting, status, &stderr_tail);
         });
     if spawned_reader.is_err() {
         log::warn!("browser host: cannot start the reader thread");
+    }
+}
+
+fn present(
+    shared: &Shared,
+    reader: &mut StreamReader,
+    message: HostMessage,
+) -> Option<HostMessage> {
+    match message {
+        HostMessage::Event(Event::Surface {
+            tab,
+            generation,
+            width,
+            height,
+            stride,
+            slots,
+        }) => {
+            let adopted = reader
+                .take_fds(slots as usize)
+                .ok_or_else(|| "the frame slots arrived without their descriptors".to_string())
+                .and_then(|fds| {
+                    shared
+                        .frames
+                        .adopt_surface(tab, generation, width, height, stride, fds)
+                });
+            match adopted {
+                Ok(()) => None,
+                Err(reason) => Some(HostMessage::Event(Event::PresentationFailed {
+                    tab,
+                    reason,
+                })),
+            }
+        }
+        HostMessage::Event(Event::Frame(frame)) => {
+            if let Some(release) = shared.frames.accept(&frame) {
+                send_quietly(
+                    &mut shared.lock(),
+                    HostCommand::ReleaseFrame {
+                        tab: release.tab,
+                        generation: release.generation,
+                        slot: release.slot,
+                    },
+                );
+            }
+            None
+        }
+        HostMessage::Event(Event::Closed { tab }) => {
+            shared.frames.forget(tab);
+            Some(HostMessage::Event(Event::Closed { tab }))
+        }
+        other => Some(other),
     }
 }
 
@@ -700,6 +874,7 @@ fn host_gone(
             }));
         }
         for (tab, record) in state.tabs.iter_mut() {
+            shared.frames.drop_surface(*tab);
             record.status = TabStatus::Crashed {
                 reason: reason.clone(),
             };

@@ -1,11 +1,9 @@
 use cef::*;
-use paneflow_browser_proto::{Event, TabId};
+use paneflow_browser_proto::surface::{DialogKind, FileMode};
+use paneflow_browser_proto::{Event, ProfileName, Rect as ViewRect, TabId};
 
 use crate::host::{Effect, console_level, media_permissions, origin_or_url, prompt_permissions};
-use crate::ui::{dispatch, with_host};
-
-const VIEW_WIDTH: i32 = 1280;
-const VIEW_HEIGHT: i32 = 800;
+use crate::ui::{dispatch, view_of, with_host};
 
 fn text(value: Option<&CefString>) -> String {
     value.map(|value| value.to_string()).unwrap_or_default()
@@ -19,6 +17,10 @@ fn emit(event: Event) {
     dispatch(|_| vec![Effect::Emit(event)]);
 }
 
+fn emit_page(event: Event) {
+    dispatch(|host| host.page_event(event));
+}
+
 wrap_render_handler! {
     struct TabRender {
         tab: TabId,
@@ -27,9 +29,103 @@ wrap_render_handler! {
     impl RenderHandler {
         fn view_rect(&self, _browser: Option<&mut Browser>, rect: Option<&mut Rect>) {
             if let Some(rect) = rect {
-                rect.width = VIEW_WIDTH;
-                rect.height = VIEW_HEIGHT;
+                let view = view_of(self.tab);
+                rect.x = 0;
+                rect.y = 0;
+                rect.width = i32::try_from(view.width).unwrap_or(1);
+                rect.height = i32::try_from(view.height).unwrap_or(1);
             }
+        }
+
+        fn screen_info(
+            &self,
+            _browser: Option<&mut Browser>,
+            screen_info: Option<&mut ScreenInfo>,
+        ) -> ::std::os::raw::c_int {
+            let Some(info) = screen_info else { return 0 };
+            let view = view_of(self.tab);
+            let rect = Rect {
+                x: 0,
+                y: 0,
+                width: i32::try_from(view.width).unwrap_or(1),
+                height: i32::try_from(view.height).unwrap_or(1),
+            };
+            info.device_scale_factor = view.scale;
+            info.depth = 24;
+            info.depth_per_component = 8;
+            info.is_monochrome = 0;
+            info.rect = rect.clone();
+            info.available_rect = rect;
+            1
+        }
+
+        fn screen_point(
+            &self,
+            _browser: Option<&mut Browser>,
+            view_x: ::std::os::raw::c_int,
+            view_y: ::std::os::raw::c_int,
+            screen_x: Option<&mut ::std::os::raw::c_int>,
+            screen_y: Option<&mut ::std::os::raw::c_int>,
+        ) -> ::std::os::raw::c_int {
+            match (screen_x, screen_y) {
+                (Some(x), Some(y)) => {
+                    *x = view_x;
+                    *y = view_y;
+                    1
+                }
+                _ => 0,
+            }
+        }
+
+        fn on_popup_show(&self, _browser: Option<&mut Browser>, show: ::std::os::raw::c_int) {
+            let tab = self.tab;
+            with_host(|host| host.popup_shown(tab, show == 1));
+        }
+
+        fn on_popup_size(&self, _browser: Option<&mut Browser>, rect: Option<&Rect>) {
+            let Some(rect) = rect else { return };
+            let rect = ViewRect { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+            let tab = self.tab;
+            with_host(|host| host.popup_moved(tab, rect));
+        }
+
+        fn on_paint(
+            &self,
+            _browser: Option<&mut Browser>,
+            type_: PaintElementType,
+            _dirty_rects: Option<&[Rect]>,
+            buffer: *const u8,
+            width: ::std::os::raw::c_int,
+            height: ::std::os::raw::c_int,
+        ) {
+            let (Ok(width), Ok(height)) = (u32::try_from(width), u32::try_from(height)) else {
+                return;
+            };
+            let Some(len) = paneflow_browser_proto::surface::frame_bytes(width, height) else {
+                return;
+            };
+            if buffer.is_null() || len == 0 {
+                return;
+            }
+            let pixels = unsafe { std::slice::from_raw_parts(buffer, len) };
+            let popup = type_ == PaintElementType::POPUP;
+            let tab = self.tab;
+            with_host(|host| host.painted(tab, popup, pixels, width, height));
+        }
+
+        fn on_ime_composition_range_changed(
+            &self,
+            _browser: Option<&mut Browser>,
+            _selected_range: Option<&Range>,
+            character_bounds: Option<&[Rect]>,
+        ) {
+            let Some(last) = character_bounds.and_then(|bounds| bounds.last()) else {
+                return;
+            };
+            emit(Event::ImeCaret {
+                tab: self.tab,
+                caret: ViewRect { x: last.x, y: last.y, width: last.width, height: last.height },
+            });
         }
     }
 }
@@ -47,8 +143,23 @@ wrap_load_handler! {
             _transition_type: TransitionType,
         ) {
             if let Some(frame) = frame.filter(|frame| frame.is_main() == 1) {
-                emit(Event::LoadStarted { tab: self.tab, url: frame_url(frame) });
+                emit_page(Event::LoadStarted { tab: self.tab, url: frame_url(frame) });
             }
+        }
+
+        fn on_loading_state_change(
+            &self,
+            _browser: Option<&mut Browser>,
+            is_loading: ::std::os::raw::c_int,
+            can_go_back: ::std::os::raw::c_int,
+            can_go_forward: ::std::os::raw::c_int,
+        ) {
+            emit_page(Event::LoadingState {
+                tab: self.tab,
+                loading: is_loading == 1,
+                can_go_back: can_go_back == 1,
+                can_go_forward: can_go_forward == 1,
+            });
         }
 
         fn on_load_end(
@@ -58,7 +169,7 @@ wrap_load_handler! {
             http_status_code: ::std::os::raw::c_int,
         ) {
             if let Some(frame) = frame.filter(|frame| frame.is_main() == 1) {
-                emit(Event::Loaded {
+                emit_page(Event::Loaded {
                     tab: self.tab,
                     url: frame_url(frame),
                     http_status: http_status_code,
@@ -75,7 +186,7 @@ wrap_load_handler! {
             failed_url: Option<&CefString>,
         ) {
             if frame.is_some_and(|frame| frame.is_main() == 1) {
-                emit(Event::LoadFailed {
+                emit_page(Event::LoadFailed {
                     tab: self.tab,
                     url: text(failed_url),
                     error_code: error_code.get_raw(),
@@ -92,6 +203,10 @@ wrap_display_handler! {
     }
 
     impl DisplayHandler {
+        fn on_loading_progress_change(&self, _browser: Option<&mut Browser>, progress: f64) {
+            emit_page(Event::LoadProgress { tab: self.tab, progress });
+        }
+
         fn on_console_message(
             &self,
             _browser: Option<&mut Browser>,
@@ -106,6 +221,129 @@ wrap_display_handler! {
                 text: text(message),
                 source: text(source),
                 line,
+            });
+            1
+        }
+
+        fn on_title_change(&self, _browser: Option<&mut Browser>, title: Option<&CefString>) {
+            emit_page(Event::TitleChanged { tab: self.tab, title: text(title) });
+        }
+
+        fn on_address_change(
+            &self,
+            _browser: Option<&mut Browser>,
+            frame: Option<&mut Frame>,
+            url: Option<&CefString>,
+        ) {
+            if frame.is_some_and(|frame| frame.is_main() == 1) {
+                emit_page(Event::AddressChanged { tab: self.tab, url: text(url) });
+            }
+        }
+
+        fn on_cursor_change(
+            &self,
+            _browser: Option<&mut Browser>,
+            _cursor: ::std::os::raw::c_ulong,
+            type_: CursorType,
+            _custom_cursor_info: Option<&CursorInfo>,
+        ) -> ::std::os::raw::c_int {
+            emit(Event::Cursor { tab: self.tab, cursor: crate::input::cursor(type_) });
+            1
+        }
+    }
+}
+
+wrap_jsdialog_handler! {
+    struct TabJsDialog {
+        tab: TabId,
+    }
+
+    impl JsdialogHandler {
+        fn on_jsdialog(
+            &self,
+            _browser: Option<&mut Browser>,
+            origin_url: Option<&CefString>,
+            dialog_type: JsdialogType,
+            message_text: Option<&CefString>,
+            default_prompt_text: Option<&CefString>,
+            callback: Option<&mut JsdialogCallback>,
+            _suppress_message: Option<&mut ::std::os::raw::c_int>,
+        ) -> ::std::os::raw::c_int {
+            let Some(callback) = callback else { return 0 };
+            let kind = if dialog_type == JsdialogType::CONFIRM {
+                DialogKind::Confirm
+            } else if dialog_type == JsdialogType::PROMPT {
+                DialogKind::Prompt
+            } else {
+                DialogKind::Alert
+            };
+            let tab = self.tab;
+            let callback = callback.clone();
+            let Some(dialog) = with_host(|host| host.dialog_opened(tab, callback)).flatten() else {
+                return 0;
+            };
+            emit(Event::DialogOpened {
+                tab,
+                dialog,
+                kind,
+                origin: origin_or_url(&text(origin_url)),
+                message: text(message_text),
+                default_text: text(default_prompt_text),
+            });
+            1
+        }
+
+        fn on_reset_dialog_state(&self, _browser: Option<&mut Browser>) {
+            let tab = self.tab;
+            with_host(|host| host.dialogs_reset(tab));
+        }
+    }
+}
+
+wrap_dialog_handler! {
+    struct TabFileDialog {
+        tab: TabId,
+    }
+
+    impl DialogHandler {
+        fn on_file_dialog(
+            &self,
+            _browser: Option<&mut Browser>,
+            mode: FileDialogMode,
+            title: Option<&CefString>,
+            _default_file_path: Option<&CefString>,
+            accept_filters: Option<&mut CefStringList>,
+            _accept_extensions: Option<&mut CefStringList>,
+            _accept_descriptions: Option<&mut CefStringList>,
+            callback: Option<&mut FileDialogCallback>,
+        ) -> ::std::os::raw::c_int {
+            let Some(callback) = callback else { return 0 };
+            let mode = if mode == FileDialogMode::OPEN_MULTIPLE {
+                FileMode::OpenMultiple
+            } else if mode == FileDialogMode::OPEN_FOLDER {
+                FileMode::OpenFolder
+            } else if mode == FileDialogMode::SAVE {
+                FileMode::Save
+            } else {
+                FileMode::Open
+            };
+            let accept: Vec<String> = accept_filters
+                .map(|list| list.clone().into_iter().collect())
+                .unwrap_or_default();
+            let tab = self.tab;
+            let held = callback.clone();
+            let Some(request) =
+                with_host(|host| host.file_chooser_opened(tab, held)).flatten()
+            else {
+                callback.cancel();
+                return 1;
+            };
+            emit(Event::FileChooserOpened {
+                tab,
+                request,
+                mode,
+                title: text(title),
+                accept,
             });
             1
         }
@@ -251,10 +489,10 @@ wrap_life_span_handler! {
             _browser: Option<&mut Browser>,
             _frame: Option<&mut Frame>,
             _popup_id: ::std::os::raw::c_int,
-            _target_url: Option<&CefString>,
+            target_url: Option<&CefString>,
             _target_frame_name: Option<&CefString>,
             _target_disposition: WindowOpenDisposition,
-            _user_gesture: ::std::os::raw::c_int,
+            user_gesture: ::std::os::raw::c_int,
             _popup_features: Option<&PopupFeatures>,
             _window_info: Option<&mut WindowInfo>,
             _client: Option<&mut Option<Client>>,
@@ -262,6 +500,14 @@ wrap_life_span_handler! {
             _extra_info: Option<&mut Option<DictionaryValue>>,
             _no_javascript_access: Option<&mut ::std::os::raw::c_int>,
         ) -> ::std::os::raw::c_int {
+            let url = text(target_url);
+            if !url.is_empty() {
+                emit(Event::NewWindowRequested {
+                    tab: self.tab,
+                    url,
+                    user_gesture: user_gesture == 1,
+                });
+            }
             1
         }
 
@@ -279,58 +525,98 @@ wrap_life_span_handler! {
     }
 }
 
+#[derive(Clone)]
+struct TabHandlers {
+    render: RenderHandler,
+    load: LoadHandler,
+    display: DisplayHandler,
+    request: RequestHandler,
+    permission: PermissionHandler,
+    download: DownloadHandler,
+    life_span: LifeSpanHandler,
+    jsdialog: JsdialogHandler,
+    dialog: DialogHandler,
+}
+
 wrap_client! {
     struct TabClient {
-        render: RenderHandler,
-        load: LoadHandler,
-        display: DisplayHandler,
-        request: RequestHandler,
-        permission: PermissionHandler,
-        download: DownloadHandler,
-        life_span: LifeSpanHandler,
+        handlers: TabHandlers,
     }
 
     impl Client {
         fn render_handler(&self) -> Option<RenderHandler> {
-            Some(self.render.clone())
+            Some(self.handlers.render.clone())
         }
 
         fn load_handler(&self) -> Option<LoadHandler> {
-            Some(self.load.clone())
+            Some(self.handlers.load.clone())
         }
 
         fn display_handler(&self) -> Option<DisplayHandler> {
-            Some(self.display.clone())
+            Some(self.handlers.display.clone())
         }
 
         fn request_handler(&self) -> Option<RequestHandler> {
-            Some(self.request.clone())
+            Some(self.handlers.request.clone())
         }
 
         fn permission_handler(&self) -> Option<PermissionHandler> {
-            Some(self.permission.clone())
+            Some(self.handlers.permission.clone())
         }
 
         fn download_handler(&self) -> Option<DownloadHandler> {
-            Some(self.download.clone())
+            Some(self.handlers.download.clone())
         }
 
         fn life_span_handler(&self) -> Option<LifeSpanHandler> {
-            Some(self.life_span.clone())
+            Some(self.handlers.life_span.clone())
+        }
+
+        fn jsdialog_handler(&self) -> Option<JsdialogHandler> {
+            Some(self.handlers.jsdialog.clone())
+        }
+
+        fn dialog_handler(&self) -> Option<DialogHandler> {
+            Some(self.handlers.dialog.clone())
         }
     }
 }
 
 pub fn tab_client(tab: TabId) -> Client {
-    TabClient::new(
-        TabRender::new(tab),
-        TabLoad::new(tab),
-        TabDisplay::new(tab),
-        TabRequest::new(tab),
-        TabPermission::new(tab),
-        TabDownload::new(tab),
-        TabLifeSpan::new(tab),
-    )
+    TabClient::new(TabHandlers {
+        render: TabRender::new(tab),
+        load: TabLoad::new(tab),
+        display: TabDisplay::new(tab),
+        request: TabRequest::new(tab),
+        permission: TabPermission::new(tab),
+        download: TabDownload::new(tab),
+        life_span: TabLifeSpan::new(tab),
+        jsdialog: TabJsDialog::new(tab),
+        dialog: TabFileDialog::new(tab),
+    })
+}
+
+wrap_request_context_handler! {
+    struct ProfileContext {
+        profile: ProfileName,
+    }
+
+    impl RequestContextHandler {
+        fn on_request_context_initialized(&self, request_context: Option<&mut RequestContext>) {
+            let outcome = match request_context {
+                Some(context) => crate::host::block_permissions(context),
+                None => Err("the engine initialised the profile without a context".to_string()),
+            };
+            let profile = self.profile.clone();
+            crate::ui::on_ui(move || {
+                dispatch(|host| host.profile_initialized(&profile, outcome));
+            });
+        }
+    }
+}
+
+pub fn profile_handler(profile: ProfileName) -> RequestContextHandler {
+    ProfileContext::new(profile)
 }
 
 wrap_dev_tools_message_observer! {
@@ -342,9 +628,17 @@ wrap_dev_tools_message_observer! {
         fn on_dev_tools_message(
             &self,
             _browser: Option<&mut Browser>,
-            _message: Option<&[u8]>,
+            message: Option<&[u8]>,
         ) -> ::std::os::raw::c_int {
-            0
+            let Some(message) = message else { return 0 };
+            let tab = self.tab;
+            match with_host(|host| host.session_message(tab, message)).flatten() {
+                Some(effects) => {
+                    crate::host::run_effects(effects);
+                    1
+                }
+                None => 0,
+            }
         }
 
         fn on_dev_tools_method_result(
@@ -368,7 +662,9 @@ wrap_dev_tools_message_observer! {
             let params = params
                 .and_then(|params| serde_json::from_slice(params).ok())
                 .unwrap_or(serde_json::Value::Null);
-            emit(Event::DevTools { tab: self.tab, method: text(method), params });
+            let tab = self.tab;
+            let method = text(method);
+            dispatch(|host| host.devtools_event(tab, method, params));
         }
     }
 }

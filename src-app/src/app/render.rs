@@ -157,6 +157,9 @@ impl Render for PaneFlowApp {
         crate::work_counters::count(&crate::work_counters::ROOT_RENDERS);
         startup_trace::on_app_render(window);
         let sidebar_view = self.sidebar_view(cx);
+        self.sync_browser_display(cx);
+        #[cfg(debug_assertions)]
+        crate::latency_harness::start(window, cx);
         self.acknowledge_seen_declared_errors(cx);
         crate::terminal::link_fallback::sync_workspace_roots(
             self.workspaces
@@ -993,6 +996,10 @@ impl Render for PaneFlowApp {
 
         if let Some(menu) = self.files_menu_open.clone() {
             app_content = app_content.child(self.render_files_context_menu(menu, ui, window, cx));
+        }
+
+        if let Some(menu) = self.terminal_link_menu.clone() {
+            app_content = app_content.child(self.render_terminal_link_menu(menu, window, cx));
         }
 
         if let Some(offer) = self.comment_offer.clone() {

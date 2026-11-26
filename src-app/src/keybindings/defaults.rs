@@ -395,6 +395,11 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         action_name: "open_settings",
         context: None,
     },
+    DefaultBinding {
+        key: "f12",
+        action_name: "toggle_developer_tools",
+        context: Some("Browser"),
+    },
 ];
 
 pub(super) const PLATFORM_DEFAULTS: &[DefaultBinding] = if cfg!(target_os = "macos") {
@@ -404,6 +409,21 @@ pub(super) const PLATFORM_DEFAULTS: &[DefaultBinding] = if cfg!(target_os = "mac
 };
 
 const MACOS_PLATFORM_DEFAULTS: &[DefaultBinding] = &[
+    DefaultBinding {
+        key: "cmd-alt-i",
+        action_name: "toggle_developer_tools",
+        context: Some("Browser"),
+    },
+    DefaultBinding {
+        key: "cmd-alt-j",
+        action_name: "show_developer_console",
+        context: Some("Browser"),
+    },
+    DefaultBinding {
+        key: "cmd-alt-c",
+        action_name: "inspect_element",
+        context: Some("Browser"),
+    },
     DefaultBinding {
         key: "cmd-c",
         action_name: "terminal_copy",
@@ -442,6 +462,16 @@ const MACOS_PLATFORM_DEFAULTS: &[DefaultBinding] = &[
 ];
 
 const OTHER_PLATFORM_DEFAULTS: &[DefaultBinding] = &[
+    DefaultBinding {
+        key: "ctrl-shift-i",
+        action_name: "toggle_developer_tools",
+        context: Some("Browser"),
+    },
+    DefaultBinding {
+        key: "ctrl-shift-c",
+        action_name: "inspect_element",
+        context: Some("Browser"),
+    },
     DefaultBinding {
         key: "ctrl-v",
         action_name: "terminal_paste",

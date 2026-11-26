@@ -28,7 +28,8 @@ impl LayoutBridge {
                         crate::pane::PaneSurface::Terminal(view) => {
                             Some(view.read(cx).surface_id())
                         }
-                        crate::pane::PaneSurface::Markdown(_) => None,
+                        crate::pane::PaneSurface::Markdown(_)
+                        | crate::pane::PaneSurface::Browser(_) => None,
                     };
                     let id = SurfaceId(self.own_or_reserved(own));
                     let definition = surface_definition(&surface, cx);

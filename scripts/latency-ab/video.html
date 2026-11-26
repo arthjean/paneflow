@@ -1,0 +1,9 @@
+<!doctype html><html><head><meta charset="utf-8"><title>loading</title><style>body{margin:0;background:#000}video{width:100vw;height:100vh;object-fit:contain}</style></head>
+<body><video src="/clip.webm" autoplay muted loop playsinline></video>
+<script>
+const video = document.querySelector("video");
+setInterval(() => {
+  const quality = video.getVideoPlaybackQuality();
+  document.title = `frames=${quality.totalVideoFrames} dropped=${quality.droppedVideoFrames} paused=${video.paused}`;
+}, 500);
+</script></body></html>

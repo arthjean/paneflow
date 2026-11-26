@@ -198,6 +198,10 @@ impl PaneFlowApp {
                     self.show_toast(message, cx);
                     return;
                 }
+                if preset.is_browser() {
+                    self.add_browser_surface_to_pane(&pane, cx);
+                    return;
+                }
                 let env = match preset.env(&self.cached_config) {
                     Ok(env) => env,
                     Err(message) => {
@@ -452,6 +456,17 @@ impl PaneFlowApp {
             }
             terminal::TerminalEvent::OpenMarkdownPath(path) => {
                 self.open_markdown_in_pane(&terminal, path.clone(), cx);
+            }
+            terminal::TerminalEvent::OpenInBrowser { url } => {
+                self.open_local_link(url.clone(), cx);
+            }
+            terminal::TerminalEvent::LinkMenu { url, position } => {
+                self.dismiss_transient_surfaces();
+                self.terminal_link_menu = Some(crate::app::browser_surface::LinkMenu {
+                    url: url.clone(),
+                    position: *position,
+                });
+                cx.notify();
             }
             terminal::TerminalEvent::FontZoomChanged => {
                 self.save_session(cx);

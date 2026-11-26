@@ -1933,6 +1933,7 @@ impl Element for TerminalElement {
                 let total_elapsed = keystroke_at.elapsed();
                 let total_ms = total_elapsed.as_secs_f64() * 1000.0;
                 let handler_to_paint_ms = total_ms - paint_ms;
+                crate::latency_harness::record(total_ms);
                 if total_ms > 8.0 {
                     log::warn!(
                         "[latency] key-handler→paint-cpu: {total_ms:.2}ms \

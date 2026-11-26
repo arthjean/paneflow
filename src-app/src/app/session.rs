@@ -817,6 +817,9 @@ impl PaneFlowApp {
             });
             return Some(crate::pane::PaneSurface::Markdown(markdown));
         }
+        if surface.surface_type.as_deref() == Some(crate::browser::SURFACE_TYPE) {
+            return Self::restored_browser_surface(workspace_id, surface, cx);
+        }
 
         let cwd = resolved_surface_cwd(surface.cwd.as_deref(), fallback_cwd);
 

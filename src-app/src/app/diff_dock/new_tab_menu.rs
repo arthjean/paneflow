@@ -14,6 +14,7 @@ enum NewTabAction {
     Changes,
     File,
     Terminal,
+    Browser,
     Reopen,
 }
 
@@ -62,6 +63,12 @@ pub(super) fn render_diff_new_tab_menu(
                 .mnemonic('t')
                 .shortcut(shortcut("secondary-j")),
         )
+        .item(
+            MenuItem::new("Browser", NewTabAction::Browser)
+                .id("diff-dock-new-tab-browser")
+                .icon(icon::GLOBE)
+                .mnemonic('b'),
+        )
         .separator()
         .item(super::tab_menu::reopen_item(
             can_reopen,
@@ -74,6 +81,7 @@ pub(super) fn render_diff_new_tab_menu(
                 NewTabAction::Changes => this.open_diff_changes_tab(cx),
                 NewTabAction::File => this.open_diff_file_picker(window, cx),
                 NewTabAction::Terminal => this.open_diff_terminal_tab(window, cx),
+                NewTabAction::Browser => this.open_diff_browser_tab(window, cx),
                 NewTabAction::Reopen => this.reopen_closed_diff_tab(window, cx),
             }
         })),

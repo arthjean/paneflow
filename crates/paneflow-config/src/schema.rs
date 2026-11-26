@@ -101,6 +101,13 @@ mod tests {
                 csv_table: Some(false),
                 semantic_tokens: Some(true),
             },
+            browser: BrowserConfig {
+                open_local_links: Some(true),
+                search_engine: Some(SearchEngine::Custom),
+                custom_search: Some("https://search.example.com/?q=%s".to_string()),
+                default_zoom: Some(125),
+                keep_history: Some(false),
+            },
             language_servers: LanguageServersConfig(BTreeMap::from([(
                 "gopls".to_string(),
                 LanguageServerEntry {
@@ -242,6 +249,11 @@ mod tests {
             object_keys(&serialized["editor"]),
             object_keys(&schema["properties"]["editor"]["properties"]),
             "EditorDisplayConfig and public JSON Schema drifted"
+        );
+        assert_eq!(
+            object_keys(&serialized["browser"]),
+            object_keys(&schema["properties"]["browser"]["properties"]),
+            "BrowserConfig and public JSON Schema drifted"
         );
         assert_eq!(
             object_keys(&serialized["language_servers"]["gopls"]),

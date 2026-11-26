@@ -7,6 +7,7 @@ pub(crate) enum SettingsSection {
     Shortcuts,
     Terminal,
     Editor,
+    Browser,
     Agents,
     Usage,
     McpServers,
@@ -83,6 +84,13 @@ pub(crate) enum TerminalDropdown {
     CursorShape,
     CursorColor,
     FontWeight,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum BrowserDropdown {
+    Engine,
+    Zoom,
+    ClearSpan,
 }
 
 #[derive(Clone, Copy, PartialEq)]

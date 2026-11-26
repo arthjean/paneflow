@@ -76,9 +76,22 @@ impl PaneFlowApp {
         self.diff_dock.open = true;
         if has_current_snapshot {
             cx.notify();
+        } else if self.diff_dock_defers_snapshot() {
+            self.diff_dock.deferred_snapshot = Some(cwd);
+            cx.notify();
         } else {
+            self.diff_dock.deferred_snapshot = None;
             self.refresh_diff_dock(cwd, cx);
         }
+    }
+
+    fn diff_dock_defers_snapshot(&self) -> bool {
+        let picker = self.diff_dock.picker || self.diff_dock.diff_tabs.is_empty();
+        picker
+            || matches!(
+                self.diff_dock.diff_tabs.get(self.diff_dock.diff_active_tab),
+                Some(DiffDockTab::Browser(_))
+            )
     }
 
     pub(crate) fn dismiss_diff_dock_panel(&mut self, cx: &mut Context<Self>) {
@@ -462,6 +475,12 @@ impl PaneFlowApp {
         });
         let (toolbar, body) = match tabs.get(active) {
             Some(DiffDockTab::Terminal(terminal)) => (None, terminal.clone().into_any_element()),
+            Some(DiffDockTab::Browser(view)) => (
+                None,
+                view.clone()
+                    .cached(gpui::StyleRefinement::default().size_full())
+                    .into_any_element(),
+            ),
             Some(DiffDockTab::PendingFile) => (
                 Some(render_diff_file_header(
                     self.render_dock_crumbs(None, ui, cx),

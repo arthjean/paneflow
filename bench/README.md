@@ -648,6 +648,52 @@ With that rule no run would reach the 90 % calibration of the promotion
 criterion, so the A/A now bounds the p50s, and each p95 is judged only where
 its own A/A holds.
 
+## Browser latency A/B
+
+`scripts/latency-ab.sh` measures what a browser tab costs the terminal's
+keystroke latency in a live window, by the method of TD-17 in
+`tasks/prd-agents-browser.md`. It is not a performance gate: it needs a real
+compositor and a real GPU, so it runs on a development machine, never in CI,
+and it judges one arm against another rather than against a budget.
+
+```bash
+scripts/latency-ab.sh                    # 9 control runs and 3 cpu runs, seeded from the clock
+scripts/latency-ab.sh --seed 20261125    # the same schedule again
+scripts/latency-ab.sh --control 6 --cpu 2 --no-build
+```
+
+Each run starts the debug build on a fresh `PANEFLOW_HOME`
+(`~/.paneflow-dev-latency-ab-*`, deleted after the run with its host and
+worker stopped) in an empty folder that is not a repository, with
+`PANEFLOW_LATENCY_PROBE=1` and the harness of `src-app/src/latency_harness.rs`,
+which exists in debug builds only. The harness opens a shell tab, then the
+arm, and types into its own terminal through `Window::dispatch_keystroke`, so
+no input reaches any other window: five warm-up pairs of `z` and backspace,
+then three rounds of 104 letters at 45 ms intervals and `ctrl-u`. One sample
+per keystroke runs from the terminal's key handler to the end of its paint.
+
+| Arm | What the window shows | What the host does |
+|---|---|---|
+| `control` | the dock on the Changes tab of the empty folder | plays the video in a tab that is not displayed, as for an agent |
+| `cpu` | the dock on the video tab, through the CPU path | plays the video and sends every frame |
+
+Both arms open the dock at the same width, so the terminal has the same size,
+and every run's home turns `browser.display` on, which is off by default.
+The video page, `scripts/latency-ab/video.html`, plays
+`crates/paneflow-browser-host/tests/fixtures/clip.webm` from a local server
+and writes the decoded frame count to its title, which every run records.
+
+Before the first run the script writes `rule.json` under
+`target/latency-ab/<stamp>/`: the regression rule, the method, the seed, the
+interleaved schedule (each block shuffles its control runs with one cpu run),
+the commit and whether the tree is dirty. After the last run
+`scripts/latency-ab/verdict.py` writes `verdict.json`. The cpu path regresses
+when any of its run medians exceeds the largest control median, or any of its
+99th percentiles the largest control 99th percentile. A run with an error,
+fewer than 300 samples, or a video that did not play makes the campaign
+`invalid`, and no run is repeated or dropped. A bootstrap 95 % interval of the
+pooled median difference is reported for information and never decides.
+
 ## Persistent session suite
 
 The suite is the ignored integration test `persistent_session_baseline` in

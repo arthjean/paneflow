@@ -176,6 +176,10 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn open_workspace_service_url(&mut self, url: &str, cx: &mut Context<Self>) {
+        if crate::browser::opens_in_paneflow(&self.cached_config.browser, url) {
+            self.open_local_link(url.to_string(), cx);
+            return;
+        }
         self.open_external_url(url.to_string(), cx);
     }
 
@@ -638,6 +642,7 @@ impl PaneFlowApp {
                 .filter(|cwd| !cwd.is_empty())
                 .map(PathBuf::from),
             PaneSurface::Markdown(markdown) => Some(markdown.read(cx).path.clone()),
+            PaneSurface::Browser(_) => None,
         }
     }
 }

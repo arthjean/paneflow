@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use crate::handshake::{Hello, Refusal, Welcome};
 use crate::navigation::NavigationRefusal;
 use crate::profile::ProfileName;
+use crate::site::SiteSecurity;
+use crate::surface::{Cursor, DialogKind, FileMode, HistoryStep, Input, Rect, View};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -26,6 +28,22 @@ pub enum Command {
         tab: TabId,
         profile: ProfileName,
         url: String,
+        guarded: bool,
+    },
+    Guard {
+        tab: TabId,
+        guarded: bool,
+    },
+    Zoom {
+        tab: TabId,
+        percent: u16,
+    },
+    Security {
+        tab: TabId,
+    },
+    Inspect {
+        tab: TabId,
+        inspector: TabId,
     },
     CloseTab {
         tab: TabId,
@@ -47,6 +65,37 @@ pub enum Command {
         origin: String,
         decision: OriginDecision,
     },
+    Present {
+        tab: TabId,
+        view: Option<View>,
+    },
+    ReleaseFrame {
+        tab: TabId,
+        generation: u64,
+        slot: u32,
+    },
+    Input {
+        tab: TabId,
+        input: Input,
+    },
+    History {
+        tab: TabId,
+        step: HistoryStep,
+    },
+    Stop {
+        tab: TabId,
+    },
+    AnswerDialog {
+        tab: TabId,
+        dialog: u64,
+        accept: bool,
+        text: Option<String>,
+    },
+    AnswerFiles {
+        tab: TabId,
+        request: u64,
+        paths: Option<Vec<String>>,
+    },
     Shutdown,
 }
 
@@ -55,10 +104,21 @@ impl Command {
         match self {
             Self::OpenTab { tab, .. }
             | Self::CloseTab { tab }
+            | Self::Guard { tab, .. }
+            | Self::Zoom { tab, .. }
+            | Self::Security { tab }
+            | Self::Inspect { tab, .. }
             | Self::Navigate { tab, .. }
             | Self::Reload { tab }
             | Self::DevTools { tab, .. }
-            | Self::DecideOrigin { tab, .. } => Some(*tab),
+            | Self::DecideOrigin { tab, .. }
+            | Self::Present { tab, .. }
+            | Self::ReleaseFrame { tab, .. }
+            | Self::Input { tab, .. }
+            | Self::History { tab, .. }
+            | Self::Stop { tab }
+            | Self::AnswerDialog { tab, .. }
+            | Self::AnswerFiles { tab, .. } => Some(*tab),
             Self::Shutdown => None,
         }
     }
@@ -86,6 +146,7 @@ pub enum HostMessage {
 pub enum Outcome {
     Done,
     DevTools { result: serde_json::Value },
+    Security { security: SiteSecurity },
     Failed { error: CommandError },
 }
 
@@ -94,6 +155,7 @@ impl Outcome {
         match self {
             Self::Done => Ok(Reply::Done),
             Self::DevTools { result } => Ok(Reply::DevTools(result)),
+            Self::Security { security } => Ok(Reply::Security(security)),
             Self::Failed { error } => Err(error),
         }
     }
@@ -104,6 +166,7 @@ impl From<Result<Reply, CommandError>> for Outcome {
         match result {
             Ok(Reply::Done) => Self::Done,
             Ok(Reply::DevTools(result)) => Self::DevTools { result },
+            Ok(Reply::Security(security)) => Self::Security { security },
             Err(error) => Self::Failed { error },
         }
     }
@@ -113,6 +176,7 @@ impl From<Result<Reply, CommandError>> for Outcome {
 pub enum Reply {
     Done,
     DevTools(serde_json::Value),
+    Security(SiteSecurity),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
@@ -223,6 +287,65 @@ pub enum Event {
     Closed {
         tab: TabId,
     },
+    Surface {
+        tab: TabId,
+        generation: u64,
+        width: u32,
+        height: u32,
+        stride: u32,
+        slots: u32,
+    },
+    Frame(FrameDescriptor),
+    PresentationFailed {
+        tab: TabId,
+        reason: String,
+    },
+    Cursor {
+        tab: TabId,
+        cursor: Cursor,
+    },
+    TitleChanged {
+        tab: TabId,
+        title: String,
+    },
+    AddressChanged {
+        tab: TabId,
+        url: String,
+    },
+    LoadingState {
+        tab: TabId,
+        loading: bool,
+        can_go_back: bool,
+        can_go_forward: bool,
+    },
+    LoadProgress {
+        tab: TabId,
+        progress: f64,
+    },
+    DialogOpened {
+        tab: TabId,
+        dialog: u64,
+        kind: DialogKind,
+        origin: String,
+        message: String,
+        default_text: String,
+    },
+    FileChooserOpened {
+        tab: TabId,
+        request: u64,
+        mode: FileMode,
+        title: String,
+        accept: Vec<String>,
+    },
+    NewWindowRequested {
+        tab: TabId,
+        url: String,
+        user_gesture: bool,
+    },
+    ImeCaret {
+        tab: TabId,
+        caret: Rect,
+    },
     Exiting {
         reason: ExitReason,
     },
@@ -241,7 +364,19 @@ impl Event {
             | Self::PermissionDenied { tab, .. }
             | Self::DownloadCancelled { tab, .. }
             | Self::Crashed { tab, .. }
-            | Self::Closed { tab } => Some(*tab),
+            | Self::Closed { tab }
+            | Self::Surface { tab, .. }
+            | Self::PresentationFailed { tab, .. }
+            | Self::Cursor { tab, .. }
+            | Self::TitleChanged { tab, .. }
+            | Self::AddressChanged { tab, .. }
+            | Self::LoadingState { tab, .. }
+            | Self::LoadProgress { tab, .. }
+            | Self::DialogOpened { tab, .. }
+            | Self::FileChooserOpened { tab, .. }
+            | Self::NewWindowRequested { tab, .. }
+            | Self::ImeCaret { tab, .. } => Some(*tab),
+            Self::Frame(frame) => Some(frame.tab()),
             Self::Exiting { .. } => None,
         }
     }
@@ -274,4 +409,12 @@ pub enum FrameDescriptor {
         format: PixelFormat,
         modifier: u64,
     },
+}
+
+impl FrameDescriptor {
+    pub fn tab(&self) -> TabId {
+        match self {
+            Self::SharedMemory { tab, .. } | Self::GpuTexture { tab, .. } => *tab,
+        }
+    }
 }

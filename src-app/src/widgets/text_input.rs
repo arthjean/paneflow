@@ -199,6 +199,25 @@ impl TextInput {
         cx.notify();
     }
 
+    pub(crate) fn selection(&self) -> Range<usize> {
+        self.selected_range.clone()
+    }
+
+    pub(crate) fn complete(&mut self, completed: impl Into<SharedString>, cx: &mut Context<Self>) {
+        let completed = completed.into();
+        let typed = self.selected_range.end.min(self.content.len());
+        if !completed.starts_with(&self.content[..typed]) || completed.len() <= typed {
+            return;
+        }
+        self.content = completed;
+        self.selected_range = typed..self.content.len();
+        self.selection_reversed = false;
+        self.marked_range = None;
+        self.last_layout = None;
+        self.reset_blink();
+        cx.notify();
+    }
+
     pub fn set_placeholder(
         &mut self,
         placeholder: impl Into<SharedString>,

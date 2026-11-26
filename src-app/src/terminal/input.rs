@@ -786,6 +786,17 @@ impl TerminalView {
             return;
         }
 
+        if event.button == MouseButton::Right {
+            if let Some(url) = self.url_at(event.position) {
+                cx.emit(TerminalEvent::LinkMenu {
+                    url,
+                    position: event.position,
+                });
+                cx.stop_propagation();
+            }
+            return;
+        }
+
         if event.button != MouseButton::Left {
             return;
         }
@@ -945,6 +956,23 @@ impl TerminalView {
         }
     }
 
+    fn url_at(&self, position: gpui::Point<gpui::Pixels>) -> Option<String> {
+        let cell = self.pixel_to_grid(position);
+        let line = self.terminal.session_backend().line_text_at(cell)?;
+        crate::terminal::element::detect_urls_on_line_mapped(
+            &line.text,
+            line.line,
+            &line.char_to_column,
+        )
+        .into_iter()
+        .find(|zone| {
+            zone.is_openable
+                && zone.start.line == cell.line
+                && (zone.start.column..=zone.end.column).contains(&cell.column)
+        })
+        .map(|zone| zone.uri)
+    }
+
     fn open_hyperlink(
         &self,
         link: &HyperlinkZone,
@@ -975,6 +1003,13 @@ impl TerminalView {
             }
             HyperlinkSource::Osc8 | HyperlinkSource::Regex => {
                 let uri = link.uri.clone();
+                if crate::browser::opens_in_paneflow(
+                    &crate::config_snapshot::current(cx).browser,
+                    &uri,
+                ) {
+                    cx.emit(TerminalEvent::OpenInBrowser { url: uri });
+                    return;
+                }
                 cx.spawn(async move |this, cx| {
                     let Err(err) = crate::external_open::open_url_off_thread(uri).await else {
                         return;

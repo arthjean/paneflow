@@ -300,6 +300,7 @@ pub(crate) fn surface_entity(surface: &PaneSurface) -> EntityId {
     match surface {
         PaneSurface::Terminal(view) => view.entity_id(),
         PaneSurface::Markdown(view) => view.entity_id(),
+        PaneSurface::Browser(view) => view.entity_id(),
     }
 }
 
@@ -364,6 +365,7 @@ impl PaneFlowApp {
             }
         };
         self.run_layout_effects(&applied, cx);
+        self.build_staged_surfaces_the_model_spawns_no_session_for(cx);
         self.project_layout(cx);
         self.run_layout_rehomes(&applied, cx);
         if let Some(pane) = applied.focus.and_then(|id| self.layout.pane(id)) {
@@ -373,6 +375,30 @@ impl PaneFlowApp {
         self.layout_revision_changed(cx);
         cx.notify();
         Ok(applied)
+    }
+
+    fn build_staged_surfaces_the_model_spawns_no_session_for(&mut self, cx: &mut Context<Self>) {
+        let staged: Vec<SurfaceId> = self
+            .layout
+            .staged_surfaces
+            .keys()
+            .copied()
+            .filter(|surface| {
+                self.layout
+                    .model
+                    .state()
+                    .surface(*surface)
+                    .is_some_and(|known| known.kind() != paneflow_layout::SurfaceKind::Terminal)
+            })
+            .collect();
+        for surface in staged {
+            self.spawn_layout_surface(surface, cx);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn layout_state(&self) -> &paneflow_layout::State {
+        self.layout.model.state()
     }
 
     #[cfg(test)]
@@ -478,7 +504,7 @@ impl PaneFlowApp {
         self.layout.model.state().find_surface(surface)?;
         match self.layout.surfaces.get(&surface)? {
             PaneSurface::Terminal(view) => Some(view.clone()),
-            PaneSurface::Markdown(_) => None,
+            PaneSurface::Markdown(_) | PaneSurface::Browser(_) => None,
         }
     }
 

@@ -223,6 +223,51 @@ pub(crate) const LANGUAGE_SERVER_PERMISSIONS: SettingCopy = SettingCopy {
 };
 const EDITOR_COPIES: &[&SettingCopy] = &[&SEMANTIC_HIGHLIGHTING, &LANGUAGE_SERVER_PERMISSIONS];
 const EDITOR_HEADERS: &[&str] = &["Language servers"];
+pub(crate) const BROWSER_LOCAL_LINKS: SettingCopy = SettingCopy {
+    title: "Open local links in Paneflow",
+    description: "Links to localhost from a terminal or the sidebar open in a Paneflow browser \
+                  tab instead of your default browser.",
+};
+pub(crate) const BROWSER_SEARCH_ENGINE: SettingCopy = SettingCopy {
+    title: "Search engine",
+    description: "Words typed in the address field search here. Nothing is sent while you type.",
+};
+pub(crate) const BROWSER_CUSTOM_SEARCH: SettingCopy = SettingCopy {
+    title: "Search address",
+    description: "Put %s where the words go, after the site. Until the address is usable, \
+                  DuckDuckGo searches.",
+};
+pub(crate) const BROWSER_DEFAULT_ZOOM: SettingCopy = SettingCopy {
+    title: "Page zoom",
+    description: if cfg!(target_os = "macos") {
+        "Zoom a site with \u{2318}= and \u{2318}- to give it its own zoom; \u{2318}0 brings it back."
+    } else {
+        "Zoom a site with Ctrl+= and Ctrl+- to give it its own zoom; Ctrl+0 brings it back."
+    },
+};
+pub(crate) const BROWSER_SITE_ZOOM: SettingCopy = SettingCopy {
+    title: "Sites with their own zoom",
+    description: "Each site you zoomed keeps its zoom in every workspace.",
+};
+pub(crate) const BROWSER_KEEP_HISTORY: SettingCopy = SettingCopy {
+    title: "Keep history",
+    description: "Remembers the pages you open, for the address field's suggestions. Off, \
+                  nothing new is kept. Pages agents open are never kept.",
+};
+pub(crate) const BROWSER_CLEAR_HISTORY: SettingCopy = SettingCopy {
+    title: "Clear history",
+    description: "Forgets the pages last visited in the time range.",
+};
+const BROWSER_COPIES: &[&SettingCopy] = &[
+    &BROWSER_LOCAL_LINKS,
+    &BROWSER_SEARCH_ENGINE,
+    &BROWSER_CUSTOM_SEARCH,
+    &BROWSER_DEFAULT_ZOOM,
+    &BROWSER_SITE_ZOOM,
+    &BROWSER_KEEP_HISTORY,
+    &BROWSER_CLEAR_HISTORY,
+];
+const BROWSER_HEADERS: &[&str] = &["Links and search", "Zoom", "History"];
 const WORKTREES_COPIES: &[&SettingCopy] =
     &[&WORKTREE_ROOT, &AUTO_REMOVE_WORKTREES, &WORKTREE_KEEP_LIMIT];
 const MCP_COPIES: &[&SettingCopy] = &[&MCP_BRIDGE];
@@ -266,6 +311,7 @@ fn section_copies(section: SettingsSection) -> &'static [&'static SettingCopy] {
         SettingsSection::Terminal => TERMINAL_COPIES,
         SettingsSection::Worktrees => WORKTREES_COPIES,
         SettingsSection::Editor => EDITOR_COPIES,
+        SettingsSection::Browser => BROWSER_COPIES,
         SettingsSection::McpServers => MCP_COPIES,
         SettingsSection::Agents => AGENTS_COPIES,
         SettingsSection::Usage => USAGE_COPIES,
@@ -285,6 +331,7 @@ fn section_headers(section: SettingsSection) -> &'static [&'static str] {
         SettingsSection::Spaces => SPACES_HEADERS,
         SettingsSection::Worktrees => WORKTREES_HEADERS,
         SettingsSection::Editor => EDITOR_HEADERS,
+        SettingsSection::Browser => BROWSER_HEADERS,
         SettingsSection::Shortcuts => &[],
     }
 }

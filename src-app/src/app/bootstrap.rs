@@ -220,6 +220,33 @@ impl PaneFlowApp {
             cx.notify();
         })
         .detach();
+        let browser_custom_search_input = cx.new(|cx| {
+            crate::widgets::text_input::TextInput::new("", "https://example.com/search?q=%s", cx)
+                .with_accessible_name("Search address")
+        });
+        cx.observe(&browser_custom_search_input, |this: &mut Self, _, cx| {
+            this.browser_custom_search_edited(cx);
+            cx.notify();
+        })
+        .detach();
+        crate::browser::omnibox::start(cx);
+        crate::browser::zoom::start(cx);
+        cx.observe_global::<crate::browser::kept::Store<crate::browser::omnibox::History>>(
+            |this: &mut Self, cx| {
+                if this.settings_section == Some(crate::SettingsSection::Browser) {
+                    cx.notify();
+                }
+            },
+        )
+        .detach();
+        cx.observe_global::<crate::browser::kept::Store<crate::browser::zoom::SiteZooms>>(
+            |this: &mut Self, cx| {
+                if this.settings_section == Some(crate::SettingsSection::Browser) {
+                    cx.notify();
+                }
+            },
+        )
+        .detach();
         let shortcut_search_input = cx.new(|cx| {
             crate::widgets::text_input::TextInput::new(
                 "",
@@ -401,6 +428,9 @@ impl PaneFlowApp {
             settings_search_motion: Default::default(),
             terminal_dropdown: None,
             general_dropdown: None,
+            browser_dropdown: None,
+            browser_clear_span: 0,
+            browser_custom_search_input,
             workspace_template_dropdown: None,
             workspace_template_selected: None,
             workspace_template_detail_open: false,
@@ -505,6 +535,7 @@ impl PaneFlowApp {
             files_sidebar_root: None,
             files_sidebar_workspace: None,
             files_menu_open: None,
+            terminal_link_menu: None,
             comment_agents: std::collections::HashMap::new(),
             comment_offer: None,
             toast: None,
@@ -599,6 +630,7 @@ impl PaneFlowApp {
                 picked: false,
                 picker_focus: cx.focus_handle(),
                 picker_focus_pending: false,
+                deferred_snapshot: None,
                 picker_focus_return: None,
                 picker_highlight: None,
                 changes_tree_open: false,

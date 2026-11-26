@@ -31,6 +31,16 @@ pub enum TabCommand {
         origin: String,
         decision: OriginDecision,
     },
+    AnswerDialog {
+        dialog: u64,
+        accept: bool,
+        text: Option<String>,
+    },
+    AnswerFiles {
+        request: u64,
+        paths: Option<Vec<String>>,
+    },
+    Guard(bool),
 }
 
 pub trait Engine: Send + Sync + 'static {
@@ -40,6 +50,7 @@ pub trait Engine: Send + Sync + 'static {
         &self,
         profile: ProfileName,
         url: &str,
+        guarded: bool,
         deadline: Duration,
     ) -> (TabId, Result<Reply, CommandError>);
 
@@ -49,6 +60,8 @@ pub trait Engine: Send + Sync + 'static {
         command: TabCommand,
         deadline: Duration,
     ) -> Result<Reply, CommandError>;
+
+    fn fire(&self, tab: TabId, command: TabCommand);
 }
 
 impl Engine for BrowserClient {
@@ -69,9 +82,10 @@ impl Engine for BrowserClient {
         &self,
         profile: ProfileName,
         url: &str,
+        guarded: bool,
         deadline: Duration,
     ) -> (TabId, Result<Reply, CommandError>) {
-        let (tab, ticket) = BrowserClient::open_tab(self, profile, url);
+        let (tab, ticket) = BrowserClient::open_tab_guarded(self, profile, url, guarded);
         (tab, ticket.wait(deadline))
     }
 
@@ -87,7 +101,31 @@ impl Engine for BrowserClient {
             TabCommand::Close => self.close_tab(tab),
             TabCommand::DevTools { method, params } => self.devtools(tab, method, params),
             TabCommand::Decide { origin, decision } => self.decide_origin(tab, origin, decision),
+            TabCommand::AnswerDialog {
+                dialog,
+                accept,
+                text,
+            } => self.answer_dialog(tab, dialog, accept, text),
+            TabCommand::AnswerFiles { request, paths } => self.answer_files(tab, request, paths),
+            TabCommand::Guard(guarded) => self.guard(tab, guarded),
         };
         ticket.wait(deadline)
+    }
+
+    fn fire(&self, tab: TabId, command: TabCommand) {
+        let _ticket = match command {
+            TabCommand::Navigate(url) => self.navigate(tab, url),
+            TabCommand::Reload => self.reload(tab),
+            TabCommand::Close => self.close_tab(tab),
+            TabCommand::DevTools { method, params } => self.devtools(tab, method, params),
+            TabCommand::Decide { origin, decision } => self.decide_origin(tab, origin, decision),
+            TabCommand::AnswerDialog {
+                dialog,
+                accept,
+                text,
+            } => self.answer_dialog(tab, dialog, accept, text),
+            TabCommand::AnswerFiles { request, paths } => self.answer_files(tab, request, paths),
+            TabCommand::Guard(guarded) => self.guard(tab, guarded),
+        };
     }
 }

@@ -1,8 +1,11 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use cef::*;
+
+use paneflow_browser_proto::{TabId, View};
 
 use crate::host::Host;
 
@@ -36,6 +39,23 @@ pub fn on_ui_after(delay: Duration, work: impl FnOnce() + Send + 'static) -> boo
 
 thread_local! {
     static HOST: RefCell<Option<Host>> = const { RefCell::new(None) };
+    static VIEWS: RefCell<HashMap<TabId, View>> = RefCell::new(HashMap::new());
+}
+
+pub fn set_view(tab: TabId, view: View) {
+    VIEWS.with(|views| {
+        views.borrow_mut().insert(tab, view);
+    });
+}
+
+pub fn forget_view(tab: TabId) {
+    VIEWS.with(|views| {
+        views.borrow_mut().remove(&tab);
+    });
+}
+
+pub fn view_of(tab: TabId) -> View {
+    VIEWS.with(|views| views.borrow().get(&tab).copied().unwrap_or_default())
 }
 
 pub fn install(host: Host) {

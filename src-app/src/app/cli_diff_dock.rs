@@ -123,6 +123,7 @@ pub(crate) enum RestoredDockEntry {
     Changes,
     Files,
     File(std::path::PathBuf),
+    Browser { url: String, title: Option<String> },
 }
 
 pub(crate) fn restored_dock_plan(
@@ -139,6 +140,12 @@ pub(crate) fn restored_dock_plan(
             DockTabSession::File { path } => {
                 let path = resolved_dock_path(root, path);
                 exists(&path).then_some(RestoredDockEntry::File(path))
+            }
+            DockTabSession::Browser { url, title } => {
+                crate::browser::restorable(url).then(|| RestoredDockEntry::Browser {
+                    url: url.clone(),
+                    title: title.clone(),
+                })
             }
             DockTabSession::Unknown => None,
         })
@@ -190,6 +197,10 @@ impl PaneFlowApp {
                 DiffDockTab::File(view) => Some(DockTabSession::File {
                     path: stored_dock_path(root, view.read(cx).path()),
                 }),
+                DiffDockTab::Browser(view) => view
+                    .read(cx)
+                    .persisted()
+                    .map(|(url, title)| DockTabSession::Browser { url, title }),
                 DiffDockTab::Terminal(_) => None,
             })
             .collect()
@@ -279,14 +290,31 @@ impl PaneFlowApp {
         root: std::path::PathBuf,
         cx: &mut Context<Self>,
     ) {
+        let workspace_id = self
+            .workspaces
+            .iter()
+            .find(|ws| ws.tabs().iter().any(|tab| tab.id == tab_id))
+            .map(|ws| ws.id);
         let tabs: Vec<DiffDockTab> = plan
             .entries
             .into_iter()
-            .map(|entry| match entry {
-                RestoredDockEntry::Changes => DiffDockTab::Changes,
-                RestoredDockEntry::Files => DiffDockTab::PendingFile,
-                RestoredDockEntry::File(path) => {
-                    DiffDockTab::File(self.new_code_view(path, Some(root.clone()), true, cx))
+            .filter_map(|entry| match entry {
+                RestoredDockEntry::Changes => Some(DiffDockTab::Changes),
+                RestoredDockEntry::Files => Some(DiffDockTab::PendingFile),
+                RestoredDockEntry::File(path) => Some(DiffDockTab::File(self.new_code_view(
+                    path,
+                    Some(root.clone()),
+                    true,
+                    cx,
+                ))),
+                RestoredDockEntry::Browser { url, title } => {
+                    let workspace_id = workspace_id?;
+                    Some(DiffDockTab::Browser(self.new_browser_view(
+                        move |cx| {
+                            crate::browser::BrowserView::restored(workspace_id, url, title, cx)
+                        },
+                        cx,
+                    )))
                 }
             })
             .collect();
@@ -505,6 +533,7 @@ impl PaneFlowApp {
         }
         if self.diff_dock.open {
             self.dismiss_diff_dock_panel(cx);
+            self.save_session(cx);
             return;
         }
         let Some(cwd) = self
@@ -516,6 +545,7 @@ impl PaneFlowApp {
         self.diff_dock.picker = !self.diff_dock.picked;
         self.diff_dock.picker_focus_pending = self.diff_dock.picker;
         self.open_diff_dock_panel(cwd, cx);
+        self.save_session(cx);
     }
 
     pub(crate) fn handle_toggle_diff_dock_maximize(
@@ -1026,6 +1056,43 @@ mod tests {
         let plan = restored_dock_plan(&unknown, root, |_| true);
         assert_eq!(plan.entries, vec![RestoredDockEntry::Files]);
         assert_eq!(plan.active, 0);
+    }
+
+    #[test]
+    fn a_restored_dock_keeps_browser_tabs_and_drops_one_with_a_refused_scheme() {
+        let browser = |url: &str| DockTabSession::Browser {
+            url: url.to_string(),
+            title: Some("Fixture".to_string()),
+        };
+        let session = DockSession {
+            open: true,
+            tabs: vec![
+                browser("http://127.0.0.1:5173/"),
+                browser("file:///etc/passwd"),
+                browser("https://example.com/docs"),
+            ],
+            active: 2,
+            tree: false,
+        };
+        let plan = restored_dock_plan(&session, std::path::Path::new("/repo"), |_| true);
+        assert_eq!(
+            plan.entries,
+            vec![
+                RestoredDockEntry::Browser {
+                    url: "http://127.0.0.1:5173/".to_string(),
+                    title: Some("Fixture".to_string()),
+                },
+                RestoredDockEntry::Browser {
+                    url: "https://example.com/docs".to_string(),
+                    title: Some("Fixture".to_string()),
+                },
+            ]
+        );
+        assert_eq!(plan.active, 1, "the active tab survives the dropped one");
+        let json = serde_json::to_value(browser("http://localhost:3000/")).unwrap();
+        assert_eq!(json["kind"], "browser");
+        let back: DockTabSession = serde_json::from_value(json).unwrap();
+        assert_eq!(back, browser("http://localhost:3000/"));
     }
 
     #[test]

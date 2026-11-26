@@ -470,6 +470,7 @@ fn settings_values(app: &PaneFlowApp) -> Vec<ScopeValue> {
         ("Appearance", SettingsSection::Appearance),
         ("Terminal", SettingsSection::Terminal),
         ("Editor", SettingsSection::Editor),
+        ("Browser", SettingsSection::Browser),
         ("Workspaces", SettingsSection::Workspaces),
         ("Spaces", SettingsSection::Spaces),
         ("Worktrees", SettingsSection::Worktrees),

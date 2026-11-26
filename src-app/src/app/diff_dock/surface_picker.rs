@@ -21,16 +21,18 @@ pub(crate) enum DiffDockSurface {
     Changes,
     Terminal,
     File,
+    Browser,
 }
 
 impl DiffDockSurface {
-    const ALL: [Self; 3] = [Self::Changes, Self::Terminal, Self::File];
+    const ALL: [Self; 4] = [Self::Changes, Self::Terminal, Self::File, Self::Browser];
 
     fn id(self) -> &'static str {
         match self {
             Self::Changes => "diff-dock-picker-changes",
             Self::Terminal => "diff-dock-picker-terminal",
             Self::File => "diff-dock-picker-file",
+            Self::Browser => "diff-dock-picker-browser",
         }
     }
 
@@ -39,6 +41,7 @@ impl DiffDockSurface {
             Self::Changes => "Changes",
             Self::Terminal => "Terminal",
             Self::File => "File",
+            Self::Browser => "Browser",
         }
     }
 
@@ -47,6 +50,7 @@ impl DiffDockSurface {
             Self::Changes => "icons/dock/git-compare.svg",
             Self::Terminal => "icons/dock/computer-terminal-01.svg",
             Self::File => "icons/dock/file-code.svg",
+            Self::Browser => "icons/world.svg",
         }
     }
 
@@ -55,6 +59,7 @@ impl DiffDockSurface {
             Self::Changes => "c",
             Self::Terminal => "t",
             Self::File => "f",
+            Self::Browser => "b",
         }
     }
 
@@ -63,6 +68,7 @@ impl DiffDockSurface {
             Self::Changes => "C",
             Self::Terminal => "T",
             Self::File => "F",
+            Self::Browser => "B",
         }
     }
 }
@@ -111,6 +117,7 @@ impl PaneFlowApp {
             DiffDockSurface::Changes => self.open_diff_changes_tab(cx),
             DiffDockSurface::Terminal => self.open_diff_terminal_tab(window, cx),
             DiffDockSurface::File => self.open_diff_file_picker(window, cx),
+            DiffDockSurface::Browser => self.open_diff_browser_tab(window, cx),
         }
     }
 
@@ -264,6 +271,10 @@ mod tests {
             picker_key("f", None),
             PickerKey::Open(DiffDockSurface::File)
         );
+        assert_eq!(
+            picker_key("b", None),
+            PickerKey::Open(DiffDockSurface::Browser)
+        );
         assert_eq!(picker_key("x", None), PickerKey::Ignore);
     }
 
@@ -278,11 +289,11 @@ mod tests {
     #[test]
     fn the_arrows_wrap_through_the_rows() {
         assert_eq!(picker_key("down", None), PickerKey::Highlight(0));
-        assert_eq!(picker_key("down", Some(2)), PickerKey::Highlight(0));
-        assert_eq!(picker_key("up", None), PickerKey::Highlight(2));
-        assert_eq!(picker_key("up", Some(0)), PickerKey::Highlight(2));
+        assert_eq!(picker_key("down", Some(3)), PickerKey::Highlight(0));
+        assert_eq!(picker_key("up", None), PickerKey::Highlight(3));
+        assert_eq!(picker_key("up", Some(0)), PickerKey::Highlight(3));
         assert_eq!(picker_key("home", Some(2)), PickerKey::Highlight(0));
-        assert_eq!(picker_key("end", Some(0)), PickerKey::Highlight(2));
+        assert_eq!(picker_key("end", Some(0)), PickerKey::Highlight(3));
     }
 
     #[test]

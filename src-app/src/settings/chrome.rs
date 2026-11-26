@@ -111,6 +111,22 @@ const NAV_GROUPS: &[NavGroup] = &[
                 ],
             },
             NavItem {
+                section: SettingsSection::Browser,
+                label: "Browser",
+                icon: "icons/settings/globe-02.svg",
+                keywords: &[
+                    "browser",
+                    "web",
+                    "page",
+                    "search engine",
+                    "google",
+                    "duckduckgo",
+                    "zoom",
+                    "history",
+                    "links",
+                ],
+            },
+            NavItem {
                 section: SettingsSection::Workspaces,
                 label: "Workspaces",
                 icon: "icons/settings/dashboard-square-01.svg",
@@ -241,6 +257,7 @@ pub(crate) fn section_title(section: SettingsSection) -> &'static str {
         SettingsSection::Shortcuts => "Keyboard Shortcuts",
         SettingsSection::Terminal => "Terminal",
         SettingsSection::Editor => "Editor",
+        SettingsSection::Browser => "Browser",
         SettingsSection::Agents => "Agents",
         SettingsSection::Usage => "Usage",
         SettingsSection::McpServers => "Plugins",
@@ -479,6 +496,8 @@ impl PaneFlowApp {
             self.render_terminal_heading(title_text)
         } else if section == SettingsSection::Editor {
             self.render_editor_heading(title_text)
+        } else if section == SettingsSection::Browser {
+            self.render_browser_heading(title_text)
         } else if section == SettingsSection::Appearance {
             self.render_appearance_heading(title_text)
         } else if section == SettingsSection::General {
@@ -531,6 +550,7 @@ impl PaneFlowApp {
                 .into_any_element(),
             SettingsSection::Terminal => self.render_terminal_content(cx).into_any_element(),
             SettingsSection::Editor => self.render_editor_content(cx).into_any_element(),
+            SettingsSection::Browser => self.render_browser_content(cx),
             SettingsSection::Agents => self.render_agents_content(cx),
             SettingsSection::Usage => self.render_usage_content(window, cx),
             SettingsSection::McpServers => self.render_mcp_servers_content(cx).into_any_element(),
@@ -639,6 +659,7 @@ impl PaneFlowApp {
         self.theme_dropdown_open = false;
         self.terminal_dropdown = None;
         self.general_dropdown = None;
+        self.browser_dropdown = None;
         self.workspace_template_dropdown = None;
         self.workspace_template_detail_open = false;
         self.workspace_template_delete_armed = false;

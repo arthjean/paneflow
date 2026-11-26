@@ -100,7 +100,9 @@ impl PaneFlowApp {
                 PaneSurface::Terminal(view) if view.read(cx).terminal.session_id == *session => {
                     Some(view.clone())
                 }
-                PaneSurface::Terminal(_) | PaneSurface::Markdown(_) => None,
+                PaneSurface::Terminal(_) | PaneSurface::Markdown(_) | PaneSurface::Browser(_) => {
+                    None
+                }
             })
     }
 
@@ -122,7 +124,7 @@ impl PaneFlowApp {
         });
         let session = match &built {
             PaneSurface::Terminal(view) => Some(view.read(cx).terminal.session_id.clone()),
-            PaneSurface::Markdown(_) => None,
+            PaneSurface::Markdown(_) | PaneSurface::Browser(_) => None,
         };
         self.layout.register_surface(surface, built);
         if let Some(session) = session
@@ -166,6 +168,11 @@ impl PaneFlowApp {
                 crate::markdown::MarkdownView::open(PathBuf::from(path), cx)
             });
             return PaneSurface::Markdown(view);
+        }
+        if definition.surface_type.as_deref() == Some(crate::browser::SURFACE_TYPE)
+            && let Some(surface) = Self::restored_browser_surface(app_ws, &definition, cx)
+        {
+            return surface;
         }
         let worktree = self.surface_worktree(surface);
         let cwd = definition.cwd.clone().map(PathBuf::from);

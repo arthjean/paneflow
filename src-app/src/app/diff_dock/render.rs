@@ -255,11 +255,18 @@ fn render_diff_tab(
             None,
         ),
         (DiffDockTab::PendingFile, _) => ("icons/dock/folder-tree.svg", "Files".to_string(), None),
+        (DiffDockTab::Browser(view), _) => {
+            let title = view.read(cx).title();
+            ("icons/world.svg", truncate_page_title(&title), Some(title))
+        }
         (_, Some((icon, label, path, _))) => (*icon, label.clone(), Some(path.clone())),
         _ => ("icons/dock/file-code.svg", "File".to_string(), None),
     };
     let tooltip = tooltip.unwrap_or_else(|| label.clone());
-    let closes_on_middle_click = matches!(tab, DiffDockTab::File(_) | DiffDockTab::PendingFile);
+    let closes_on_middle_click = matches!(
+        tab,
+        DiffDockTab::File(_) | DiffDockTab::PendingFile | DiffDockTab::Browser(_)
+    );
     let dirty = file.is_some_and(|(_, _, _, dirty)| dirty);
     let text = if active { ui.text } else { ui.muted };
     let group = SharedString::from(format!("diff-dock-tab-{index}-group"));
@@ -386,6 +393,14 @@ fn truncate_tab_label(name: &str) -> String {
         .skip(name.chars().count() - (TAB_LABEL_MAX_CHARS - 1))
         .collect();
     format!("…{kept}")
+}
+
+fn truncate_page_title(title: &str) -> String {
+    if title.chars().count() <= TAB_LABEL_MAX_CHARS {
+        return title.to_string();
+    }
+    let head: String = title.chars().take(TAB_LABEL_MAX_CHARS - 1).collect();
+    format!("{}…", head.trim_end())
 }
 
 pub(super) fn render_diff_file_header(
@@ -801,5 +816,15 @@ mod tests {
         let cut = truncate_tab_label(accented);
         assert_eq!(cut.chars().count(), TAB_LABEL_MAX_CHARS);
         assert!(cut.ends_with(".rs"));
+    }
+
+    #[test]
+    fn a_long_page_title_keeps_its_start_like_a_pane_tab() {
+        assert_eq!(truncate_page_title("Checkout form"), "Checkout form");
+        let cut =
+            truncate_page_title("A very long page title that keeps going well past any tab width");
+        assert!(cut.starts_with("A very long page"), "got {cut}");
+        assert!(cut.ends_with('…'));
+        assert!(cut.chars().count() <= TAB_LABEL_MAX_CHARS);
     }
 }

@@ -66,6 +66,10 @@ impl LayoutTree {
                                 agent_session: None,
                             }
                         }
+                        crate::pane::PaneSurface::Browser(view) => SurfaceDefinition {
+                            focus: Some(index == active),
+                            ..crate::browser::surface_definition(view.read(cx))
+                        },
                     })
                     .collect();
                 LayoutNode::Pane { surfaces }

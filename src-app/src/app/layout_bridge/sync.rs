@@ -470,23 +470,24 @@ impl PaneFlowApp {
     }
 
     fn adopt_surface_names(&mut self, cx: &mut Context<Self>) {
-        let named: Vec<_> = self
-            .layout
-            .model
-            .state()
-            .workspaces
-            .iter()
-            .flat_map(|ws| ws.tabs.iter())
-            .filter_map(|tab| tab.root.as_ref())
-            .flat_map(paneflow_layout::Node::panes)
-            .flat_map(|pane| pane.surfaces.iter())
-            .filter_map(|surface| match self.layout.surface(surface.id)? {
-                crate::pane::PaneSurface::Terminal(view) => {
-                    Some((view, surface.definition.custom_name.clone()))
-                }
-                crate::pane::PaneSurface::Markdown(_) => None,
-            })
-            .collect();
+        let named: Vec<_> =
+            self.layout
+                .model
+                .state()
+                .workspaces
+                .iter()
+                .flat_map(|ws| ws.tabs.iter())
+                .filter_map(|tab| tab.root.as_ref())
+                .flat_map(paneflow_layout::Node::panes)
+                .flat_map(|pane| pane.surfaces.iter())
+                .filter_map(|surface| match self.layout.surface(surface.id)? {
+                    crate::pane::PaneSurface::Terminal(view) => {
+                        Some((view, surface.definition.custom_name.clone()))
+                    }
+                    crate::pane::PaneSurface::Markdown(_)
+                    | crate::pane::PaneSurface::Browser(_) => None,
+                })
+                .collect();
         for (view, name) in named {
             if view.read(cx).terminal.custom_name != name {
                 view.update(cx, |view, cx| {

@@ -16,8 +16,12 @@ impl PaneFlowApp {
         self.workspace_menu_open = None;
         self.settings_section = Some(section);
         self.reset_settings_scroll();
+        if section == SettingsSection::Browser {
+            self.seed_browser_settings(cx);
+        }
         self.terminal_dropdown = None;
         self.general_dropdown = None;
+        self.browser_dropdown = None;
         self.workspace_template_dropdown = None;
         self.workspace_template_detail_open = false;
         self.workspace_template_delete_armed = false;
@@ -66,6 +70,7 @@ impl PaneFlowApp {
         self.theme_dropdown_open = false;
         self.terminal_dropdown = None;
         self.general_dropdown = None;
+        self.browser_dropdown = None;
         self.workspace_template_dropdown = None;
         self.workspace_template_detail_open = false;
         self.workspace_template_delete_armed = false;
@@ -458,6 +463,7 @@ impl PaneFlowApp {
             match settings_escape_target(SettingsOverlays {
                 terminal_dropdown: self.terminal_dropdown.is_some(),
                 general_dropdown: self.general_dropdown.is_some(),
+                browser_dropdown: self.browser_dropdown.is_some(),
                 theme_preset_menu: self.theme_dropdown_open,
                 workspace_template_dropdown: self.workspace_template_dropdown.is_some(),
                 agent_profile_menu: self.agent_profile_menu.is_some(),
@@ -470,6 +476,7 @@ impl PaneFlowApp {
             }) {
                 SettingsEscape::TerminalDropdown => self.terminal_dropdown = None,
                 SettingsEscape::GeneralDropdown => self.general_dropdown = None,
+                SettingsEscape::BrowserDropdown => self.browser_dropdown = None,
                 SettingsEscape::ThemePresetMenu => self.theme_dropdown_open = false,
                 SettingsEscape::WorkspaceTemplateDropdown => {
                     self.workspace_template_dropdown = None;
@@ -699,6 +706,7 @@ impl PaneFlowApp {
 struct SettingsOverlays {
     terminal_dropdown: bool,
     general_dropdown: bool,
+    browser_dropdown: bool,
     theme_preset_menu: bool,
     workspace_template_dropdown: bool,
     agent_profile_menu: bool,
@@ -711,6 +719,7 @@ struct SettingsOverlays {
 enum SettingsEscape {
     TerminalDropdown,
     GeneralDropdown,
+    BrowserDropdown,
     ThemePresetMenu,
     WorkspaceTemplateDropdown,
     AgentProfileMenu,
@@ -725,6 +734,8 @@ fn settings_escape_target(open: SettingsOverlays) -> SettingsEscape {
         SettingsEscape::TerminalDropdown
     } else if open.general_dropdown {
         SettingsEscape::GeneralDropdown
+    } else if open.browser_dropdown {
+        SettingsEscape::BrowserDropdown
     } else if open.theme_preset_menu {
         SettingsEscape::ThemePresetMenu
     } else if open.workspace_template_dropdown {

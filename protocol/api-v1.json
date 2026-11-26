@@ -3424,7 +3424,7 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "properties": {
           "url": {
-            "description": "An http or https URL of at most 2048 characters",
+            "description": "An http or https URL of at most 2097152 characters, Chromium's own limit",
             "type": "string"
           },
           "workspace": {
@@ -3995,7 +3995,7 @@
             "type": "integer"
           },
           "url": {
-            "description": "An http or https URL of at most 2048 characters",
+            "description": "An http or https URL of at most 2097152 characters, Chromium's own limit",
             "type": "string"
           }
         },

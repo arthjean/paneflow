@@ -124,6 +124,12 @@ pane. Search actions apply while the corresponding search is active.
 | Markdown pane | `markdown_find_next` | `Enter` |
 | Markdown pane | `markdown_find_prev` | `Shift+Enter` |
 | Markdown pane | `markdown_find_dismiss` | `Escape` |
+| Browser tab | `toggle_developer_tools` | `F12` |
+| Browser tab | `toggle_developer_tools` | `Cmd+Alt+I (macOS)` |
+| Browser tab | `toggle_developer_tools` | `Ctrl+Shift+I (Linux, Windows)` |
+| Browser tab | `show_developer_console` | `Cmd+Alt+J (macOS)` |
+| Browser tab | `inspect_element` | `Cmd+Alt+C (macOS)` |
+| Browser tab | `inspect_element` | `Ctrl+Shift+C (Linux, Windows)` |
 | Application | `quit` | `Cmd/Ctrl+Q` |
 
 ### Actions without a default shortcut
@@ -136,6 +142,7 @@ pane. Search actions apply while the corresponding search is active.
 | Terminal pane | `fork_conversation` | Fork the agent conversation into a split. |
 | Terminal pane | `accept_conversation_notice` | Run the action of the pane's conversation notice. |
 | Terminal pane | `dismiss_conversation_notice` | Dismiss the pane's conversation notice. |
+| Browser tab | `show_developer_console` | Open the developer tools on the Console panel. On Linux and Windows `Ctrl+Shift+J` already jumps to the next waiting agent, so this action has no default there. |
 
 `jump_next_waiting` goes through the agents that need you, in the order of
 the sidebar's Agents section: agents waiting for input first, then agents in

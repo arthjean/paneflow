@@ -31,6 +31,7 @@ pub(super) fn surface_definition(surface: &PaneSurface, cx: &App) -> SurfaceDefi
             path: Some(view.read(cx).path.display().to_string()),
             ..SurfaceDefinition::default()
         },
+        PaneSurface::Browser(view) => crate::browser::surface_definition(view.read(cx)),
     }
 }
 
@@ -59,7 +60,7 @@ impl LayoutBridge {
             None => {
                 let own = match surface {
                     PaneSurface::Terminal(view) => Some(SurfaceId(view.read(cx).surface_id())),
-                    PaneSurface::Markdown(_) => None,
+                    PaneSurface::Markdown(_) | PaneSurface::Browser(_) => None,
                 };
                 let id = own
                     .filter(|id| self.unclaimed(id.0))
@@ -90,6 +91,9 @@ impl LayoutBridge {
         }
         if live.path.is_some() {
             definition.path = live.path;
+        }
+        if matches!(surface, PaneSurface::Browser(_)) {
+            definition.name = live.name;
         }
         if let Some(live_env) = live.env {
             definition

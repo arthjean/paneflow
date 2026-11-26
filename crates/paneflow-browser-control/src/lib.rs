@@ -15,9 +15,13 @@ mod error;
 mod keys;
 mod snapshot;
 mod state;
+mod surface;
 
 pub use approvals::{Approvals, EvaluateRequest, Refuse, SiteChoice, SiteRequest};
 pub use control::{CallContext, Control, Identity, Limits, decode_base64, validate_url};
 pub use engine::{Engine, EngineStatus, RunningHost, TabCommand};
 pub use error::ControlError;
 pub use snapshot::HIDDEN_VALUE;
+pub use surface::{
+    ANNOTATION_BINDING, BlockedPermission, FileChooser, HeldSite, PageDialog, SurfaceEvent, TabView,
+};

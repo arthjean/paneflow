@@ -3,6 +3,10 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+use paneflow_browser_proto::surface::{
+    Cursor, DialogKind, FileMode, HistoryStep, Input, KeyKind, Modifiers, MouseButton, Rect, View,
+};
+use paneflow_browser_proto::{Certificate, CertificateName, Connection, SiteSecurity};
 use paneflow_browser_proto::{
     Command, CommandError, ConsoleLevel, Event, ExitReason, FrameDescriptor, Hello, HostMessage,
     NavigationRefusal, OriginDecision, Outcome, Permission, PixelFormat, ProfileName, Refusal,
@@ -21,9 +25,20 @@ fn command_kind(command: &Command) -> u8 {
         Command::DevTools { .. } => 4,
         Command::DecideOrigin { .. } => 5,
         Command::Shutdown => 6,
+        Command::Present { .. } => 7,
+        Command::ReleaseFrame { .. } => 8,
+        Command::Input { .. } => 9,
+        Command::History { .. } => 10,
+        Command::Stop { .. } => 11,
+        Command::AnswerDialog { .. } => 12,
+        Command::AnswerFiles { .. } => 13,
+        Command::Guard { .. } => 14,
+        Command::Zoom { .. } => 15,
+        Command::Security { .. } => 16,
+        Command::Inspect { .. } => 17,
     }
 }
-const COMMAND_KINDS: u8 = 7;
+const COMMAND_KINDS: u8 = 18;
 
 fn event_kind(event: &Event) -> u8 {
     match event {
@@ -39,9 +54,21 @@ fn event_kind(event: &Event) -> u8 {
         Event::Crashed { .. } => 9,
         Event::Closed { .. } => 10,
         Event::Exiting { .. } => 11,
+        Event::Surface { .. } => 12,
+        Event::Frame(_) => 13,
+        Event::PresentationFailed { .. } => 14,
+        Event::Cursor { .. } => 15,
+        Event::TitleChanged { .. } => 16,
+        Event::AddressChanged { .. } => 17,
+        Event::LoadingState { .. } => 18,
+        Event::DialogOpened { .. } => 19,
+        Event::FileChooserOpened { .. } => 20,
+        Event::NewWindowRequested { .. } => 21,
+        Event::ImeCaret { .. } => 22,
+        Event::LoadProgress { .. } => 23,
     }
 }
-const EVENT_KINDS: u8 = 12;
+const EVENT_KINDS: u8 = 24;
 
 fn error_kind(error: &CommandError) -> u8 {
     match error {
@@ -86,6 +113,20 @@ fn commands() -> Vec<Command> {
             tab: tab(),
             profile: ProfileName::new("0b6d6713-5706-4af6-8061-06e40f757cb9").unwrap(),
             url: "http://127.0.0.1:5173/".to_string(),
+            guarded: true,
+        },
+        Command::Guard {
+            tab: tab(),
+            guarded: false,
+        },
+        Command::Zoom {
+            tab: tab(),
+            percent: 125,
+        },
+        Command::Security { tab: tab() },
+        Command::Inspect {
+            tab: tab(),
+            inspector: TabId(9),
         },
         Command::CloseTab { tab: tab() },
         Command::Navigate {
@@ -112,6 +153,84 @@ fn commands() -> Vec<Command> {
             tab: tab(),
             origin: "https://example.com".to_string(),
             decision: OriginDecision::Deny,
+        },
+        Command::Present {
+            tab: tab(),
+            view: Some(View::new(540, 738, 2.0)),
+        },
+        Command::Present {
+            tab: tab(),
+            view: None,
+        },
+        Command::ReleaseFrame {
+            tab: tab(),
+            generation: 2,
+            slot: 1,
+        },
+        Command::Input {
+            tab: tab(),
+            input: Input::MouseButton {
+                x: 10,
+                y: 20,
+                button: MouseButton::Left,
+                pressed: true,
+                clicks: 2,
+                modifiers: Modifiers(Modifiers::SHIFT | Modifiers::LEFT_BUTTON),
+            },
+        },
+        Command::Input {
+            tab: tab(),
+            input: Input::Key {
+                kind: KeyKind::Char,
+                windows_key_code: 0x41,
+                native_key_code: 38,
+                character: u16::from(b'a'),
+                unmodified_character: u16::from(b'a'),
+                modifiers: Modifiers::default(),
+            },
+        },
+        Command::Input {
+            tab: tab(),
+            input: Input::ImeSetComposition {
+                text: "にほん".to_string(),
+                selection_start: 1,
+                selection_end: 3,
+            },
+        },
+        Command::Input {
+            tab: tab(),
+            input: Input::Wheel {
+                x: 1,
+                y: 2,
+                delta_x: 0,
+                delta_y: -120,
+                modifiers: Modifiers::default(),
+            },
+        },
+        Command::Input {
+            tab: tab(),
+            input: Input::Focus { focused: false },
+        },
+        Command::History {
+            tab: tab(),
+            step: HistoryStep::Back,
+        },
+        Command::Stop { tab: tab() },
+        Command::AnswerDialog {
+            tab: tab(),
+            dialog: 7,
+            accept: true,
+            text: Some("answer".to_string()),
+        },
+        Command::AnswerFiles {
+            tab: tab(),
+            request: 3,
+            paths: Some(vec!["/home/u/report.pdf".to_string()]),
+        },
+        Command::AnswerFiles {
+            tab: tab(),
+            request: 4,
+            paths: None,
         },
         Command::Shutdown,
     ]
@@ -231,6 +350,70 @@ fn events() -> Vec<Event> {
         Event::Exiting {
             reason: ExitReason::WindowGone,
         },
+        Event::Surface {
+            tab: tab(),
+            generation: 2,
+            width: 1080,
+            height: 1476,
+            stride: 4320,
+            slots: 3,
+        },
+        Event::Frame(frames().remove(0)),
+        Event::PresentationFailed {
+            tab: tab(),
+            reason: "memfd_create failed".to_string(),
+        },
+        Event::Cursor {
+            tab: tab(),
+            cursor: Cursor::Pointer,
+        },
+        Event::TitleChanged {
+            tab: tab(),
+            title: "Fixture".to_string(),
+        },
+        Event::AddressChanged {
+            tab: tab(),
+            url: "http://127.0.0.1/a".to_string(),
+        },
+        Event::LoadingState {
+            tab: tab(),
+            loading: true,
+            can_go_back: true,
+            can_go_forward: false,
+        },
+        Event::LoadProgress {
+            tab: tab(),
+            progress: 0.5,
+        },
+        Event::DialogOpened {
+            tab: tab(),
+            dialog: 1,
+            kind: DialogKind::Prompt,
+            origin: "http://127.0.0.1:5173".to_string(),
+            message: "Name?".to_string(),
+            default_text: "Ada".to_string(),
+        },
+        Event::FileChooserOpened {
+            tab: tab(),
+            request: 2,
+            mode: FileMode::OpenMultiple,
+            title: String::new(),
+            accept: vec![".png".to_string(), "image/*".to_string()],
+        },
+        Event::NewWindowRequested {
+            tab: tab(),
+            url: "http://127.0.0.1/popup".to_string(),
+            user_gesture: true,
+        },
+        Event::ImeCaret {
+            tab: tab(),
+            caret: Rect {
+                x: 10,
+                y: 20,
+                width: 1,
+                height: 18,
+            },
+        },
     ]
 }
 
@@ -317,6 +500,33 @@ fn every_reply_and_error_survives_a_round_trip() {
         Outcome::Done,
         Outcome::DevTools {
             result: json!({"result": {"type": "number", "value": 2}}),
+        },
+        Outcome::Security {
+            security: SiteSecurity {
+                url: "https://vercel.com/".to_string(),
+                connection: Connection::Secure,
+                protocol: Some("TLS 1.3".to_string()),
+                certificate: Some(Certificate {
+                    subject: CertificateName {
+                        common_name: "vercel.com".to_string(),
+                        organization: None,
+                    },
+                    issuer: CertificateName {
+                        common_name: "R11".to_string(),
+                        organization: Some("Let's Encrypt".to_string()),
+                    },
+                    valid_from: 1_790_000_000,
+                    valid_until: 1_797_776_000,
+                }),
+            },
+        },
+        Outcome::Security {
+            security: SiteSecurity {
+                url: "http://localhost:3000/".to_string(),
+                connection: Connection::Plain,
+                protocol: None,
+                certificate: None,
+            },
         },
     ];
     outcomes.extend(errors.into_iter().map(|error| Outcome::Failed { error }));
