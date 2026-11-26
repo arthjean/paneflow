@@ -1,0 +1,424 @@
+{
+  "prd": {
+    "file": "tasks/prd-mcp-removal.md",
+    "title": "Remove the MCP Bridge, Keep the CLI and Lua",
+    "created_at": "2026-11-26",
+    "status": "IN_PROGRESS"
+  },
+  "epics": [
+    {
+      "id": "EP-001",
+      "title": "Every client gets the bridge's safe defaults",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 3,
+      "stories_done": 3
+    },
+    {
+      "id": "EP-002",
+      "title": "Verbs and guidance for what only the bridge offered",
+      "status": "DONE",
+      "priority": "P0",
+      "stories_total": 4,
+      "stories_done": 4
+    },
+    {
+      "id": "EP-003",
+      "title": "Agent integrations without the bridge",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 4,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-004",
+      "title": "The bridge is gone",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 5,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-005",
+      "title": "Documentation, guidance and listings",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 5,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-006",
+      "title": "Linux end to end",
+      "status": "TODO",
+      "priority": "P0",
+      "stories_total": 2,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-007",
+      "title": "Windows hardware proofs",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 2,
+      "stories_done": 0
+    },
+    {
+      "id": "EP-008",
+      "title": "macOS hardware proofs",
+      "status": "TODO",
+      "priority": "P1",
+      "stories_total": 1,
+      "stories_done": 0
+    }
+  ],
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "Reads are scoped to the caller's workspace",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "blocked_by": [],
+      "started_at": "2026-11-26",
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26"
+    },
+    {
+      "id": "US-002",
+      "title": "Search results are fenced by the server",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "blocked_by": [],
+      "started_at": "2026-11-26",
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26"
+    },
+    {
+      "id": "US-003",
+      "title": "paneflow ls fences what it prints for a program",
+      "epic": "EP-001",
+      "status": "DONE",
+      "priority": "P0",
+      "blocked_by": [],
+      "started_at": "2026-11-26",
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26"
+    },
+    {
+      "id": "US-004",
+      "title": "paneflow write relays text to another agent",
+      "epic": "EP-002",
+      "status": "DONE",
+      "priority": "P0",
+      "blocked_by": [],
+      "started_at": "2026-11-26",
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26"
+    },
+    {
+      "id": "US-005",
+      "title": "paneflow ask asks the user a question",
+      "epic": "EP-002",
+      "status": "DONE",
+      "priority": "P0",
+      "blocked_by": [],
+      "started_at": "2026-11-26",
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26"
+    },
+    {
+      "id": "US-006",
+      "title": "paneflow do <action> can return before the action ends",
+      "epic": "EP-002",
+      "status": "DONE",
+      "priority": "P0",
+      "blocked_by": [],
+      "started_at": "2026-11-26",
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26"
+    },
+    {
+      "id": "US-007",
+      "title": "The conductor skill carries the rules and the whole surface",
+      "epic": "EP-002",
+      "status": "DONE",
+      "priority": "P0",
+      "blocked_by": [
+        "US-001",
+        "US-002",
+        "US-004",
+        "US-005",
+        "US-006"
+      ],
+      "started_at": "2026-11-26",
+      "completed_at": "2026-11-26",
+      "reviewed_at": "2026-11-26"
+    },
+    {
+      "id": "US-008",
+      "title": "Rename the integrations crate and keep paneflow.json order",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-009",
+      "title": "Hooks install, report and refresh with no bridge",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-008"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-010",
+      "title": "A purge engine for the MCP entries Paneflow wrote",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-009"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-011",
+      "title": "The purge runs wherever Paneflow wrote entries",
+      "epic": "EP-003",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-010"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-012",
+      "title": "Delete the bridge and its embedding",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-001",
+        "US-002",
+        "US-003",
+        "US-004",
+        "US-007",
+        "US-011"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-013",
+      "title": "paneflow mcp names the replacement",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-011",
+        "US-012"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-014",
+      "title": "Settings and the palette lose the MCP",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-012"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-015",
+      "title": "Build and packaging scripts serve two helpers",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-012"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-016",
+      "title": "Workflows, bench baseline and policy tests serve two helpers",
+      "epic": "EP-004",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-012"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-017",
+      "title": "Repository documents and agent guidance",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-012",
+        "US-013",
+        "US-014",
+        "US-015",
+        "US-016"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-018",
+      "title": "Changelog and release metadata",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-012",
+        "US-013"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-019",
+      "title": "Site documentation pages",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-017"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-020",
+      "title": "Site copy, the mirror and the guard",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-018",
+        "US-019"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-021",
+      "title": "Public Lua scripting page",
+      "epic": "EP-005",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-006",
+        "US-019"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-022",
+      "title": "Upgrade from an install with the bridge",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-011",
+        "US-012",
+        "US-015"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-023",
+      "title": "A live agent works through the CLI only",
+      "epic": "EP-006",
+      "status": "TODO",
+      "priority": "P0",
+      "blocked_by": [
+        "US-007",
+        "US-012"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-024",
+      "title": "Windows build, signing and tests without the bridge",
+      "epic": "EP-007",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-015",
+        "US-016",
+        "US-018"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-025",
+      "title": "Windows upgrade and purge",
+      "epic": "EP-007",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-022",
+        "US-024"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    },
+    {
+      "id": "US-026",
+      "title": "macOS build, upgrade and purge",
+      "epic": "EP-008",
+      "status": "TODO",
+      "priority": "P1",
+      "blocked_by": [
+        "US-015",
+        "US-022"
+      ],
+      "started_at": null,
+      "completed_at": null,
+      "reviewed_at": null
+    }
+  ]
+}
