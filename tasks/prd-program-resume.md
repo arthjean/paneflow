@@ -6,6 +6,8 @@
 | Version | Date | Author | Summary |
 |---------|------|--------|---------|
 | 1.0 | 2026-11-26 | Arthur Jean | Initial PRD, from the OSC 7577 specification (revision 0.5, 2026-11-25), its announcement, an ecosystem search, and five code maps of the pane spawn path, the OSC ingestion path, the restore flow, the embedded helpers and the shell integration. `paneflow-host` becomes the OSC 7577 terminal; a resume launcher in the shim crate replaces keystroke typing for every resume; real-hardware epics for Windows and macOS. 8 epics, 31 stories. |
+| 1.1 | 2026-11-26 | Arthur Jean | Every Windows proof of EP-002 to EP-006 moved into EP-007 and every macOS proof into EP-008, so EP-001 to EP-006 are proven on Linux alone. Moved: the WSL and gated-token checks of US-005 and the Windows working directory of US-007 to US-027 and US-028; the Windows exit code of US-010 and the cmd fallback of US-022 to US-029; the macOS working directory of US-007 and the macOS mode of the manifest temporary file of US-008 to US-030; the macOS exec and handoff-mode checks of US-010 to US-031. |
+| 1.2 | 2026-11-26 | Arthur Jean | Technical corrections from the EP-003 implementation. TD-08: fish receives the handoff path in a second `--init-command` that sets shell globals, because fish runs its config before any init command and an environment variable would reach `config.fish`; a restart now keeps the integration arguments Paneflow built (`--rcfile`, the fish `--init-command`, the pwsh `-NoLogo -NoExit -Command`), which a bash resume needs and which a restart used to drop. TD-09: the hook sends no `start_time`, the host reads it from the pid itself, which keeps the hook inside its size margin and does not trust a reported value. TD-11: the summary object is `resume_candidate`, beside a `resume_attempt` object (attempt, record, outcome `prepared`, `started`, `settled`, `failed` or `refused`, reason, program, pid), because the flattened manifest already uses the `program_resume` key for the record store. Refusal reasons gained `unsettled`, `unknown_record`, `unknown_attempt`, `launcher_missing`, `invalid_command` and `handoff_unwritable`; a refused restart or create still starts a plain shell and names its reason in `resume_attempt`. The handoff format lives in a new dependency-free crate, `paneflow-resume-handoff`, shared by the host and the launcher. |
 
 ## Problem Statement
 
@@ -127,16 +129,16 @@ arg <base64 of argv[1]>
 ...
 ```
 
-The launcher refuses a file whose first line is not `paneflow-resume 1`, that has no `arg` line, or that holds an unknown field. Before starting the program it changes to the `cwd` directory. If that fails, it reports `cwd_missing` when the source is `report`, and otherwise stays in the shell's directory. The shell is also spawned in that directory, so the prompt that returns after the program exits is there. zsh, bash and fish receive its path in `PANEFLOW_RESUME_HANDOFF`. Each integration script copies the variable into a shell-local value and unsets it before the user's startup files run, since the integration runs first for these three shells (`shell.rs:6-13,55-56,611,618-621`). PowerShell gets the path inside its per-spawn `-Command` string, because its profile runs before that string (`shell.rs:685-692`).
+The launcher refuses a file whose first line is not `paneflow-resume 1`, that has no `arg` line, or that holds an unknown field. Before starting the program it changes to the `cwd` directory. If that fails, it reports `cwd_missing` when the source is `report`, and otherwise stays in the shell's directory. The shell is also spawned in that directory, so the prompt that returns after the program exits is there. zsh and bash receive its path in `PANEFLOW_RESUME_HANDOFF`. Each integration script copies the variable into a shell-local value and unsets it before the user's startup files run, since the integration runs first for these two shells (`shell.rs:6-13,55-56,611,618-621`). fish runs its config before any `--init-command`, so it receives the path in a second init command that sets two shell globals, and no environment variable reaches `config.fish`. PowerShell gets the path inside its per-spawn `-Command` string, because its profile runs before that string (`shell.rs:685-692`).
 
 **TD-09: attempts are reported through the hook IPC path.** The launcher spawns `paneflow-ai-hook resume-attempt`, as the shim already spawns the hook for its own events (`crates/paneflow-shim/src/main.rs:187-222`). The hook calls a new host method, `session.resume_attempt`, with:
 
 ```json
-{"attempt": "<32 hex>", "outcome": "started", "pid": 4242, "start_time": 1795543201000}
+{"attempt": "<32 hex>", "outcome": "started", "pid": 4242}
 {"attempt": "<32 hex>", "outcome": "failed", "reason": "not_found | not_executable | cwd_missing | handoff_invalid"}
 ```
 
-`start_time` is the value `paneflow_peer::process_start_time` returns for the pid. The host authorizes it as a `Pane` principal of the same session, whose identity `paneflow-peer` attests, and binds it with the attempt id written in the handoff. On `started`, the record's owner becomes the new process (pid and start time), as R1 requires ("After a resume, the record belongs to the process the terminal started"). On `failed`, the record is dropped, except for `cwd_missing`, which keeps it blocked (TD-10). Emitting a signed 7577 report from the launcher instead would need the old owner's pid, whose validation fails once it is dead.
+The hook sends no `start_time`: the host reads the start time of the reported pid itself (v1.2). The host authorizes it as a `Pane` principal of the same session, whose identity `paneflow-peer` attests, and binds it with the attempt id written in the handoff. On `started`, the record's owner becomes the new process (pid and start time), as R1 requires ("After a resume, the record belongs to the process the terminal started"). On `failed`, the record is dropped, except for `cwd_missing`, which keeps it blocked (TD-10). Emitting a signed 7577 report from the launcher instead would need the old owner's pid, whose validation fails once it is dead.
 
 **TD-10: what counts as a failed resume.** R1 leaves the definition to the terminal.
 - **Failed:** the launcher could not start the program (`not_found`, `not_executable`, `handoff_invalid`). The record is dropped.
@@ -153,7 +155,7 @@ No time threshold is used, because no evidence supplies one.
 
 The mode governs OSC 7577 records only. Catalog conversations stay governed by `agents.restore_conversations`, and use the handoff (TD-13) in every mode.
 
-The desktop reads a session's candidate from the `SessionSummary` that the attach resolution already returns (`host_link::resolve`); the `session.inspect` IPC method and the `paneflow-host session inspect` command print the same summary. The host adds a `program_resume` object to `SessionSummary` with:
+The desktop reads a session's candidate from the `SessionSummary` that the attach resolution already returns (`host_link::resolve`); the `session.inspect` IPC method and the `paneflow-host session inspect` command print the same summary. The host adds a `resume_candidate` object to `SessionSummary` (named `program_resume` before v1.2) with:
 - `record` (an id), `argv`, `cwd`, `cwd_source`, `owner_pid`, `accepted_at_ms`;
 - `settled` (a boolean);
 - `blocked` (`null`, or one of `cwd_missing`, `shell_unsupported`, `sandbox_changed`, `first_process`).
@@ -307,7 +309,7 @@ A pure crate decides, for any byte string and any record state, exactly what OSC
 
 Every pane spawned by the host advertises OSC 7577, and the host turns verified reports into durable records with a correct lifetime.
 
-**Definition of Done:** on Linux, a fixture process in a hosted pane sends a signed report, the record appears in `session inspect`, survives a `kill -9` of the host in the manifest, and disappears 2 s after the owner exits on its own; Windows and macOS code paths compile and are proven in EP-007 and EP-008.
+**Definition of Done:** on Linux, a fixture process in a hosted pane sends a signed report, the record appears in `session inspect`, survives a `kill -9` of the host in the manifest, and disappears 2 s after the owner exits on its own. The Windows and macOS paths are proven in EP-007 and EP-008, not here.
 
 #### US-005: Per-generation token in the pane environment
 **Description:** As a program running in a pane, I want `OSC7577_TOKEN` in my environment so that I can tell the terminal how to resume me.
@@ -316,14 +318,12 @@ Every pane spawned by the host advertises OSC 7577, and the host turns verified 
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given a hosted pane, when its shell prints `$OSC7577_TOKEN`, then the value has 43 characters, all in `[A-Za-z0-9_-]`
-- [ ] Given two panes, when both print the variable, then the values differ
-- [ ] Given a pane restarted to a new generation, when it prints the variable, then the value differs from the previous generation's
-- [ ] Given the session manifest on disk, when it is searched for the token, then the token is absent
-- [ ] Given `session inspect` and the host log at debug level, when their output is searched for the token, then the token is absent
-- [ ] Given a host started with `OSC7577_TOKEN=inherited` in its environment, when a pane prints the variable, then the value is not `inherited`
-- [ ] Given a WSL pane on Windows, when it is spawned, then the variable is not set on the `wsl` process
-- [ ] Given any Windows pane before US-027 lifts the gate, when it is spawned, then the variable is not set
+- [x] Given a hosted pane, when its shell prints `$OSC7577_TOKEN`, then the value has 43 characters, all in `[A-Za-z0-9_-]`
+- [x] Given two panes, when both print the variable, then the values differ
+- [x] Given a pane restarted to a new generation, when it prints the variable, then the value differs from the previous generation's
+- [x] Given the session manifest on disk, when it is searched for the token, then the token is absent
+- [x] Given `session inspect` and the host log at debug level, when their output is searched for the token, then the token is absent
+- [x] Given a host started with `OSC7577_TOKEN=inherited` in its environment, when a pane prints the variable, then the value is not `inherited`
 
 #### US-006: Ingest reports from the unknown-sequence callback
 **Description:** As the host, I want OSC 7577 sequences delivered to the protocol core in stream order so that reports are verified as soon as they are written.
@@ -332,12 +332,12 @@ Every pane spawned by the host advertises OSC 7577, and the host turns verified 
 **Dependencies:** Blocked by US-003, US-005
 
 **Acceptance Criteria:**
-- [ ] Given a hosted pane, when the fixture writes a signed 7577 report to its terminal, then the host's store holds the record
-- [ ] Given the same report terminated by BEL instead of ESC `\`, when it is written, then the record is stored
-- [ ] Given a report longer than 4096 bytes, when it is written, then the outcome is `Ignored` and an earlier record of the same owner remains
-- [ ] Given a report cut by CAN, when it is written, then nothing is stored
-- [ ] Given an unrelated unknown OSC such as `OSC 7400`, when it is written, then the store is unchanged and the pane renders as before
-- [ ] Given the pinned libghostty, when the guard test feeds a signed 7577 report through the real engine, then the unknown-sequence callback receives it; the test fails if the engine handles 7577 itself
+- [x] Given a hosted pane, when the fixture writes a signed 7577 report to its terminal, then the host's store holds the record
+- [x] Given the same report terminated by BEL instead of ESC `\`, when it is written, then the record is stored
+- [x] Given a report longer than 4096 bytes, when it is written, then the outcome is `Ignored` and an earlier record of the same owner remains
+- [x] Given a report cut by CAN, when it is written, then nothing is stored
+- [x] Given an unrelated unknown OSC such as `OSC 7400`, when it is written, then the store is unchanged and the pane renders as before
+- [x] Given the pinned libghostty, when the guard test feeds a signed 7577 report through the real engine, then the unknown-sequence callback receives it; the test fails if the engine handles 7577 itself
 
 #### US-007: Owner validation and ancestry capture
 **Description:** As the host, I want each report's owner checked against the pane and recorded with its identity so that impersonated, foreign or recycled pids cannot create records.
@@ -346,14 +346,13 @@ Every pane spawned by the host advertises OSC 7577, and the host turns verified 
 **Dependencies:** Blocked by US-006
 
 **Acceptance Criteria:**
-- [ ] Given a report whose pid is a live process of the pane, when it is processed, then the record stores the owner's start time and its ancestor chain up to the pane's first process
-- [ ] Given a report whose pid does not exist, when it is processed, then the outcome is `Rejected`
-- [ ] Given a report whose pid is a live process outside the pane session (a `setsid` child of the fixture), when it is processed, then the outcome is `Rejected`
-- [ ] Given a report whose pid is the pane's first process, when it is processed, then the record is stored and marked not resumable (Non-Goals)
-- [ ] Given a report without `cwd` on Linux or macOS, when it is processed, then the record's cwd is the owner's cwd read from the OS at acceptance
-- [ ] Given a report without `cwd` on Windows, when it is processed, then the record's cwd is the pane's spawn directory with source `spawn`, and OSC 7 is not consulted
-- [ ] Given a report with a `cwd` key, when it is processed, then the record's cwd is that directory with source `report`, even when the owner's OS directory differs
-- [ ] Given a record whose owner pid was reused by a process with another start time, when a report for that pid arrives, then it is treated as a new owner and the old record is removed
+- [x] Given a report whose pid is a live process of the pane, when it is processed, then the record stores the owner's start time and its ancestor chain up to the pane's first process
+- [x] Given a report whose pid does not exist, when it is processed, then the outcome is `Rejected`
+- [x] Given a report whose pid is a live process outside the pane session (a `setsid` child of the fixture), when it is processed, then the outcome is `Rejected`
+- [x] Given a report whose pid is the pane's first process, when it is processed, then the record is stored and marked not resumable (Non-Goals)
+- [x] Given a report without `cwd` on Linux, when it is processed, then the record's cwd is the owner's cwd read from the OS at acceptance
+- [x] Given a report with a `cwd` key, when it is processed, then the record's cwd is that directory with source `report`, even when the owner's OS directory differs
+- [x] Given a record whose owner pid was reused by a process with another start time, when a report for that pid arrives, then it is treated as a new owner and the old record is removed
 
 #### US-008: Durable, private record persistence and inspection
 **Description:** As a user whose host dies, I want records written into the session manifest as they change so that a restore finds them.
@@ -362,14 +361,14 @@ Every pane spawned by the host advertises OSC 7577, and the host turns verified 
 **Dependencies:** Blocked by US-007
 
 **Acceptance Criteria:**
-- [ ] Given an accepted report, when the persistence service has run, then the manifest's `program_resume` field holds the record
-- [ ] Given a `clear`, when the persistence service has run, then the field no longer holds that record
-- [ ] Given a manifest temporary file on Unix, when it is created, then its mode is 0600 from creation
-- [ ] Given a manifest written by this version, when a host without the field reads it, then the read succeeds
-- [ ] Given a manifest without the field, when this version reads it, then the session has no records
-- [ ] Given `paneflow-host session inspect`, when the session has a record, then the output shows argv, cwd, owner pid and acceptance time with control and bidi characters escaped as `\u{XXXX}`
-- [ ] Given two accepted reports submitted before the persistence writer takes the session's pending revision, when it writes, then one manifest write holds the second record (`Metadata` coalescing, `ARCHITECTURE.md:1462-1464`)
-- [ ] Given an accepted report, when its record change is submitted, then it is submitted as a `Metadata` revision to the persistence service and the runtime thread writes no file
+- [x] Given an accepted report, when the persistence service has run, then the manifest's `program_resume` field holds the record
+- [x] Given a `clear`, when the persistence service has run, then the field no longer holds that record
+- [x] Given a manifest temporary file on Linux, when it is created, then its mode is 0600 from creation
+- [x] Given a manifest written by this version, when a host without the field reads it, then the read succeeds
+- [x] Given a manifest without the field, when this version reads it, then the session has no records
+- [x] Given `paneflow-host session inspect`, when the session has a record, then the output shows argv, cwd, owner pid and acceptance time with control and bidi characters escaped as `\u{XXXX}`
+- [x] Given two accepted reports submitted before the persistence writer takes the session's pending revision, when it writes, then one manifest write holds the second record (`Metadata` coalescing, `ARCHITECTURE.md:1462-1464`)
+- [x] Given an accepted report, when its record change is submitted, then it is submitted as a `Metadata` revision to the persistence service and the runtime thread writes no file
 
 #### US-009: Owner lifetime through kernel exit notification
 **Description:** As a user, I want a record to disappear when its program ends on its own and to stay when the host ends so that only the programs I left running come back.
@@ -378,13 +377,13 @@ Every pane spawned by the host advertises OSC 7577, and the host turns verified 
 **Dependencies:** Blocked by US-008
 
 **Acceptance Criteria:**
-- [ ] Given a record on Linux, when its owner exits on its own, then the exit is observed through a pidfd and the record is removed 2 s later
-- [ ] Given an owner that exited 1 s before a `kill -9` of the host, when the next host reads the manifest, then the record is present
-- [ ] Given a forced `host.shutdown`, when the owners die from the shutdown, then their records are kept
-- [ ] Given the user closes the pane, when the session is stopped, then its records are discarded
-- [ ] Given "Stop everything and quit", when it completes, then every record is discarded
-- [ ] Given RIS, DECSTR, an alternate-screen switch, an erase and an OSC 133 mark written after a record, when they are processed, then the record remains
-- [ ] Given a pidfd that cannot be opened (the owner exited between validation and watch), when the watch is set up, then the record is marked exited and removal is scheduled
+- [x] Given a record on Linux, when its owner exits on its own, then the exit is observed through a pidfd and the record is removed 2 s later
+- [x] Given an owner that exited 1 s before a `kill -9` of the host, when the next host reads the manifest, then the record is present
+- [x] Given a forced `host.shutdown`, when the owners die from the shutdown, then their records are kept
+- [x] Given the user closes the pane, when the session is stopped, then its records are discarded
+- [x] Given "Stop everything and quit", when it completes, then every record is discarded
+- [x] Given RIS, DECSTR, an alternate-screen switch, an erase and an OSC 133 mark written after a record, when they are processed, then the record remains
+- [x] Given a pidfd that cannot be opened (the owner exited between validation and watch), when the watch is set up, then the record is marked exited and removal is scheduled
 
 ---
 
@@ -401,15 +400,14 @@ A record or a catalog command runs in the user's shell at its first prompt, with
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given the shim binary named `paneflow-resume` and a valid handoff file, when it runs, then it deletes the file before starting the program
-- [ ] Given a bare argv[0], when the launcher resolves it, then it uses the `PATH` of its own environment, so a `paneflow-shim` agent copy first on `PATH` is the one started
-- [ ] Given an absolute argv[0], when the launcher runs, then it starts that path without a `PATH` lookup
-- [ ] Given Unix, when the program starts, then it has the launcher's pid and receives argv[0] exactly as written in the handoff
-- [ ] Given Windows, when the program exits with code 3, then the launcher exits with code 3
-- [ ] Given a handoff whose program is not found, when the launcher runs, then it prints `paneflow-resume: <name>: not found` on stderr and exits 127
-- [ ] Given a handoff file not owned by the user or with a mode other than 0600 on Unix, when the launcher runs, then it refuses it and exits 126
-- [ ] Given a missing handoff file, when the launcher runs, then it exits 126 without starting anything
-- [ ] Given the extract plan, when the app starts, then `paneflow-resume` is written to the helper directory beside the agent shims
+- [x] Given the shim binary named `paneflow-resume` and a valid handoff file, when it runs, then it deletes the file before starting the program
+- [x] Given a bare argv[0], when the launcher resolves it, then it uses the `PATH` of its own environment, so a `paneflow-shim` agent copy first on `PATH` is the one started
+- [x] Given an absolute argv[0], when the launcher runs, then it starts that path without a `PATH` lookup
+- [x] Given Linux, when the program starts, then it has the launcher's pid and receives argv[0] exactly as written in the handoff
+- [x] Given a handoff whose program is not found, when the launcher runs, then it prints `paneflow-resume: <name>: not found` on stderr and exits 127
+- [x] Given a handoff file not owned by the user or with a mode other than 0600 on Linux, when the launcher runs, then it refuses it and exits 126
+- [x] Given a missing handoff file, when the launcher runs, then it exits 126 without starting anything
+- [x] Given the extract plan, when the app starts, then `paneflow-resume` is written to the helper directory beside the agent shims
 
 #### US-011: Resume attempt reports and ownership transfer
 **Description:** As the host, I want to learn when a resumed program started or failed so that the record follows the new process and failures are never retried.
@@ -418,14 +416,14 @@ A record or a catalog command runs in the user's shell at its first prompt, with
 **Dependencies:** Blocked by US-008, US-010
 
 **Acceptance Criteria:**
-- [ ] Given the launcher started the program, when the host receives `session.resume_attempt` with outcome `started` and the attempt id, then the record's owner becomes the reported pid and start time
-- [ ] Given the launcher could not find the program, when the host receives `session.resume_attempt` with outcome `failed` and reason `not_found`, then the record is removed
-- [ ] Given the launcher could not enter the record's `report` directory, when the host receives outcome `failed` with reason `cwd_missing`, then the record is kept and its summary's `blocked` is `cwd_missing`
-- [ ] Given a `session.resume_attempt` from a process outside the session, when the host receives it, then it is refused and the record is unchanged
-- [ ] Given a `session.resume_attempt` with an unknown attempt id, when the host receives it, then it is refused
-- [ ] Given a started attempt, when the resumed owner sends an accepted report, then the attempt is settled
-- [ ] Given a started attempt, when the user sends the first input to the session, then the attempt is settled
-- [ ] Given a host killed while an attempt is started and unsettled, when the next host reads the manifest, then the record is marked unsettled
+- [x] Given the launcher started the program, when the host receives `session.resume_attempt` with outcome `started` and the attempt id, then the record's owner becomes the reported pid and start time
+- [x] Given the launcher could not find the program, when the host receives `session.resume_attempt` with outcome `failed` and reason `not_found`, then the record is removed
+- [x] Given the launcher could not enter the record's `report` directory, when the host receives outcome `failed` with reason `cwd_missing`, then the record is kept and its summary's `blocked` is `cwd_missing`
+- [x] Given a `session.resume_attempt` from a process outside the session, when the host receives it, then it is refused and the record is unchanged
+- [x] Given a `session.resume_attempt` with an unknown attempt id, when the host receives it, then it is refused
+- [x] Given a started attempt, when the resumed owner sends an accepted report, then the attempt is settled
+- [x] Given a started attempt, when the user sends the first input to the session, then the attempt is settled
+- [x] Given a host killed while an attempt is started and unsettled, when the next host reads the manifest, then the record is marked unsettled
 
 #### US-012: Handoff consumption in the shell integration
 **Description:** As a user, I want the resumed program to start at my shell's first prompt after my startup files so that it gets my usual environment.
@@ -434,14 +432,14 @@ A record or a catalog command runs in the user's shell at its first prompt, with
 **Dependencies:** Blocked by US-010
 
 **Acceptance Criteria:**
-- [ ] Given bash with integration and `PANEFLOW_RESUME_HANDOFF` set, when the first prompt is about to show, then the launcher runs once by its absolute path
-- [ ] Given bash, when `~/.bashrc` runs, then `PANEFLOW_RESUME_HANDOFF` is already unset in its environment
-- [ ] Given zsh, when `~/.zshrc` runs, then the variable is already unset
-- [ ] Given fish, when its config runs, then the variable is already unset
-- [ ] Given PowerShell, when the `-Command` string is built for a resume, then it holds the handoff path and no environment variable carries it
-- [ ] Given a second prompt, when it shows, then the launcher does not run again
-- [ ] Given no handoff, when the first prompt shows, then the integration runs nothing new
-- [ ] Given a startup file that changes `PATH`, when the launcher resolves the program, then it uses the changed `PATH`
+- [x] Given bash with integration and `PANEFLOW_RESUME_HANDOFF` set, when the first prompt is about to show, then the launcher runs once by its absolute path
+- [x] Given bash, when `~/.bashrc` runs, then `PANEFLOW_RESUME_HANDOFF` is already unset in its environment
+- [x] Given zsh, when `~/.zshrc` runs, then the variable is already unset
+- [x] Given fish, when its config runs, then the variable is already unset
+- [x] Given PowerShell, when the `-Command` string is built for a resume, then it holds the handoff path and no environment variable carries it
+- [x] Given a second prompt, when it shows, then the launcher does not run again
+- [x] Given no handoff, when the first prompt shows, then the integration runs nothing new
+- [x] Given a startup file that changes `PATH`, when the launcher resolves the program, then it uses the changed `PATH`
 
 #### US-013: Host restart with a resume handoff
 **Description:** As the desktop, I want to ask the host to restart a lost session with its record resumed so that the handoff, the token and the attempt are created in one step.
@@ -450,13 +448,13 @@ A record or a catalog command runs in the user's shell at its first prompt, with
 **Dependencies:** Blocked by US-011, US-012
 
 **Acceptance Criteria:**
-- [ ] Given a lost session with a resumable record, when `session.restart` carries `resume: { record }`, then the host writes a 0600 handoff in the session directory in the TD-08 format and spawns the shell in the record's cwd with it
-- [ ] Given the restart, when the manifest is written, then `launch.env` holds neither the handoff path nor the token
-- [ ] Given a record whose `cwd` came from the report and no longer exists, when the restart is requested, then the host refuses with reason `cwd_missing` and starts a plain shell
-- [ ] Given an unsettled record, when a restart with `resume` is requested without `confirmed: true`, then the host refuses with reason `unsettled`
-- [ ] Given a record accepted in a sandboxed session, when the restart's sandbox plan differs, then the host refuses with reason `sandbox_changed`
-- [ ] Given a pane whose shell has no integration, when a resume is requested, then the host refuses with reason `shell_unsupported`
-- [ ] Given a lost session, when the attach resolution or the `session.inspect` IPC method returns its summary, then it carries the `program_resume` object of TD-11 with `blocked` set when one of these refusals would apply
+- [x] Given a lost session with a resumable record, when `session.restart` carries `resume: { record }`, then the host writes a 0600 handoff in the session directory in the TD-08 format and spawns the shell in the record's cwd with it
+- [x] Given the restart, when the manifest is written, then `launch.env` holds neither the handoff path nor the token
+- [x] Given a record whose `cwd` came from the report and no longer exists, when the restart is requested, then the host refuses with reason `cwd_missing` and starts a plain shell
+- [x] Given an unsettled record, when a restart with `resume` is requested without `confirmed: true`, then the host refuses with reason `unsettled`
+- [x] Given a record accepted in a sandboxed session, when the restart's sandbox plan differs, then the host refuses with reason `sandbox_changed`
+- [x] Given a pane whose shell has no integration, when a resume is requested, then the host refuses with reason `shell_unsupported`
+- [x] Given a lost session, when the attach resolution or the `session.inspect` IPC method returns its summary, then it carries the `resume_candidate` object of TD-11 with `blocked` set when one of these refusals would apply
 
 #### US-014: Live-session and catalog handoff entry points
 **Description:** As the desktop, I want handoffs for a running shell and for a catalog conversation so that the banner and the conversation resume never type arguments.
@@ -465,13 +463,13 @@ A record or a catalog command runs in the user's shell at its first prompt, with
 **Dependencies:** Blocked by US-013
 
 **Acceptance Criteria:**
-- [ ] Given a live session and `session.prepare_resume { record, confirmed }` from the window, when it runs, then the host writes a handoff and returns the launcher's absolute path and the handoff path
-- [ ] Given `session.prepare_resume { argv, cwd }` from the window, when it runs, then the handoff holds that argv and cwd with source `report`
-- [ ] Given `session.prepare_resume` for an unsettled record with `confirmed: false`, when it runs, then the host refuses with reason `unsettled`
-- [ ] Given `session.create` with `resume: { argv, cwd }` from the window, when it runs, then the shell starts with a handoff holding that argv
-- [ ] Given `session.prepare_resume` or a `resume` on `session.create` from a `Pane` principal, when it runs, then the host refuses it
-- [ ] Given `session.discard_resume { record }` from the window, when it runs, then the record is removed from the store and the manifest
-- [ ] Given `session.discard_resume` with an unknown record id, when it runs, then the host answers with reason `unknown_record` and changes nothing
+- [x] Given a live session and `session.prepare_resume { record, confirmed }` from the window, when it runs, then the host writes a handoff and returns the launcher's absolute path and the handoff path
+- [x] Given `session.prepare_resume { argv, cwd }` from the window, when it runs, then the handoff holds that argv and cwd with source `report`
+- [x] Given `session.prepare_resume` for an unsettled record with `confirmed: false`, when it runs, then the host refuses with reason `unsettled`
+- [x] Given `session.create` with `resume: { argv, cwd }` from the window, when it runs, then the shell starts with a handoff holding that argv
+- [x] Given `session.prepare_resume` or a `resume` on `session.create` from a `Pane` principal, when it runs, then the host refuses it
+- [x] Given `session.discard_resume { record }` from the window, when it runs, then the record is removed from the store and the manifest
+- [x] Given `session.discard_resume` with an unknown record id, when it runs, then the host answers with reason `unknown_record` and changes nothing
 
 #### US-015: Exact argv delivery across shells (validation)
 **Description:** As a maintainer, I want proof that arguments reach the program unchanged so that the "never shell source" rule holds in practice.
@@ -480,10 +478,10 @@ A record or a catalog command runs in the user's shell at its first prompt, with
 **Dependencies:** Blocked by US-013
 
 **Acceptance Criteria:**
-- [ ] Given bash in CI and a record whose argv is `paneflow-session-fixture`, `argv-dump`, `$(reboot)`, `a; b`, `two words`, an empty string, `-n`, `naïve` and `*`, when it is resumed, then the fixture's dump holds those 9 elements byte for byte
-- [ ] Given a bash function and an alias named like the fixture, when it is resumed, then the fixture binary runs, not the function or the alias
-- [ ] Given a fixture copy named `true` first on `PATH`, when a record with argv[0] `true` is resumed under bash, then the fixture copy runs (its dump exists), not the bash builtin
-- [ ] Given zsh and fish installed locally on Linux, when the same record is resumed in each, then the dump files are identical to bash's, and the run is recorded in `tasks/program-resume-evidence/` (local evidence)
+- [x] Given bash in CI and a record whose argv is `paneflow-session-fixture`, `argv-dump`, `$(reboot)`, `a; b`, `two words`, an empty string, `-n`, `naïve` and `*`, when it is resumed, then the fixture's dump holds those 9 elements byte for byte
+- [x] Given a bash function and an alias named like the fixture, when it is resumed, then the fixture binary runs, not the function or the alias
+- [x] Given a fixture copy named `true` first on `PATH`, when a record with argv[0] `true` is resumed under bash, then the fixture copy runs (its dump exists), not the bash builtin
+- [x] Given zsh and fish installed locally on Linux, when the same record is resumed in each, then the dump files are identical to bash's, and the run is recorded in `tasks/program-resume-evidence/` (local evidence)
 
 ---
 
@@ -573,7 +571,7 @@ After a host loss, each pane with a record either resumes, asks, or explains why
 
 Catalog conversation resumes stop typing their command into shells that have integration.
 
-**Definition of Done:** with bash and zsh, an automatic Claude conversation resume starts through the handoff with no keystroke written by the desktop; cmd and nushell keep the typed path.
+**Definition of Done:** with bash and zsh, an automatic Claude conversation resume starts through the handoff with no keystroke written by the desktop; nushell keeps the typed path. The cmd path is proven in EP-007.
 
 #### US-021: Automatic conversation resume through the handoff
 **Description:** As an agent user, I want my conversation resumed at the shell's first prompt without simulated typing so that startup files and slow prompts cannot break it.
@@ -596,7 +594,6 @@ Catalog conversation resumes stop typing their command into shells that have int
 
 **Acceptance Criteria:**
 - [ ] Given the `OfferResume` banner in a bash pane, when the user clicks it, then the desktop types the launcher path and a handoff path, not the agent's arguments
-- [ ] Given a cmd pane on Windows, when a conversation resumes, then today's typed command is used unchanged
 - [ ] Given a pane with `shell_integration: false`, when a conversation resumes, then today's typed command is used
 - [ ] Given the launcher reports `failed` for a conversation, when the banner updates, then the conversation is forgotten, as today's "Resume failed" path does
 
@@ -663,7 +660,7 @@ The full path is proven on Linux with the real host, a real shell and a real Pi,
 
 ### EP-007: Windows hardware proofs
 
-Everything that only Windows can prove, run in one pass on the Windows 11 machine.
+Everything that only Windows can prove, run in one pass on the Windows 11 machine. Every Windows check of EP-002 to EP-006 lives here, so those epics are certified on Linux alone; this epic also proves that their `cfg(windows)` code builds and lints on the Windows CI leg.
 
 **Definition of Done:** US-027 to US-029 pass on Windows 11 x64 hardware with recorded evidence; until US-027 passes, the host does not set the token on Windows.
 
@@ -676,6 +673,8 @@ Everything that only Windows can prove, run in one pass on the Windows 11 machin
 **Acceptance Criteria:**
 - [ ] Given a PowerShell pane on Windows 11, when the fixture writes the specification's four valid reports, then the host receives each content byte for byte
 - [ ] Given a report of 4000 bytes, when it is written, then it arrives whole and is accepted
+- [ ] Given any Windows pane before this story lifts the gate, when it is spawned, then `OSC7577_TOKEN` is not set (US-005, test `a_windows_pane_never_sees_the_token_while_conpty_is_unproven`)
+- [ ] Given a WSL pane on Windows, before and after the gate is lifted, when it is spawned, then the variable is not set on the `wsl` process (US-005)
 - [ ] Given the result, when US-027 passes, then the Windows token gate is removed in the same change; when it fails, the gate stays and the failure is recorded
 
 #### US-028: Windows owner validation, exit notification and private files
@@ -687,6 +686,7 @@ Everything that only Windows can prove, run in one pass on the Windows 11 machin
 **Acceptance Criteria:**
 - [ ] Given a report whose pid is in the pane's job object, when it is processed, then it is accepted with its creation time
 - [ ] Given a report whose pid is outside the job, when it is processed, then it is rejected
+- [ ] Given a report without `cwd` on Windows, when it is processed, then the record's cwd is the pane's spawn directory with source `spawn`, and OSC 7 is not consulted (US-007)
 - [ ] Given an owner exit, when it is observed through a process handle, then the record is removed 2 s later
 - [ ] Given the manifest and a handoff file, when their ACLs are read with `icacls`, then only the user, SYSTEM and Administrators have access, or the missing ACL is added and recorded (A7)
 
@@ -699,19 +699,20 @@ Everything that only Windows can prove, run in one pass on the Windows 11 machin
 **Acceptance Criteria:**
 - [ ] Given pwsh 7 and Windows PowerShell 5.1, when the US-015 record is resumed, then the dump holds the same 9 elements as US-015
 - [ ] Given a resumed program, when the user presses Ctrl+C, then the program receives it and the launcher stays alive until the program exits
-- [ ] Given the program exits with code 3, when the launcher returns, then `$LASTEXITCODE` is 3
+- [ ] Given the program exits with code 3, when the launcher returns, then the launcher exits with code 3 (US-010) and `$LASTEXITCODE` is 3
 - [ ] Given a cmd pane, when a record exists, then the banner says the shell cannot resume programs
+- [ ] Given a cmd pane, when a catalog conversation resumes, then today's typed command is used unchanged (US-022)
 
 ---
 
 ### EP-008: macOS hardware proofs
 
-Everything that only a Mac can prove, run in one pass on the rented Mac.
+Everything that only a Mac can prove, run in one pass on the rented Mac. Every macOS check of EP-002 to EP-006 lives here, so those epics are certified on Linux alone.
 
 **Definition of Done:** US-030 and US-031 pass on macOS hardware with recorded evidence.
 
-#### US-030: macOS owner validation and kqueue exit
-**Description:** As a macOS user, I want the host's checks to hold on macOS so that records there are trustworthy.
+#### US-030: macOS owner validation, kqueue exit and private files
+**Description:** As a macOS user, I want the host's checks to hold on macOS so that records there are trustworthy and private.
 
 **Priority:** P1
 **Dependencies:** Blocked by US-009
@@ -719,6 +720,8 @@ Everything that only a Mac can prove, run in one pass on the rented Mac.
 **Acceptance Criteria:**
 - [ ] Given a report from a process of the pane session, when it is processed, then it is accepted with its `proc_pidinfo` start time
 - [ ] Given a report from a `setsid` child, when it is processed, then it is rejected
+- [ ] Given a report without `cwd` on macOS, when it is processed, then the record's cwd is the owner's cwd read through `PROC_PIDVNODEPATHINFO` with source `owner` (US-007)
+- [ ] Given a manifest temporary file on macOS, when it is created, then its mode is 0600 from creation (US-008)
 - [ ] Given an owner exit, when it is observed through `EVFILT_PROC`, then the record is removed 2 s later
 - [ ] Given a signed report in a pane, when the guard test of US-006 runs on macOS, then the unknown-sequence callback receives it (A2)
 
@@ -730,7 +733,8 @@ Everything that only a Mac can prove, run in one pass on the rented Mac.
 
 **Acceptance Criteria:**
 - [ ] Given zsh, the default macOS shell, when the US-015 record is resumed, then the dump holds the same 9 elements as US-015
-- [ ] Given a resumed program, when its pid is read, then it equals the launcher's pid (exec)
+- [ ] Given a resumed program, when its pid and argv[0] are read, then the pid equals the launcher's pid (exec) and argv[0] is exactly the handoff's (US-010)
+- [ ] Given a handoff file not owned by the user or with a mode other than 0600 on macOS, when the launcher runs, then it refuses it and exits 126 (US-010)
 - [ ] Given Pi on macOS, when the host is killed and Paneflow restores, then Pi resumes its session
 - [ ] Given a failure to start, when the launcher reports it, then the record is removed
 
